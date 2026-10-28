@@ -28,3 +28,6 @@ Standalone Data Plane; integrated local development via Docker Compose; centrall
 
 ## Architecture invariants
 Publishing is the only draft-to-runtime promotion. Runtime cannot modify published definitions. UI and agents use the same server-authorized capabilities. App publication never submits staged business transactions. Agent/LLM outage does not disable conventional published pages when their data providers remain available.
+
+## Persistent agent extension (planned)
+Runtime agents are standalone configurable resources, not necessarily attached to a user. The Data Plane owns agent lifecycle/state, authenticated event scheduler/ingress, LangGraph.js durable execution, scoped memory, approval inbox, action-intent/outcome journal and workers. The optional Control Plane configures and administers definitions, but already deployed runs must not depend on it. User delegation is optional and checked at action time. Checkpoints alone do not guarantee exactly-once external side effects. See [persistent agents design](persistent-agents.md) and [ADR 0010](../adr/0010-configurable-persistent-agents.md).
