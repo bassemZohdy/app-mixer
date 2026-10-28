@@ -31,5 +31,11 @@ try{
  await React.act(()=>stale('stale'));assert.equal(errors.length,1);assert.equal(document.querySelector('span').textContent,'Updated');
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Button'}]}}));
  assert.equal(errors.length,2);assert.equal(document.querySelector('span').textContent,'Updated');
- await React.act(()=>root.unmount());assert.equal(unsubscribed,2);receive({version:'invalid'});stale('late');assert.equal(errors.length,2);
+ const oldReceive=receive;let newReceive;
+ const newSubscribe=callback=>{newReceive=callback;return ()=>{unsubscribed++;};};
+ await React.act(()=>root.render(React.createElement(React.StrictMode,null,React.createElement(Component,{subscribe:newSubscribe,onError:error=>errors.push(error),onAction:event=>actions.push(event)}))));
+ assert.equal(unsubscribed,2);assert.equal(document.querySelector('span'),null);oldReceive({version:'invalid'});stale('late');assert.equal(errors.length,2);
+ await React.act(()=>{newReceive({version:'v0.9.1',createSurface:{surfaceId:'new',catalogId:APP_MIXER_CATALOG}});newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'New source'}]}});});
+ assert.equal(document.querySelector('span').textContent,'New source');
+ await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
 }finally{dom.window.close();}
