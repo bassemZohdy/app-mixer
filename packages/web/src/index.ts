@@ -142,6 +142,7 @@ export class A2UIRenderer {
     if (!id(payload.surfaceId)) throw Error('Invalid surface ID');
     const surfaceId = payload.surfaceId;
     if (kind === 'createSurface') {
+      if (this.surfaces.size >= 100) throw Error('Too many surfaces');
       if (!only(payload, ['surfaceId','catalogId'])) throw Error('Unsupported surface property');
       if (payload.catalogId !== BASIC_CATALOG) throw Error('Unsupported catalog');
       if (this.surfaces.has(surfaceId)) throw Error('Surface already exists');
@@ -161,6 +162,7 @@ export class A2UIRenderer {
         if (!obj(c) || !id(c.id) || !id(c.component) || !this.registry.get(c.component)) throw Error('Unsupported component');
         components.set(c.id, structuredClone(c));
       }
+      if (components.size > 1000) throw Error('Too many components');
     } else {
       if (!only(payload, ['surfaceId','path','value'])) throw Error('Unsupported data property');
       if (payload.path !== undefined && typeof payload.path !== 'string') throw Error('Invalid data path');
@@ -168,7 +170,9 @@ export class A2UIRenderer {
     }
     const doc = this.host.ownerDocument;
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
+    let renderedCount = 0;
     const render = (componentId: string, visited: Set<string>): HTMLElement => {
+      if (++renderedCount > 5000) throw Error('Component tree too large');
       const c = components.get(componentId);
       if (!c) { const placeholder = doc.createElement('span'); placeholder.textContent = ''; return placeholder; }
       if (visited.has(componentId) || visited.size >= 100) throw Error('Cyclic or deeply nested components');
