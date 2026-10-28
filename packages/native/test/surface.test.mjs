@@ -47,3 +47,14 @@ test('field writes are isolated and reject stale callbacks',()=>{
  store.apply(remove('a'));store.apply(create('a'));store.apply(update('a',[{id:'root',component:'TextField',label:'New',value:{path:'/name'}}]));
  assert.throws(()=>store.writeField('a','root',first.revision,'stale'),/Stale/);assert.equal(store.snapshot()[0].root.value,'');
 });
+
+test('buttons resolve only explicit context and reject stale action callbacks',()=>{
+ const store=new NativeSurfaceStore();store.apply(create('a'));
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{form:{name:'Ada',secret:'private'}}}});
+ store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'},source:'screen'}}}},{id:'label',component:'Text',text:'Save'}]));
+ const revision=store.snapshot()[0].revision;
+ const action=store.action('a','root',revision);assert.deepEqual(action.action.context,{name:'Ada',source:'screen'});assert.equal(action.action.sourceComponentId,'root');
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/form/name',value:'Grace'}});assert.equal(store.action('a','root',revision).action.context.name,'Grace');
+ store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'other'}}}]));assert.throws(()=>store.action('a','root',revision),/Stale/);
+ assert.throws(()=>store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'bad',context:{x:{path:'/__proto__/x'}}}}}])),/Unsafe/);
+});

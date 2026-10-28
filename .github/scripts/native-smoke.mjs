@@ -11,18 +11,22 @@ const React=require('react');const {createRoot}=require('react-dom/client');
 const View=({children,style})=>React.createElement('div',{style},children);
 const Text=({children,accessibilityRole})=>React.createElement('span',{'data-role':accessibilityRole},children);
 let change;const TextInput=props=>{change=props.onChangeText;return React.createElement('input',{value:props.value,readOnly:true});};
-const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput});const root=createRoot(document.getElementById('app'));
-let receive,unsubscribed=0;const errors=[];
+const Pressable=({children,onPress,disabled})=>React.createElement('button',{onClick:onPress,disabled},children);
+const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable});const root=createRoot(document.getElementById('app'));
+let receive,unsubscribed=0;const errors=[],actions=[];
 const subscribe=callback=>{receive=callback;return ()=>{unsubscribed++;};};
 try{
  await React.act(()=>root.render(React.createElement(React.StrictMode,null,React.createElement(Component,{subscribe,onError:error=>errors.push(error)}))));
  await React.act(()=>{
   receive({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
   receive({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{name:'Native hello'}}});
-  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title','field']},{id:'title',component:'Text',text:{path:'/name'},variant:'h1'},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}}]}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title','field','button']},{id:'title',component:'Text',text:{path:'/name'},variant:'h1'},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}},{id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/name'}}}}},{id:'label',component:'Text',text:'Save'}]}});
  });
  assert.equal(document.querySelector('span').textContent,'Native hello');assert.equal(document.querySelector('span').dataset.role,'header');
- await React.act(()=>change('Updated'));assert.equal(document.querySelector('span').textContent,'Updated');const stale=change;
+ assert.equal(document.querySelector('button').disabled,true);
+ await React.act(()=>root.render(React.createElement(React.StrictMode,null,React.createElement(Component,{subscribe,onError:error=>errors.push(error),onAction:event=>actions.push(event)}))));
+ await React.act(()=>change('Updated'));assert.equal(document.querySelector('span').textContent,'Updated');
+ await React.act(()=>document.querySelector('button').click());assert.equal(actions[0].action.name,'save');assert.deepEqual(actions[0].action.context,{name:'Updated'});const stale=change;
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'field',component:'TextField',label:'Name',value:{path:'/other'}}]}}));
  await React.act(()=>stale('stale'));assert.equal(errors.length,1);assert.equal(document.querySelector('span').textContent,'Updated');
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Button'}]}}));
