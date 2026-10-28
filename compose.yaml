@@ -1,0 +1,56 @@
+# Local single-user development only; host ports are bound to loopback.
+x-local-image: &local-image
+  image: app-mixer-local
+  build:
+    context: .
+    dockerfile: Dockerfile.local
+services:
+  init:
+    <<: *local-image
+    command: ["node", "deploy/local/service.mjs", "init"]
+    volumes: ["definitions:/data"]
+    restart: "no"
+  workspace:
+    <<: *local-image
+    command: ["node", "demo-app/server.mjs"]
+    environment:
+      APP_MIXER_BIND: 0.0.0.0
+      DATA_PLANE_URL: http://127.0.0.1:3002/application
+      AGENT_URL: http://127.0.0.1:3003/agent
+      AGENT_TOKEN: ${AGENT_TOKEN:?Set AGENT_TOKEN to a random token of at least 32 characters}
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+  data:
+    <<: *local-image
+    command: ["node", "deploy/local/service.mjs", "data"]
+    network_mode: service:workspace
+    volumes: ["definitions:/data"]
+    depends_on:
+      workspace:
+        condition: service_started
+  control:
+    <<: *local-image
+    command: ["node", "deploy/local/service.mjs", "control"]
+    network_mode: service:workspace
+    environment:
+      CONTROL_BIND: 0.0.0.0
+      CONTROL_TOKEN: ${CONTROL_TOKEN:?Set CONTROL_TOKEN to a random token of at least 32 characters}
+    volumes: ["definitions:/data"]
+    depends_on:
+      workspace:
+        condition: service_started
+  agent:
+    <<: *local-image
+    command: ["node", "deploy/local/service.mjs", "agent"]
+    network_mode: service:workspace
+    environment:
+      AGENT_TOKEN: ${AGENT_TOKEN:?Set AGENT_TOKEN to a random token of at least 32 characters}
+    depends_on:
+      workspace:
+        condition: service_started
+volumes:
+  definitions:

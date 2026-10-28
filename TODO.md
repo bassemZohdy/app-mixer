@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**12 / 31 tasks complete (39%)**
+**13 / 31 tasks complete (42%)**
 
 `████████░░░░░░░░░░░░`
 
@@ -23,7 +23,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P1-05 Development Agent typed patches, preview and approval/publish (local in-memory workflow; [scope and limitations](docs/development-proposals.md))
 - [x] P1-06 OpenAPI import and authorized capability registry (restricted GET sample; [scope and limitations](docs/capability-registry.md))
 - [x] P1-07 Two-level published definition cache and invalidation (local in-memory integration; [scope and limitations](docs/published-cache.md))
-- [ ] P1-08 Docker Compose and agent-outage acceptance test (local agent-outage acceptance covered; Compose pending)
+- [x] P1-08 Docker Compose and agent-outage acceptance test (local development profile; [scope and limitations](docs/local-compose.md))
 
 ## P2: portability and advanced data
 - [ ] P2-01 Angular/React/React Native/Flutter adapters and parity checks

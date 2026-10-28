@@ -30,6 +30,7 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [Development proposals](docs/development-proposals.md)
 - [Capability registry](docs/capability-registry.md)
 - [Published-definition cache](docs/published-cache.md)
+- [Local Docker Compose](docs/local-compose.md)
 - [TODO](TODO.md)
 - [CHANGELOG](CHANGELOG.md)
 
