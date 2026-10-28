@@ -72,3 +72,12 @@ test('shared Flutter fixture matches web and native bindings',async()=>{
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
  for(const step of steps){web.apply(step.message);native.apply(step.message);assert.equal(native.snapshot()[0].root?.text??null,step.text);assert.equal(host.children[0].children[0]?.textContent??null,step.text);}
 });
+
+test('shared Flutter fixture matches web and native action context',async()=>{
+ const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/actions.json',import.meta.url),'utf8'));
+ const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
+ for(const step of fixture.messages){web.apply(step);native.apply(step);}
+ host.children[0].children[0].listeners.click();
+ const webAction={...events[0].action};delete webAction.timestamp;const nativeAction={...native.action('main','root',native.snapshot()[0].revision).action};delete nativeAction.timestamp;
+ assert.deepEqual(webAction,fixture.action);assert.deepEqual(nativeAction,fixture.action);
+});

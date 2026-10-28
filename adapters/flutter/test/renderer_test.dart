@@ -91,4 +91,12 @@ void main() {
     expect(()=>store.action('main','button',revision),throwsFormatException);
   });
 
+  test('shared action fixture resolves explicit context', () {
+    final fixture=jsonDecode(File('test/fixtures/actions.json').readAsStringSync()) as Map;
+    final store=FlutterSurfaceStore();
+    for(final message in fixture['messages'] as List){store.apply(message);}
+    final action=Map<String,dynamic>.from(store.action('main','root',store.views().single.revision)['action'] as Map)..remove('timestamp');
+    expect(action,fixture['action']);
+  });
+
 }
