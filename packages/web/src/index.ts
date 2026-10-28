@@ -139,7 +139,7 @@ export class A2UIRenderer {
   apply(message: unknown): void {
     if (!obj(message) || message.version !== 'v0.9.1') throw Error('Unsupported A2UI version');
     const keys = ['createSurface','updateComponents','updateDataModel','deleteSurface'].filter(k => Object.hasOwn(message, k));
-    if (keys.length !== 1 || !obj(message[keys[0]])) throw Error('Invalid A2UI message');
+    if (keys.length !== 1 || !only(message, ['version',keys[0]]) || !obj(message[keys[0]])) throw Error('Invalid A2UI message');
     const kind = keys[0], payload = message[kind] as Obj;
     if (!id(payload.surfaceId)) throw Error('Invalid surface ID');
     const surfaceId = payload.surfaceId;
@@ -158,7 +158,7 @@ export class A2UIRenderer {
     let components = surface.components, data = surface.data;
     if (kind === 'updateComponents') {
       if (!only(payload, ['surfaceId','components'])) throw Error('Unsupported components property');
-      if (!Array.isArray(payload.components) || payload.components.length > 1000) throw Error('Invalid components');
+      if (!Array.isArray(payload.components) || payload.components.length < 1 || payload.components.length > 1000) throw Error('Invalid components');
       components = new Map(surface.components);
       for (const c of payload.components) {
         if (!obj(c) || !id(c.id) || !id(c.component) || !this.registry.get(c.component)) throw Error('Unsupported component');

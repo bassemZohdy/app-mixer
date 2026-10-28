@@ -12,7 +12,7 @@
 
 The optional `A2UIJsonLines` helper frames decoded JSONL text in order, including messages split across chunks; network transport and UTF-8 decoding remain the caller’s responsibility. Components can arrive incrementally; missing children render as empty placeholders. Data model updates use absolute JSON pointers and create missing object parents; deleting an array element preserves its index. Text bindings re-render after updates. Unknown component types and unsupported properties fail rather than executing supplied code. Renderers registered through `ComponentRegistry` are trusted application code, not model-provided code. The renderer caps surfaces, stored components, and expanded tree size, and rejects cyclic or excessively deep trees; rendered text uses `textContent`.
 
-Not yet implemented: basic catalog parity, Markdown, templates and relative bindings, additional form components, action functions and validation, theme, `sendDataModel`, and a protocol conformance suite. P1-03 remains open until the supported catalog and protocol behavior are verified with a broader conformance suite. Renderer parity across other platforms is a separate task.
+Not yet implemented: basic catalog parity, Markdown, templates and relative bindings, additional form components, action functions and validation, theme, `sendDataModel`, and broader protocol conformance coverage. A pinned upstream schema test covers representative lifecycle and action messages. P1-03 remains open for the remaining protocol and catalog behavior. Renderer parity across other platforms is a separate task.
 
 Example after building the workspaces and serving the compiled module to a browser:
 

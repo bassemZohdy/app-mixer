@@ -47,6 +47,8 @@ test('rejects invalid updates without replacing the previous UI', () => {
   assert.throws(() => renderer.apply(create('main')),/already exists/);
   assert.throws(() => renderer.apply({version:'v0.8',deleteSurface:{surfaceId:'main'}}),/version/);
   assert.throws(() => renderer.apply(components('missing',[])),/Unknown surface/);
+  assert.throws(() => renderer.apply(components('main',[])),/Invalid components/);
+  assert.throws(() => renderer.apply({...create('other'), extra:true}),/Invalid A2UI message/);
 });
 
 test('supports incremental child definitions and independent surfaces', () => {
