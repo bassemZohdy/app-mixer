@@ -24,12 +24,13 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [Application definition model](docs/specs/application-model.md)
 - [Architecture decisions](docs/specs/decisions.md)
 - [Initial implementation plan](docs/specs/implementation-plan.md)
+- [Local plane APIs](docs/plane-apis.md)
 - [TODO](TODO.md)
 - [CHANGELOG](CHANGELOG.md)
 
 ## Repository
 
-`packages/core` provides in-memory and SQLite-backed versioned application definition stores. The SQLite store persists drafts and immutable published versions; it is a local prototype, not a production security boundary. `packages/cli` scaffolds a minimal standalone HTTP application. The CLI is for developer tooling only. The future Control Plane is optional; the Data Plane must execute published apps independently.
+`packages/core` provides in-memory and SQLite-backed versioned application definition stores. The SQLite store persists drafts and immutable published versions; it is a local prototype, not a production security boundary. `packages/cli` scaffolds a minimal standalone HTTP application. Local development Control Plane and Data Plane HTTP server factories are available in core; see the API guide for security limits. The CLI is for developer tooling only. The future Control Plane is optional; the Data Plane must execute published apps independently.
 
 This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Angular, React, React Native and Flutter adapters, offline sync, OpenAPI integration, server/client caches, authorization and Kubernetes packaging are future work.
 
