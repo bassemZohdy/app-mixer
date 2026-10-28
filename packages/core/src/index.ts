@@ -28,3 +28,5 @@ export class ApplicationStore {
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");const p={version:this.published.length+1,definition:copy(this.draft)};this.published.push(p);return copy(p);}
 }
+
+export { SqliteApplicationStore } from './sqlite.js';

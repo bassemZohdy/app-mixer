@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**5 / 22 tasks complete (23%)**
+**6 / 22 tasks complete (27%)**
 
-`█████░░░░░░░░░░░░░░░░░`
+`██████░░░░░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -16,7 +16,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P0-05 Review initial scaffold security and runtime behavior
 
 ## P1: working vertical slice
-- [ ] P1-01 SQLite definition repository and immutable published versions
+- [x] P1-01 SQLite definition repository and immutable published versions
 - [ ] P1-02 Isolated Control Plane and Data Plane APIs
 - [ ] P1-03 A2UI-compatible component registry and web renderer
 - [ ] P1-04 AG-UI adapter with configurable LLM and LangGraph.js

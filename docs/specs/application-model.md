@@ -24,4 +24,4 @@ Illustrative framework YAML, **not** the official A2UI wire schema.
 
 Agent patch must carry base revision, be atomic and validated for schema, component registry, capabilities, permissions and compatibility. Failed patch leaves prior draft intact. Preview is isolated. Authorized publishing creates immutable versions; rollback restores an earlier compatible version. Business schema migrations and staged transactions are separate operations.
 
-Current prototype implements only in-memory drafts, basic patches and publishing; durable repository, authZ, A2UI serialization and migration are pending.
+The prototype implements in-memory and SQLite-backed drafts, basic patches and immutable published versions. Authorization, A2UI serialization and migration are pending.
