@@ -7,25 +7,68 @@ export type NativeSurface={id:string;root?:NativeNode};
 const obj=(value:unknown):value is Obj=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const id=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=256;
 const only=(value:Obj,keys:string[])=>Object.keys(value).every(key=>keys.includes(key));
+const pointer=(path:string):string[]=>{
+  if(path===''||path==='/')return [];
+  if(!path.startsWith('/'))throw Error('Only absolute JSON pointers are supported');
+  return path.slice(1).split('/').map(segment=>{
+    if(/~(?![01])/.test(segment))throw Error('Invalid JSON pointer');
+    const value=segment.replace(/~1/g,'/').replace(/~0/g,'~');
+    if(['__proto__','prototype','constructor'].includes(value))throw Error('Unsafe JSON pointer');
+    return value;
+  });
+};
+function cloneData(value:unknown):unknown {
+  const ancestors=new Set<object>();let count=0;
+  const visit=(input:unknown,depth:number):unknown=>{
+    if(++count>10000||depth>100)throw Error('Data model too large');
+    if(input===undefined||input===null||typeof input==='string'||typeof input==='boolean'||(typeof input==='number'&&Number.isFinite(input)))return input;
+    if(!obj(input)&&!Array.isArray(input))throw Error('Unsupported data value');
+    if(ancestors.has(input))throw Error('Cyclic data model');ancestors.add(input);
+    let result:unknown;
+    if(Array.isArray(input))result=input.map(item=>visit(item,depth+1));
+    else {const output:Obj={};for(const [key,item] of Object.entries(input)){if(['__proto__','prototype','constructor'].includes(key))throw Error('Unsafe data key');output[key]=visit(item,depth+1);}result=output;}
+    ancestors.delete(input);return result;
+  };
+  return visit(value,0);
+}
+function read(data:unknown,path:string):unknown {
+  let current=data;
+  for(const key of pointer(path)){if(!obj(current)&&!Array.isArray(current))return undefined;if(!Object.hasOwn(current,key))return undefined;current=(current as Record<string,unknown>)[key];}
+  return current;
+}
+function updateData(data:unknown,path:string,value:unknown,remove:boolean):unknown {
+  const keys=pointer(path);if(!keys.length)return remove?{}:cloneData(value);
+  const root=cloneData(data);let current=root;
+  for(let i=0;i<keys.length-1;i++){
+    const key=keys[i];if(!obj(current)&&!Array.isArray(current))throw Error('Data path parent does not exist');
+    if(!Object.hasOwn(current,key)||(current as Record<string,unknown>)[key]===undefined){if(remove)return root;if(Array.isArray(current))throw Error('Invalid array index');current[key]={};}
+    current=(current as Record<string,unknown>)[key];
+  }
+  if(!obj(current)&&!Array.isArray(current))throw Error('Data path parent does not exist');
+  const last=keys[keys.length-1];
+  if(Array.isArray(current)){if(!/^(0|[1-9]\d*)$/.test(last)||Number(last)>=current.length)throw Error('Invalid array index');current[Number(last)]=remove?undefined:cloneData(value);}
+  else if(remove)delete current[last];else current[last]=cloneData(value);
+  return cloneData(root);
+}
 const aligns=['start','center','end','stretch'];
 const justifies=['start','center','end','spaceBetween','spaceAround','spaceEvenly'];
 function validate(c:unknown):asserts c is Obj {
   if(!obj(c)||!id(c.id)||typeof c.component!=='string')throw Error('Invalid component');
   if(c.component==='Text'){
-    if(!only(c,['id','component','text','variant'])||(typeof c.text!=='string'||c.text.length>10000)||(c.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string)))throw Error('Unsupported Text');
+    if(!only(c,['id','component','text','variant'])||(!(typeof c.text==='string'&&c.text.length<=10000)&&!(obj(c.text)&&only(c.text,['path'])&&typeof c.text.path==='string'&&pointer(c.text.path)))||(c.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string)))throw Error('Unsupported Text');
   }else if(c.component==='Column'||c.component==='Row'){
     if(!only(c,['id','component','children','justify','align'])||!Array.isArray(c.children)||c.children.length>1000||!c.children.every(id)||(c.justify!==undefined&&!justifies.includes(c.justify as string))||(c.align!==undefined&&!aligns.includes(c.align as string)))throw Error('Unsupported layout');
   }else if(c.component==='Card'){
     if(!only(c,['id','component','child'])||!id(c.child))throw Error('Unsupported Card');
   }else throw Error('Unsupported component');
 }
-type Surface={id:string;components:Map<string,Obj>};
-/** Validates and commits updates atomically. Dynamic bindings and interactions are not yet supported. */
+type Surface={id:string;components:Map<string,Obj>;data:unknown};
+/** Validates and commits updates atomically. Interactive controls and actions are not yet supported. */
 export class NativeSurfaceStore {
   private readonly surfaces=new Map<string,Surface>();
   apply(message:unknown):void {
     if(!obj(message)||message.version!=='v0.9.1')throw Error('Unsupported A2UI version');
-    const keys=['createSurface','updateComponents','deleteSurface'].filter(key=>Object.hasOwn(message,key));
+    const keys=['createSurface','updateComponents','updateDataModel','deleteSurface'].filter(key=>Object.hasOwn(message,key));
     if(keys.length!==1||!only(message,['version',keys[0]])||!obj(message[keys[0]]))throw Error('Unsupported A2UI message');
     const kind=keys[0],payload=message[kind] as Obj;
     if(!id(payload.surfaceId))throw Error('Invalid surface ID');
@@ -33,21 +76,26 @@ export class NativeSurfaceStore {
     if(kind==='createSurface'){
       if(!only(payload,['surfaceId','catalogId'])||(payload.catalogId!==APP_MIXER_CATALOG&&payload.catalogId!==BASIC_CATALOG))throw Error('Unsupported catalog');
       if(this.surfaces.has(surfaceId)||this.surfaces.size>=100)throw Error('Duplicate or excessive surfaces');
-      this.surfaces.set(surfaceId,{id:surfaceId,components:new Map()});return;
+      this.surfaces.set(surfaceId,{id:surfaceId,components:new Map(),data:{}});return;
     }
     const surface=this.surfaces.get(surfaceId);if(!surface)throw Error('Unknown surface');
     if(kind==='deleteSurface'){
       if(!only(payload,['surfaceId']))throw Error('Unsupported delete property');
       this.surfaces.delete(surfaceId);return;
     }
+    if(kind==='updateDataModel'){
+      if(!only(payload,['surfaceId','path','value'])||(payload.path!==undefined&&typeof payload.path!=='string'))throw Error('Invalid data update');
+      const data=updateData(surface.data,(payload.path as string|undefined)??'/',payload.value,!Object.hasOwn(payload,'value')||payload.value===undefined);
+      this.root(surface.components,data);surface.data=data;return;
+    }
     if(!only(payload,['surfaceId','components'])||!Array.isArray(payload.components)||payload.components.length<1||payload.components.length>1000)throw Error('Invalid components');
     const components=new Map(surface.components);
-    for(const c of payload.components){validate(c);components.set(c.id as string,{...c,...(Array.isArray(c.children)?{children:[...c.children]}:{})});}
+    for(const c of payload.components){validate(c);components.set(c.id as string,{...c,...(Array.isArray(c.children)?{children:[...c.children]}:{}),...(obj(c.text)?{text:{...c.text}}:{})});}
     if(components.size>1000)throw Error('Too many components');
-    this.root(components);surface.components=components;
+    this.root(components,surface.data);surface.components=components;
   }
-  snapshot():NativeSurface[]{return [...this.surfaces.values()].map(surface=>({id:surface.id,root:this.root(surface.components)}));}
-  private root(components:Map<string,Obj>):NativeNode|undefined {
+  snapshot():NativeSurface[]{return [...this.surfaces.values()].map(surface=>({id:surface.id,root:this.root(surface.components,surface.data)}));}
+  private root(components:Map<string,Obj>,data:unknown):NativeNode|undefined {
     if(!components.has('root'))return undefined;
     let count=0;
     const visit=(key:string,ancestors:Set<string>):NativeNode|undefined=>{
@@ -56,7 +104,8 @@ export class NativeSurfaceStore {
       if(ancestors.has(key)||ancestors.size>=100)throw Error('Cyclic or deeply nested components');
       const next=new Set(ancestors);next.add(key);
       const childIds=c.component==='Card'?[c.child as string]:c.component==='Column'||c.component==='Row'?c.children as string[]:[];
-      return {id:key,kind:c.component as NativeNode['kind'],...(typeof c.text==='string'?{text:c.text}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next)).filter((child):child is NativeNode=>child!==undefined)};
+      const boundText=typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined;
+      return {id:key,kind:c.component as NativeNode['kind'],...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next)).filter((child):child is NativeNode=>child!==undefined)};
     };
     return visit('root',new Set());
   }
