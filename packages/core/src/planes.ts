@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch } from './index.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
@@ -17,7 +18,7 @@ class RequestError extends Error {
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const exact = (obj: Record<string, unknown>, keys: string[]) => Object.keys(obj).every(key => keys.includes(key));
-const string = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 1024;
+const string = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1024;
 const revision = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 function component(value: unknown): value is Component {
   if (!record(value) || !exact(value, ['id', 'type', 'props']) || !string(value.id) ||
@@ -76,16 +77,29 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
   });
 }
 /** Local-development control plane. Bind to loopback and protect its token. */
-export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals): Server {
+export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition) => Promise<{id:string}>;
+export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   return server(async (req, res) => {
-    if (proposals && req.method === 'GET' && req.url === '/development') {
+    if (proposals && req.method === 'GET' && (req.url === '/development' || req.url === '/development/renderer.mjs')) {
       const host=req.headers.host, port=req.socket.localPort;
       if (host !== '127.0.0.1:'+port && host !== 'localhost:'+port) { respond(res,400,{error:'Invalid host'}); return; }
-      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"});
+      if (req.url === '/development/renderer.mjs') {
+        const source=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
+        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(source); return;
+      }
+      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"});
       res.end(DEVELOPMENT_UI); return;
     }
     if (!authorized(req, token)) { respond(res, 401, {error:'Unauthorized'}); return; }
+    if (proposals && develop && req.method === 'POST' && req.url === '/development/propose') {
+      const input=await body(req);
+      if (!record(input) || !exact(input,['instruction']) || !string(input.instruction) || input.instruction.length>1000) throw new RequestError(400,'Invalid development request');
+      const result=await develop(input.instruction,repository.getDraft());
+      const proposal=proposals.get(result.id);
+      if (!proposal || proposal.status !== 'pending') throw Error('Proposal not found');
+      respond(res,201,proposal); return;
+    }
     const proposalRoute = /^\/proposals\/([0-9a-f-]{36})(?:\/(approve|reject))?$/.exec(req.url ?? '');
     if (proposals && proposalRoute) {
       const [,proposalId,action] = proposalRoute;
@@ -141,8 +155,8 @@ export function createProposalPlane(proposals: DevelopmentProposals, token: stri
   });
 }
 /** Construct both local-development planes with distinct credentials. */
-export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string) {
+export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string, develop?: DevelopmentRunner) {
   if (developerToken === agentToken) throw Error('Developer and agent tokens must differ');
   const proposals = new DevelopmentProposals(repository);
-  return {control:createControlPlane(repository,developerToken,proposals), proposal:createProposalPlane(proposals,agentToken)};
+  return {control:createControlPlane(repository,developerToken,proposals,develop), proposal:createProposalPlane(proposals,agentToken)};
 }

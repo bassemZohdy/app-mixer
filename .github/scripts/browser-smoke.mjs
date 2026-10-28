@@ -81,6 +81,7 @@ try {
     '--virtual-time-budget=3000',`--user-data-dir=${join(dir,'chrome-review')}`,'--dump-dom',reviewURL
   ], {timeout:45000,maxBuffer:1024*1024});
   assert.match(reviewPage.stdout, /Review development proposal/);
+  assert.match(reviewPage.stdout, /data-review-ready="true"/);
   assert.match(reviewPage.stdout, /id="publish"[^>]*disabled/);
   console.log('Generated workspace, chat, interactive renderer and review page passed in headless Chrome');
 } finally {

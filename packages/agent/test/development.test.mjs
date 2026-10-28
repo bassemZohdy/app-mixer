@@ -36,3 +36,33 @@ test('invalid model outputs and invalid endpoint fail without submitting',async(
   assert.equal(called,false);
   assert.throws(()=>createProposalClient('https://example.com/proposals',token),/Invalid proposal endpoint/);
 });
+
+test('developer UI requests a model proposal, reviews it, approves and publishes separately',async()=>{
+  const {runInNewContext}=await import('node:vm');
+  const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
+  let developmentAgent;
+  const planes=createDevelopmentPlanes(repo,developer,token,(instruction,draft)=>developmentAgent.propose(instruction,draft));
+  try{
+    const pp=await start(planes.proposal),cp=await start(planes.control);
+    const model={async *stream(){yield JSON.stringify({patches:[{op:'addPage',page:{id:'home',title:'Generated',route:'/',components:[]}}]});}};
+    developmentAgent=new DevelopmentAgent(model,createProposalClient(`${pp}/proposals`,token));
+    const html=await (await fetch(`${cp}/development`)).text();
+    const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
+    const executable=script.replace(/^\s*import [^;]+;/,'');
+    const {A2UIRenderer,APP_MIXER_CATALOG}=await import('../../web/dist/index.js');
+    const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
+    const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
+    elements.token.value=developer;elements.instruction.value='Create a page';
+    const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};
+    function element(){return {ownerDocument:document,children:[],style:{},dataset:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}
+    Object.assign(elements['rendered-preview'],element());
+    runInNewContext(executable,{document,A2UIRenderer,APP_MIXER_CATALOG,fetch:(path,options)=>fetch(new URL(path,cp),options)});
+    await elements.generate.listeners.click();
+    assert.match(elements.preview.textContent,/Generated/);
+    assert.equal(repo.getDraft().revision,0);assert.equal(repo.getPublished(),undefined);
+    await elements.approve.listeners.click();
+    assert.equal(repo.getDraft().revision,1);assert.equal(repo.getPublished(),undefined);
+    await elements.publish.listeners.click();
+    assert.equal(repo.getPublished().definition.pages[0].title,'Generated');
+  }finally{await stop(planes.control);await stop(planes.proposal);}
+});
