@@ -57,4 +57,38 @@ void main() {
     for(final step in steps){store.apply(step['message']);expect(store.snapshot().single?.text, step['text']);}
   });
 
+  testWidgets('field changes update button context and external updates refresh the field', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+    final errors=<Object>[],actions=<Map<String,dynamic>>[];
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe:subscribe,onError:errors.add,onAction:actions.add))));
+    receive(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateDataModel', {'surfaceId':'main','value':{'form':{'name':'Ada','secret':'private'}}}));
+    receive(message('updateComponents', {'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['field','button']},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/form/name'}},
+      {'id':'button','component':'Button','child':'label','action':{'event':{'name':'save','context':{'name':{'path':'/form/name'}}}}},
+      {'id':'label','component':'Text','text':'Save'}
+    ]}));
+    await tester.pump();await tester.enterText(find.byType(TextField),'Grace');await tester.pump();
+    await tester.tap(find.byType(TextButton));await tester.pump();
+    expect((actions.single['action'] as Map)['context'], {'name':'Grace'});expect(errors,isEmpty);
+    receive(message('updateDataModel', {'surfaceId':'main','path':'/form/name','value':'Lin'}));await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller?.text,'Lin');
+  });
+  test('rejects stale field and button events', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['field','button']},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
+      {'id':'button','component':'Button','child':'label','action':{'event':{'name':'save'}}},
+      {'id':'label','component':'Text','text':'Save'}
+    ]}));
+    final revision=store.views().single.revision;store.writeField('main','field',revision,'Ada');
+    expect((store.action('main','button',revision)['action'] as Map)['name'],'save');
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'label','component':'Text','text':'Changed'}]}));
+    expect(()=>store.writeField('main','field',revision,'stale'),throwsFormatException);
+    expect(()=>store.action('main','button',revision),throwsFormatException);
+  });
+
 }
