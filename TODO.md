@@ -26,7 +26,9 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P1-08 Docker Compose and agent-outage acceptance test (local development profile; [scope and limitations](docs/local-compose.md))
 
 ## P2: portability and advanced data
-- [ ] P2-01 Angular/React/React Native/Flutter adapters and parity checks (React and Angular DOM bridges, React Native and Flutter subsets; [scope and remaining work](docs/flutter-adapter.md))
+- [ ] P2-01 Angular/React/React Native/Flutter adapters and parity checks
+  - Implemented: React and Angular DOM bridges; React Native and Flutter subsets; shared layout, binding, action and rejection fixtures. CI exercises React, Angular, React Native for Web, Flutter VM and Flutter on Chrome.
+  - Remaining: iOS/Android device verification, Flutter stretch/default layout alignment, typography and accessibility parity, and broader catalog/behavior parity. See [React Native](docs/react-native-adapter.md) and [Flutter](docs/flutter-adapter.md) scope.
 - [ ] P2-02 Extension SDK and compatibility manifests
 - [ ] P2-03 Internal data provider and staged external transactions
 - [ ] P2-04 Offline-first queue, idempotency and conflict handling
