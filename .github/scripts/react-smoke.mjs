@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import {createReactA2UIComponent} from '../../packages/web/dist/react.js';
+import {APP_MIXER_CATALOG} from '../../packages/web/dist/index.js';
+
+if(!process.env.REACT_SMOKE_DEPS)throw Error('REACT_SMOKE_DEPS is required');
+const require=createRequire(resolve(process.env.REACT_SMOKE_DEPS,'package.json'));
+const {JSDOM}=require('jsdom');
+const dom=new JSDOM('<!doctype html><div id="app"></div>',{url:'http://localhost/'});
+globalThis.window=dom.window;globalThis.document=dom.window.document;
+Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react');const {createRoot}=require('react-dom/client');
+const A2UI=createReactA2UIComponent(React);const root=createRoot(document.getElementById('app'));
+let receive,unsubscribed=0;const errors=[],actions=[];
+const subscribe=callback=>{receive=callback;return ()=>{unsubscribed++;};};
+const onError=error=>errors.push(error);
+const render=onAction=>React.createElement(React.StrictMode,null,React.createElement(A2UI,{subscribe,onAction,onError}));
+try{
+ await React.act(()=>root.render(render(message=>actions.push(['first',message]))));
+ await React.act(()=>{
+  receive({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save'}}},{id:'label',component:'Text',text:'Save'}]}});
+ });
+ assert.equal(document.querySelector('button').textContent,'Save');
+ await React.act(()=>root.render(render(message=>actions.push(['updated',message]))));
+ await React.act(()=>document.querySelector('button').click());
+ assert.equal(actions[0][0],'updated');assert.equal(actions[0][1].action.name,'save');assert.deepEqual(errors,[]);
+ await React.act(()=>root.unmount());
+ assert.equal(document.querySelector('button'),null);assert.equal(unsubscribed,2);
+ receive({version:'invalid'});assert.deepEqual(errors,[]);
+}finally{dom.window.close();}
