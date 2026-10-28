@@ -214,6 +214,28 @@ void main() {
     expect(tester.widget<TextField>(find.byType(TextField).first).controller?.text,'Ada');expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
 
+  testWidgets('text variants use the host theme and heading semantics', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['heading','body','caption']},
+      {'id':'heading','component':'Text','text':'Heading','variant':'h1'},
+      {'id':'body','component':'Text','text':'Body'},
+      {'id':'caption','component':'Text','text':'Caption','variant':'caption'}
+    ]}));
+    await tester.pump();
+    final theme=Theme.of(tester.element(find.text('Heading'))).textTheme;
+    expect(tester.widget<Text>(find.text('Heading')).style,theme.headlineLarge);
+    expect(tester.widget<Text>(find.text('Body')).style,theme.bodyMedium);
+    expect(tester.widget<Text>(find.text('Caption')).style,theme.bodySmall);
+    final headingSemantics=tester.widget<Semantics>(find.ancestor(of:find.text('Heading'),matching:find.byType(Semantics)).first);
+    expect(headingSemantics.properties.header,isTrue);
+    expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+
   testWidgets('stretch layouts render text and input in bounded and nested axes', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

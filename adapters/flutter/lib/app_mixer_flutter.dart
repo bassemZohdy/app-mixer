@@ -249,7 +249,19 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
   }
   bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path) {
-    if (node.kind == 'Text') return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? ''));
+    if (node.kind == 'Text') {
+      final theme = Theme.of(context).textTheme;
+      final style = switch (node.variant) {
+        'h1' => theme.headlineLarge,
+        'h2' => theme.headlineMedium,
+        'h3' => theme.headlineSmall,
+        'h4' => theme.titleLarge,
+        'h5' => theme.titleMedium,
+        'caption' => theme.bodySmall,
+        _ => theme.bodyMedium,
+      };
+      return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? '', style: style));
+    }
     final children=<Widget>[];
     for (var i=0;i<node.children.length;i++) {
       final child=node.children[i], rendered=_widget(child,surface,store,generation,'$path/$i');
