@@ -30,4 +30,4 @@ Control requests require `Authorization: Bearer <token>`. JSON mutations require
 | Data | `GET /application` | Latest published version and definition; 404 before publication. |
 | Data | `GET /application/versions/:version` | A specific published version. |
 
-A stale revision returns 409. Bad requests return 400; unauthorized requests return 401. No Data Plane route reads drafts or changes definitions. This API does not yet provide the approval workflow or complete schema, capability and permission validation described in the architecture; those are separate roadmap items.
+A stale revision returns 409. Bad requests return 400; unauthorized requests return 401. No Data Plane route reads drafts or changes definitions. Optional local proposal endpoints provide separate agent and developer tokens; see [development proposals](development-proposals.md). Complete schema, capability and permission validation and production authorization remain separate roadmap items.

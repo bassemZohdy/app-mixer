@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import type { ApplicationDefinition, Component, Page, Patch } from './index.js';
+import { DevelopmentProposals } from './proposals.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -65,17 +66,30 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
     handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof Error && error.message === 'Revision conflict') respond(res, 409, {error:'Revision conflict'});
-      else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation'].includes(error.message)) respond(res, 400, {error:error.message});
+      else if (error instanceof Error && ['Revision conflict','Proposal is not pending'].includes(error.message)) respond(res, 409, {error:error.message});
+      else if (error instanceof Error && error.message === 'Proposal not found') respond(res, 404, {error:error.message});
+      else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
+      else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal'].includes(error.message)) respond(res, 400, {error:error.message});
       else respond(res, 500, {error:'Internal server error'});
     });
   });
 }
 /** Local-development control plane. Bind to loopback and protect its token. */
-export function createControlPlane(repository: DefinitionRepository, token: string): Server {
+export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   return server(async (req, res) => {
     if (!authorized(req, token)) { respond(res, 401, {error:'Unauthorized'}); return; }
+    const proposalRoute = /^\/proposals\/([0-9a-f-]{36})(?:\/(approve|reject))?$/.exec(req.url ?? '');
+    if (proposals && proposalRoute) {
+      const [,proposalId,action] = proposalRoute;
+      if (req.method === 'GET' && !action) {
+        const proposal=proposals.get(proposalId);
+        if (!proposal) throw Error('Proposal not found');
+        respond(res,200,proposal); return;
+      }
+      if (req.method === 'POST' && action === 'approve') { respond(res,200,proposals.approve(proposalId)); return; }
+      if (req.method === 'POST' && action === 'reject') { respond(res,200,proposals.reject(proposalId)); return; }
+    }
     if (req.method === 'GET' && (req.url === '/draft' || req.url === '/preview')) {
       respond(res, 200, repository.getDraft()); return;
     }
@@ -106,4 +120,22 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     if (!published) { respond(res, 404, {error:'Publication not found'}); return; }
     respond(res, 200, published);
   });
+}
+
+/** Proposal-only endpoint for an agent; it cannot apply, approve or publish. */
+export function createProposalPlane(proposals: DevelopmentProposals, token: string): Server {
+  if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Proposal token must contain at least 32 characters');
+  return server(async (req,res) => {
+    if (!authorized(req,token)) { respond(res,401,{error:'Unauthorized'}); return; }
+    if (req.method !== 'POST' || req.url !== '/proposals') { respond(res,404,{error:'Not found'}); return; }
+    const input=await body(req);
+    if (!record(input) || !exact(input,['baseRevision','patches']) || !revision(input.baseRevision)) throw new RequestError(400,'Invalid proposal request');
+    respond(res,201,proposals.propose(input.baseRevision,input.patches));
+  });
+}
+/** Construct both local-development planes with distinct credentials. */
+export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string) {
+  if (developerToken === agentToken) throw Error('Developer and agent tokens must differ');
+  const proposals = new DevelopmentProposals(repository);
+  return {control:createControlPlane(repository,developerToken,proposals), proposal:createProposalPlane(proposals,agentToken)};
 }
