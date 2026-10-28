@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { timingSafeEqual } from 'node:crypto';
 import type { ApplicationDefinition, Component, Page, Patch } from './index.js';
 import { DevelopmentProposals } from './proposals.js';
+import { DEVELOPMENT_UI } from './development-ui.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -78,6 +79,12 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
 export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   return server(async (req, res) => {
+    if (proposals && req.method === 'GET' && req.url === '/development') {
+      const host=req.headers.host, port=req.socket.localPort;
+      if (host !== '127.0.0.1:'+port && host !== 'localhost:'+port) { respond(res,400,{error:'Invalid host'}); return; }
+      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"});
+      res.end(DEVELOPMENT_UI); return;
+    }
     if (!authorized(req, token)) { respond(res, 401, {error:'Unauthorized'}); return; }
     const proposalRoute = /^\/proposals\/([0-9a-f-]{36})(?:\/(approve|reject))?$/.exec(req.url ?? '');
     if (proposals && proposalRoute) {

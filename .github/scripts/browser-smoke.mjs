@@ -7,10 +7,11 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createProject } from '../../packages/cli/dist/index.js';
 import { createAGUIServer, LangGraphAGUIAdapter } from '../../packages/agent/dist/index.js';
+import { ApplicationStore, createDevelopmentPlanes } from '../../packages/core/dist/index.js';
 
 const exec = promisify(execFile);
 const dir = await mkdtemp(join(tmpdir(), 'app-mixer-browser-'));
-let server, agent;
+let server, agent, review;
 try {
   const target = await createProject('browser-test', dir);
   const token='a-strong-local-token-at-least-32-characters';
@@ -71,11 +72,22 @@ try {
     '--virtual-time-budget=5000', `--user-data-dir=${join(dir,'chrome-interaction')}`, '--dump-dom', url
   ], {timeout:45000,maxBuffer:1024*1024});
   assert.match(interactive.stdout, /<body data-result="pass">/);
-  console.log('Generated workspace and interactive renderer passed in headless Chrome');
+  const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
+  review=createDevelopmentPlanes(repo,'developer-token-at-least-32-characters-long','agent-token-at-least-32-characters-long').control;
+  review.listen(0,'127.0.0.1'); await once(review,'listening');
+  const reviewURL=`http://127.0.0.1:${review.address().port}/development`;
+  const reviewPage=await exec(process.env.CHROME_BIN || 'google-chrome', [
+    '--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',
+    '--virtual-time-budget=3000',`--user-data-dir=${join(dir,'chrome-review')}`,'--dump-dom',reviewURL
+  ], {timeout:45000,maxBuffer:1024*1024});
+  assert.match(reviewPage.stdout, /Review development proposal/);
+  assert.match(reviewPage.stdout, /id="publish"[^>]*disabled/);
+  console.log('Generated workspace, chat, interactive renderer and review page passed in headless Chrome');
 } finally {
   if (server && server.exitCode === null && server.signalCode === null) {
     const exited = once(server, 'exit'); server.kill(); await exited;
   }
+  if(review?.listening) await new Promise((resolve,reject)=>review.close(error=>error?reject(error):resolve()));
   if(agent?.listening) await new Promise((resolve,reject)=>agent.close(error=>error?reject(error):resolve()));
   await rm(dir, {recursive:true, force:true});
 }

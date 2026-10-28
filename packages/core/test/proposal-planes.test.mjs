@@ -48,3 +48,32 @@ test('stale and malformed proposals fail without changing the draft',async()=>{
     assert.equal((await fetch(`${cp}/proposals/${p.id}/reject`,post(developer))).status,200);
   }finally{await stop(planes.control);await stop(planes.proposal);}
 });
+
+test('review UI loads preview, approves draft, and publishes only on separate click', async()=>{
+  const {runInNewContext}=await import('node:vm');
+  const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
+  const planes=createDevelopmentPlanes(repo,developer,agent);
+  try {
+    const cp=await start(planes.control),pp=await start(planes.proposal);
+    const page={id:'home',route:'/',title:'<script>unsafe</script>',components:[]};
+    const proposal=await (await fetch(`${pp}/proposals`,post(agent,{baseRevision:0,patches:[{op:'addPage',page}]}))).json();
+    const response=await fetch(`${cp}/development`);assert.equal(response.status,200);
+    assert.match(response.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+    const html=await response.text();assert.doesNotMatch(html,new RegExp(developer));
+    const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
+    const ids=['token','proposal-id','status','patch','preview','load','approve','reject','publish'];
+    const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
+    elements.token.value=developer;elements['proposal-id'].value=proposal.id;
+    const document={getElementById:id=>elements[id]};
+    runInNewContext(script,{document,fetch:(path,options)=>fetch(new URL(path,cp),options)});
+    await elements.load.listeners.click();
+    assert.match(elements.preview.textContent,/<script>unsafe<\/script>/);
+    assert.equal(repo.getDraft().revision,0);assert.equal(repo.getPublished(),undefined);
+    await elements.approve.listeners.click();
+    assert.equal(repo.getDraft().revision,1);assert.equal(repo.getPublished(),undefined);
+    assert.equal(elements.publish.disabled,false);
+    await elements.publish.listeners.click();
+    assert.equal(repo.getPublished().definition.pages[0].title,'<script>unsafe</script>');
+    assert.match(elements.status.textContent,/Published version 1/);
+  }finally{await stop(planes.control);await stop(planes.proposal);}
+});
