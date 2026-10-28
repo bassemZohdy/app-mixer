@@ -22,11 +22,13 @@ List<String> _pointer(String path) {
     return key;
   }).toList();
 }
+final _deleted = Object();
 dynamic _copy(dynamic value) {
   var count=0;
   final ancestors=<Object>{};
   dynamic visit(dynamic input, int depth) {
     if (++count>10000 || depth>100) throw FormatException('Data model too large');
+    if (identical(input,_deleted)) return _deleted;
     if (input==null || input is String || input is bool || (input is num && input.isFinite)) return input;
     if (input is! List && input is! Map) throw FormatException('Unsupported data value');
     if (!ancestors.add(input)) throw FormatException('Cyclic data model');
@@ -51,6 +53,7 @@ dynamic _read(dynamic data, String path) {
     if (value is Map) {if (!value.containsKey(key)) return _missing; value=value[key];}
     else if (value is List) {final index=int.tryParse(key);if (index==null || index<0 || index>=value.length || '$index'!=key) return _missing; value=value[index];}
     else {return _missing;}
+    if (identical(value,_deleted)) return _missing;
   }
   return value;
 }
@@ -63,12 +66,13 @@ dynamic _update(dynamic data, String path, dynamic value, bool remove) {
       current=current[key];
     } else if (current is List) {
       final index=int.tryParse(key);if(index==null||index<0||index>=current.length||'$index'!=key)throw FormatException('Invalid array index');
+      if (identical(current[index],_deleted)) {if(remove)return root;throw FormatException('Invalid array index');}
       current=current[index];
     } else {throw FormatException('Data path parent does not exist');}
   }
   final last=keys.last;
   if (current is Map) {if(remove) {current.remove(last);} else {current[last]=_copy(value);}}
-  else if (current is List) {final index=int.tryParse(last);if(index==null||index<0||index>=current.length||'$index'!=last)throw FormatException('Invalid array index');current[index]=remove?null:_copy(value);}
+  else if (current is List) {final index=int.tryParse(last);if(index==null||index<0||index>=current.length||'$index'!=last)throw FormatException('Invalid array index');current[index]=remove?_deleted:_copy(value);}
   else {throw FormatException('Data path parent does not exist');}
   return _copy(root);
 }
