@@ -78,3 +78,5 @@ export class LangGraphAGUIAdapter {
 }
 
 export { createAGUIServer } from './transport.js';
+export { DevelopmentAgent, createProposalClient } from './development.js';
+export type { DraftSnapshot, ProposalResult, ProposalClient } from './development.js';
