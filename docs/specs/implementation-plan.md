@@ -22,3 +22,9 @@ Angular, React, React Native and Flutter adapters; component compatibility tests
 OIDC, scoped authorization, audit, telemetry, tenant isolation, secure cache, offline conflict UX, optional central Control Plane connector and Kubernetes packaging.
 
 Prioritize vertical end-to-end functionality over extra microservices. Do not claim features complete without tests and evidence.
+
+## M2P Persistent agent foundation (after baseline capability authorization)
+Define independently configurable agent identity/scope and lifecycle; implement durable LangGraph.js runs/checkpoints, timer/webhook/domain-event activation, run/trigger deduplication, idempotent action journaling and configurable memory. Verify recovery at action boundaries and that organization-level agents execute without interactive user sessions. Track P2-06–P2-10.
+
+## M3P Persistent agent production safeguards
+Implement service/delegated identity, expired-consent handling, durable approvals, tenant isolation, run budgets, tracing and production store/worker portability. Prove recovery, cancel/retry, external-effect deduplication and Control Plane outage behavior. Track P3-05–P3-08. See [full persistent-agent specification](persistent-agents.md).
