@@ -81,3 +81,5 @@ export { createAGUIServer } from './transport.js';
 export { DevelopmentAgent, createProposalClient } from './development.js';
 export type { DraftSnapshot, ProposalResult, ProposalClient } from './development.js';
 export { createCapabilityTool } from './capability-tool.js';
+export { createOpenAIToolModel, createToolCallingModel } from './tool-model.js';
+export type { ToolModel } from './tool-model.js';
