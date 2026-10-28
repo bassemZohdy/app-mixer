@@ -87,3 +87,19 @@ test('shared Flutter fixture matches web and native layout trees',async()=>{
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
  for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0];const nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?domTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeTree(nativeRoot):null,step.tree);}
 });
+
+test('deleted array elements differ from null in action context on web and native',()=>{
+ const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateDataModel',{surfaceId:'main',value:{items:[null,'gone']}}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/0'}}}}},{id:'label',component:'Text',text:'Save'}]}));
+ host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.value,null);assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.value,null);
+ apply(message('updateDataModel',{surfaceId:'main',path:'/items/1'}));
+ apply(message('updateDataModel',{surfaceId:'main',path:'/other',value:'updated'}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/1'}}}}}]}));
+ assert.throws(()=>host.children[0].children[0].listeners.click(),/not found/);assert.throws(()=>native.action('main','root',native.snapshot()[0].revision),/not found/);
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items'}}}}}]}));
+ host.children[0].children[0].listeners.click();const nativeEvent=native.action('main','root',native.snapshot()[0].revision);
+ assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).action.context.value)),[null,null]);assert.deepEqual(JSON.parse(JSON.stringify(nativeEvent.action.context.value)),[null,null]);
+});

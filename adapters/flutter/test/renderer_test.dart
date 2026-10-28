@@ -124,4 +124,26 @@ void main() {
     expect(store.snapshot().single?.text,'Safe');
   });
 
+  test('deleted array elements differ from null in action context', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateDataModel',{'surfaceId':'main','value':{'items':[null,'gone']}}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save','context':{'value':{'path':'/items/0'}}}}},
+      {'id':'label','component':'Text','text':'Save'}
+    ]}));
+    expect(((store.action('main','root',store.views().single.revision)['action'] as Map)['context'] as Map)['value'], isNull);
+    store.apply(message('updateDataModel',{'surfaceId':'main','path':'/items/1'}));
+    store.apply(message('updateDataModel',{'surfaceId':'main','path':'/other','value':'updated'}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save','context':{'value':{'path':'/items/1'}}}}}
+    ]}));
+    expect(()=>store.action('main','root',store.views().single.revision),throwsFormatException);
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save','context':{'value':{'path':'/items'}}}}}
+    ]}));
+    final event=store.action('main','root',store.views().single.revision);
+    expect(((event['action'] as Map)['context'] as Map)['value'],[null,null]);
+    expect(()=>jsonEncode(event),returnsNormally);
+  });
+
 }
