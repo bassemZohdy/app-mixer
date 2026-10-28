@@ -4,7 +4,7 @@
 
 A trusted host can explicitly approve a pending proposal, applying its stored patches to the draft through the repository's revision check. If the draft changed since the proposal was made, approval fails without applying the proposal. Rejecting a proposal does not modify the draft. Publication is a separate explicit repository operation, and still requires the expected draft revision. Returned proposals are copies; mutating them cannot alter the stored proposal.
 
-This is an in-memory foundation, not an approval security boundary. Proposals and decisions disappear on process restart, The local development planes expose separate bearer-token protected proposal and control servers. The host must keep the developer token away from the agent; control-plane patch/publish endpoints remain directly accessible to developer-token holders. An initial Development Agent can ask a configured streaming model for JSON patches and submit them through the proposal-only endpoint. The endpoint validates every patch before storing it. A local review UI is available; durable proposal storage, persistent audit, production identity, and complete policy validation are not implemented. P1-05 remains open until those capabilities are implemented and verified. Existing validation covers the prototype manifest and patch types; it does not validate capability permissions or renderer compatibility.
+This is an in-memory foundation, not an approval security boundary. Proposals and decisions disappear on process restart, The local development planes expose separate bearer-token protected proposal and control servers. The host must keep the developer token away from the agent; control-plane patch/publish endpoints remain directly accessible to developer-token holders. An initial Development Agent can ask a configured streaming model for JSON patches and submit them through the proposal-only endpoint. The endpoint validates every patch before storing it. A local review UI is available; durable proposal storage, persistent audit, production identity, and complete policy validation are not implemented. The initial P1-05 workflow is local and in memory; durable approval, audit and production security remain roadmap items. Existing validation covers the prototype manifest and patch types; it does not validate capability permissions or renderer compatibility.
 
 ## Separate local endpoints
 
@@ -12,8 +12,24 @@ This is an in-memory foundation, not an approval security boundary. Proposals an
 
 ## Development Agent
 
-`DevelopmentAgent` uses a host-configured `StreamingModel` to produce a JSON patch proposal from a developer instruction and draft snapshot. `createProposalClient` accepts only a loopback proposal URL and the agent token; it cannot approve or publish. The model receives the supplied draft and instruction, so the host must not include secrets or data the selected provider should not receive. Model output is untrusted and must pass the proposal endpoint's validation. Responses and prompts are bounded, and the client does not follow redirects. Configure the model and endpoint from trusted host settings. Integrated development chat and durable proposal storage remain future work.
+`DevelopmentAgent` uses a host-configured `StreamingModel` to produce a JSON patch proposal from a developer instruction and draft snapshot. `createProposalClient` accepts only a loopback proposal URL and the agent token; it cannot approve or publish. The model receives the supplied draft and instruction, so the host must not include secrets or data the selected provider should not receive. Model output is untrusted and must pass the proposal endpoint's validation. Responses and prompts are bounded, and the client does not follow redirects. Configure the model and endpoint from trusted host settings. Durable proposal storage remains future work.
 
 ## Local review UI
 
-With the development planes running, open `http://127.0.0.1:<control-port>/development`. Enter the developer token and proposal ID, load the patch and preview, then explicitly approve or reject. Approval updates only the draft; a separate Publish button publishes the approved revision. A stale revision fails rather than publishing a different draft. The token is held in the page's memory, not persisted by the UI. Only use the page on a trusted local machine; the shared-token workflow is not production identity or authorization. The UI currently receives proposal IDs from the caller; it does not yet start the Development Agent itself.
+With the development planes running, open `http://127.0.0.1:<control-port>/development`. Enter the developer token and proposal ID, load the patch and preview, then explicitly approve or reject. Approval updates only the draft; a separate Publish button publishes the approved revision. A stale revision fails rather than publishing a different draft. The token is held in the page's memory, not persisted by the UI. Only use the page on a trusted local machine; the shared-token workflow is not production identity or authorization. When a Development Agent callback is configured, the UI can request a new proposal directly; it can also load an existing proposal by ID.
+
+
+To connect a configured model to the local review flow, start both servers in a trusted host process:
+
+```js
+import { createDevelopmentPlanes } from '@app-mixer/core';
+import { DevelopmentAgent, createProposalClient } from '@app-mixer/agent';
+// repository and model are configured by the host; tokens come from a secret mechanism.
+const agent = new DevelopmentAgent(model, createProposalClient('http://127.0.0.1:3004/proposals', agentToken));
+const planes = createDevelopmentPlanes(repository, developerToken, agentToken,
+  (instruction, draft) => agent.propose(instruction, draft));
+planes.control.listen(3001, '127.0.0.1');
+planes.proposal.listen(3004, '127.0.0.1');
+```
+
+The developer token protects the generation endpoint and must not be supplied to the model or proposal-only client. Generating a proposal sends the draft and instruction to the configured model; reviewing, approving, and publishing remain separate actions. The UI shows both the proposal JSON and a rendered preview using the same A2UI renderer as the generated app. Its current runtime mapping supports Text components only; the UI disables approval when it cannot render the preview. The generated runtime app is not yet connected to the published-definition repository; the end-to-end published-app and agent-outage acceptance flow remains P1-08.

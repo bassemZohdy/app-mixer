@@ -31,7 +31,7 @@ export class ApplicationStore {
 
 export { SqliteApplicationStore } from './sqlite.js';
 export { createControlPlane, createDataPlane, createProposalPlane, createDevelopmentPlanes } from './planes.js';
-export type { DefinitionRepository } from './planes.js';
+export type { DefinitionRepository, DevelopmentRunner } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';

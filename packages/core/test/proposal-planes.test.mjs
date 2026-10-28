@@ -60,14 +60,19 @@ test('review UI loads preview, approves draft, and publishes only on separate cl
     const response=await fetch(`${cp}/development`);assert.equal(response.status,200);
     assert.match(response.headers.get('content-security-policy'),/frame-ancestors 'none'/);
     const html=await response.text();assert.doesNotMatch(html,new RegExp(developer));
-    const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
-    const ids=['token','proposal-id','status','patch','preview','load','approve','reject','publish'];
+    const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
+    const executable=script.replace(/^\s*import [^;]+;/,'');
+    const {A2UIRenderer,APP_MIXER_CATALOG}=await import('../../web/dist/index.js');
+    const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
     const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
     elements.token.value=developer;elements['proposal-id'].value=proposal.id;
-    const document={getElementById:id=>elements[id]};
-    runInNewContext(script,{document,fetch:(path,options)=>fetch(new URL(path,cp),options)});
+    const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};
+    function element(){return {ownerDocument:document,children:[],style:{},dataset:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}
+    Object.assign(elements['rendered-preview'],element());
+    runInNewContext(executable,{document,A2UIRenderer,APP_MIXER_CATALOG,fetch:(path,options)=>fetch(new URL(path,cp),options)});
     await elements.load.listeners.click();
     assert.match(elements.preview.textContent,/<script>unsafe<\/script>/);
+    assert.equal(elements['rendered-preview'].children[0].children[0].children[0].textContent,'<script>unsafe</script>');
     assert.equal(repo.getDraft().revision,0);assert.equal(repo.getPublished(),undefined);
     await elements.approve.listeners.click();
     assert.equal(repo.getDraft().revision,1);assert.equal(repo.getPublished(),undefined);
@@ -75,5 +80,10 @@ test('review UI loads preview, approves draft, and publishes only on separate cl
     await elements.publish.listeners.click();
     assert.equal(repo.getPublished().definition.pages[0].title,'<script>unsafe</script>');
     assert.match(elements.status.textContent,/Published version 1/);
+    const unsupported=await (await fetch(`${pp}/proposals`,post(agent,{baseRevision:1,patches:[{op:'addComponent',pageId:'home',component:{id:'table',type:'Table'}}]}))).json();
+    elements['proposal-id'].value=unsupported.id;
+    await elements.load.listeners.click();
+    assert.equal(elements.approve.disabled,true);
+    assert.match(elements.status.textContent,/preview is unsupported/);
   }finally{await stop(planes.control);await stop(planes.proposal);}
 });
