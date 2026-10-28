@@ -18,7 +18,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 ## P1: working vertical slice
 - [x] P1-01 SQLite definition repository and immutable published versions
 - [x] P1-02 Isolated Control Plane and Data Plane APIs
-- [ ] P1-03 A2UI-compatible component registry and web renderer
+- [ ] P1-03 A2UI-compatible component registry and web renderer (initial subset: [details and remaining work](docs/a2ui-renderer.md))
 - [ ] P1-04 AG-UI adapter with configurable LLM and LangGraph.js
 - [ ] P1-05 Development Agent typed patches, preview and approval/publish
 - [ ] P1-06 OpenAPI import and authorized capability registry
