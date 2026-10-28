@@ -15,4 +15,6 @@
 | ADR-11 | Proposed implementation | SQLite local, configurable production storage |
 | ADR-12 | Proposed implementation | Apache-2.0 licensing; dependency review needed |
 
+| ADR-13 | Agreed product direction | Configurable, independent persistent runtime agents; optional user binding; LangGraph.js with lifecycle, triggers, durable action layer ([ADR 0010](../adr/0010-configurable-persistent-agents.md)) |
+
 Open decisions: renderer parity, protocol versions, identity delegation, offline conflict semantics, schema migration, cache invalidation, extension signing and central connector security.
