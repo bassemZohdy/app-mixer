@@ -37,8 +37,11 @@ test('supported lifecycle and emitted action match pinned upstream A2UI schemas'
     {version,createSurface:{surfaceId,catalogId:APP_MIXER_CATALOG}},
     {version,updateDataModel:{surfaceId,value:{user:{name:'Ada'}}}},
     {version,updateComponents:{surfaceId,components:[
-      {id:'root',component:'Column',children:['name','save']},
+      {id:'root',component:'Card',child:'layout'},
+      {id:'layout',component:'Column',children:['row','save']},
+      {id:'row',component:'Row',children:['name','field'],justify:'center'},
       {id:'name',component:'Text',text:{path:'/user/name'}},
+      {id:'field',component:'TextField',label:'Name',value:{path:'/user/name'}},
       {id:'save',component:'Button',child:'label',action:{event:{name:'submit',context:{name:{path:'/user/name'}}}}},
       {id:'label',component:'Text',text:'Save'}
     ]}}
@@ -47,7 +50,7 @@ test('supported lifecycle and emitted action match pinned upstream A2UI schemas'
     assert.equal(validateServer(message),true,JSON.stringify(validateServer.errors));
     renderer.apply(message);
   }
-  host.children[0].children[0].children[1].listeners.click();
+  host.children[0].children[0].children[0].children[1].listeners.click();
   assert.equal(validateClient(action),true,JSON.stringify(validateClient.errors));
   assert.equal(action.action.context.name,'Ada');
   assert.ok(!Number.isNaN(Date.parse(action.action.timestamp)));
