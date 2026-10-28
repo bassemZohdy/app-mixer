@@ -37,3 +37,13 @@ test('bound text follows data updates while unsafe paths leave state unchanged',
  assert.throws(()=>store.apply(data('/person/__proto__/x','bad')),/Unsafe/);assert.equal(store.snapshot()[0].root.text,'Ada');
  store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/person/name'}});assert.equal(store.snapshot()[0].root.text,'');
 });
+
+test('field writes are isolated and reject stale callbacks',()=>{
+ const store=new NativeSurfaceStore();store.apply(create('a'));
+ store.apply(update('a',[{id:'root',component:'TextField',label:'Name',value:{path:'/name'}}]));
+ const first=store.snapshot()[0];store.writeField('a','root',first.revision,'Ada');store.writeField('a','root',first.revision,'Grace');
+ assert.equal(store.snapshot()[0].root.value,'Grace');
+ assert.throws(()=>store.apply(update('a',[{id:'root',component:'TextField',label:'Unsafe',value:{path:'/__proto__/x'}}])),/Unsafe/);
+ store.apply(remove('a'));store.apply(create('a'));store.apply(update('a',[{id:'root',component:'TextField',label:'New',value:{path:'/name'}}]));
+ assert.throws(()=>store.writeField('a','root',first.revision,'stale'),/Stale/);assert.equal(store.snapshot()[0].root.value,'');
+});
