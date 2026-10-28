@@ -100,7 +100,7 @@ void main() {
   });
 
   test('shared layout fixture matches expected component hierarchy', () {
-    const styles={'start':'flex-start','center':'center','end':'flex-end','spaceBetween':'space-between','spaceAround':'space-around','spaceEvenly':'space-evenly'};
+    const styles={'start':'flex-start','center':'center','end':'flex-end','stretch':'stretch','spaceBetween':'space-between','spaceAround':'space-around','spaceEvenly':'space-evenly'};
     Map<String,dynamic> tree(NativeNode node) => {
       'kind':node.kind,
       if(node.kind=='Text') 'text':node.text,
@@ -212,6 +212,32 @@ void main() {
     await tester.pump();expect(tester.takeException(),isNull);expect(find.byType(TextField),findsNWidgets(2));
     await tester.enterText(find.byType(TextField).first,'Ada');await tester.pump();
     expect(tester.widget<TextField>(find.byType(TextField).first).controller?.text,'Ada');expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('stretch layouts render text and input in bounded and nested axes', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','align':'stretch','children':['heading','row']},
+      {'id':'heading','component':'Text','text':'Heading'},
+      {'id':'row','component':'Row','align':'stretch','children':['field','label']},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
+      {'id':'label','component':'Text','text':'Label'}
+    ]}));
+    await tester.pump();expect(tester.takeException(),isNull);expect(find.text('Heading'),findsOneWidget);
+    await tester.enterText(find.byType(TextField),'Ada');await tester.pump();expect(tester.takeException(),isNull);expect(errors,isEmpty);
+  });
+  test('rejects excessive nested stretch atomically', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));
+    final components=<Map<String,dynamic>>[];
+    for(var i=0;i<5;i++){components.add({'id':i==0?'root':'n$i','component':'Column','align':'stretch','children':[i==4?'leaf':'n${i+1}']});}
+    components.add({'id':'leaf','component':'Text','text':'deep'});
+    expect(()=>store.apply(message('updateComponents',{'surfaceId':'main','components':components})),throwsFormatException);
+    expect(store.snapshot().single?.text,'Safe');
   });
 
 }
