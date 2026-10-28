@@ -1,3 +1,5 @@
+import type { ApplicationDefinition, PublicationGuard } from './index.js';
+
 /** Metadata for trusted, statically installed extensions. This is not a code loader. */
 export type ExtensionManifest = {
   manifestVersion: 1;
@@ -53,4 +55,19 @@ export function checkExtensionCompatibility(manifests: unknown, host: unknown, r
   }
   for (const kind of ['components','tools','providers'] as const) for (const name of requirements[kind] as string[]) if (!registrations[kind].has(name)) errors.push(`Missing ${kind} registration: ${name}`);
   return {compatible:errors.length===0, errors};
+}
+
+/** Build a synchronous publication guard from trusted static metadata and a host-owned requirement selector. */
+export function createExtensionPublicationGuard(manifests: ExtensionManifest[], host: ExtensionHost, requirementsFor: (draft: ApplicationDefinition) => ExtensionRequirements): PublicationGuard {
+  if (typeof requirementsFor !== 'function') throw Error('Invalid extension requirements selector');
+  // Snapshot configuration so callers cannot silently alter approvals after guard creation.
+  const installed = structuredClone(manifests), target = structuredClone(host);
+  // Validate configuration even when there are no application requirements.
+  checkExtensionCompatibility(installed, target, {components:[], tools:[], providers:[]});
+  return draft => {
+    const requirements = requirementsFor(structuredClone(draft));
+    const result = checkExtensionCompatibility(installed, target, requirements);
+    if (!result.compatible) throw Error('Extension compatibility failed');
+    return true;
+  };
 }

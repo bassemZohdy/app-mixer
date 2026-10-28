@@ -1,6 +1,13 @@
 export type Component = {id:string;type:"Text"|"Card"|"Table"|"Input";props?:Record<string,string|number|boolean>};
 export type Page = {id:string;title:string;route:string;components:Component[]};
 export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[]};
+export type PublicationGuard = (draft:ApplicationDefinition) => true;
+export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
+ if(!guard)return;
+ const result:unknown=guard(structuredClone(draft));
+ if(result instanceof Promise) result.catch(()=>{});
+ if(result!==true)throw Error("Publication guard must synchronously return true");
+}
 export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"addComponent";pageId:string;component:Component};
 const copy = <T>(x:T):T => structuredClone(x);
 export function validate(d:ApplicationDefinition):void {
@@ -12,7 +19,7 @@ export function validate(d:ApplicationDefinition):void {
 }
 export class ApplicationStore {
  private draft:ApplicationDefinition;private published:{version:number;definition:ApplicationDefinition}[]=[];
- constructor(initial:ApplicationDefinition){validate(initial);this.draft=copy(initial);}
+ constructor(initial:ApplicationDefinition, private readonly publicationGuard?:PublicationGuard){validate(initial);if(publicationGuard!==undefined && typeof publicationGuard!=="function")throw Error("Invalid publication guard");this.draft=copy(initial);}
  getDraft(){return copy(this.draft);}
  getPublished(version?:number){if(version!==undefined&&(!Number.isSafeInteger(version)||version<1))throw Error("Invalid version");const p=version===undefined?this.published.at(-1):this.published.find(x=>x.version===version);return p?copy(p):undefined;}
  apply(baseRevision:number,patches:Patch[]):ApplicationDefinition{
@@ -26,7 +33,7 @@ export class ApplicationStore {
   }}
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
  }
- publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");const p={version:this.published.length+1,definition:copy(this.draft)};this.published.push(p);return copy(p);}
+ publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)};this.published.push(p);return copy(p);}
 }
 
 export { SqliteApplicationStore } from './sqlite.js';
@@ -41,5 +48,5 @@ export { createCapabilityServer } from './capability-server.js';
 export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
-export { checkExtensionCompatibility } from './extensions.js';
+export { checkExtensionCompatibility, createExtensionPublicationGuard } from './extensions.js';
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements } from './extensions.js';

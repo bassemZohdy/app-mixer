@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { ApplicationStore, validate, type ApplicationDefinition, type Patch } from './index.js';
+import { ApplicationStore, validate, enforcePublicationGuard, type ApplicationDefinition, type Patch, type PublicationGuard } from './index.js';
 
 type Published = { version: number; definition: ApplicationDefinition };
 
@@ -8,8 +8,9 @@ export class SqliteApplicationStore {
   private readonly db: DatabaseSync;
   private readonly id: string;
 
-  constructor(path: string, initial: ApplicationDefinition) {
+  constructor(path: string, initial: ApplicationDefinition, private readonly publicationGuard?: PublicationGuard) {
     validate(initial);
+    if (publicationGuard !== undefined && typeof publicationGuard !== 'function') throw Error('Invalid publication guard');
     this.id = initial.id;
     this.db = new DatabaseSync(path);
     try {
@@ -73,6 +74,7 @@ export class SqliteApplicationStore {
     return this.transaction(() => {
       const draft = this.getDraft();
       if (draft.revision !== expectedRevision) throw Error('Revision conflict');
+      enforcePublicationGuard(this.publicationGuard, draft);
       const row = this.db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM application_publications WHERE app_id = ?').get(this.id);
       const version = Number(row!.version) + 1;
       this.db.prepare('INSERT INTO application_publications (app_id, version, definition) VALUES (?, ?, ?)')
