@@ -197,4 +197,21 @@ void main() {
     for(final invalid in fixture){expect(()=>store.apply(invalid),throwsFormatException);expect(store.snapshot().single?.text,'Safe');}
   });
 
+  testWidgets('text fields in rows receive bounded width and remain editable', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Row','children':['first','nested']},
+      {'id':'first','component':'TextField','label':'First','value':{'path':'/first'}},
+      {'id':'nested','component':'Column','children':['second']},
+      {'id':'second','component':'TextField','label':'Second','value':{'path':'/second'}}
+    ]}));
+    await tester.pump();expect(tester.takeException(),isNull);expect(find.byType(TextField),findsNWidgets(2));
+    await tester.enterText(find.byType(TextField).first,'Ada');await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField).first).controller?.text,'Ada');expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+
 }

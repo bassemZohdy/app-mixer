@@ -241,10 +241,15 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     final store=_store, generation=_generation;
     return Column(children: store.views().map((surface)=>surface.root==null ? const SizedBox.shrink() : _widget(surface.root!,surface,store,generation,'root')).toList());
   }
+  bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path) {
     if (node.kind == 'Text') return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? ''));
     final children=<Widget>[];
-    for (var i=0;i<node.children.length;i++) {children.add(_widget(node.children[i],surface,store,generation,'$path/$i'));}
+    for (var i=0;i<node.children.length;i++) {
+      final child=node.children[i], rendered=_widget(child,surface,store,generation,'$path/$i');
+      // Row gives non-flex children unbounded width. Material text inputs require a finite width.
+      children.add(node.kind=='Row' && _containsTextField(child) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered);
+    }
     if (node.kind == 'TextField') return _BoundTextField(key:ValueKey((surface.id,path,node.id)),label:node.label ?? '',value:node.value ?? '',multiline:node.variant=='longText',onChanged:(value){
       if (!mounted || generation!=_generation || !identical(store,_store)) return;
       try {store.writeField(surface.id,node.id,surface.revision,value);setState(() {});} catch(error){widget.onError(error);}
