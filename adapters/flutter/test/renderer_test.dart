@@ -160,4 +160,34 @@ void main() {
     expect(store.snapshot().single?.text,'Safe');
   });
 
+  testWidgets('replacing a source clears the surface and ignores its late messages', (tester) async {
+    late void Function(Object?) first,second;
+    var firstStops=0,secondStops=0;
+    final errors=<Object>[];
+    VoidCallback? firstSource(void Function(Object?) receive) {first=receive;return (){firstStops++;};}
+    VoidCallback? secondSource(void Function(Object?) receive) {second=receive;return (){secondStops++;};}
+    Widget app(A2UISubscribe source)=>MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:source,onError:errors.add)));
+    await tester.pumpWidget(app(firstSource));
+    first(message('createSurface',{'surfaceId':'old','catalogId':appMixerCatalog}));
+    first(message('updateComponents',{'surfaceId':'old','components':[{'id':'root','component':'Text','text':'Old'}]}));
+    await tester.pump();expect(find.text('Old'),findsOneWidget);
+    await tester.pumpWidget(app(secondSource));expect(firstStops,1);expect(find.text('Old'),findsNothing);
+    first({'version':'invalid'});expect(errors,isEmpty);
+    second(message('createSurface',{'surfaceId':'new','catalogId':appMixerCatalog}));
+    second(message('updateComponents',{'surfaceId':'new','components':[{'id':'root','component':'Text','text':'New'}]}));
+    await tester.pump();expect(find.text('New'),findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());expect(secondStops,1);second({'version':'invalid'});expect(errors,isEmpty);
+  });
+  testWidgets('disables buttons without an action handler', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:(_){ }))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save'}}},
+      {'id':'label','component':'Text','text':'Save'}
+    ]}));
+    await tester.pump();expect(tester.widget<TextButton>(find.byType(TextButton)).onPressed,isNull);
+  });
+
 }
