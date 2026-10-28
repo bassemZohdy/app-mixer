@@ -1,0 +1,9 @@
+{
+  "messages": [
+    {"version":"v0.9.1","createSurface":{"surfaceId":"main","catalogId":"https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json"}},
+    {"version":"v0.9.1","updateDataModel":{"surfaceId":"main","value":{"form":{"name":"Ada","secret":"private"}}}},
+    {"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Button","child":"label","action":{"event":{"name":"save","context":{"name":{"path":"/form/name"},"source":"screen"}}}},{"id":"label","component":"Text","text":"Save"}]}},
+    {"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/name","value":"Grace"}}
+  ],
+  "action": {"name":"save","surfaceId":"main","sourceComponentId":"root","context":{"name":"Grace","source":"screen"}}
+}
