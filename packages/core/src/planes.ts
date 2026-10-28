@@ -68,7 +68,7 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
     handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof Error && ['Revision conflict','Proposal is not pending'].includes(error.message)) respond(res, 409, {error:error.message});
+      else if (error instanceof Error && ['Revision conflict','Proposal is not pending','Extension compatibility failed'].includes(error.message)) respond(res, 409, {error:error.message});
       else if (error instanceof Error && error.message === 'Proposal not found') respond(res, 404, {error:error.message});
       else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
       else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal'].includes(error.message)) respond(res, 400, {error:error.message});
