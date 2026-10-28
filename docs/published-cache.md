@@ -1,7 +1,15 @@
-# Published-definition cache: server foundation
+# Published-definition cache
 
 `PublishedDefinitionCache` stores cloned, validated immutable published versions in memory with a bounded size and TTL. Its key includes tenant ID, a host-derived authorization scope/version, application ID, schema version, and publication version. Callers must authenticate and authorize before selecting a scope; a cache key is not an authorization check. Change the authorization key or invalidate the relevant scope when permissions change. Do not put credentials in the key.
 
 `CachedPublishedRepository` wraps a repository for one trusted scope and can be passed to `createDataPlane`. Version-specific reads can use the cache. Latest reads always consult the authoritative repository to discover the current version, so a publication made by another process is observed without relying on a local invalidation event. Missing entries are not cached. `invalidate` removes entries for an exact scope and optional version; `clear` discards all entries. The repository remains authoritative and can repopulate the cache after eviction.
 
-This is a local server-cache foundation. The Data Plane prototype is unauthenticated and does not derive tenant or permission scopes. The caller must enforce those boundaries before using the wrapper. Client caching, cross-process invalidation for permission changes, durable/offline storage, HTTP revalidation, and production authorization are not implemented. P1-07 remains open until both cache levels and invalidation are integrated and tested.
+This is a local server-cache foundation. The Data Plane prototype is unauthenticated and does not derive tenant or permission scopes. The caller must enforce those boundaries before using the wrapper. Cross-process invalidation for permission changes, durable/offline storage, and production authorization are not implemented.
+
+## Client revalidation
+
+`ClientPublishedCache` in `@app-mixer/web` holds one cloned publication in memory. Its host supplies a trusted scope, a publication compatibility validator, and a loader. The loader must authenticate and authorize every request, send the previous ETag as `If-None-Match`, and return either a 200 publication with its ETag or a 304. Both data-plane publication routes support this conditional request and return `Cache-Control: no-store`; caching is explicit and in memory rather than delegated to a shared HTTP cache. Every refresh revalidates against the server; failures do not return a cached fallback.
+
+When tenant, application, schema, or permissions change, call `setScope` with a newly authenticated scope, or `clear` on logout. These calls discard the entry and reject older in-flight responses. Concurrent refreshes also reject responses superseded by a later request. The server's `invalidate` or `clear` remains necessary when its trusted authorization scope changes. There is no cross-process permission invalidation bus; each host is responsible for enforcing authorization and clearing affected caches.
+
+The generated app does not yet consume this cache or the published data plane. These APIs are an integration foundation, not production authorization or offline storage. P1-07 remains open pending runtime integration.
