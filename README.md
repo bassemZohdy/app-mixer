@@ -25,6 +25,7 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [Architecture decisions](docs/specs/decisions.md)
 - [Initial implementation plan](docs/specs/implementation-plan.md)
 - [Local plane APIs](docs/plane-apis.md)
+- [A2UI renderer subset](docs/a2ui-renderer.md)
 - [TODO](TODO.md)
 - [CHANGELOG](CHANGELOG.md)
 
