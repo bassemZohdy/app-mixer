@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,readFile,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {createProject} from '../dist/index.js';
+test('scaffolds runnable app',async()=>{const dir=await mkdtemp(join(tmpdir(),'app-mixer-'));try{const target=await createProject('demo-app',dir);const a=JSON.parse(await readFile(join(target,'application.json'),'utf8'));assert.equal(a.pages[0].route,'/');await assert.rejects(createProject('demo-app',dir),/exists/);}finally{await rm(dir,{force:true,recursive:true})}});
+test('rejects path traversal',async()=>{await assert.rejects(createProject('../bad'),/Invalid/)});
