@@ -37,3 +37,4 @@ export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
 export { importOpenAPI, CapabilityRegistry } from './capabilities.js';
 export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';
+export { createCapabilityServer } from './capability-server.js';
