@@ -4,7 +4,7 @@
 
 ## Getting started
 
-Requires Node.js 22+ and npm.
+Requires Node.js 22.13+ and npm. The SQLite repository uses the experimental built-in `node:sqlite` API.
 
 ```bash
 npm install
@@ -29,8 +29,8 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 
 ## Repository
 
-`packages/core` implements an in-memory versioned application definition prototype. `packages/cli` scaffolds a minimal standalone HTTP application. The CLI is for developer tooling only. The future Control Plane is optional; the Data Plane must execute published apps independently.
+`packages/core` provides in-memory and SQLite-backed versioned application definition stores. The SQLite store persists drafts and immutable published versions; it is a local prototype, not a production security boundary. `packages/cli` scaffolds a minimal standalone HTTP application. The CLI is for developer tooling only. The future Control Plane is optional; the Data Plane must execute published apps independently.
 
-This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Angular, React, React Native and Flutter adapters, persistent storage, offline sync, OpenAPI integration, server/client caches, authorization and Kubernetes packaging are future work.
+This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Angular, React, React Native and Flutter adapters, offline sync, OpenAPI integration, server/client caches, authorization and Kubernetes packaging are future work.
 
 Licensed under [Apache-2.0](LICENSE). See the [foundation review](docs/foundation-review.md) for dependency licenses and prototype limitations.
