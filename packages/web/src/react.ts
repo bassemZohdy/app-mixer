@@ -17,7 +17,7 @@ export function createReactA2UIComponent(React:ReactRuntime): (props:ReactA2UIPr
   return function ReactA2UI({subscribe,onAction,onError}:ReactA2UIProps):any {
     const host=React.useRef<HTMLElement|null>(null);
     const actions=React.useRef(onAction),errors=React.useRef(onError);
-    actions.current=onAction;errors.current=onError;
+    React.useEffect(()=>{actions.current=onAction;errors.current=onError;},[onAction,onError]);
     React.useEffect(()=>{
       if(!host.current)return;
       const element=host.current;

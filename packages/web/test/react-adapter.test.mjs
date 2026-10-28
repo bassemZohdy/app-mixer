@@ -11,7 +11,7 @@ class Element {
   addEventListener(type,callback){this.listeners[type]=callback;}
 }
 const doc={createElement:tag=>new Element(tag,doc)};
-const makeReact=()=>{let effect;return {createElement:(type,props)=>({type,props}),useRef:value=>({current:value}),useEffect:callback=>{effect=callback;},mount:element=>{element.props.ref.current=doc.createElement('div');return {host:element.props.ref.current,cleanup:effect()};}};};
+const makeReact=()=>{const effects=[];return {createElement:(type,props)=>({type,props}),useRef:value=>({current:value}),useEffect:callback=>{effects.push(callback);},mount:element=>{element.props.ref.current=doc.createElement('div');const cleanups=effects.map(effect=>effect());return {host:element.props.ref.current,cleanup:()=>{for(const fn of cleanups)if(fn)fn();}};}};};
 const create={version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}};
 const tree={version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['message','button']},{id:'message',component:'Text',text:{path:'/name'}},{id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/name'}}}}},{id:'label',component:'Text',text:'Save'}]}};
 const data={version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{name:'Ada'}}};
