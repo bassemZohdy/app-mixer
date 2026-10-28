@@ -265,3 +265,42 @@ export function createCapabilityActionHandler(options:{
       .catch(()=>options.onError('Capability invocation failed'));
   };
 }
+
+export type ClientCacheScope = {tenantId:string;authorizationKey:string;applicationId:string;schemaVersion:number};
+export type ClientPublication = {version:number;definition:{id:string;schemaVersion:number;[key:string]:unknown}};
+export type PublicationResponse = {status:200;etag:string;publication:unknown}|{status:304};
+export type PublicationLoader = (etag?:string)=>Promise<PublicationResponse>;
+const isCacheObject=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+function scopeKey(scope:ClientCacheScope):string {
+  if(!scope||typeof scope.tenantId!=='string'||!scope.tenantId||typeof scope.authorizationKey!=='string'||!scope.authorizationKey||typeof scope.applicationId!=='string'||!scope.applicationId||!Number.isSafeInteger(scope.schemaVersion)||scope.schemaVersion<1)throw Error('Invalid cache scope');
+  return JSON.stringify([scope.tenantId,scope.authorizationKey,scope.applicationId,scope.schemaVersion]);
+}
+/** In-memory client cache. The host must authenticate and authorize before selecting a scope. */
+export class ClientPublishedCache {
+  private scope:ClientCacheScope;
+  private key:string;
+  private generation=0;
+  private refreshSequence=0;
+  private entry?:{etag:string;publication:ClientPublication};
+  constructor(scope:ClientCacheScope,private readonly loader:PublicationLoader,private readonly compatible:(definition:unknown)=>boolean){
+    this.key=scopeKey(scope);this.scope=structuredClone(scope);
+    if(typeof loader!=='function'||typeof compatible!=='function')throw Error('Loader and compatibility check are required');
+  }
+  setScope(scope:ClientCacheScope):void {
+    const key=scopeKey(scope);
+    if(key!==this.key){this.generation++;this.entry=undefined;this.scope=structuredClone(scope);this.key=key;}
+  }
+  clear():void{this.generation++;this.entry=undefined;}
+  async refresh():Promise<ClientPublication> {
+    const generation=this.generation,sequence=++this.refreshSequence,previous=this.entry;
+    const result=await this.loader(previous?.etag);
+    if(generation!==this.generation)throw Error('Cache scope changed during refresh');
+    if(sequence!==this.refreshSequence)throw Error('Refresh superseded');
+    if(result.status===304){if(!previous)throw Error('Unexpected cache revalidation');return structuredClone(previous.publication);}
+    if(result.status!==200||typeof result.etag!=='string'||!/^"[a-f0-9]{64}"$/.test(result.etag)||!isCacheObject(result.publication))throw Error('Invalid publication response');
+    const value=result.publication,definition=value.definition;
+    if(!Number.isSafeInteger(value.version)||(value.version as number)<1||!isCacheObject(definition)||definition.id!==this.scope.applicationId||definition.schemaVersion!==this.scope.schemaVersion||!this.compatible(structuredClone(definition)))throw Error('Incompatible publication');
+    const publication=structuredClone(value) as ClientPublication;
+    this.entry={etag:result.etag,publication};return structuredClone(publication);
+  }
+}

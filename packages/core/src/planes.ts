@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch } from './index.js';
 import { DevelopmentProposals } from './proposals.js';
@@ -139,6 +139,10 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     if (version !== undefined && !Number.isSafeInteger(version)) throw new RequestError(400, 'Invalid version');
     const published = repository.getPublished(version);
     if (!published) { respond(res, 404, {error:'Publication not found'}); return; }
+    const tag='"'+createHash('sha256').update(JSON.stringify(published)).digest('hex')+'"';
+    const tags=(req.headers['if-none-match']??'').split(',').map(value=>value.trim().replace(/^W\//,''));
+    if(tags.includes(tag)||tags.includes('*')){res.writeHead(304,{'etag':tag,'cache-control':'no-store'});res.end();return;}
+    res.setHeader('etag',tag);
     respond(res, 200, published);
   });
 }
