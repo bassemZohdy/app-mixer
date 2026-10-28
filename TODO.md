@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**9 / 22 tasks complete (41%)**
+**9 / 31 tasks complete (29%)**
 
-`█████████░░░░░░░░░░░░░`
+`██████░░░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -37,5 +37,20 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [ ] P3-02 Observability and production operational controls
 - [ ] P3-03 Optional remote Control Plane connector
 - [ ] P3-04 Kubernetes production deployment
+
+## P2: persistent agent foundation (new, pending)
+- [ ] P2-06 Define configurable independent agent entity, scope/ownership and versioned manifest (PA-01)
+- [ ] P2-07 Implement agent lifecycle manager, durable run registry, pause/resume/cancel and recovery (PA-02, PA-04)
+- [ ] P2-08 Add event/webhook and scheduler activation, authenticated ingress, trigger dedup and concurrency limits (PA-03)
+- [ ] P2-09 Build durable action intent/outcome journal, stable idempotency and uncertain-result reconciliation (PA-05)
+- [ ] P2-10 Implement configurable memory adapters, isolation, retention and provenance (PA-06)
+
+## P3: persistent agent security and operations (new, pending)
+- [ ] P3-05 Support service principals and optional delegated user identity with policy checks and expiry handling (PA-07)
+- [ ] P3-06 Durable human approval/consent, expiration and audited decisions (PA-08)
+- [ ] P3-07 Agent trace/metrics/audit, quotas, budgets and administrative operational controls (PA-09)
+- [ ] P3-08 Production durable-store/worker portability, crash/restart and tenant-isolation acceptance tests (PA-10)
+
+Persistent-agent details: [requirements and architecture](docs/specs/persistent-agents.md), [ADR 0010](docs/adr/0010-configurable-persistent-agents.md). These are *planned* tasks, not implemented features.
 
 A checked item means documentation or implementation is verified; future requirements are not completed merely by being described.
