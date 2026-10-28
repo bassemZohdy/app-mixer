@@ -1,7 +1,9 @@
 /** An intentionally limited renderer for A2UI v0.9.1 basic catalog messages. */
 export const BASIC_CATALOG = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj = Record<string, unknown>;
-type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document) => HTMLElement;
+export type ActionMessage = {version:'v0.9.1'; action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string, unknown>}};
+type Interaction = {write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
+type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document, interaction: Interaction) => HTMLElement;
 const obj = (x: unknown): x is Obj => x !== null && typeof x === 'object' && !Array.isArray(x);
 const only = (value: Obj, keys: string[]): boolean => Object.keys(value).every(key => keys.includes(key));
 const id = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= 256;
@@ -88,12 +90,46 @@ export function basicRegistry(): ComponentRegistry {
     if (!id(c.child)) throw Error('Invalid Card child');
     const element = doc.createElement('section'); element.appendChild(child(c.child)); return element;
   });
+  registry.register('TextField', (c, _child, data, doc, interaction) => {
+    if (!only(c, ['id','component','label','value','variant'])) throw Error('Unsupported TextField property');
+    if (typeof c.label !== 'string' || !obj(c.value) || !only(c.value, ['path']) || typeof c.value.path !== 'string') throw Error('Invalid TextField');
+    const path = c.value.path;
+    if (pointer(path).length === 0) throw Error('TextField requires a non-root path');
+    if (c.variant !== undefined && c.variant !== 'shortText' && c.variant !== 'longText') throw Error('Unsupported TextField variant');
+    const wrapper = doc.createElement('label');
+    const label = doc.createElement('span'); label.textContent = c.label; wrapper.appendChild(label);
+    const input = c.variant === 'longText' ? doc.createElement('textarea') : doc.createElement('input');
+    input.value = textValue(c.value, data);
+    let composing = false;
+    input.addEventListener('compositionstart', () => { composing = true; });
+    input.addEventListener('compositionend', () => { composing = false; interaction.write(path, input.value, input); });
+    input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
+    interaction.controls.set(c.id as string, input);
+    wrapper.appendChild(input); return wrapper;
+  });
+  registry.register('Button', (c, child, _data, doc, interaction) => {
+    if (!only(c, ['id','component','child','action','variant']) || !id(c.child)) throw Error('Invalid Button');
+    if (c.variant !== undefined && !['default','primary','borderless'].includes(c.variant as string)) throw Error('Unsupported Button variant');
+    if (!obj(c.action) || !only(c.action, ['event']) || !obj(c.action.event) || !only(c.action.event, ['name','context']) || !id(c.action.event.name) || (c.action.event.context !== undefined && !obj(c.action.event.context))) throw Error('Unsupported Button action');
+    const event = c.action.event;
+    const context = (event.context ?? {}) as Obj;
+    for (const value of Object.values(context)) {
+      if (obj(value)) {
+        if (!only(value, ['path']) || typeof value.path !== 'string') throw Error('Unsupported action context');
+        pointer(value.path);
+      } else if (value !== null && !['string','number','boolean'].includes(typeof value)) throw Error('Unsupported action context');
+    }
+    const button = doc.createElement('button'); button.type = 'button'; button.disabled = !interaction.enabled;
+    button.appendChild(child(c.child));
+    button.addEventListener('click', () => interaction.action(event.name as string, context));
+    return button;
+  });
   return registry;
 }
-type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown };
+type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement> };
 export class A2UIRenderer {
   private readonly surfaces = new Map<string, Surface>();
-  constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry()) {}
+  constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry(), private readonly onAction?: (message: ActionMessage) => void) {}
   apply(message: unknown): void {
     if (!obj(message) || message.version !== 'v0.9.1') throw Error('Unsupported A2UI version');
     const keys = ['createSurface','updateComponents','updateDataModel','deleteSurface'].filter(k => Object.hasOwn(message, k));
@@ -107,7 +143,7 @@ export class A2UIRenderer {
       if (this.surfaces.has(surfaceId)) throw Error('Surface already exists');
       const element = this.host.ownerDocument.createElement('div');
       element.dataset.surfaceId = surfaceId; this.host.appendChild(element);
-      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}}); return;
+      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map()}); return;
     }
     const surface = this.surfaces.get(surfaceId);
     if (!surface) throw Error('Unknown surface');
@@ -127,17 +163,43 @@ export class A2UIRenderer {
       data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value'));
     }
     const doc = this.host.ownerDocument;
+    const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
     const render = (componentId: string, visited: Set<string>): HTMLElement => {
       const c = components.get(componentId);
       if (!c) { const placeholder = doc.createElement('span'); placeholder.textContent = ''; return placeholder; }
       if (visited.has(componentId) || visited.size >= 100) throw Error('Cyclic or deeply nested components');
       const next = new Set(visited); next.add(componentId);
-      return this.registry.get(c.component as string)!(c, child => render(child, next), data, doc);
+      const interaction: Interaction = {
+        controls, enabled: !!this.onAction,
+        write: (path, value, input) => {
+          if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(componentId) !== input) return;
+          const focused = input.ownerDocument.activeElement === input;
+          const start = input.selectionStart, end = input.selectionEnd;
+          this.apply({version:'v0.9.1', updateDataModel:{surfaceId,path,value}});
+          const replacement = surface.controls.get(componentId);
+          if (replacement && focused) {
+            replacement.focus();
+            if (start !== null && end !== null) replacement.setSelectionRange(start, end);
+          }
+        },
+        action: (name, context) => {
+          if (this.surfaces.get(surfaceId) !== surface || !this.onAction) return;
+          const resolved: Obj = {};
+          for (const [key, value] of Object.entries(context)) {
+            if (['__proto__','prototype','constructor'].includes(key)) throw Error('Unsafe action context');
+            const result = obj(value) ? read(surface.data, value.path as string) : value;
+            if (result === undefined) throw Error('Action context path not found');
+            resolved[key] = structuredClone(result);
+          }
+          this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
+        }
+      };
+      return this.registry.get(c.component as string)!(c, child => render(child, next), data, doc, interaction);
     };
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
     surface.element.replaceChildren(...(root ? [root] : []));
-    surface.components = components; surface.data = data;
+    surface.components = components; surface.data = data; surface.controls = controls;
   }
 }
 

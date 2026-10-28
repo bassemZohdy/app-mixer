@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import {A2UIRenderer, A2UIJsonLines, BASIC_CATALOG, ComponentRegistry, basicRegistry} from '../dist/index.js';
 
 class Element {
-  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.textContent=''; this.parent=null; }
+  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.textContent=''; this.parent=null; this.listeners={}; this.value=''; this.selectionStart=0; this.selectionEnd=0; }
   appendChild(child) { child.parent=this; this.children.push(child); return child; }
   replaceChildren(...children) { this.children=[]; for(const child of children) this.appendChild(child); }
   remove() { if(this.parent) this.parent.children=this.parent.children.filter(child => child !== this); }
+  addEventListener(type, fn) { this.listeners[type]=fn; }
+  dispatch(type) { this.listeners[type]?.(); }
+  focus() { this.focused=true; this.ownerDocument.activeElement=this; }
+  setSelectionRange(start,end) { this.selectionStart=start; this.selectionEnd=end; }
 }
 const setup = () => { const doc={createElement:tag => new Element(tag,doc)}; const host=doc.createElement('main'); return {host,renderer:new A2UIRenderer(host)}; };
 const create = id => ({version:'v0.9.1',createSurface:{surfaceId:id,catalogId:BASIC_CATALOG}});
@@ -69,4 +73,41 @@ test('frames fragmented JSONL messages in order and rejects oversized lines', ()
   const limited = new A2UIJsonLines(renderer, 4);
   assert.throws(() => limited.write('12345'), /too long/);
   assert.throws(() => limited.write(''), /closed/);
+});
+
+
+test('updates text field bindings and dispatches explicit action context', () => {
+  const doc={createElement:tag => new Element(tag,doc)}; const host=doc.createElement('main');
+  const actions=[]; const renderer=new A2UIRenderer(host,basicRegistry(),message=>actions.push(message));
+  renderer.apply(create('main')); renderer.apply(data('main',{form:{name:'Ada', secret:'not-shared'}}));
+  renderer.apply(components('main',[
+    {id:'root',component:'Column',children:['field','display','submit']},
+    {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'}},
+    {id:'display',component:'Text',text:{path:'/form/name'}},
+    {id:'submit',component:'Button',child:'caption',action:{event:{name:'save',context:{name:{path:'/form/name'}}}}},
+    {id:'caption',component:'Text',text:'Save'}
+  ]));
+  let root=host.children[0].children[0];
+  const field=root.children[0].children[1]; field.value='Grace'; field.focus(); field.setSelectionRange(5,5); field.dispatch('input');
+  root=host.children[0].children[0];
+  assert.equal(root.children[1].textContent,'Grace');
+  assert.equal(root.children[0].children[1].focused,true);
+  root.children[2].dispatch('click');
+  assert.equal(actions.length,1);
+  assert.equal(actions[0].action.name,'save');
+  assert.equal(actions[0].action.sourceComponentId,'submit');
+  assert.deepEqual(actions[0].action.context,{name:'Grace'});
+  assert.equal(actions[0].version,'v0.9.1');
+  const composing=root.children[0].children[1];
+  composing.dispatch('compositionstart'); composing.value='日本'; composing.dispatch('input');
+  assert.equal(host.children[0].children[0].children[1].textContent,'Grace');
+  composing.dispatch('compositionend');
+  assert.equal(host.children[0].children[0].children[1].textContent,'日本');
+});
+
+
+test('buttons are disabled without an action handler', () => {
+  const {host,renderer}=setup(); renderer.apply(create('main'));
+  renderer.apply(components('main',[{id:'root',component:'Button',child:'label',action:{event:{name:'send'}}},{id:'label',component:'Text',text:'Send'}]));
+  assert.equal(host.children[0].children[0].disabled,true);
 });
