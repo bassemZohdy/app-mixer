@@ -146,4 +146,18 @@ void main() {
     expect(()=>jsonEncode(event),returnsNormally);
   });
 
+  test('rejects explicit null for optional paths and component properties atomically', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));
+    expect(()=>store.apply(message('updateDataModel',{'surfaceId':'main','path':null,'value':{'x':'bad'}})),throwsFormatException);
+    for(final c in [
+      {'id':'root','component':'Text','text':'bad','variant':null},
+      {'id':'root','component':'Column','children':[],'align':null},
+      {'id':'root','component':'Row','children':[],'justify':null},
+      {'id':'root','component':'TextField','label':'Name','value':{'path':'/x'},'variant':null},
+      {'id':'root','component':'Button','child':'x','action':{'event':{'name':'save'}},'variant':null}
+    ]){expect(()=>store.apply(message('updateComponents',{'surfaceId':'main','components':[c]})),throwsFormatException);}
+    expect(store.snapshot().single?.text,'Safe');
+  });
+
 }

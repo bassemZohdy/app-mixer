@@ -128,7 +128,7 @@ class FlutterSurfaceStore {
       _surfaces.remove(id); return;
     }
     if (kind == 'updateDataModel') {
-      if (!_only(payload, ['surfaceId','path','value']) || (payload['path'] != null && payload['path'] is! String)) throw FormatException('Invalid data update');
+      if (!_only(payload, ['surfaceId','path','value']) || (payload.containsKey('path') && payload['path'] is! String)) throw FormatException('Invalid data update');
       final data = _update(surface.data, payload['path'] as String? ?? '/', payload['value'], !payload.containsKey('value'));
       _root(surface.components, data); surface.data = data; return;
     }
@@ -168,16 +168,16 @@ class FlutterSurfaceStore {
       final text = c['text'];
       var validText = text is String && text.length <= 10000;
       if (text is Map && _only(_object(text), ['path']) && text['path'] is String) {_pointer(text['path'] as String); validText = true;}
-      if (!_only(c, ['id','component','text','variant']) || !validText || (c['variant'] != null && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
+      if (!_only(c, ['id','component','text','variant']) || !validText || (c.containsKey('variant') && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
     } else if (type == 'Column' || type == 'Row') {
       final children = c['children'];
-      if (!_only(c, ['id','component','children','justify','align']) || children is! List || children.length > 1000 || !children.every(_id) || (c['justify'] != null && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].contains(c['justify'])) || (c['align'] != null && !['start','center','end'].contains(c['align']))) throw FormatException('Unsupported layout');
+      if (!_only(c, ['id','component','children','justify','align']) || children is! List || children.length > 1000 || !children.every(_id) || (c.containsKey('justify') && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].contains(c['justify'])) || (c.containsKey('align') && !['start','center','end'].contains(c['align']))) throw FormatException('Unsupported layout');
     } else if (type == 'TextField') {
       final value=c['value'];
-      if (!_only(c,['id','component','label','value','variant']) || c['label'] is! String || value is! Map || !_only(_object(value),['path']) || value['path'] is! String || _pointer(value['path'] as String).isEmpty || (c['variant'] != null && !['shortText','longText'].contains(c['variant']))) throw FormatException('Unsupported TextField');
+      if (!_only(c,['id','component','label','value','variant']) || c['label'] is! String || value is! Map || !_only(_object(value),['path']) || value['path'] is! String || _pointer(value['path'] as String).isEmpty || (c.containsKey('variant') && !['shortText','longText'].contains(c['variant']))) throw FormatException('Unsupported TextField');
     } else if (type == 'Button') {
       final action=c['action'];
-      if (!_only(c,['id','component','child','action','variant']) || !_id(c['child']) || (c['variant'] != null && !['default','primary','borderless'].contains(c['variant'])) || action is! Map || !_only(_object(action),['event']) || action['event'] is! Map) throw FormatException('Unsupported Button');
+      if (!_only(c,['id','component','child','action','variant']) || !_id(c['child']) || (c.containsKey('variant') && !['default','primary','borderless'].contains(c['variant'])) || action is! Map || !_only(_object(action),['event']) || action['event'] is! Map) throw FormatException('Unsupported Button');
       final event=_object(action['event']);
       if (!_only(event,['name','context']) || !_id(event['name']) || (event.containsKey('context') && event['context'] is! Map)) throw FormatException('Unsupported action');
       for (final entry in _object(event['context'] ?? {}).entries) {
