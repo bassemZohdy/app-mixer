@@ -19,6 +19,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Real React lifecycle smoke test
+        if: matrix.node == '22'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/react-smoke" --no-save --package-lock=false --ignore-scripts react@19.2.0 react-dom@19.2.0 jsdom@26.1.0
+          REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/react-smoke.mjs
       - name: Docker Compose outage smoke test
         if: matrix.node == '22'
         run: node deploy/local/compose-smoke.mjs
