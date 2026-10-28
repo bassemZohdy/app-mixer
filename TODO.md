@@ -22,7 +22,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P1-04 AG-UI adapter with configurable LLM and LangGraph.js (initial text-only integration; [scope and limitations](docs/agent-adapter.md))
 - [x] P1-05 Development Agent typed patches, preview and approval/publish (local in-memory workflow; [scope and limitations](docs/development-proposals.md))
 - [x] P1-06 OpenAPI import and authorized capability registry (restricted GET sample; [scope and limitations](docs/capability-registry.md))
-- [ ] P1-07 Two-level published definition cache and invalidation
+- [ ] P1-07 Two-level published definition cache and invalidation (server cache foundation: [scope and remaining work](docs/published-cache.md))
 - [ ] P1-08 Docker Compose and agent-outage acceptance test
 
 ## P2: portability and advanced data

@@ -1,0 +1,7 @@
+# Published-definition cache: server foundation
+
+`PublishedDefinitionCache` stores cloned, validated immutable published versions in memory with a bounded size and TTL. Its key includes tenant ID, a host-derived authorization scope/version, application ID, schema version, and publication version. Callers must authenticate and authorize before selecting a scope; a cache key is not an authorization check. Change the authorization key or invalidate the relevant scope when permissions change. Do not put credentials in the key.
+
+`CachedPublishedRepository` wraps a repository for one trusted scope and can be passed to `createDataPlane`. Version-specific reads can use the cache. Latest reads always consult the authoritative repository to discover the current version, so a publication made by another process is observed without relying on a local invalidation event. Missing entries are not cached. `invalidate` removes entries for an exact scope and optional version; `clear` discards all entries. The repository remains authoritative and can repopulate the cache after eviction.
+
+This is a local server-cache foundation. The Data Plane prototype is unauthenticated and does not derive tenant or permission scopes. The caller must enforce those boundaries before using the wrapper. Client caching, cross-process invalidation for permission changes, durable/offline storage, HTTP revalidation, and production authorization are not implemented. P1-07 remains open until both cache levels and invalidation are integrated and tested.
