@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**8 / 22 tasks complete (36%)**
+**9 / 22 tasks complete (41%)**
 
-`████████░░░░░░░░░░░░░░`
+`█████████░░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -19,7 +19,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P1-01 SQLite definition repository and immutable published versions
 - [x] P1-02 Isolated Control Plane and Data Plane APIs
 - [x] P1-03 A2UI-compatible component registry and web renderer (initial six-component catalog; [scope and limitations](docs/a2ui-renderer.md))
-- [ ] P1-04 AG-UI adapter with configurable LLM and LangGraph.js (text streaming foundation: [scope and remaining work](docs/agent-adapter.md))
+- [x] P1-04 AG-UI adapter with configurable LLM and LangGraph.js (initial text-only integration; [scope and limitations](docs/agent-adapter.md))
 - [ ] P1-05 Development Agent typed patches, preview and approval/publish
 - [ ] P1-06 OpenAPI import and authorized capability registry
 - [ ] P1-07 Two-level published definition cache and invalidation
