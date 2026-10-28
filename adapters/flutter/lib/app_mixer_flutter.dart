@@ -47,6 +47,12 @@ dynamic _copy(dynamic value) {
   return visit(value,0);
 }
 final _missing = Object();
+dynamic _export(dynamic value) {
+  if (identical(value,_deleted)) return null;
+  if (value is List) return value.map(_export).toList();
+  if (value is Map) return value.map((key, item)=>MapEntry(key, _export(item)));
+  return value;
+}
 dynamic _read(dynamic data, String path) {
   var value=data;
   for (final key in _pointer(path)) {
@@ -149,7 +155,7 @@ class FlutterSurfaceStore {
     for (final entry in ((event['context'] as Map?) ?? {}).entries) {
       final value=entry.value is Map ? _read(surface.data, (entry.value as Map)['path'] as String) : entry.value;
       if (identical(value,_missing)) throw FormatException('Action context path not found');
-      context[entry.key as String]=_copy(value);
+      context[entry.key as String]=_export(_copy(value));
     }
     return {'version':'v0.9.1','action':{'name':event['name'],'surfaceId':surfaceId,'sourceComponentId':componentId,'timestamp':DateTime.now().toUtc().toIso8601String(),'context':context}};
   }

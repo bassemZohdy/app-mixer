@@ -99,4 +99,7 @@ test('deleted array elements differ from null in action context on web and nativ
  apply(message('updateDataModel',{surfaceId:'main',path:'/other',value:'updated'}));
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/1'}}}}}]}));
  assert.throws(()=>host.children[0].children[0].listeners.click(),/not found/);assert.throws(()=>native.action('main','root',native.snapshot()[0].revision),/not found/);
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items'}}}}}]}));
+ host.children[0].children[0].listeners.click();const nativeEvent=native.action('main','root',native.snapshot()[0].revision);
+ assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).action.context.value)),[null,null]);assert.deepEqual(JSON.parse(JSON.stringify(nativeEvent.action.context.value)),[null,null]);
 });

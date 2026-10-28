@@ -138,6 +138,12 @@ void main() {
       {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save','context':{'value':{'path':'/items/1'}}}}}
     ]}));
     expect(()=>store.action('main','root',store.views().single.revision),throwsFormatException);
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save','context':{'value':{'path':'/items'}}}}}
+    ]}));
+    final event=store.action('main','root',store.views().single.revision);
+    expect(((event['action'] as Map)['context'] as Map)['value'],[null,null]);
+    expect(()=>jsonEncode(event),returnsNormally);
   });
 
 }
