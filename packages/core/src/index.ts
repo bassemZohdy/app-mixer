@@ -49,4 +49,4 @@ export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
 export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry } from './extensions.js';
-export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation } from './extensions.js';
+export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigSchema, ExtensionConfiguration } from './extensions.js';
