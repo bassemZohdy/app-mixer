@@ -1,0 +1,7 @@
+# OpenAPI and capability registry: local foundation
+
+`importOpenAPI` discovers operation IDs, methods and paths from an already parsed OpenAPI 3.0 or 3.1 JSON document. It produces candidates only. Discovery performs no HTTP calls, does not resolve path-item `$ref`, does not trust server URLs or credentials, and grants no permission to invoke an operation. Missing or duplicate operation IDs and unsupported path items are rejected. The importer does not yet interpret request/response schemas, security schemes, YAML, external references or operation-specific servers.
+
+`CapabilityRegistry` requires the trusted host to explicitly register each operation with an authorization function, input validator and executor. An unregistered capability cannot be invoked. Every invocation requires a tenant ID and principal ID from the trusted server; the same policy and validation run for UI and agent origins before execution. Input is cloned before validation and execution. These functions are trusted application code, not values supplied by a client or model.
+
+This is a local foundation, not an authentication or production authorization solution. The caller must authenticate the actor and derive the invocation context server-side; never accept tenant or principal IDs from an untrusted client as proof of identity. There is no built-in OpenAPI schema validation, REST executor, credential management, approval, audit journal, or API route yet. P1-06 remains open until these are implemented and verified for a sample REST operation through both UI and agent paths.
