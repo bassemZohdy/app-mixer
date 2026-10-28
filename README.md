@@ -33,4 +33,4 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 
 This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Angular, React, React Native and Flutter adapters, persistent storage, offline sync, OpenAPI integration, server/client caches, authorization and Kubernetes packaging are future work.
 
-License intention: Apache-2.0; verify full license text and third-party licensing before distribution.
+Licensed under [Apache-2.0](LICENSE). See the [foundation review](docs/foundation-review.md) for dependency licenses and prototype limitations.

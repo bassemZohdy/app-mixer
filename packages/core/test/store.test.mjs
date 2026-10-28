@@ -8,3 +8,9 @@ assert.throws(()=>store.apply(1,[]),/Revision conflict/);
 assert.throws(()=>store.apply(2,[{op:'addPage',page:{id:'duplicate',route:'/',title:'Bad',components:[]}}]),/Duplicate/);
 assert.equal(store.getDraft().revision,2);
 });
+
+test('rejects unknown patch operations without changing the draft', () => {
+  const store = new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
+  assert.throws(() => store.apply(0,[{op:'unknown'}]), /Unknown patch operation/);
+  assert.equal(store.getDraft().revision, 0);
+});
