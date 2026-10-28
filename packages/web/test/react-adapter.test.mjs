@@ -35,3 +35,10 @@ test('React host bridge cleans up after a synchronous subscription failure',()=>
  const element=Component({subscribe:()=>{throw Error('connect failed');},onAction:()=>{},onError:e=>errors.push(e.message)});
  const {host,cleanup}=react.mount(element);assert.deepEqual(errors,['connect failed']);cleanup();assert.equal(host.children.length,0);
 });
+
+test('React host clears its surface and reports unsubscribe failures',()=>{
+ const react=makeReact(),errors=[],Component=createReactA2UIComponent(react);
+ const element=Component({subscribe:()=>()=>{throw Error('stop failed');},onAction:()=>{},onError:e=>errors.push(e.message)});
+ const {host,cleanup}=react.mount(element);host.appendChild(doc.createElement('p'));cleanup();
+ assert.deepEqual(errors,['stop failed']);assert.equal(host.children.length,0);
+});

@@ -18,7 +18,7 @@ TestBed.initTestEnvironment(BrowserDynamicTestingModule,platformBrowserDynamicTe
 TestBed.configureTestingModule({imports:[A2UIComponent]});
 const fixture=TestBed.createComponent(A2UIComponent);let receive,late,unsubscribed=0;const actions=[],errors=[];
 fixture.componentInstance.action.subscribe(message=>actions.push(message));fixture.componentInstance.error.subscribe(error=>errors.push(error));
-const subscribe=fn=>{receive=fn;return ()=>{unsubscribed++;};};
+const subscribe=fn=>{receive=fn;return ()=>{unsubscribed++;throw Error('cleanup failed');};};
 try {
  fixture.componentRef.setInput('subscribe',subscribe);fixture.detectChanges();await fixture.whenStable();
  assert.equal(typeof receive,'function');
@@ -27,6 +27,9 @@ try {
  const button=fixture.nativeElement.querySelector('button');assert.equal(button.textContent,'Save');button.click();assert.equal(actions[0].action.name,'save');
  receive({version:'invalid'});assert.equal(errors.length,1);
  late=receive;fixture.componentRef.setInput('subscribe',fn=>{receive=fn;return ()=>{unsubscribed++;};});fixture.detectChanges();await fixture.whenStable();
- assert.equal(unsubscribed,1);assert.equal(fixture.nativeElement.querySelector('button'),null);late({version:'invalid'});assert.equal(errors.length,1);
- fixture.destroy();assert.equal(unsubscribed,2);receive({version:'invalid'});assert.equal(errors.length,1);
+ assert.equal(unsubscribed,1);assert.equal(fixture.nativeElement.querySelector('button'),null);late({version:'invalid'});assert.equal(errors.length,2);assert.equal(errors[1].message,'cleanup failed');
+ receive({version:'v0.9.1',createSurface:{surfaceId:'new',catalogId:APP_MIXER_CATALOG}});
+ receive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'Connected'}]}});
+ assert.match(fixture.nativeElement.textContent,/Connected/);
+ fixture.destroy();assert.equal(unsubscribed,2);receive({version:'invalid'});assert.equal(errors.length,2);
 }finally{TestBed.resetTestingModule();dom.window.close();}

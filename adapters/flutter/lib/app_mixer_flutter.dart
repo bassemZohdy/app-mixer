@@ -226,7 +226,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
   void didUpdateWidget(covariant AppMixerA2UI oldWidget) {super.didUpdateWidget(oldWidget); if (oldWidget.subscribe != widget.subscribe) _connect();}
   void _connect() {
     final generation = ++_generation;
-    _unsubscribe?.call(); _unsubscribe = null; _store = FlutterSurfaceStore();
+    _disconnect(); _store = FlutterSurfaceStore();
     try {
       _unsubscribe = widget.subscribe((message) {
         if (!mounted || generation != _generation) return;
@@ -234,8 +234,12 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       });
     } catch (error) {widget.onError(error);}
   }
+  void _disconnect() {
+    final stop=_unsubscribe;_unsubscribe=null;
+    try {stop?.call();} catch(error) {widget.onError(error);}
+  }
   @override
-  void dispose() {_generation++; _unsubscribe?.call(); super.dispose();}
+  void dispose() {_generation++; try {_disconnect();} finally {super.dispose();}}
   @override
   Widget build(BuildContext context) {
     final store=_store, generation=_generation;

@@ -154,7 +154,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.Pressable&&message.updateComponents.components.some(c=>obj(c)&&c.component==='Button'))throw Error('Pressable primitive is required');
         store.apply(message);setSurfaces(store.snapshot());
       }catch(error){errors.current(error);}});}catch(error){errors.current(error);}
-      return ()=>{active=false;if(storeRef.current===store)storeRef.current=null;if(typeof stop==='function')stop();};
+      return ()=>{active=false;if(storeRef.current===store)storeRef.current=null;try{if(typeof stop==='function')stop();}catch(error){errors.current(error);}};
     },[subscribe]);
     const store=storeRef.current;
     const render=(node:NativeNode,surface:NativeSurface):any=>{
