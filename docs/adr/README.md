@@ -16,4 +16,6 @@ Status meanings: **Accepted** means the product architecture direction was agree
 | [0008](0008-application-data-and-offline-sync.md) | Accepted | Internal data, staged operations and offline sync |
 | [0009](0009-deployment-and-technology-defaults.md) | Proposed | Deployment profiles and initial technology choices |
 
+| [0010](0010-configurable-persistent-agents.md) | Accepted direction | Independent configurable persistent agents and durable activation/actions |
+
 See [requirements](../specs/requirements.md), [architecture](../specs/architecture.md), [implementation plan](../specs/implementation-plan.md), [TODO](../../TODO.md), and [CHANGELOG](../../CHANGELOG.md).
