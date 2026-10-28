@@ -5,12 +5,12 @@
 | Component | Supported properties (in addition to `id` and `component`) |
 | --- | --- |
 | Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Text is displayed literally, including Markdown syntax. |
-| Column, Row | `children`: array of component IDs. |
+| Column, Row | `children`: array of component IDs; optional `justify` and `align` flex alignment. |
 | Card | `child`: component ID. |
 
-Components can arrive incrementally; missing children render as empty placeholders. Data model updates use absolute JSON pointers, but nested parent objects must already exist. Text bindings re-render after updates. Unknown component types and unsupported properties fail rather than executing supplied code. Renderers registered through `ComponentRegistry` are trusted application code, not model-provided code. The renderer rejects cyclic and excessively deep trees; rendered text uses `textContent`.
+The optional `A2UIJsonLines` helper frames decoded JSONL text in order, including messages split across chunks; network transport and UTF-8 decoding remain the caller’s responsibility. Components can arrive incrementally; missing children render as empty placeholders. Data model updates use absolute JSON pointers, but nested parent objects must already exist. Text bindings re-render after updates. Unknown component types and unsupported properties fail rather than executing supplied code. Renderers registered through `ComponentRegistry` are trusted application code, not model-provided code. The renderer rejects cyclic and excessively deep trees; rendered text uses `textContent`.
 
-Not yet implemented: basic catalog parity, Markdown, templates and relative bindings, forms, actions, functions, validation, theme, `sendDataModel`, JSONL transport, and a protocol conformance suite. P1-03 remains open until the supported catalog is defined and verified with protocol conformance tests. Renderer parity across other platforms is a separate task.
+Not yet implemented: basic catalog parity, Markdown, templates and relative bindings, forms, actions, functions, validation, theme, `sendDataModel`, and a protocol conformance suite. P1-03 remains open until the supported catalog is defined and verified with protocol conformance tests. Renderer parity across other platforms is a separate task.
 
 Example after building the workspaces and serving the compiled module to a browser:
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {A2UIRenderer, BASIC_CATALOG, ComponentRegistry, basicRegistry} from '../dist/index.js';
+import {A2UIRenderer, A2UIJsonLines, BASIC_CATALOG, ComponentRegistry, basicRegistry} from '../dist/index.js';
 
 class Element {
   constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.textContent=''; this.parent=null; }
@@ -46,11 +46,27 @@ test('rejects invalid updates without replacing the previous UI', () => {
 
 test('supports incremental child definitions and independent surfaces', () => {
   const {host,renderer}=setup(); renderer.apply(create('a')); renderer.apply(create('b'));
-  renderer.apply(components('a',[{id:'root',component:'Row',children:['later']}]));
+  renderer.apply(components('a',[{id:'root',component:'Row',children:['later'],justify:'spaceBetween',align:'center'}]));
   renderer.apply(components('b',[{id:'root',component:'Text',text:'Other'}]));
   renderer.apply(components('a',[{id:'later',component:'Text',text:'Loaded'}]));
+  assert.equal(host.children[0].children[0].style.justifyContent,'space-between');
+  assert.equal(host.children[0].children[0].style.alignItems,'center');
   assert.equal(host.children[0].children[0].children[0].textContent,'Loaded');
   assert.equal(host.children[1].children[0].textContent,'Other');
   assert.throws(() => new ComponentRegistry().register('x',()=>{}).register('x',()=>{}),/duplicate/);
   assert.ok(basicRegistry().get('Text'));
+});
+
+
+test('frames fragmented JSONL messages in order and rejects oversized lines', () => {
+  const {host,renderer} = setup();
+  const stream = new A2UIJsonLines(renderer);
+  const lines = JSON.stringify(create('main')) + '\r\n' + JSON.stringify(components('main',[{id:'root',component:'Text',text:'Streamed'}]));
+  for (let i=0; i<lines.length; i+=7) stream.write(lines.slice(i,i+7));
+  stream.finish();
+  assert.equal(host.children[0].children[0].textContent,'Streamed');
+  assert.throws(() => stream.write('x'), /closed/);
+  const limited = new A2UIJsonLines(renderer, 4);
+  assert.throws(() => limited.write('12345'), /too long/);
+  assert.throws(() => limited.write(''), /closed/);
 });
