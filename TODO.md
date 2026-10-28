@@ -1,11 +1,19 @@
 # TODO — App Mixer
 
+## Overall progress
+
+**5 / 22 tasks complete (23%)**
+
+`█████░░░░░░░░░░░░░░░░░`
+
+Progress counts checked items equally; a task is complete only after verification.
+
 ## P0: foundation verification
-- [ ] P0-01 Run clean npm install/build/test; fix failures
-- [ ] P0-02 Add CI workflow and generated-app smoke test
-- [ ] P0-03 Verify complete Apache-2.0 LICENSE and dependency license compatibility
+- [x] P0-01 Run clean npm install/build/test; fix failures
+- [x] P0-02 Add CI workflow and generated-app smoke test
+- [x] P0-03 Verify complete Apache-2.0 LICENSE and dependency license compatibility
 - [x] P0-04 Capture product requirements, architecture, decisions and roadmap in docs/specs
-- [ ] P0-05 Review initial scaffold security and runtime behavior
+- [x] P0-05 Review initial scaffold security and runtime behavior
 
 ## P1: working vertical slice
 - [ ] P1-01 SQLite definition repository and immutable published versions

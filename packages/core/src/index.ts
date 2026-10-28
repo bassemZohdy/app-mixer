@@ -22,6 +22,7 @@ export class ApplicationStore {
    case "addPage":candidate.pages.push(copy(p.page));break;
    case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.title=p.title;break;}
    case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.components.push(copy(p.component));break;}
+   default: throw Error("Unknown patch operation");
   }}
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
  }
