@@ -45,3 +45,38 @@ test('invalid publication policy fails closed', async()=>{
  assert.throws(()=>createExtensionPublicationGuard([manifest()],host(),null),/Invalid/);
  const asyncStore=new ApplicationStore(initial,async()=>true);assert.throws(()=>asyncStore.publish(0),/synchronously return true/);assert.equal(asyncStore.getPublished(),undefined);
 });
+
+test('registers only approved implementations matching the manifest', async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');
+ const m=manifest(), h=host(), registry=new ExtensionRegistry(h), chart=()=>1, lookup=()=>2;
+ const bindings={components:{chart},tools:{lookup},providers:{}};
+ registry.register(m,bindings);
+ m.components.length=0;h.approved.length=0;bindings.components.chart=()=>3;
+ assert.equal(registry.get('components','chart'),chart);
+ assert.equal(registry.get('tools','lookup'),lookup);
+ assert.equal(registry.get('providers','unknown'),undefined);
+ const exported=registry.getManifests();exported[0].components.length=0;
+ assert.deepEqual(registry.getManifests()[0].components,['chart']);
+});
+
+test('failed registration is atomic and rejects incompatible or undeclared implementations',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');
+ const registry=new ExtensionRegistry(host()), m=manifest(), fn=()=>{};
+ for(const bindings of [
+  {components:{chart:fn},tools:{},providers:{}},
+  {components:{chart:fn,extra:fn},tools:{lookup:fn},providers:{}},
+  {components:{chart:1},tools:{lookup:fn},providers:{}},
+ ]) {assert.throws(()=>registry.register(m,bindings),/bindings/);assert.deepEqual(registry.getManifests(),[]);assert.equal(registry.get('components','chart'),undefined);}
+ assert.throws(()=>registry.register({...m,scope:'platform'},{components:{chart:fn},tools:{lookup:fn},providers:{}}),/compatibility/);
+ registry.register(m,{components:{chart:fn},tools:{lookup:fn},providers:{}});
+ assert.throws(()=>registry.register(m,{components:{chart:fn},tools:{lookup:fn},providers:{}}),/compatibility/);
+ assert.equal(registry.getManifests().length,1);
+ assert.throws(()=>registry.get('__proto__','chart'),/lookup/);
+});
+
+test('registration rejects collisions between distinct approved extensions',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');const h=host(), first=manifest(), other={...manifest(),id:'other.extension'};
+ h.approved.push({...h.approved[0],id:other.id});const registry=new ExtensionRegistry(h), fn=()=>{};
+ const bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ registry.register(first,bindings);assert.throws(()=>registry.register(other,bindings),/compatibility/);assert.equal(registry.getManifests().length,1);
+});
