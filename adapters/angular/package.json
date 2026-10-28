@@ -1,0 +1,9 @@
+{
+  "name": "@app-mixer/angular",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}},
+  "peerDependencies": {"@angular/core": "^19.2.0", "@app-mixer/web": "^0.1.0"},
+  "scripts": {"build": "ngc -p tsconfig.json"}
+}

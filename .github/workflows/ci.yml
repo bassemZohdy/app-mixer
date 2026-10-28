@@ -24,6 +24,15 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/react-smoke" --no-save --package-lock=false --ignore-scripts react@19.2.0 react-dom@19.2.0 jsdom@26.1.0
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/react-smoke.mjs
+      - name: Angular AOT and lifecycle smoke test
+        if: matrix.node == '22'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/angular-smoke" --no-save --package-lock=false --ignore-scripts @angular/core@19.2.15 @angular/common@19.2.15 @angular/compiler@19.2.15 @angular/compiler-cli@19.2.15 @angular/platform-browser@19.2.15 @angular/platform-browser-dynamic@19.2.15 rxjs@7.8.2 zone.js@0.15.1 jsdom@26.1.0 typescript@5.8.3
+          cp -R adapters/angular/src adapters/angular/tsconfig.json adapters/angular/package.json "$RUNNER_TEMP/angular-smoke/"
+          mkdir -p "$RUNNER_TEMP/angular-smoke/node_modules/@app-mixer"
+          ln -s "$GITHUB_WORKSPACE/packages/web" "$RUNNER_TEMP/angular-smoke/node_modules/@app-mixer/web"
+          "$RUNNER_TEMP/angular-smoke/node_modules/.bin/ngc" -p "$RUNNER_TEMP/angular-smoke/tsconfig.json"
+          ANGULAR_SMOKE_DIR="$RUNNER_TEMP/angular-smoke" node .github/scripts/angular-smoke.mjs
       - name: Docker Compose outage smoke test
         if: matrix.node == '22'
         run: node deploy/local/compose-smoke.mjs
