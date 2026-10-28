@@ -1,0 +1,7 @@
+# Extension compatibility foundation
+
+`checkExtensionCompatibility` from `@app-mixer/core` checks metadata for trusted, statically installed extensions. A version 1 manifest declares an ID, exact extension version, scope (`platform`, `development`, or `application`), exact supported runtime versions, renderer IDs, component/tool/provider names, and requested permission names. IDs are lowercase ASCII identifiers. Versions use numeric `major.minor.patch` without ranges or prereleases. Lists are bounded and cannot contain duplicates; unknown fields are rejected.
+
+The caller supplies its runtime and renderer, an explicit approval for each extension ID, version and scope, and the permissions approved for that extension. It also supplies the registrations needed by the application. The check rejects missing approvals, excess requested permissions, unsupported runtime or renderer, duplicate registrations, and missing requirements. It returns a compatibility result and diagnostic strings; malformed input throws. A host must treat any error as a failure.
+
+This is metadata validation only. It does not load code, verify signatures or package integrity, enforce permissions during execution, validate extension configuration, or integrate into publication. Approval data must come from a trusted host; extension code and registration implementations remain trusted. Do not use this check as an authorization boundary. Configuration schemas, implementation registration and publication enforcement remain P2-02 work.

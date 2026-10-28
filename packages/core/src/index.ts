@@ -41,3 +41,5 @@ export { createCapabilityServer } from './capability-server.js';
 export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
+export { checkExtensionCompatibility } from './extensions.js';
+export type { ExtensionManifest, ExtensionHost, ExtensionRequirements } from './extensions.js';
