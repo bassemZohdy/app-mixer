@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "test": "npm run build && node --test packages/core/test/*.test.mjs packages/cli/test/*.test.mjs packages/web/test/*.test.mjs packages/agent/test/*.test.mjs"
+    "test": "npm run build && node --test packages/core/test/*.test.mjs packages/cli/test/*.test.mjs packages/web/test/*.test.mjs packages/native/test/*.test.mjs packages/agent/test/*.test.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

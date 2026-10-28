@@ -28,6 +28,7 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [A2UI renderer subset](docs/a2ui-renderer.md)
 - [React host bridge prototype](docs/react-adapter.md)
 - [Angular host bridge prototype](docs/angular-adapter.md)
+- [React Native static renderer prototype](docs/react-native-adapter.md)
 - [Agent adapter](docs/agent-adapter.md)
 - [Development proposals](docs/development-proposals.md)
 - [Capability registry](docs/capability-registry.md)
