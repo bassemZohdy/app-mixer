@@ -103,3 +103,15 @@ test('deleted array elements differ from null in action context on web and nativ
  host.children[0].children[0].listeners.click();const nativeEvent=native.action('main','root',native.snapshot()[0].revision);
  assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).action.context.value)),[null,null]);assert.deepEqual(JSON.parse(JSON.stringify(nativeEvent.action.context.value)),[null,null]);
 });
+
+test('web and native reject null paths and optional properties atomically',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]}));
+ for(const invalid of [
+  message('updateDataModel',{surfaceId:'main',path:null,value:{x:'bad'}}),
+  ...[{id:'root',component:'Text',text:'bad',variant:null},{id:'root',component:'Column',children:[],align:null},{id:'root',component:'Row',children:[],justify:null},{id:'root',component:'TextField',label:'Name',value:{path:'/x'},variant:null},{id:'root',component:'Button',child:'x',action:{event:{name:'save'}},variant:null}].map(c=>message('updateComponents',{surfaceId:'main',components:[c]}))
+ ]){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));}
+ assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
+});
