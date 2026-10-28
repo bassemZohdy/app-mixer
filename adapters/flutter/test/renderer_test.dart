@@ -99,4 +99,17 @@ void main() {
     expect(action,fixture['action']);
   });
 
+  test('shared layout fixture matches expected component hierarchy', () {
+    const styles={'start':'flex-start','center':'center','end':'flex-end','spaceBetween':'space-between','spaceAround':'space-around','spaceEvenly':'space-evenly'};
+    Map<String,dynamic> tree(NativeNode node) => {
+      'kind':node.kind,
+      if(node.kind=='Text') 'text':node.text,
+      if(node.kind=='Row'||node.kind=='Column') ...{'justify':styles[node.justify],'align':styles[node.align]},
+      'children':node.children.map(tree).toList()
+    };
+    final steps=jsonDecode(File('test/fixtures/layout.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();
+    for(final step in steps){store.apply(step['message']);final root=store.snapshot().single;expect(root==null?null:tree(root),step['tree']);}
+  });
+
 }

@@ -81,3 +81,9 @@ test('shared Flutter fixture matches web and native action context',async()=>{
  const webAction={...events[0].action};delete webAction.timestamp;const nativeAction={...native.action('main','root',native.snapshot()[0].revision).action};delete nativeAction.timestamp;
  assert.deepEqual(webAction,fixture.action);assert.deepEqual(nativeAction,fixture.action);
 });
+
+test('shared Flutter fixture matches web and native layout trees',async()=>{
+ const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/layout.json',import.meta.url),'utf8'));
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0];const nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?domTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeTree(nativeRoot):null,step.tree);}
+});
