@@ -29,6 +29,7 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [React host bridge prototype](docs/react-adapter.md)
 - [Angular host bridge prototype](docs/angular-adapter.md)
 - [React Native renderer prototype](docs/react-native-adapter.md)
+- [Flutter renderer prototype](docs/flutter-adapter.md)
 - [Agent adapter](docs/agent-adapter.md)
 - [Development proposals](docs/development-proposals.md)
 - [Capability registry](docs/capability-registry.md)
