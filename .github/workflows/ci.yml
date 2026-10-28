@@ -22,9 +22,10 @@ jobs:
       - name: Real React lifecycle smoke test
         if: matrix.node == '22'
         run: |
-          npm install --prefix "$RUNNER_TEMP/react-smoke" --no-save --package-lock=false --ignore-scripts react@19.2.0 react-dom@19.2.0 jsdom@26.1.0
+          npm install --prefix "$RUNNER_TEMP/react-smoke" --no-save --package-lock=false --ignore-scripts react@19.2.0 react-dom@19.2.0 jsdom@26.1.0 react-native-web@0.21.2
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/react-smoke.mjs
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/native-smoke.mjs
+          REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/native-web-smoke.mjs
       - name: Angular AOT and lifecycle smoke test
         if: matrix.node == '22'
         run: |
