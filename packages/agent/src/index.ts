@@ -1,0 +1,78 @@
+import { randomUUID } from 'node:crypto';
+import { EventType, type Event } from '@ag-ui/core';
+import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
+import { Annotation, StateGraph, START, END, getWriter } from '@langchain/langgraph';
+import { ChatOpenAI } from '@langchain/openai';
+
+export type ChatMessage = {role:'user'|'assistant'; content:string};
+export type RunInput = {threadId:string; runId:string; messages:ChatMessage[]};
+export interface StreamingModel {
+  stream(messages: ChatMessage[], signal?: AbortSignal): AsyncIterable<string>;
+}
+export type OpenAIModelConfig = {model:string; apiKey:string; baseURL?:string; systemPrompt?:string};
+
+/** The provider and credentials are configured by the host, never by a conversation message. */
+export function createOpenAIModel(config: OpenAIModelConfig): StreamingModel {
+  if (!config.model || !config.apiKey) throw Error('Model and API key are required');
+  const model = new ChatOpenAI({model:config.model, apiKey:config.apiKey,
+    ...(config.baseURL ? {configuration:{baseURL:config.baseURL}} : {})});
+  return {
+    async *stream(messages, signal) {
+      const input: BaseMessage[] = [];
+      if (config.systemPrompt) input.push(new SystemMessage(config.systemPrompt));
+      for (const message of messages) input.push(message.role === 'user' ? new HumanMessage(message.content) : new AIMessage(message.content));
+      const chunks = await model.stream(input, {signal});
+      for await (const chunk of chunks) {
+        if (typeof chunk.content === 'string') yield chunk.content;
+        else for (const part of chunk.content) if (part.type === 'text' && typeof part.text === 'string') yield part.text;
+      }
+    }
+  };
+}
+
+function validate(input: RunInput): void {
+  if (!input || typeof input.threadId !== 'string' || !input.threadId.trim() || input.threadId.length > 256 ||
+      typeof input.runId !== 'string' || !input.runId.trim() || input.runId.length > 256 ||
+      !Array.isArray(input.messages) || !input.messages.length || input.messages.length > 100 ||
+      input.messages.some(message => !message || !['user','assistant'].includes(message.role) ||
+        typeof message.content !== 'string' || message.content.length > 100000)) throw Error('Invalid run input');
+  if (input.messages.at(-1)?.role !== 'user') throw Error('Last message must be from the user');
+}
+const State = Annotation.Root({messages:Annotation<ChatMessage[]>(), response:Annotation<string>()});
+
+/** Streams AG-UI events from a LangGraph run. Conversation history is supplied per run. */
+export class LangGraphAGUIAdapter {
+  constructor(private readonly model: StreamingModel) {}
+  async *run(input: RunInput, options: {signal?:AbortSignal} = {}): AsyncGenerator<Event> {
+    validate(input);
+    const {threadId,runId} = input;
+    const messageId = randomUUID();
+    const graph = new StateGraph(State)
+      .addNode('respond', async (state, config) => {
+        const writer = getWriter(config);
+        if (!writer) throw Error('Streaming writer unavailable');
+        for await (const delta of this.model.stream(state.messages, config.signal)) {
+          if (typeof delta !== 'string') throw Error('Model returned a non-text chunk');
+          if (delta) writer(delta);
+        }
+        return {response:''};
+      })
+      .addEdge(START,'respond').addEdge('respond',END).compile();
+    yield {type:EventType.RUN_STARTED,threadId,runId};
+    let started = false;
+    try {
+      const stream = await graph.stream({messages:input.messages}, {streamMode:'custom',signal:options.signal});
+      for await (const delta of stream) {
+        if (typeof delta !== 'string') throw Error('Invalid graph chunk');
+        if (!started) { started = true; yield {type:EventType.TEXT_MESSAGE_START,messageId,role:'assistant'}; }
+        yield {type:EventType.TEXT_MESSAGE_CONTENT,messageId,delta};
+      }
+      if (!started) yield {type:EventType.TEXT_MESSAGE_START,messageId,role:'assistant'};
+      yield {type:EventType.TEXT_MESSAGE_END,messageId};
+      yield {type:EventType.RUN_FINISHED,threadId,runId};
+    } catch {
+      if (started) yield {type:EventType.TEXT_MESSAGE_END,messageId};
+      yield {type:EventType.RUN_ERROR,message:'The agent could not complete this run.',code:'AGENT_RUN_FAILED'};
+    }
+  }
+}
