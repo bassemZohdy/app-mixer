@@ -30,7 +30,7 @@ export function createReactA2UIComponent(React:ReactRuntime): (props:ReactA2UIPr
           try{renderer.apply(message);}catch(error){errors.current(error);}
         });
       }catch(error){errors.current(error);}
-      return ()=>{active=false;try{if(typeof unsubscribe==='function')unsubscribe();}finally{element.replaceChildren();}};
+      return ()=>{active=false;try{if(typeof unsubscribe==='function')unsubscribe();}catch(error){errors.current(error);}finally{element.replaceChildren();}};
     },[subscribe]);
     return React.createElement('div',{ref:host});
   };

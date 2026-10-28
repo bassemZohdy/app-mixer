@@ -38,4 +38,11 @@ try{
  await React.act(()=>{newReceive({version:'v0.9.1',createSurface:{surfaceId:'new',catalogId:APP_MIXER_CATALOG}});newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'New source'}]}});});
  assert.equal(document.querySelector('span').textContent,'New source');
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
+ const root2=createRoot(document.getElementById('app'));let next;const failures=[];
+ const broken=()=>()=>{throw Error('cleanup failed');},replacement=callback=>{next=callback;};
+ await React.act(()=>root2.render(React.createElement(Component,{subscribe:broken,onError:error=>failures.push(error.message)})));
+ await React.act(()=>root2.render(React.createElement(Component,{subscribe:replacement,onError:error=>failures.push(error.message)})));
+ assert.deepEqual(failures,['cleanup failed']);
+ await React.act(()=>{next({version:'v0.9.1',createSurface:{surfaceId:'after',catalogId:APP_MIXER_CATALOG}});next({version:'v0.9.1',updateComponents:{surfaceId:'after',components:[{id:'root',component:'Text',text:'Connected'}]}});});
+ assert.match(document.getElementById('app').textContent,/Connected/);await React.act(()=>root2.unmount());
 }finally{dom.window.close();}

@@ -36,6 +36,6 @@ export class A2UIComponent implements OnChanges, OnDestroy {
   ngOnDestroy():void {this.destroyed=true;this.generation++;this.disconnect();}
   private disconnect():void {
     const stop=this.unsubscribe;this.unsubscribe=undefined;
-    try{stop?.();}finally{this.element.replaceChildren();}
+    try{stop?.();}catch(error){this.zone.run(()=>this.error.emit(error));}finally{this.element.replaceChildren();}
   }
 }

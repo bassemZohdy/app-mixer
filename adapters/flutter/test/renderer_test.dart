@@ -164,7 +164,7 @@ void main() {
     late void Function(Object?) first,second;
     var firstStops=0,secondStops=0;
     final errors=<Object>[];
-    VoidCallback? firstSource(void Function(Object?) receive) {first=receive;return (){firstStops++;};}
+    VoidCallback? firstSource(void Function(Object?) receive) {first=receive;return (){firstStops++;throw StateError('cleanup failed');};}
     VoidCallback? secondSource(void Function(Object?) receive) {second=receive;return (){secondStops++;};}
     Widget app(A2UISubscribe source)=>MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:source,onError:errors.add)));
     await tester.pumpWidget(app(firstSource));
@@ -172,11 +172,11 @@ void main() {
     first(message('updateComponents',{'surfaceId':'old','components':[{'id':'root','component':'Text','text':'Old'}]}));
     await tester.pump();expect(find.text('Old'),findsOneWidget);
     await tester.pumpWidget(app(secondSource));expect(firstStops,1);expect(find.text('Old'),findsNothing);
-    first({'version':'invalid'});expect(errors,isEmpty);
+    first({'version':'invalid'});expect(errors,hasLength(1));expect(errors.single,isA<StateError>());
     second(message('createSurface',{'surfaceId':'new','catalogId':appMixerCatalog}));
     second(message('updateComponents',{'surfaceId':'new','components':[{'id':'root','component':'Text','text':'New'}]}));
     await tester.pump();expect(find.text('New'),findsOneWidget);
-    await tester.pumpWidget(const SizedBox.shrink());expect(secondStops,1);second({'version':'invalid'});expect(errors,isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());expect(secondStops,1);second({'version':'invalid'});expect(errors,hasLength(1));
   });
   testWidgets('disables buttons without an action handler', (tester) async {
     late void Function(Object?) receive;
