@@ -115,3 +115,10 @@ test('web and native reject null paths and optional properties atomically',()=>{
  ]){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));}
  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
 });
+
+test('shared invalid messages leave web and native surfaces unchanged',async()=>{
+ const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/rejections.json',import.meta.url),'utf8'));
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ for(const value of [message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]})]){web.apply(value);native.apply(value);}
+ for(const invalid of fixture){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
+});

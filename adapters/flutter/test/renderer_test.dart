@@ -190,4 +190,11 @@ void main() {
     await tester.pump();expect(tester.widget<TextButton>(find.byType(TextButton)).onPressed,isNull);
   });
 
+  test('shared invalid messages leave Flutter surface unchanged', () {
+    final fixture=jsonDecode(File('test/fixtures/rejections.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));
+    for(final invalid in fixture){expect(()=>store.apply(invalid),throwsFormatException);expect(store.snapshot().single?.text,'Safe');}
+  });
+
 }

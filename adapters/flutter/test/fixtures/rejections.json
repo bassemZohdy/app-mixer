@@ -1,0 +1,8 @@
+[
+  {"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":null,"value":{"name":"bad"}}},
+  {"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/__proto__/bad","value":"bad"}},
+  {"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Text","text":"bad","variant":null}]}},
+  {"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Column","children":["root"]}]}},
+  {"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"TextField","label":"Name","value":{"path":"/"}}]}},
+  {"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Button","child":"label","action":{"event":{"name":"save","context":{"x":{"path":"/constructor/x"}}}}},{"id":"label","component":"Text","text":"Save"}]}}
+]
