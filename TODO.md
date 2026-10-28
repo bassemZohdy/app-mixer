@@ -20,7 +20,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P1-02 Isolated Control Plane and Data Plane APIs
 - [x] P1-03 A2UI-compatible component registry and web renderer (initial six-component catalog; [scope and limitations](docs/a2ui-renderer.md))
 - [x] P1-04 AG-UI adapter with configurable LLM and LangGraph.js (initial text-only integration; [scope and limitations](docs/agent-adapter.md))
-- [ ] P1-05 Development Agent typed patches, preview and approval/publish
+- [ ] P1-05 Development Agent typed patches, preview and approval/publish (proposal foundation: [scope and remaining work](docs/development-proposals.md))
 - [ ] P1-06 OpenAPI import and authorized capability registry
 - [ ] P1-07 Two-level published definition cache and invalidation
 - [ ] P1-08 Docker Compose and agent-outage acceptance test
