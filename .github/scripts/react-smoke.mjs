@@ -16,7 +16,7 @@ const A2UI=createReactA2UIComponent(React);const root=createRoot(document.getEle
 let receive,unsubscribed=0;const errors=[],actions=[];
 const subscribe=callback=>{receive=callback;return ()=>{unsubscribed++;};};
 const onError=error=>errors.push(error);
-const render=onAction=>React.createElement(React.StrictMode,null,React.createElement(A2UI,{subscribe,onAction,onError}));
+const render=(onAction,source=subscribe)=>React.createElement(React.StrictMode,null,React.createElement(A2UI,{subscribe:source,onAction,onError}));
 try{
  await React.act(()=>root.render(render(message=>actions.push(['first',message]))));
  await React.act(()=>{
@@ -27,7 +27,12 @@ try{
  await React.act(()=>root.render(render(message=>actions.push(['updated',message]))));
  await React.act(()=>document.querySelector('button').click());
  assert.equal(actions[0][0],'updated');assert.equal(actions[0][1].action.name,'save');assert.deepEqual(errors,[]);
- await React.act(()=>root.unmount());
- assert.equal(document.querySelector('button'),null);assert.equal(unsubscribed,2);
- receive({version:'invalid'});assert.deepEqual(errors,[]);
+ const oldReceive=receive;let newReceive;
+ const newSubscribe=callback=>{newReceive=callback;return ()=>{unsubscribed++;};};
+ await React.act(()=>root.render(render(message=>actions.push(['updated',message]),newSubscribe)));
+ assert.equal(unsubscribed,2);assert.equal(document.querySelector('button'),null);
+ oldReceive({version:'invalid'});assert.deepEqual(errors,[]);
+ await React.act(()=>{newReceive({version:'v0.9.1',createSurface:{surfaceId:'new',catalogId:APP_MIXER_CATALOG}});newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'New source'}]}});});
+ assert.match(document.getElementById('app').textContent,/New source/);
+ await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.deepEqual(errors,[]);
 }finally{dom.window.close();}
