@@ -1,4 +1,6 @@
 /** An intentionally limited renderer for A2UI v0.9.1 basic catalog messages. */
+export const APP_MIXER_CATALOG = 'https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json';
+/** The standard catalog is accepted for backward compatibility, but only a subset is implemented. */
 export const BASIC_CATALOG = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj = Record<string, unknown>;
 export type ActionMessage = {version:'v0.9.1'; action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string, unknown>}};
@@ -144,7 +146,7 @@ export class A2UIRenderer {
     if (kind === 'createSurface') {
       if (this.surfaces.size >= 100) throw Error('Too many surfaces');
       if (!only(payload, ['surfaceId','catalogId'])) throw Error('Unsupported surface property');
-      if (payload.catalogId !== BASIC_CATALOG) throw Error('Unsupported catalog');
+      if (payload.catalogId !== BASIC_CATALOG && payload.catalogId !== APP_MIXER_CATALOG) throw Error('Unsupported catalog');
       if (this.surfaces.has(surfaceId)) throw Error('Surface already exists');
       const element = this.host.ownerDocument.createElement('div');
       element.dataset.surfaceId = surfaceId; this.host.appendChild(element);

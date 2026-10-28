@@ -48,8 +48,8 @@ test('generated app serves its workspace and definition', {timeout: 15000}, asyn
     assert.ok(script);
     const executable = script.replace(/^import [^;]+;/, '');
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'BASIC_CATALOG', executable)(
-      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.BASIC_CATALOG
+    await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'APP_MIXER_CATALOG', executable)(
+      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.APP_MIXER_CATALOG
     );
     const rendered = host.children[0].children[0];
     assert.equal(rendered.children[0].textContent, 'Home');
