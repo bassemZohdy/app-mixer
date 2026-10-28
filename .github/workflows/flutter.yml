@@ -25,3 +25,4 @@ jobs:
           flutter pub get
           flutter analyze
           flutter test
+          timeout 180s flutter test --platform chrome test/web/renderer_web_test.dart
