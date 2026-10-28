@@ -32,3 +32,13 @@ CLI creates project → developer imports OpenAPI or selects internal data → d
 
 ## Explicit exclusions
 Brownfield migration, new workflow engine, new LLM, new identity provider, arbitrary agent-generated executable code, mandatory centralized platform. Requirements are not claims of delivered features.
+
+## Persistent runtime agents (planned)
+- REQ-18: Agent is an independent configurable, tenant-scoped entity; association to organization/team/app/service/user is optional and policy-driven, not hard-wired to one user.
+- REQ-19: Configurable agent lifecycle manager, durable run/checkpoint recovery, event/webhook/schedule activation and idle suspension.
+- REQ-20: Durable action intent/outcome logging, stable idempotency across restarts, reconciliation and human approvals for sensitive actions.
+- REQ-21: Scoped configurable memory with retention, audit, deletion and separation across tenants, agents and authorized actors.
+- REQ-22: Service and optionally delegated-user identity, authorization at every capability call, consent expiry, budgets and observability.
+- REQ-23: Local and production deployment portability with independently runnable Data Plane; no mandatory new workflow engine.
+
+Full proposed design and acceptance criteria: [Persistent Agents](persistent-agents.md). None of REQ-18–23 is claimed implemented.
