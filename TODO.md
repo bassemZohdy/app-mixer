@@ -26,7 +26,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [x] P1-08 Docker Compose and agent-outage acceptance test (local development profile; [scope and limitations](docs/local-compose.md))
 
 ## P2: portability and advanced data
-- [ ] P2-01 Angular/React/React Native/Flutter adapters and parity checks
+- [ ] P2-01 Angular/React/React Native/Flutter adapters and parity checks (React DOM host bridge prototype; [scope and remaining work](docs/react-adapter.md))
 - [ ] P2-02 Extension SDK and compatibility manifests
 - [ ] P2-03 Internal data provider and staged external transactions
 - [ ] P2-04 Offline-first queue, idempotency and conflict handling
