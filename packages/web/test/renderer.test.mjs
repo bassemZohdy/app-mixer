@@ -123,3 +123,14 @@ test('data model upserts nested paths and array deletion preserves indices', () 
   renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/items/0'}});
   assert.equal(host.children[0].children[0].textContent,'second');
 });
+
+
+test('rejects oversized expanded trees without replacing existing UI', () => {
+  const {host,renderer}=setup(); renderer.apply(create('main'));
+  renderer.apply(components('main',[{id:'root',component:'Text',text:'Safe'}]));
+  const nodes = [{id:'root',component:'Column',children:['n0','n0']}];
+  for (let i=0;i<13;i++) nodes.push({id:`n${i}`,component:'Column',children:[`n${i+1}`,`n${i+1}`]});
+  nodes.push({id:'n13',component:'Text',text:'leaf'});
+  assert.throws(() => renderer.apply(components('main',nodes)), /tree too large/);
+  assert.equal(host.children[0].children[0].textContent,'Safe');
+});
