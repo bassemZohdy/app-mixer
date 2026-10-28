@@ -58,3 +58,14 @@ test('buttons resolve only explicit context and reject stale action callbacks',(
  store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'other'}}}]));assert.throws(()=>store.action('a','root',revision),/Stale/);
  assert.throws(()=>store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'bad',context:{x:{path:'/__proto__/x'}}}}}])),/Unsafe/);
 });
+
+test('data model limits reject unsafe or oversized updates atomically',()=>{
+ const store=new NativeSurfaceStore();store.apply(create('a'));
+ store.apply(update('a',[{id:'root',component:'Text',text:{path:'/name'}}]));
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{name:'Safe'}}});
+ const data=value=>({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/extra',value}});
+ assert.throws(()=>store.apply(data(Array(10001).fill(1))),/too large/);
+ assert.throws(()=>store.apply(data(JSON.parse('{"__proto__":{"x":1}}'))),/Unsafe/);
+ const cycle=[];cycle.push(cycle);assert.throws(()=>store.apply(data(cycle)),/Cyclic/);
+ assert.equal(store.snapshot()[0].root.text,'Safe');
+});

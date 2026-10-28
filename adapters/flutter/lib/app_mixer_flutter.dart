@@ -22,7 +22,28 @@ List<String> _pointer(String path) {
     return key;
   }).toList();
 }
-dynamic _copy(dynamic value) => jsonDecode(jsonEncode(value));
+dynamic _copy(dynamic value) {
+  var count=0;
+  final ancestors=<Object>{};
+  dynamic visit(dynamic input, int depth) {
+    if (++count>10000 || depth>100) throw FormatException('Data model too large');
+    if (input==null || input is String || input is bool || (input is num && input.isFinite)) return input;
+    if (input is! List && input is! Map) throw FormatException('Unsupported data value');
+    if (!ancestors.add(input)) throw FormatException('Cyclic data model');
+    dynamic result;
+    if (input is List) {result=input.map((value)=>visit(value,depth+1)).toList();}
+    else {
+      final values=<String,dynamic>{};
+      for (final entry in (input as Map).entries) {
+        if (entry.key is! String || ['__proto__','prototype','constructor'].contains(entry.key)) throw FormatException('Unsafe data key');
+        values[entry.key as String]=visit(entry.value,depth+1);
+      }
+      result=values;
+    }
+    ancestors.remove(input);return result;
+  }
+  return visit(value,0);
+}
 final _missing = Object();
 dynamic _read(dynamic data, String path) {
   var value=data;
@@ -49,7 +70,7 @@ dynamic _update(dynamic data, String path, dynamic value, bool remove) {
   if (current is Map) {if(remove) {current.remove(last);} else {current[last]=_copy(value);}}
   else if (current is List) {final index=int.tryParse(last);if(index==null||index<0||index>=current.length||'$index'!=last)throw FormatException('Invalid array index');current[index]=remove?null:_copy(value);}
   else {throw FormatException('Data path parent does not exist');}
-  return root;
+  return _copy(root);
 }
 
 class NativeNode {

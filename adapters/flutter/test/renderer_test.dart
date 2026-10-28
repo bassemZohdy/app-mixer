@@ -112,4 +112,16 @@ void main() {
     for(final step in steps){store.apply(step['message']);final root=store.snapshot().single;expect(root==null?null:tree(root),step['tree']);}
   });
 
+  test('bounds and isolates data model updates', () {
+    final store=FlutterSurfaceStore();
+    store.apply(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'Text','text':{'path':'/name'}}]}));
+    store.apply(message('updateDataModel', {'surfaceId':'main','value':{'name':'Safe'}}));
+    expect(() => store.apply(message('updateDataModel', {'surfaceId':'main','path':'/extra','value':List.filled(10001, 1)})), throwsFormatException);
+    expect(() => store.apply(message('updateDataModel', {'surfaceId':'main','path':'/extra','value':{'__proto__':{'x':1}}})), throwsFormatException);
+    final cyclic=<dynamic>[];cyclic.add(cyclic);
+    expect(() => store.apply(message('updateDataModel', {'surfaceId':'main','path':'/extra','value':cyclic})), throwsFormatException);
+    expect(store.snapshot().single?.text,'Safe');
+  });
+
 }
