@@ -36,4 +36,4 @@ export type { DefinitionRepository, DevelopmentRunner } from './planes.js';
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
 export { importOpenAPI, CapabilityRegistry } from './capabilities.js';
-export type { CapabilityCandidate, InvocationContext } from './capabilities.js';
+export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';
