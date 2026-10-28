@@ -4,10 +4,11 @@ import {NativeSurfaceStore,APP_MIXER_CATALOG} from '../dist/index.js';
 import {A2UIRenderer} from '../../web/dist/index.js';
 
 class Element {
- constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.style={};this.dataset={};this.textContent='';this.parent=null;}
+ constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.style={};this.dataset={};this.textContent='';this.parent=null;this.listeners={};this.value='';}
  appendChild(child){child.parent=this;this.children.push(child);return child;}
  replaceChildren(...children){this.children=[];for(const child of children)this.appendChild(child);}
  remove(){if(this.parent)this.parent.children=this.parent.children.filter(x=>x!==this);}
+ addEventListener(event,fn){this.listeners[event]=fn;}
 }
 const doc={createElement:tag=>new Element(tag,doc)};
 const domTree=node=>{
@@ -38,4 +39,19 @@ test('web and native agree on data-bound text and nested updates',()=>{
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/form/a~1b'}}]}));
  for(const value of ['Ada','Grace',42]){apply(message('updateDataModel',{surfaceId:'main',path:'/form/a~1b',value}));assert.equal(host.children[0].children[0].textContent,native.snapshot()[0].root.text);}
  apply(message('updateDataModel',{surfaceId:'main',path:'/form/a~1b'}));assert.equal(host.children[0].children[0].textContent,native.snapshot()[0].root.text);
+});
+
+test('web and native text fields update the same bound data',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateDataModel',{surfaceId:'main',value:{form:{name:'Ada'}}}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['field','display']},{id:'field',component:'TextField',label:'Name',value:{path:'/form/name'}},{id:'display',component:'Text',text:{path:'/form/name'}}]}));
+ const input=host.children[0].children[0].children[0].children[1];input.value='Grace';input.listeners.input();
+ const snapshot=native.snapshot()[0];native.writeField('main','field',snapshot.revision,'Grace');
+ assert.equal(host.children[0].children[0].children[1].textContent,native.snapshot()[0].root.children[1].text);
+ assert.equal(native.snapshot()[0].root.children[0].value,'Grace');
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'field',component:'TextField',label:'Name',value:{path:'/form/other'}}]}));
+ assert.throws(()=>native.writeField('main','field',snapshot.revision,'stale'),/Stale/);
+ assert.equal(native.snapshot()[0].root.children[1].text,'Grace');
 });

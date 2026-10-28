@@ -10,7 +10,8 @@ Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configu
 const React=require('react');const {createRoot}=require('react-dom/client');
 const View=({children,style})=>React.createElement('div',{style},children);
 const Text=({children,accessibilityRole})=>React.createElement('span',{'data-role':accessibilityRole},children);
-const Component=createReactNativeA2UIComponent(React,{View,Text});const root=createRoot(document.getElementById('app'));
+let change;const TextInput=props=>{change=props.onChangeText;return React.createElement('input',{value:props.value,readOnly:true});};
+const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput});const root=createRoot(document.getElementById('app'));
 let receive,unsubscribed=0;const errors=[];
 const subscribe=callback=>{receive=callback;return ()=>{unsubscribed++;};};
 try{
@@ -18,10 +19,13 @@ try{
  await React.act(()=>{
   receive({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
   receive({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{name:'Native hello'}}});
-  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title']},{id:'title',component:'Text',text:{path:'/name'},variant:'h1'}]}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title','field']},{id:'title',component:'Text',text:{path:'/name'},variant:'h1'},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}}]}});
  });
  assert.equal(document.querySelector('span').textContent,'Native hello');assert.equal(document.querySelector('span').dataset.role,'header');
+ await React.act(()=>change('Updated'));assert.equal(document.querySelector('span').textContent,'Updated');const stale=change;
+ await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'field',component:'TextField',label:'Name',value:{path:'/other'}}]}}));
+ await React.act(()=>stale('stale'));assert.equal(errors.length,1);assert.equal(document.querySelector('span').textContent,'Updated');
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Button'}]}}));
- assert.equal(errors.length,1);assert.equal(document.querySelector('span').textContent,'Native hello');
- await React.act(()=>root.unmount());assert.equal(unsubscribed,2);receive({version:'invalid'});assert.equal(errors.length,1);
+ assert.equal(errors.length,2);assert.equal(document.querySelector('span').textContent,'Updated');
+ await React.act(()=>root.unmount());assert.equal(unsubscribed,2);receive({version:'invalid'});stale('late');assert.equal(errors.length,2);
 }finally{dom.window.close();}
