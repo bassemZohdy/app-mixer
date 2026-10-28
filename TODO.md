@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**6 / 22 tasks complete (27%)**
+**7 / 22 tasks complete (32%)**
 
-`██████░░░░░░░░░░░░░░░░`
+`███████░░░░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -17,7 +17,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 
 ## P1: working vertical slice
 - [x] P1-01 SQLite definition repository and immutable published versions
-- [ ] P1-02 Isolated Control Plane and Data Plane APIs
+- [x] P1-02 Isolated Control Plane and Data Plane APIs
 - [ ] P1-03 A2UI-compatible component registry and web renderer
 - [ ] P1-04 AG-UI adapter with configurable LLM and LangGraph.js
 - [ ] P1-05 Development Agent typed patches, preview and approval/publish

@@ -14,3 +14,14 @@ test('rejects unknown patch operations without changing the draft', () => {
   assert.throws(() => store.apply(0,[{op:'unknown'}]), /Unknown patch operation/);
   assert.equal(store.getDraft().revision, 0);
 });
+
+
+test('in-memory store retrieves the requested published version', () => {
+  const store = new ApplicationStore({id:'demo', schemaVersion:1, revision:0, pages:[]});
+  store.publish(0);
+  store.apply(0, [{op:'addPage',page:{id:'home',title:'Home',route:'/',components:[]}}]);
+  store.publish(1);
+  assert.equal(store.getPublished(1).definition.pages.length, 0);
+  assert.equal(store.getPublished().version, 2);
+  assert.equal(store.getPublished(3), undefined);
+});

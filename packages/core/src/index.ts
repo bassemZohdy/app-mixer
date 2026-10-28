@@ -14,7 +14,7 @@ export class ApplicationStore {
  private draft:ApplicationDefinition;private published:{version:number;definition:ApplicationDefinition}[]=[];
  constructor(initial:ApplicationDefinition){validate(initial);this.draft=copy(initial);}
  getDraft(){return copy(this.draft);}
- getPublished(){const p=this.published.at(-1);return p?copy(p):undefined;}
+ getPublished(version?:number){if(version!==undefined&&(!Number.isSafeInteger(version)||version<1))throw Error("Invalid version");const p=version===undefined?this.published.at(-1):this.published.find(x=>x.version===version);return p?copy(p):undefined;}
  apply(baseRevision:number,patches:Patch[]):ApplicationDefinition{
   if(baseRevision!==this.draft.revision)throw Error("Revision conflict");
   const candidate=copy(this.draft);
@@ -30,3 +30,5 @@ export class ApplicationStore {
 }
 
 export { SqliteApplicationStore } from './sqlite.js';
+export { createControlPlane, createDataPlane } from './planes.js';
+export type { DefinitionRepository } from './planes.js';
