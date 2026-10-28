@@ -71,3 +71,49 @@ export function createExtensionPublicationGuard(manifests: ExtensionManifest[], 
     return true;
   };
 }
+
+export type ExtensionImplementation = (...args: never[]) => unknown;
+export type ExtensionBindings = {
+  components: Record<string, ExtensionImplementation>;
+  tools: Record<string, ExtensionImplementation>;
+  providers: Record<string, ExtensionImplementation>;
+};
+type RegistrationKind = keyof ExtensionBindings;
+
+/** Trusted static registrations only; authorization remains the host's responsibility. */
+export class ExtensionRegistry {
+  private readonly manifests: ExtensionManifest[] = [];
+  private readonly registrations: Record<RegistrationKind, Map<string, ExtensionImplementation>> = {
+    components: new Map(), tools: new Map(), providers: new Map()
+  };
+  private readonly host: ExtensionHost;
+
+  constructor(host: ExtensionHost) {
+    this.host = structuredClone(host);
+    checkExtensionCompatibility([], this.host, {components:[], tools:[], providers:[]});
+  }
+
+  register(manifest: ExtensionManifest, bindings: ExtensionBindings): void {
+    const snapshot = structuredClone(manifest);
+    const result = checkExtensionCompatibility([...this.manifests, snapshot], this.host, {components:[], tools:[], providers:[]});
+    if (!result.compatible) throw Error('Extension compatibility failed');
+    if (!fields(bindings, ['components','tools','providers'])) throw Error('Invalid extension bindings');
+    const pending: {kind:RegistrationKind; name:string; implementation:ExtensionImplementation}[] = [];
+    for (const kind of ['components','tools','providers'] as const) {
+      const values = bindings[kind];
+      if (!record(values) || Object.keys(values).length !== snapshot[kind].length ||
+          !snapshot[kind].every(name => Object.hasOwn(values,name) && typeof values[name] === 'function')) throw Error('Extension bindings do not match manifest');
+      for (const name of snapshot[kind]) pending.push({kind,name,implementation:values[name] as ExtensionImplementation});
+    }
+    // Install only after all metadata and bindings have been checked.
+    this.manifests.push(snapshot);
+    for (const {kind,name,implementation} of pending) this.registrations[kind].set(name,implementation);
+  }
+
+  get(kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
+    if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
+    return this.registrations[kind].get(name);
+  }
+
+  getManifests(): ExtensionManifest[] { return structuredClone(this.manifests); }
+}

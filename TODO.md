@@ -30,7 +30,7 @@ Progress counts checked items equally; a task is complete only after verificatio
   - Implemented: React and Angular DOM bridges; React Native and Flutter subsets; shared layout, binding, action and rejection fixtures. CI exercises React, Angular, React Native for Web, Flutter VM and Flutter on Chrome.
   - Backlog: iOS/Android device verification requires mobile emulators or devices; Flutter default layout alignment, typography and accessibility parity, and broader catalog/behavior parity also remain open. See [React Native](docs/react-native-adapter.md) and [Flutter](docs/flutter-adapter.md) scope.
 - [ ] P2-02 Extension SDK and compatibility manifests
-  - In progress: trusted static manifest and approval compatibility checker with opt-in publication guard; configuration schemas, implementation registration, extension references and default publication integration remain. See [extension scope](docs/extensions.md).
+  - In progress: trusted static manifest, approved implementation registry and opt-in publication guard; configuration schemas, renderer/capability integration, extension references and default publication integration remain. See [extension scope](docs/extensions.md).
 - [ ] P2-03 Internal data provider and staged external transactions
 - [ ] P2-04 Offline-first queue, idempotency and conflict handling
 - [ ] P2-05 Schema migration, rollback and environment promotion
