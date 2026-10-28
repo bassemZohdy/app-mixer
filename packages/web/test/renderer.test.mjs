@@ -111,3 +111,15 @@ test('buttons are disabled without an action handler', () => {
   renderer.apply(components('main',[{id:'root',component:'Button',child:'label',action:{event:{name:'send'}}},{id:'label',component:'Text',text:'Send'}]));
   assert.equal(host.children[0].children[0].disabled,true);
 });
+
+
+test('data model upserts nested paths and array deletion preserves indices', () => {
+  const {host,renderer}=setup(); renderer.apply(create('main'));
+  renderer.apply(components('main',[{id:'root',component:'Text',text:{path:'/user/name'}}]));
+  renderer.apply(data('main','Ada','/user/name'));
+  assert.equal(host.children[0].children[0].textContent,'Ada');
+  renderer.apply(data('main',{items:['first','second']}));
+  renderer.apply(components('main',[{id:'root',component:'Text',text:{path:'/items/1'}}]));
+  renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/items/0'}});
+  assert.equal(host.children[0].children[0].textContent,'second');
+});

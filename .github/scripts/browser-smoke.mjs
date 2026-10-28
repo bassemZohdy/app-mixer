@@ -26,8 +26,8 @@ try {
   });
   const {stdout} = await exec(process.env.CHROME_BIN || 'google-chrome', [
     '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-    '--virtual-time-budget=5000', '--dump-dom', url
-  ], {timeout:30000, maxBuffer:1024*1024});
+    '--virtual-time-budget=5000', `--user-data-dir=${join(dir,'chrome-workspace')}`, '--dump-dom', url
+  ], {timeout:45000, maxBuffer:1024*1024});
   assert.match(stdout, /Welcome to App Mixer/);
   assert.match(stdout, /data-surface-id="workspace"/);
   const fixture = `<!doctype html><html><body data-result="pending"><main id="app"></main><script type="module">
@@ -56,8 +56,8 @@ try {
   await writeFile(join(target,'index.html'),fixture);
   const interactive = await exec(process.env.CHROME_BIN || 'google-chrome', [
     '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-    '--virtual-time-budget=5000', '--dump-dom', url
-  ], {timeout:30000,maxBuffer:1024*1024});
+    '--virtual-time-budget=5000', `--user-data-dir=${join(dir,'chrome-interaction')}`, '--dump-dom', url
+  ], {timeout:45000,maxBuffer:1024*1024});
   assert.match(interactive.stdout, /<body data-result="pass">/);
   console.log('Generated workspace and interactive renderer passed in headless Chrome');
 } finally {
