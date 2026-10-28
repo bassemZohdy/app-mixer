@@ -11,7 +11,7 @@ This is a local foundation, not an authentication or production authorization so
 
 `createCapabilityServer(registry, authenticate, auditFailure)` creates a server with `POST /capabilities/:operationId/invoke`. The host authentication callback derives `{tenantId, principalId}` from trusted credentials; clients cannot supply those fields in the request body. The body contains `{ "origin": "ui" | "agent", "input": ... }`. Both origins reach the same registry policy and validator. Authentication failures are sent to the required `auditFailure` callback; if that audit fails, access is blocked. Bind to loopback for development. The host must supply a secure authentication mechanism and durable audit sink for production.
 
-The integration test binds an imported GET candidate to a local sample REST service via an explicitly registered trusted executor. It does not automatically execute arbitrary OpenAPI URLs. API and agent UI wiring and durable audit remain open.
+The integration test binds an imported GET candidate to a local sample REST service via an explicitly registered trusted executor. It does not automatically execute arbitrary OpenAPI URLs. Durable audit and integration into the default runtime agent remain open.
 
 
 ## Restricted OpenAPI GET binding
@@ -19,3 +19,8 @@ The integration test binds an imported GET candidate to a local sample REST serv
 `createOpenAPIGetBinding(document, operationId, {baseURL, authorize, headers})` creates a candidate and registry binding for one explicitly selected GET operation. The host supplies the trusted base URL, authorization policy and optional fixed headers. HTTPS is allowed for trusted configured hosts; plain HTTP is restricted to loopback. Imported server URLs and credentials are ignored. Redirects are rejected, the upstream request has a timeout, and JSON responses are limited to 1 MiB. No write operation or retry is performed.
 
 The binding supports only primitive `string`, `integer`, `number`, and `boolean` path and query parameters with basic length or numeric bounds. Path strings are restricted to letters, digits, underscores and hyphens. Unsupported schemas, references, styles, request bodies, unknown input fields and invalid parameters are rejected. It is not a general OpenAPI validator or executor. Register the returned binding in a `CapabilityRegistry` with a durable audit sink and invoke through a host-authenticated boundary. Production DNS/network policy, credentials, tenant isolation and complete schema support remain future work.
+
+
+## UI and agent adapters
+
+`createCapabilityActionHandler` maps explicitly named A2UI events to host-provided capability invocations. `createCapabilityTool` creates a LangChain tool for a host-selected operation. Both must be connected by trusted host code to the same authenticated capability boundary; the model and UI do not supply the principal or tenant identity. Browser code must use a same-origin authenticated proxy and must not contain server credentials. The current generic runtime agent does not yet automatically bind or execute model-generated tool calls, and generated applications do not yet configure these adapters automatically.
