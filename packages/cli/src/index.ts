@@ -7,7 +7,7 @@ export async function createProject(name:string,parent=process.cwd()):Promise<st
  try{await access(target);throw Error("Target exists");}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;}
  await mkdir(target);
  const manifest={id:name,schemaVersion:1,revision:0,pages:[{id:"home",route:"/",title:"Home",components:[{id:"intro",type:"Text",props:{text:"Welcome to App Mixer"}}]}]};
- const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}main{display:grid;grid-template-columns:1fr 2fr;gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px}input{padding:10px}@media(max-width:700px){main{grid-template-columns:1fr}}</style><header>App Mixer</header><main><section><h2>Conversation</h2><p>Agent integration coming soon.</p><input placeholder="Ask agent" disabled></section><section><h2>Workspace</h2><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,BASIC_CATALOG} from '/renderer.mjs';
+ const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}main{display:grid;grid-template-columns:1fr 2fr;gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px}input{padding:10px}@media(max-width:700px){main{grid-template-columns:1fr}}</style><header>App Mixer</header><main><section><h2>Conversation</h2><p>Agent integration coming soon.</p><input placeholder="Ask agent" disabled></section><section><h2>Workspace</h2><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,APP_MIXER_CATALOG} from '/renderer.mjs';
 const host=document.getElementById('pages');
 try {
   const response=await fetch('/api/application');
@@ -27,7 +27,7 @@ try {
       components.push({id:itemId,component:'Text',text:String(item.props?.text??'')});
     }
   }
-  renderer.apply({version:'v0.9.1',createSurface:{surfaceId,catalogId:BASIC_CATALOG}});
+  renderer.apply({version:'v0.9.1',createSurface:{surfaceId,catalogId:APP_MIXER_CATALOG}});
   renderer.apply({version:'v0.9.1',updateComponents:{surfaceId,components}});
 } catch(error) { host.textContent='Unable to render application: '+error.message; }
 </script></html>`;

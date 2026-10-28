@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {A2UIRenderer, A2UIJsonLines, BASIC_CATALOG, ComponentRegistry, basicRegistry} from '../dist/index.js';
+import { readFile } from 'node:fs/promises';
+import {A2UIRenderer, A2UIJsonLines, BASIC_CATALOG, APP_MIXER_CATALOG, ComponentRegistry, basicRegistry} from '../dist/index.js';
 
 class Element {
   constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.textContent=''; this.parent=null; this.listeners={}; this.value=''; this.selectionStart=0; this.selectionEnd=0; }
@@ -133,4 +134,16 @@ test('rejects oversized expanded trees without replacing existing UI', () => {
   nodes.push({id:'n13',component:'Text',text:'leaf'});
   assert.throws(() => renderer.apply(components('main',nodes)), /tree too large/);
   assert.equal(host.children[0].children[0].textContent,'Safe');
+});
+
+
+test('versioned catalog identifies exactly the built-in registered components', async () => {
+  const catalog=JSON.parse(await readFile(new URL('../catalog/v1/catalog.json',import.meta.url),'utf8'));
+  assert.equal(catalog.catalogId,APP_MIXER_CATALOG);
+  assert.equal(catalog.$id,APP_MIXER_CATALOG);
+  assert.deepEqual(Object.keys(catalog.components).sort(),['Button','Card','Column','Row','Text','TextField']);
+  const registry=basicRegistry();
+  for(const name of Object.keys(catalog.components)) assert.ok(registry.get(name));
+  const {renderer}=setup();
+  renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'custom',catalogId:APP_MIXER_CATALOG}});
 });
