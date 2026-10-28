@@ -1,10 +1,8 @@
 # App Mixer
 
-Open-source, API-first foundations for **greenfield agent-native applications**.
+**App Mixer** is an early-stage open-source, API-first, greenfield framework for agent-native applications. It combines conventional pages with a conversational interface. **Status: foundation prototype; not production ready.**
 
-This repository is an early implementation, not a production-ready framework. The first slice contains a TypeScript CLI that scaffolds a minimal chat + workspace web application, a versioned application-definition runtime, and typed draft patches. The design keeps the **Control Plane optional** and the **Data Plane independently runnable**.
-
-## Try it
+## Getting started
 
 Requires Node.js 22+ and npm.
 
@@ -12,33 +10,27 @@ Requires Node.js 22+ and npm.
 npm install
 npm test
 npm run build
-node packages/cli/dist/index.js create demo
-cd demo
-npm install
+node packages/cli/dist/index.js create demo-app
+cd demo-app
 npm run dev
 ```
 
-The scaffolded demo runs an HTTP server, with a static frontend at http://localhost:3000. A generated application can render published pages without invoking an LLM. The chat panel is an explicit placeholder until a real agent/AG-UI transport is integrated.
+Visit http://localhost:3000. The generated app has a workspace and chat placeholder. AG-UI, A2UI and a real agent are not yet integrated.
 
-## Workspace
+## Specifications and tracking
 
-- `packages/core`: version-aware immutable definitions, drafts, validation, atomic typed patches and publication.
-- `packages/cli`: greenfield scaffolding, with a small runnable vanilla web shell.
-- `docs`: requirements, architecture, decisions, and roadmap.
+- [Requirements](docs/specs/requirements.md)
+- [Architecture](docs/specs/architecture.md)
+- [Application definition model](docs/specs/application-model.md)
+- [Architecture decisions](docs/specs/decisions.md)
+- [Initial implementation plan](docs/specs/implementation-plan.md)
+- [TODO](TODO.md)
+- [CHANGELOG](CHANGELOG.md)
 
-## Principles
+## Repository
 
-- CLI for scaffolding/development tooling only; not runtime administration.
-- Development drafts and published runtime definitions have separate lifecycles.
-- OpenAPI-first integration, pluggable extensions, provider-agnostic LLM configuration.
-- The same authorized capabilities should eventually serve buttons and runtime agents.
-- Two-level caching, optional internal storage, staged submissions and offline sync are design targets, **not implemented in this slice**.
-- Angular, React, React Native and Flutter adapters are target platforms; the initial scaffold is framework-neutral vanilla web to prove the contracts.
+`packages/core` implements an in-memory versioned application definition prototype. `packages/cli` scaffolds a minimal standalone HTTP application. The CLI is for developer tooling only. The future Control Plane is optional; the Data Plane must execute published apps independently.
 
-No integration with the separate Super App Agent or workflow-engine projects.
+This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Angular, React, React Native and Flutter adapters, persistent storage, offline sync, OpenAPI integration, server/client caches, authorization and Kubernetes packaging are future work.
 
-## Status
-
-Proof-of-foundation. Not yet production secure; do not expose generated development endpoints publicly without authentication and authorization.
-
-License: Apache-2.0. See LICENSE.
+License intention: Apache-2.0; verify full license text and third-party licensing before distribution.
