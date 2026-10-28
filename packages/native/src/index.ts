@@ -2,8 +2,9 @@
 export const APP_MIXER_CATALOG='https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json';
 export const BASIC_CATALOG='https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj=Record<string,unknown>;
-export type NativeNode={id:string;kind:'Text'|'Column'|'Row'|'Card'|'TextField';text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;children:NativeNode[]};
+export type NativeNode={id:string;kind:'Text'|'Column'|'Row'|'Card'|'TextField'|'Button';text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;children:NativeNode[]};
 export type NativeSurface={id:string;revision:number;root?:NativeNode};
+export type ActionMessage={version:'v0.9.1';action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string,unknown>}};
 const obj=(value:unknown):value is Obj=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const id=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=256;
 const only=(value:Obj,keys:string[])=>Object.keys(value).every(key=>keys.includes(key));
@@ -60,12 +61,19 @@ function validate(c:unknown):asserts c is Obj {
     if(!only(c,['id','component','children','justify','align'])||!Array.isArray(c.children)||c.children.length>1000||!c.children.every(id)||(c.justify!==undefined&&!justifies.includes(c.justify as string))||(c.align!==undefined&&!aligns.includes(c.align as string)))throw Error('Unsupported layout');
   }else if(c.component==='TextField'){
     if(!only(c,['id','component','label','value','variant'])||typeof c.label!=='string'||!obj(c.value)||!only(c.value,['path'])||typeof c.value.path!=='string'||pointer(c.value.path).length===0||(c.variant!==undefined&&c.variant!=='shortText'&&c.variant!=='longText'))throw Error('Unsupported TextField');
+  }else if(c.component==='Button'){
+    if(!only(c,['id','component','child','action','variant'])||!id(c.child)||(c.variant!==undefined&&!['default','primary','borderless'].includes(c.variant as string))||!obj(c.action)||!only(c.action,['event'])||!obj(c.action.event)||!only(c.action.event,['name','context'])||!id(c.action.event.name)||(c.action.event.context!==undefined&&!obj(c.action.event.context)))throw Error('Unsupported Button');
+    for(const [key,value] of Object.entries((c.action.event.context??{}) as Obj)){
+      if(['__proto__','prototype','constructor'].includes(key))throw Error('Unsafe action context');
+      if(obj(value)){if(!only(value,['path'])||typeof value.path!=='string')throw Error('Unsupported action context');pointer(value.path);}
+      else if(value!==null&&typeof value!=='string'&&typeof value!=='boolean'&&!(typeof value==='number'&&Number.isFinite(value)))throw Error('Unsupported action context');
+    }
   }else if(c.component==='Card'){
     if(!only(c,['id','component','child'])||!id(c.child))throw Error('Unsupported Card');
   }else throw Error('Unsupported component');
 }
 type Surface={id:string;components:Map<string,Obj>;data:unknown;revision:number};
-/** Validates and commits updates atomically. Button actions are not yet supported. */
+/** Validates and commits updates atomically. */
 export class NativeSurfaceStore {
   private readonly surfaces=new Map<string,Surface>();
   private revision=0;
@@ -93,7 +101,7 @@ export class NativeSurfaceStore {
     }
     if(!only(payload,['surfaceId','components'])||!Array.isArray(payload.components)||payload.components.length<1||payload.components.length>1000)throw Error('Invalid components');
     const components=new Map(surface.components);
-    for(const c of payload.components){validate(c);components.set(c.id as string,{...c,...(Array.isArray(c.children)?{children:[...c.children]}:{}),...(obj(c.text)?{text:{...c.text}}:{}),...(obj(c.value)?{value:{...c.value}}:{})});}
+    for(const c of payload.components){validate(c);components.set(c.id as string,{...c,...(Array.isArray(c.children)?{children:[...c.children]}:{}),...(obj(c.text)?{text:{...c.text}}:{}),...(obj(c.value)?{value:{...c.value}}:{}),...(obj(c.action)?{action:cloneData(c.action)}:{})});}
     if(components.size>1000)throw Error('Too many components');
     this.root(components,surface.data);surface.components=components;surface.revision=++this.revision;
   }
@@ -102,6 +110,16 @@ export class NativeSurfaceStore {
     if(!surface||surface.revision!==revision||!component||component.component!=='TextField'||!obj(component.value)||typeof component.value.path!=='string')throw Error('Stale or unknown field');
     if(typeof value!=='string')throw Error('Invalid field value');
     const data=updateData(surface.data,component.value.path,value,false);this.root(surface.components,data);surface.data=data;
+  }
+  action(surfaceId:string,componentId:string,revision:number):ActionMessage {
+    const surface=this.surfaces.get(surfaceId),component=surface?.components.get(componentId);
+    if(!surface||surface.revision!==revision||!component||component.component!=='Button'||!obj(component.action)||!obj(component.action.event))throw Error('Stale or unknown button');
+    const event=component.action.event,context:Record<string,unknown>={};
+    for(const [key,value] of Object.entries((event.context??{}) as Obj)){
+      const result=obj(value)?read(surface.data,value.path as string):value;
+      if(result===undefined)throw Error('Action context path not found');context[key]=cloneData(result);
+    }
+    return {version:'v0.9.1',action:{name:event.name as string,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context}};
   }
   snapshot():NativeSurface[]{return [...this.surfaces.values()].map(surface=>({id:surface.id,revision:surface.revision,root:this.root(surface.components,surface.data)}));}
   private root(components:Map<string,Obj>,data:unknown):NativeNode|undefined {
@@ -112,7 +130,7 @@ export class NativeSurfaceStore {
       const c=components.get(key);if(!c)return undefined;
       if(ancestors.has(key)||ancestors.size>=100)throw Error('Cyclic or deeply nested components');
       const next=new Set(ancestors);next.add(key);
-      const childIds=c.component==='Card'?[c.child as string]:c.component==='Column'||c.component==='Row'?c.children as string[]:[];
+      const childIds=c.component==='Card'||c.component==='Button'?[c.child as string]:c.component==='Column'||c.component==='Row'?c.children as string[]:[];
       const boundText=typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined;
       const fieldValue=c.component==='TextField'&&obj(c.value)?read(data,c.value.path as string):undefined;
       return {id:key,kind:c.component as NativeNode['kind'],...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next)).filter((child):child is NativeNode=>child!==undefined)};
@@ -121,18 +139,19 @@ export class NativeSurfaceStore {
   }
 }
 type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;useRef:<T>(value:T)=>{current:T};useState:<T>(value:T)=>[T,(value:T)=>void];useEffect:(effect:()=>void|(()=>void),deps:unknown[])=>void};
-export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void};
+export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
-export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any}):(props:NativeA2UIProps)=>any {
+export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any}):(props:NativeA2UIProps)=>any {
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
-  return function NativeA2UI({subscribe,onError}:NativeA2UIProps):any{
-    const [surfaces,setSurfaces]=React.useState<NativeSurface[]>([]),errors=React.useRef(onError),storeRef=React.useRef<NativeSurfaceStore|null>(null);
-    React.useEffect(()=>{errors.current=onError;},[onError]);
+  return function NativeA2UI({subscribe,onError,onAction}:NativeA2UIProps):any{
+    const [surfaces,setSurfaces]=React.useState<NativeSurface[]>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null);
+    React.useEffect(()=>{errors.current=onError;actions.current=onAction;},[onError,onAction]);
     React.useEffect(()=>{
       let active=true;const store=new NativeSurfaceStore();storeRef.current=store;setSurfaces([]);let stop:void|(()=>void);
       try{stop=subscribe(message=>{if(!active)return;try{
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.TextInput&&message.updateComponents.components.some(c=>obj(c)&&c.component==='TextField'))throw Error('TextInput primitive is required');
+        if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.Pressable&&message.updateComponents.components.some(c=>obj(c)&&c.component==='Button'))throw Error('Pressable primitive is required');
         store.apply(message);setSurfaces(store.snapshot());
       }catch(error){errors.current(error);}});}catch(error){errors.current(error);}
       return ()=>{active=false;if(storeRef.current===store)storeRef.current=null;if(typeof stop==='function')stop();};
@@ -140,6 +159,10 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const store=storeRef.current;
     const render=(node:NativeNode,surface:NativeSurface):any=>{
       if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{})},node.text);
+      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
+        if(!store||storeRef.current!==store||!actions.current)return;
+        try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
+      }},...node.children.map(child=>render(child,surface)));
       if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id},
         React.createElement(primitives.Text,null,node.label),
         React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{

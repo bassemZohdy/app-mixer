@@ -55,3 +55,13 @@ test('web and native text fields update the same bound data',()=>{
  assert.throws(()=>native.writeField('main','field',snapshot.revision,'stale'),/Stale/);
  assert.equal(native.snapshot()[0].root.children[1].text,'Grace');
 });
+
+test('web and native emit matching button action context',()=>{
+ const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateDataModel',{surfaceId:'main',value:{form:{name:'Ada',secret:'private'}}}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'},source:'screen'}}}},{id:'label',component:'Text',text:'Save'}]}));
+ host.children[0].children[0].listeners.click();const nativeAction=native.action('main','root',native.snapshot()[0].revision);
+ assert.deepEqual({...events[0].action,timestamp:''},{...nativeAction.action,timestamp:''});
+});
