@@ -10,7 +10,7 @@
 | TextField | Literal `label`, absolute `value.path`, and optional `variant` (`shortText` or `longText`); writes changes to the local model. |
 | Button | `child`, optional `variant`, and `action.event` with `name` and optional context containing primitives or absolute data paths. |
 
-The optional `A2UIJsonLines` helper frames decoded JSONL text in order, including messages split across chunks; network transport and UTF-8 decoding remain the caller’s responsibility. Components can arrive incrementally; missing children render as empty placeholders. Data model updates use absolute JSON pointers, but nested parent objects must already exist. Text bindings re-render after updates. Unknown component types and unsupported properties fail rather than executing supplied code. Renderers registered through `ComponentRegistry` are trusted application code, not model-provided code. The renderer rejects cyclic and excessively deep trees; rendered text uses `textContent`.
+The optional `A2UIJsonLines` helper frames decoded JSONL text in order, including messages split across chunks; network transport and UTF-8 decoding remain the caller’s responsibility. Components can arrive incrementally; missing children render as empty placeholders. Data model updates use absolute JSON pointers and create missing object parents; deleting an array element preserves its index. Text bindings re-render after updates. Unknown component types and unsupported properties fail rather than executing supplied code. Renderers registered through `ComponentRegistry` are trusted application code, not model-provided code. The renderer rejects cyclic and excessively deep trees; rendered text uses `textContent`.
 
 Not yet implemented: basic catalog parity, Markdown, templates and relative bindings, additional form components, action functions and validation, theme, `sendDataModel`, and a protocol conformance suite. P1-03 remains open until the supported catalog is defined and verified with protocol conformance tests. Renderer parity across other platforms is a separate task.
 
@@ -30,4 +30,4 @@ Protocol references: [A2UI v0.9.1 quickstart](https://a2ui.org/quickstart/) and 
 
 CI also starts a generated app and checks its rendered workspace in headless Chrome. This is a smoke test, not full protocol conformance.
 
-Pass an `onAction` callback as the third argument to `A2UIRenderer` to receive v0.9.1 action messages. Buttons are disabled without a callback. Only explicitly mapped event context is included; actions are never sent to a server by the renderer. The caller must authorize and route actions. The parent object of a TextField data path must exist before editing.
+Pass an `onAction` callback as the third argument to `A2UIRenderer` to receive v0.9.1 action messages. Buttons are disabled without a callback. Only explicitly mapped event context is included; actions are never sent to a server by the renderer. The caller must authorize and route actions.

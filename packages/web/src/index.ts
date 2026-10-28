@@ -34,14 +34,18 @@ function update(data: unknown, path: string, value: unknown, remove: boolean): u
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i];
     if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
-    if (!Object.hasOwn(current, key)) throw Error('Data path parent does not exist');
+    if (!Object.hasOwn(current, key) || (current as Record<string, unknown>)[key] === undefined) {
+      if (remove) return root;
+      if (Array.isArray(current)) throw Error('Invalid array index');
+      current[key] = {};
+    }
     current = (current as Record<string, unknown>)[key];
   }
   if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
   const last = keys[keys.length - 1];
   if (Array.isArray(current)) {
     if (!/^(0|[1-9]\d*)$/.test(last) || Number(last) >= current.length) throw Error('Invalid array index');
-    if (remove) current.splice(Number(last), 1); else current[Number(last)] = structuredClone(value);
+    if (remove) current[Number(last)] = undefined; else current[Number(last)] = structuredClone(value);
   } else if (remove) delete current[last]; else current[last] = structuredClone(value);
   return root;
 }
@@ -160,7 +164,7 @@ export class A2UIRenderer {
     } else {
       if (!only(payload, ['surfaceId','path','value'])) throw Error('Unsupported data property');
       if (payload.path !== undefined && typeof payload.path !== 'string') throw Error('Invalid data path');
-      data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value'));
+      data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value') || payload.value === undefined);
     }
     const doc = this.host.ownerDocument;
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
