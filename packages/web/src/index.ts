@@ -71,9 +71,15 @@ export function basicRegistry(): ComponentRegistry {
     const element = doc.createElement(tag); element.textContent = textValue(c.text, data); return element;
   });
   for (const type of ['Column', 'Row']) registry.register(type, (c, child, _data, doc) => {
-    if (!only(c, ['id','component','children'])) throw Error('Unsupported layout property');
+    if (!only(c, ['id','component','children','justify','align'])) throw Error('Unsupported layout property');
+    const justify: Record<string,string> = {start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
+    const align: Record<string,string> = {start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
+    if (c.justify !== undefined && (typeof c.justify !== 'string' || !Object.hasOwn(justify,c.justify))) throw Error('Invalid justify');
+    if (c.align !== undefined && (typeof c.align !== 'string' || !Object.hasOwn(align,c.align))) throw Error('Invalid align');
     const element = doc.createElement('div');
     element.style.display = 'flex'; element.style.flexDirection = type === 'Column' ? 'column' : 'row';
+    if (typeof c.justify === 'string') element.style.justifyContent = justify[c.justify];
+    if (typeof c.align === 'string') element.style.alignItems = align[c.align];
     for (const childId of children(c)) element.appendChild(child(childId));
     return element;
   });
@@ -132,5 +138,39 @@ export class A2UIRenderer {
     const root = components.has('root') ? render('root', new Set()) : undefined;
     surface.element.replaceChildren(...(root ? [root] : []));
     surface.components = components; surface.data = data;
+  }
+}
+
+/** Incrementally frames already-decoded A2UI JSONL text into renderer messages. */
+export class A2UIJsonLines {
+  private buffer = '';
+  private closed = false;
+  constructor(private readonly renderer: A2UIRenderer, private readonly maxLineLength = 1024 * 1024) {
+    if (!Number.isSafeInteger(maxLineLength) || maxLineLength < 1) throw Error('Invalid line limit');
+  }
+  write(chunk: string): void {
+    if (this.closed) throw Error('Stream is closed');
+    if (typeof chunk !== 'string') throw Error('Expected decoded text');
+    this.buffer += chunk;
+    try {
+      let newline: number;
+      while ((newline = this.buffer.indexOf('\n')) !== -1) {
+        const line = this.buffer.slice(0, newline);
+        this.buffer = this.buffer.slice(newline + 1);
+        this.process(line);
+      }
+      if (this.buffer.length > this.maxLineLength) throw Error('A2UI line too long');
+    } catch (error) { this.closed = true; this.buffer = ''; throw error; }
+  }
+  finish(): void {
+    if (this.closed) throw Error('Stream is closed');
+    this.closed = true;
+    const line = this.buffer; this.buffer = '';
+    if (line.length) this.process(line);
+  }
+  private process(line: string): void {
+    if (line.length > this.maxLineLength) throw Error('A2UI line too long');
+    if (!line.trim()) return;
+    this.renderer.apply(JSON.parse(line) as unknown);
   }
 }
