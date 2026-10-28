@@ -30,7 +30,7 @@ export function createOpenAIModel(config: OpenAIModelConfig): StreamingModel {
   };
 }
 
-function validate(input: RunInput): void {
+export function validateRunInput(input: RunInput): void {
   if (!input || typeof input.threadId !== 'string' || !input.threadId.trim() || input.threadId.length > 256 ||
       typeof input.runId !== 'string' || !input.runId.trim() || input.runId.length > 256 ||
       !Array.isArray(input.messages) || !input.messages.length || input.messages.length > 100 ||
@@ -44,7 +44,7 @@ const State = Annotation.Root({messages:Annotation<ChatMessage[]>(), response:An
 export class LangGraphAGUIAdapter {
   constructor(private readonly model: StreamingModel) {}
   async *run(input: RunInput, options: {signal?:AbortSignal} = {}): AsyncGenerator<Event> {
-    validate(input);
+    validateRunInput(input);
     const {threadId,runId} = input;
     const messageId = randomUUID();
     const graph = new StateGraph(State)
@@ -76,3 +76,5 @@ export class LangGraphAGUIAdapter {
     }
   }
 }
+
+export { createAGUIServer } from './transport.js';
