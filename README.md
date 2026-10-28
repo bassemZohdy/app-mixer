@@ -15,7 +15,7 @@ cd demo-app
 npm run dev
 ```
 
-Visit http://localhost:3000. The generated app has a workspace and chat placeholder. AG-UI, A2UI and a real agent are not yet integrated.
+Visit http://localhost:3000. The generated app has a workspace and chat placeholder. The workspace uses an initial A2UI renderer subset; AG-UI and a real agent are not yet integrated.
 
 ## Specifications and tracking
 

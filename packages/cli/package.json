@@ -1,1 +1,19 @@
-{"name":"@app-mixer/cli","version":"0.1.0","private":true,"type":"module","bin":{"app-mixer":"dist/index.js"},"scripts":{"build":"tsc -p tsconfig.json"},"devDependencies":{"typescript":"^5.9.3","@types/node":"^22.15.0"}}
+{
+  "name": "@app-mixer/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "app-mixer": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.15.0"
+  },
+  "dependencies": {
+    "@app-mixer/web": "0.1.0"
+  }
+}
