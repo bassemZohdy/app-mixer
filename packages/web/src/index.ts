@@ -246,3 +246,22 @@ export class A2UIJsonLines {
     this.renderer.apply(JSON.parse(line) as unknown);
   }
 }
+
+/** Map explicit A2UI action names to host-provided capability calls. */
+export function createCapabilityActionHandler(options:{
+  mapping:Record<string,string>;
+  invoke:(operationId:string,input:Record<string,unknown>)=>Promise<unknown>;
+  onResult:(operationId:string,result:unknown)=>void;
+  onError:(message:string)=>void;
+}): (message:ActionMessage)=>void {
+  if(!obj(options.mapping) || typeof options.invoke!=='function' || typeof options.onResult!=='function' || typeof options.onError!=='function') throw Error('Invalid capability action handler');
+  const mapping=new Map(Object.entries(options.mapping));
+  for(const [action,operation] of mapping) if(!id(action)||!id(operation)) throw Error('Invalid capability mapping');
+  return message => {
+    const operation=mapping.get(message.action.name);
+    if(!operation){options.onError('Action is not mapped to a capability');return;}
+    void Promise.resolve().then(()=>options.invoke(operation,structuredClone(message.action.context)))
+      .then(result=>options.onResult(operation,result))
+      .catch(()=>options.onError('Capability invocation failed'));
+  };
+}
