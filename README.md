@@ -29,6 +29,7 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [Agent adapter](docs/agent-adapter.md)
 - [Development proposals](docs/development-proposals.md)
 - [Capability registry](docs/capability-registry.md)
+- [Published-definition cache](docs/published-cache.md)
 - [TODO](TODO.md)
 - [CHANGELOG](CHANGELOG.md)
 
