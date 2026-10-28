@@ -30,3 +30,12 @@ test('web and native render the same supported static component hierarchy across
  assert.throws(()=>web.apply(cyclic),/Cyclic/);assert.throws(()=>native.apply(cyclic),/Cyclic/);compare();
  apply(message('deleteSurface',{surfaceId:'main'}));assert.equal(host.children.length,0);assert.deepEqual(native.snapshot(),[]);
 });
+
+test('web and native agree on data-bound text and nested updates',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/form/a~1b'}}]}));
+ for(const value of ['Ada','Grace',42]){apply(message('updateDataModel',{surfaceId:'main',path:'/form/a~1b',value}));assert.equal(host.children[0].children[0].textContent,native.snapshot()[0].root.text);}
+ apply(message('updateDataModel',{surfaceId:'main',path:'/form/a~1b'}));assert.equal(host.children[0].children[0].textContent,native.snapshot()[0].root.text);
+});

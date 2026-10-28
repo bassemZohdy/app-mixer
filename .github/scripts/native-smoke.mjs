@@ -17,7 +17,8 @@ try{
  await React.act(()=>root.render(React.createElement(React.StrictMode,null,React.createElement(Component,{subscribe,onError:error=>errors.push(error)}))));
  await React.act(()=>{
   receive({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
-  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title']},{id:'title',component:'Text',text:'Native hello',variant:'h1'}]}});
+  receive({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{name:'Native hello'}}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title']},{id:'title',component:'Text',text:{path:'/name'},variant:'h1'}]}});
  });
  assert.equal(document.querySelector('span').textContent,'Native hello');assert.equal(document.querySelector('span').dataset.role,'header');
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Button'}]}}));

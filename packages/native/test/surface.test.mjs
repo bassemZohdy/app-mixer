@@ -17,9 +17,9 @@ test('rejects incompatible and cyclic updates atomically',()=>{
  const store=new NativeSurfaceStore();store.apply(create('a'));store.apply(update('a',[{id:'root',component:'Text',text:'Safe'}]));
  for(const invalid of [
   update('a',[{id:'root',component:'Button',child:'x'}]),
-  update('a',[{id:'root',component:'Text',text:{path:'/name'}}]),
+  update('a',[{id:'root',component:'Text',text:{path:'relative'}}]),
   update('a',[{id:'root',component:'Column',children:['root']}]),
-  {version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{name:'Ada'}}}
+  {version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/__proto__/polluted',value:'x'}}
  ])assert.throws(()=>store.apply(invalid));
  assert.equal(store.snapshot()[0].root.text,'Safe');
 });
@@ -27,4 +27,13 @@ test('rejects expanded trees over the resource limit',()=>{
  const store=new NativeSurfaceStore();store.apply(create('a'));
  const components=[{id:'root',component:'Column',children:Array(1000).fill('branch')},{id:'branch',component:'Column',children:Array(6).fill('leaf')},{id:'leaf',component:'Text',text:'x'}];
  assert.throws(()=>store.apply(update('a',components)),/tree too large/);assert.equal(store.snapshot()[0].root,undefined);
+});
+
+test('bound text follows data updates while unsafe paths leave state unchanged',()=>{
+ const store=new NativeSurfaceStore();store.apply(create('a'));
+ store.apply(update('a',[{id:'root',component:'Text',text:{path:'/person/name'}}]));
+ const data=(path,value)=>({version:'v0.9.1',updateDataModel:{surfaceId:'a',path,value}});
+ store.apply(data('/person/name','Ada'));assert.equal(store.snapshot()[0].root.text,'Ada');
+ assert.throws(()=>store.apply(data('/person/__proto__/x','bad')),/Unsafe/);assert.equal(store.snapshot()[0].root.text,'Ada');
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/person/name'}});assert.equal(store.snapshot()[0].root.text,'');
 });
