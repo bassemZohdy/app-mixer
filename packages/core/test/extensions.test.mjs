@@ -80,3 +80,21 @@ test('registration rejects collisions between distinct approved extensions',asyn
  const bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
  registry.register(first,bindings);assert.throws(()=>registry.register(other,bindings),/compatibility/);assert.equal(registry.getManifests().length,1);
 });
+
+test('validates bounded extension configuration before installing and returns copies',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');const m={...manifest(),configSchema:{endpoint:{type:'string',required:true},enabled:{type:'boolean',required:false},limit:{type:'number',required:false}}};
+ const registry=new ExtensionRegistry(host()), fn=()=>{}, bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ for(const config of [{},{endpoint:4},{endpoint:'x',extra:true},{endpoint:'x',limit:Infinity},{endpoint:'x'.repeat(4097)},{endpoint:'x',enabled:null}]) {
+  assert.throws(()=>registry.register(m,bindings,config),/Invalid extension configuration/);assert.deepEqual(registry.getManifests(),[]);
+ }
+ const config={endpoint:'local',enabled:false,limit:0};registry.register(m,bindings,config);config.endpoint='changed';
+ const stored=registry.getConfiguration(m.id);assert.deepEqual(stored,{endpoint:'local',enabled:false,limit:0});stored.endpoint='changed';assert.equal(registry.getConfiguration(m.id).endpoint,'local');assert.equal(registry.getConfiguration('missing'),undefined);
+});
+
+test('rejects malformed or unsafe schemas and undeclared configuration',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');const fn=()=>{},bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ for(const schema of [{port:{type:'integer',required:true}},{port:{type:'number',required:'yes'}},{port:{type:'number',required:true,extra:true}},JSON.parse('{"constructor":{"type":"string","required":true}}')]) {
+  assert.throws(()=>check([{...manifest(),configSchema:schema}],host(),required()),/configuration schema/);
+ }
+ const registry=new ExtensionRegistry(host());assert.throws(()=>registry.register(manifest(),bindings,{undeclared:'x'}),/configuration/);assert.deepEqual(registry.getManifests(),[]);
+});

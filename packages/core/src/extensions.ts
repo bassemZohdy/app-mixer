@@ -1,5 +1,8 @@
 import type { ApplicationDefinition, PublicationGuard } from './index.js';
 
+export type ExtensionConfigSchema = Record<string, {type:'string'|'number'|'boolean'; required:boolean}>;
+export type ExtensionConfiguration = Record<string, string | number | boolean>;
+
 /** Metadata for trusted, statically installed extensions. This is not a code loader. */
 export type ExtensionManifest = {
   manifestVersion: 1;
@@ -12,6 +15,7 @@ export type ExtensionManifest = {
   tools: string[];
   providers: string[];
   permissions: string[];
+  configSchema?: ExtensionConfigSchema;
 };
 export type ExtensionHost = {
   runtimeVersion: string;
@@ -29,6 +33,22 @@ function list(x: unknown, pattern = idPattern): x is string[] {
   return Array.isArray(x) && x.length <= 256 && x.every(v => typeof v === 'string' && pattern.test(v)) && new Set(x).size === x.length;
 }
 const scope = (x: unknown): x is ExtensionManifest['scope'] => x === 'platform' || x === 'development' || x === 'application';
+const configKey = (x:string) => idPattern.test(x) && !['__proto__','prototype','constructor'].includes(x);
+function validateConfigSchema(schema:unknown): void {
+  if (!record(schema) || Object.keys(schema).length > 64) throw Error('Invalid extension configuration schema');
+  for (const [key, rule] of Object.entries(schema)) {
+    if (!configKey(key) || !fields(rule,['type','required']) || !['string','number','boolean'].includes(rule.type as string) || typeof rule.required !== 'boolean') throw Error('Invalid extension configuration schema');
+  }
+}
+function validateConfiguration(schema:ExtensionConfigSchema, config:unknown): asserts config is ExtensionConfiguration {
+  if (!record(config) || Object.keys(config).length > 64) throw Error('Invalid extension configuration');
+  for (const key of Object.keys(config)) {
+    if (!Object.hasOwn(schema,key)) throw Error('Invalid extension configuration');
+    const value = config[key], type = schema[key].type;
+    if (typeof value !== type || (typeof value === 'string' && value.length > 4096) || (typeof value === 'number' && !Number.isFinite(value))) throw Error('Invalid extension configuration');
+  }
+  for (const [key, rule] of Object.entries(schema)) if (rule.required && !Object.hasOwn(config,key)) throw Error('Invalid extension configuration');
+}
 
 /** Check metadata against an explicit host approval and required registrations.
  * Exact versions only; neither approval nor this check enforces runtime authorization. */
@@ -42,7 +62,8 @@ export function checkExtensionCompatibility(manifests: unknown, host: unknown, r
   const errors:string[] = [], ids = new Set<string>();
   const registrations = {components:new Set<string>(),tools:new Set<string>(),providers:new Set<string>()};
   for (const m of manifests) {
-    if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions']) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
+    if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...(record(m) && Object.hasOwn(m,'configSchema') ? ['configSchema'] : [])]) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
+    if (Object.hasOwn(m,'configSchema')) validateConfigSchema(m.configSchema);
     if (ids.has(m.id)) { errors.push(`Duplicate extension: ${m.id}`); continue; }
     ids.add(m.id);
     const approval=approvals.get(m.id);
@@ -87,16 +108,19 @@ export class ExtensionRegistry {
     components: new Map(), tools: new Map(), providers: new Map()
   };
   private readonly host: ExtensionHost;
+  private readonly configurations = new Map<string, ExtensionConfiguration>();
 
   constructor(host: ExtensionHost) {
     this.host = structuredClone(host);
     checkExtensionCompatibility([], this.host, {components:[], tools:[], providers:[]});
   }
 
-  register(manifest: ExtensionManifest, bindings: ExtensionBindings): void {
+  register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}): void {
     const snapshot = structuredClone(manifest);
     const result = checkExtensionCompatibility([...this.manifests, snapshot], this.host, {components:[], tools:[], providers:[]});
     if (!result.compatible) throw Error('Extension compatibility failed');
+    validateConfiguration(snapshot.configSchema ?? {}, configuration);
+    const configSnapshot = structuredClone(configuration);
     if (!fields(bindings, ['components','tools','providers'])) throw Error('Invalid extension bindings');
     const pending: {kind:RegistrationKind; name:string; implementation:ExtensionImplementation}[] = [];
     for (const kind of ['components','tools','providers'] as const) {
@@ -107,12 +131,19 @@ export class ExtensionRegistry {
     }
     // Install only after all metadata and bindings have been checked.
     this.manifests.push(snapshot);
+    this.configurations.set(snapshot.id,configSnapshot);
     for (const {kind,name,implementation} of pending) this.registrations[kind].set(name,implementation);
   }
 
   get(kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
     if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
     return this.registrations[kind].get(name);
+  }
+
+  getConfiguration(id:string): ExtensionConfiguration | undefined {
+    if (typeof id !== 'string' || !idPattern.test(id)) throw Error('Invalid extension lookup');
+    const config=this.configurations.get(id);
+    return config === undefined ? undefined : structuredClone(config);
   }
 
   getManifests(): ExtensionManifest[] { return structuredClone(this.manifests); }
