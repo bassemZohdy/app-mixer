@@ -27,6 +27,7 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 - [Local plane APIs](docs/plane-apis.md)
 - [A2UI renderer subset](docs/a2ui-renderer.md)
 - [Agent adapter](docs/agent-adapter.md)
+- [Development proposals](docs/development-proposals.md)
 - [TODO](TODO.md)
 - [CHANGELOG](CHANGELOG.md)
 

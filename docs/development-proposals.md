@@ -1,0 +1,7 @@
+# Development proposals: local foundation
+
+`DevelopmentProposals` accepts a base revision and a bounded list of supported typed patches. It validates the patch shape, applies the patches to a cloned in-memory draft to create an isolated preview, and retains the proposal as pending. Neither proposal nor preview modifies the draft or publishes anything.
+
+A trusted host can explicitly approve a pending proposal, applying its stored patches to the draft through the repository's revision check. If the draft changed since the proposal was made, approval fails without applying the proposal. Rejecting a proposal does not modify the draft. Publication is a separate explicit repository operation, and still requires the expected draft revision. Returned proposals are copies; mutating them cannot alter the stored proposal.
+
+This is an in-memory foundation, not an approval security boundary. Proposals and decisions disappear on process restart, the host must enforce separate agent and human authorities, and the current control-plane patch/publish endpoints remain directly accessible to holders of the control token. No Development Agent, approval UI, persistent audit, policy validation, or authenticated proposal endpoints exist yet. P1-05 remains open until those capabilities are implemented and verified. Existing validation covers the prototype manifest and patch types; it does not validate capability permissions or renderer compatibility.

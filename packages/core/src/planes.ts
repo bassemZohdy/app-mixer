@@ -31,7 +31,7 @@ function page(value: unknown): value is Page {
     string(value.id) && string(value.title) && string(value.route) &&
     Array.isArray(value.components) && value.components.length <= 500 && value.components.every(component);
 }
-function patch(value: unknown): value is Patch {
+export function isValidPatch(value: unknown): value is Patch {
   if (!record(value)) return false;
   if (value.op === 'addPage') return exact(value, ['op','page']) && page(value.page);
   if (value.op === 'setPageTitle') return exact(value, ['op','pageId','title']) && string(value.pageId) && string(value.title);
@@ -82,7 +82,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
     if (req.method === 'POST' && req.url === '/draft/patches') {
       const input = await body(req);
       if (!record(input) || !exact(input, ['baseRevision','patches']) || !revision(input.baseRevision) ||
-          !Array.isArray(input.patches) || input.patches.length > 100 || !input.patches.every(patch)) throw new RequestError(400, 'Invalid patch request');
+          !Array.isArray(input.patches) || input.patches.length > 100 || !input.patches.every(isValidPatch)) throw new RequestError(400, 'Invalid patch request');
       respond(res, 200, repository.apply(input.baseRevision, input.patches)); return;
     }
     if (req.method === 'POST' && req.url === '/publish') {
