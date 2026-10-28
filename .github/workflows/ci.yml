@@ -19,5 +19,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Docker Compose outage smoke test
+        if: matrix.node == '22'
+        run: node deploy/local/compose-smoke.mjs
       - name: Browser smoke test
         run: node .github/scripts/browser-smoke.mjs

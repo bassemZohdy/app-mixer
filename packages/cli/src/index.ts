@@ -50,6 +50,8 @@ try {
 import {readFile} from 'node:fs/promises';
 import {once} from 'node:events';
 const port=Number(process.env.PORT||3000);
+const bind=process.env.APP_MIXER_BIND||'127.0.0.1';
+if(!['127.0.0.1','0.0.0.0'].includes(bind))throw Error('Invalid bind address');
 let dataURL;
 try {const candidate=new URL(process.env.DATA_PLANE_URL||'');if(candidate.protocol==='http:'&&['127.0.0.1','localhost'].includes(candidate.hostname)&&candidate.pathname==='/application'&&!candidate.search&&!candidate.hash&&!candidate.username&&!candidate.password)dataURL=candidate;}catch{}
 let agentURL;
@@ -95,7 +97,7 @@ createServer(async(req,res)=>{
   const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':null;
   if(!path){res.writeHead(404);res.end();return;}
   try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':path.endsWith('.mjs')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
-}).listen(port,'127.0.0.1',function(){console.log('http://127.0.0.1:'+this.address().port)});
+}).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
 `;
  const chat=String.raw`const form=document.getElementById('chat-form'),input=document.getElementById('chat-input'),button=document.getElementById('chat-send'),status=document.getElementById('chat-status'),log=document.getElementById('chat-log');
 const threadId=crypto.randomUUID(),history=[];
