@@ -12,6 +12,45 @@ Map<String, dynamic> _object(Object? value) {
   return Map<String, dynamic>.from(value);
 }
 
+List<String> _pointer(String path) {
+  if (path.isEmpty || path == '/') return [];
+  if (!path.startsWith('/')) throw FormatException('Only absolute JSON pointers are supported');
+  return path.substring(1).split('/').map((part) {
+    if (RegExp(r'~(?![01])').hasMatch(part)) throw FormatException('Invalid JSON pointer');
+    final key=part.replaceAll('~1','/').replaceAll('~0','~');
+    if (['__proto__','prototype','constructor'].contains(key)) throw FormatException('Unsafe JSON pointer');
+    return key;
+  }).toList();
+}
+dynamic _copy(dynamic value) => jsonDecode(jsonEncode(value));
+dynamic _read(dynamic data, String path) {
+  var value=data;
+  for (final key in _pointer(path)) {
+    if (value is Map) {if (!value.containsKey(key)) return null; value=value[key];}
+    else if (value is List) {final index=int.tryParse(key);if (index==null || index<0 || index>=value.length || '$index'!=key) return null; value=value[index];}
+    else {return null;}
+  }
+  return value;
+}
+dynamic _update(dynamic data, String path, dynamic value, bool remove) {
+  final keys=_pointer(path);if (keys.isEmpty) return remove ? <String,dynamic>{} : _copy(value);
+  final root=_copy(data);dynamic current=root;
+  for (final key in keys.take(keys.length-1)) {
+    if (current is Map) {
+      if (!current.containsKey(key)) {if (remove) return root; current[key]=<String,dynamic>{};}
+      current=current[key];
+    } else if (current is List) {
+      final index=int.tryParse(key);if(index==null||index<0||index>=current.length||'$index'!=key)throw FormatException('Invalid array index');
+      current=current[index];
+    } else {throw FormatException('Data path parent does not exist');}
+  }
+  final last=keys.last;
+  if (current is Map) {if(remove) {current.remove(last);} else {current[last]=_copy(value);}}
+  else if (current is List) {final index=int.tryParse(last);if(index==null||index<0||index>=current.length||'$index'!=last)throw FormatException('Invalid array index');current[index]=remove?null:_copy(value);}
+  else {throw FormatException('Data path parent does not exist');}
+  return root;
+}
+
 class NativeNode {
   const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align});
   final String id, kind;
@@ -22,6 +61,7 @@ class _Surface {
   _Surface(this.id);
   final String id;
   Map<String, Map<String, dynamic>> components = {};
+  dynamic data = <String, dynamic>{};
 }
 
 /// Validates a bounded static subset and commits component updates atomically.
@@ -30,7 +70,7 @@ class FlutterSurfaceStore {
   void apply(Object? input) {
     final message = _object(input);
     if (message['version'] != 'v0.9.1') throw FormatException('Unsupported A2UI version');
-    final keys = ['createSurface', 'updateComponents', 'deleteSurface'].where(message.containsKey).toList();
+    final keys = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface'].where(message.containsKey).toList();
     if (keys.length != 1 || !_only(message, ['version', keys.first])) throw FormatException('Unsupported A2UI message');
     final kind = keys.first, payload = _object(message[kind]);
     if (!_id(payload['surfaceId'])) throw FormatException('Invalid surface ID');
@@ -46,6 +86,11 @@ class FlutterSurfaceStore {
       if (!_only(payload, ['surfaceId'])) throw FormatException('Unsupported delete property');
       _surfaces.remove(id); return;
     }
+    if (kind == 'updateDataModel') {
+      if (!_only(payload, ['surfaceId','path','value']) || (payload['path'] != null && payload['path'] is! String)) throw FormatException('Invalid data update');
+      final data = _update(surface.data, payload['path'] as String? ?? '/', payload['value'], !payload.containsKey('value'));
+      _root(surface.components, data); surface.data = data; return;
+    }
     final list = payload['components'];
     if (!_only(payload, ['surfaceId', 'components']) || list is! List || list.isEmpty || list.length > 1000) throw FormatException('Invalid components');
     final components = Map<String, Map<String, dynamic>>.from(surface.components);
@@ -54,14 +99,17 @@ class FlutterSurfaceStore {
       components[component['id'] as String] = _object(jsonDecode(jsonEncode(component)));
     }
     if (components.length > 1000) throw FormatException('Too many components');
-    _root(components); surface.components = components;
+    _root(components, surface.data); surface.components = components;
   }
-  List<NativeNode?> snapshot() => _surfaces.values.map((surface) => _root(surface.components)).toList();
+  List<NativeNode?> snapshot() => _surfaces.values.map((surface) => _root(surface.components, surface.data)).toList();
   void _validate(Map<String, dynamic> c) {
     if (!_id(c['id'])) throw FormatException('Invalid component');
     final type = c['component'];
     if (type == 'Text') {
-      if (!_only(c, ['id','component','text','variant']) || c['text'] is! String || (c['text'] as String).length > 10000 || (c['variant'] != null && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
+      final text = c['text'];
+      var validText = text is String && text.length <= 10000;
+      if (text is Map && _only(_object(text), ['path']) && text['path'] is String) {_pointer(text['path'] as String); validText = true;}
+      if (!_only(c, ['id','component','text','variant']) || !validText || (c['variant'] != null && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
     } else if (type == 'Column' || type == 'Row') {
       final children = c['children'];
       if (!_only(c, ['id','component','children','justify','align']) || children is! List || children.length > 1000 || !children.every(_id) || (c['justify'] != null && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].contains(c['justify'])) || (c['align'] != null && !['start','center','end'].contains(c['align']))) throw FormatException('Unsupported layout');
@@ -69,7 +117,7 @@ class FlutterSurfaceStore {
       if (!_only(c, ['id','component','child']) || !_id(c['child'])) throw FormatException('Unsupported Card');
     } else {throw FormatException('Unsupported component');}
   }
-  NativeNode? _root(Map<String, Map<String, dynamic>> components) {
+  NativeNode? _root(Map<String, Map<String, dynamic>> components, dynamic data) {
     if (!components.containsKey('root')) return null;
     var count = 0;
     NativeNode? visit(String id, Set<String> ancestors) {
@@ -78,7 +126,8 @@ class FlutterSurfaceStore {
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
       final ids = c['component'] == 'Card' ? [c['child'] as String] : c['component'] == 'Column' || c['component'] == 'Row' ? List<String>.from(c['children'] as List) : <String>[];
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next)).whereType<NativeNode>().toList(), text: c['text'] as String?, variant: c['variant'] as String?, justify: c['justify'] as String?, align: c['align'] as String?);
+      final rawText=c['text']; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, variant: c['variant'] as String?, justify: c['justify'] as String?, align: c['align'] as String?);
     }
     return visit('root', {});
   }

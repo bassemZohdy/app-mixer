@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {NativeSurfaceStore,APP_MIXER_CATALOG} from '../dist/index.js';
 import {A2UIRenderer} from '../../web/dist/index.js';
 
@@ -64,4 +65,10 @@ test('web and native emit matching button action context',()=>{
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'},source:'screen'}}}},{id:'label',component:'Text',text:'Save'}]}));
  host.children[0].children[0].listeners.click();const nativeAction=native.action('main','root',native.snapshot()[0].revision);
  assert.deepEqual({...events[0].action,timestamp:''},{...nativeAction.action,timestamp:''});
+});
+
+test('shared Flutter fixture matches web and native bindings',async()=>{
+ const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/bindings.json',import.meta.url),'utf8'));
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ for(const step of steps){web.apply(step.message);native.apply(step.message);assert.equal(native.snapshot()[0].root?.text??null,step.text);assert.equal(host.children[0].children[0]?.textContent??null,step.text);}
 });
