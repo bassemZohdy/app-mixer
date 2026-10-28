@@ -171,7 +171,7 @@ class FlutterSurfaceStore {
       if (!_only(c, ['id','component','text','variant']) || !validText || (c.containsKey('variant') && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
     } else if (type == 'Column' || type == 'Row') {
       final children = c['children'];
-      if (!_only(c, ['id','component','children','justify','align']) || children is! List || children.length > 1000 || !children.every(_id) || (c.containsKey('justify') && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].contains(c['justify'])) || (c.containsKey('align') && !['start','center','end'].contains(c['align']))) throw FormatException('Unsupported layout');
+      if (!_only(c, ['id','component','children','justify','align']) || children is! List || children.length > 1000 || !children.every(_id) || (c.containsKey('justify') && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].contains(c['justify'])) || (c.containsKey('align') && !['start','center','end','stretch'].contains(c['align']))) throw FormatException('Unsupported layout');
     } else if (type == 'TextField') {
       final value=c['value'];
       if (!_only(c,['id','component','label','value','variant']) || c['label'] is! String || value is! Map || !_only(_object(value),['path']) || value['path'] is! String || _pointer(value['path'] as String).isEmpty || (c.containsKey('variant') && !['shortText','longText'].contains(c['variant']))) throw FormatException('Unsupported TextField');
@@ -193,17 +193,19 @@ class FlutterSurfaceStore {
   NativeNode? _root(Map<String, Map<String, dynamic>> components, dynamic data) {
     if (!components.containsKey('root')) return null;
     var count = 0;
-    NativeNode? visit(String id, Set<String> ancestors) {
+    NativeNode? visit(String id, Set<String> ancestors, int stretchDepth) {
       if (++count > 5000) throw FormatException('Component tree too large');
       final c = components[id]; if (c == null) return null;
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
+      final nextStretchDepth=stretchDepth+(c['align']=='stretch'?1:0);
+      if(nextStretchDepth>4) throw FormatException('Too many nested stretch layouts');
       final ids = c['component'] == 'Card' || c['component'] == 'Button' ? [c['child'] as String] : c['component'] == 'Column' || c['component'] == 'Row' ? List<String>.from(c['children'] as List) : <String>[];
       final rawText=c['text']; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['label'] as String?, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: c['variant'] as String?, justify: c['justify'] as String?, align: c['align'] as String?);
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextStretchDepth)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['label'] as String?, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: c['variant'] as String?, justify: c['justify'] as String?, align: c['align'] as String?);
     }
-    return visit('root', {});
+    return visit('root', {}, 0);
   }
 }
 
@@ -264,8 +266,10 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     },child:children.isEmpty ? const SizedBox.shrink() : children.first);
     if (node.kind == 'Card') return Card(child:children.isEmpty ? const SizedBox.shrink() : children.first);
     final main = {'start':MainAxisAlignment.start,'center':MainAxisAlignment.center,'end':MainAxisAlignment.end,'spaceBetween':MainAxisAlignment.spaceBetween,'spaceAround':MainAxisAlignment.spaceAround,'spaceEvenly':MainAxisAlignment.spaceEvenly}[node.justify] ?? MainAxisAlignment.start;
-    final cross = {'start':CrossAxisAlignment.start,'center':CrossAxisAlignment.center,'end':CrossAxisAlignment.end}[node.align] ?? CrossAxisAlignment.center;
-    return node.kind == 'Row' ? Row(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children) : Column(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children);
+    final cross = {'start':CrossAxisAlignment.start,'center':CrossAxisAlignment.center,'end':CrossAxisAlignment.end,'stretch':CrossAxisAlignment.stretch}[node.align] ?? CrossAxisAlignment.center;
+    final layout = node.kind == 'Row' ? Row(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children) : Column(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children);
+    if(node.align!='stretch') return layout;
+    return node.kind=='Row' ? IntrinsicHeight(child:layout) : IntrinsicWidth(child:layout);
   }
 }
 
