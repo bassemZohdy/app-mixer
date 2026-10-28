@@ -1,0 +1,8 @@
+[
+  {"message":{"version":"v0.9.1","createSurface":{"surfaceId":"main","catalogId":"https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json"}},"text":null},
+  {"message":{"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Text","text":{"path":"/form/a~1b"}}]}},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":"Ada"}},"text":"Ada"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":"Grace"}},"text":"Grace"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":42}},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b"}},"text":""}
+]

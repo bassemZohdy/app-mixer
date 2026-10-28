@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
@@ -31,7 +33,28 @@ void main() {
     final store=FlutterSurfaceStore();
     store.apply(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
     store.apply(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));
-    expect(() => store.apply(message('updateDataModel', {'surfaceId':'main','value':{}})), throwsFormatException);
+    expect(() => store.apply(message('updateDataModel', {'surfaceId':'main','path':'/__proto__/x','value':'bad'})), throwsFormatException);
     expect(store.snapshot().single?.text, 'Safe');
   });
+  testWidgets('updates bound text after nested model changes', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe:subscribe,onError:errors.add))));
+    receive(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'Text','text':{'path':'/person/name'}}]}));
+    receive(message('updateDataModel', {'surfaceId':'main','path':'/person/name','value':'Ada'}));
+    await tester.pump();expect(find.text('Ada'), findsOneWidget);
+    receive(message('updateDataModel', {'surfaceId':'main','path':'/person/name','value':'Grace'}));
+    await tester.pump();expect(find.text('Grace'), findsOneWidget);
+    receive(message('updateDataModel', {'surfaceId':'main','path':'/person/name'}));
+    await tester.pump();expect(find.text('Grace'), findsNothing);expect(errors, isEmpty);
+  });
+
+  test('shared binding fixture matches expected output', () {
+    final steps=jsonDecode(File('test/fixtures/bindings.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();
+    for(final step in steps){store.apply(step['message']);expect(store.snapshot().single?.text, step['text']);}
+  });
+
 }
