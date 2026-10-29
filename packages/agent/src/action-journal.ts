@@ -7,6 +7,8 @@ export type AgentAction={actionId:string;operationId:string;idempotencyKey:strin
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;clock?:()=>number};
 export type ActionVerificationRequest={scope:AgentRunScope;runId:string;action:AgentAction;input:unknown;authority?:string};
 export type ActionVerification={outcome:'unknown'|'not_applied'|'failed'}|{outcome:'applied';result:unknown};
+export type AgentActionPage={actions:AgentAction[];next?:string};
+export type ActionVerificationPass={results:({actionId:string;outcome:ActionVerification['outcome']}|{actionId:string;error:unknown})[];next?:string};
 const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 export function actionJSON(value:unknown):string{
  let count=0;const stack=new Set<object>();
@@ -43,6 +45,18 @@ export class SqliteAgentActionJournal {
  private transaction<T>(callback:()=>T,withLease=true):T{this.db.exec('BEGIN IMMEDIATE');try{if(withLease)this.fence();const result=callback();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
  private metadata(row:Record<string,unknown>):AgentAction{return {actionId:String(row.action_id),operationId:String(row.operation_id),idempotencyKey:String(row.idempotency_key),status:row.status as ActionStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts)};}
  get(actionId:string):AgentAction|undefined{if(!valid(actionId))throw Error('Invalid action');const row=this.row(actionId);return row?this.metadata(row):undefined;}
+ /** Host-authorized, scope-bound action discovery; results contain no input or outcome payloads. */
+ list(options:{after?:string;limit?:number;status?:ActionStatus}={}):AgentActionPage{
+  if(!options||typeof options!=='object'||(options.after!==undefined&&!valid(options.after))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100||(options.status!==undefined&&!['ready','dispatching','uncertain','succeeded','failed'].includes(options.status)))throw Error('Invalid action listing');
+  const limit=options.limit??50,rows=this.db.prepare('SELECT action_id,operation_id,idempotency_key,status,attempts,max_attempts FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id>? AND (? IS NULL OR status=?) ORDER BY action_id LIMIT ?').all(...this.args(),options.after??'',options.status??null,options.status??null,limit+1),hasMore=rows.length>limit,actions=rows.slice(0,limit).map(row=>this.metadata(row));return {actions,...(hasMore?{next:actions[actions.length-1]!.actionId}:{})};
+ }
+ /** One bounded, sequential pass; the host authorizes and schedules recovery. */
+ async reconcilePending(verify:(request:ActionVerificationRequest)=>Promise<ActionVerification>,options:{after?:string;limit?:number}={}):Promise<ActionVerificationPass>{
+  if(typeof verify!=='function'||!options||typeof options!=='object')throw Error('Invalid action verification pass');
+  this.transaction(()=>this.requireUncertainRun(),false);const page=this.list({...options,status:'uncertain'}),results:ActionVerificationPass['results']=[];
+  for(const action of page.actions){try{results.push({actionId:action.actionId,outcome:await this.reconcileWith(action.actionId,verify)});}catch(error){results.push({actionId:action.actionId,error});}}
+  return {results,...(page.next?{next:page.next}:{})};
+ }
  async invoke(actionId:string,operationId:string,input:unknown,maxAttempts:number,dispatch:(input:unknown,idempotencyKey:string)=>Promise<unknown>,requiresApproval=false,authority?:string):Promise<unknown>{
   if(!valid(actionId)||!valid(operationId)||!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>20||typeof dispatch!=='function'||typeof requiresApproval!=='boolean'||(authority!==undefined&&(typeof authority!=='string'||authority.length<1||authority.length>1024)))throw Error('Invalid action');
   const serialized=actionJSON(input),hash=createHash('sha256').update(serialized).digest('hex');
