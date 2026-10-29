@@ -113,7 +113,7 @@ export type { ExtensionRuntimeBindings, FlutterExtensionPlan } from './extension
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration } from './extensions.js';
 
 export { SqliteDataProvider } from './data-provider.js';
-export type { DataProvider, DataRecord, DataScope, DataMigration, MigrationPreview } from './data-provider.js';
+export type { DataProvider, DataRecord, DataRecordPage, DataScope, DataMigration, MigrationPreview } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
 export type { StagedOperation, StagedStatus } from './staged-operations.js';
@@ -132,3 +132,6 @@ export type { OfflineWorkerOptions } from './offline-worker.js';
 
 export {createRecordFieldValidator} from './record-field-validator.js';
 export type {RecordField,RecordFieldValidatorOptions} from './record-field-validator.js';
+
+export {registerDataListCapability} from './data-list-capability.js';
+export type {DataListCapabilityOptions} from './data-list-capability.js';

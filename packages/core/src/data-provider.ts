@@ -3,10 +3,12 @@ import {createHash} from 'node:crypto';
 
 export type DataScope = {tenantId:string; applicationId:string};
 export type DataRecord = {id:string; revision:number; value:Record<string,unknown>};
+export type DataRecordPage = {items:DataRecord[];nextAfter?:string};
 export type MigrationPreview={schemaVersion:number;count:number;digest:string};
 export type DataMigration={fromVersion:number;toVersion:number;digest:string;transform:(value:Record<string,unknown>,id:string)=>Record<string,unknown>;validate:(value:Record<string,unknown>,id:string)=>boolean};
 export interface DataProvider {
   get(scope:DataScope, collection:string, id:string):DataRecord|undefined;
+  list?(scope:DataScope,collection:string,options?:{after?:string;limit?:number}):DataRecordPage;
   put(scope:DataScope, collection:string, id:string, value:Record<string,unknown>, expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord;
   delete(scope:DataScope, collection:string, id:string, expectedRevision:number,expectedSchemaVersion?:number):void;
 }
@@ -116,6 +118,13 @@ export class SqliteDataProvider implements DataProvider {
     const row=this.db.prepare('SELECT revision,value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND deleted=0').get(scope.tenantId,scope.applicationId,collection,id);
     if(!row)return undefined;
     return {id,revision:Number(row.revision),value:dataCopy(JSON.parse(row.value as string))};
+  }
+  list(scope:DataScope,collection:string,options:{after?:string;limit?:number}={}):DataRecordPage {
+    checkKey(scope,collection,'validation');if(!options||typeof options!=='object'||Array.isArray(options)||(options.after!==undefined&&!identifier(options.after))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid data listing');
+    const limit=options.limit??50,items:DataRecord[]=[];let bytes=0,more=false;
+    const rows=this.db.prepare('SELECT record_id,revision,value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 AND record_id>? ORDER BY record_id LIMIT ?').iterate(scope.tenantId,scope.applicationId,collection,options.after??'',limit+1);
+    for(const row of rows){if(typeof row.record_id!=='string'||!identifier(row.record_id)||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1||typeof row.value!=='string')throw Error('Invalid data record');const size=Buffer.byteLength(row.value,'utf8');if(items.length===limit||(items.length>0&&bytes+size>512*1024)){more=true;break;}items.push({id:row.record_id,revision:Number(row.revision),value:dataCopy(JSON.parse(row.value))});bytes+=size;}
+    return {items,...(more&&items.length?{nextAfter:items.at(-1)!.id}:{})};
   }
   put(scope:DataScope,collection:string,id:string,value:Record<string,unknown>,expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord {
     checkKey(scope,collection,id);

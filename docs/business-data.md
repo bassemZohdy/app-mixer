@@ -6,7 +6,7 @@
 
 On an error, including authorization or audit failure, the outcome is conservatively marked `uncertain` because the external effect may have occurred. An interrupted process can leave a record `submitting`. Only after the host has established that the submitting process is no longer active may it call `recoverAbandoned` to mark that record uncertain. An authorized operator must independently verify the external outcome before `reconcile`: `applied` marks it succeeded; `not_applied` makes it eligible for a new explicit submission with the same key. There is no automatic retry or built-in external reconciliation.
 
-These are local primitives, not HTTP endpoints or a complete production data service. Direct methods do not authenticate or authorize callers: hosts must check access to the tenant, application, operation, records and recovery decisions, and use capability policy and audit for submission. The SQLite database and its backups require host-managed access control, encryption and lifecycle. A bounded local collection migration is available as described in [data migration](data-migration.md); collection queries, offline synchronization, distributed worker coordination, and automatic expiry remain open. A host must close each store when finished and must not close it while a submission is in flight.
+These are local primitives, not HTTP endpoints or a complete production data service. Direct methods do not authenticate or authorize callers: hosts must check access to the tenant, application, operation, records and recovery decisions, and use capability policy and audit for submission. The SQLite database and its backups require host-managed access control, encryption and lifecycle. A bounded local collection migration is available as described in [data migration](data-migration.md); richer collection queries, offline synchronization, distributed worker coordination, and automatic expiry remain open. A local paginated listing capability is described below. A host must close each store when finished and must not close it while a submission is in flight.
 
 `registerDataCapability(registry, provider, options)` connects one `get`, `put`, or `delete` operation to the standard authenticated capability server and agent interface. The host supplies the candidate, fixed application and collection, an authorization function and an input validator. The tenant comes from the authenticated invocation context, not the request payload. Inputs have exact shapes: `get` takes `{id}`, `put` takes `{id, expectedRevision, value}`, and `delete` takes `{id, expectedRevision}`. Missing records return null. The host may register separate operations for each collection and policy.
 
@@ -79,3 +79,22 @@ registerDataCapability(registry, provider, {
 ```
 
 `createRecordFieldValidator(fields, options)` is also available for other trusted server paths. Schemas are validated and snapshotted at registration. Additional fields are allowed by default, matching the form's preservation of undisplayed data; set `allowAdditionalFields: false` for a closed record. Values must still meet the provider's bounded JSON restrictions. The server schema is host-owned: keep its configuration authoritative and do not trust a browser-supplied schema. Existing records are not automatically migrated or validated on read. Full JSON Schema, nested editing, conditional rules, and production schema governance remain separate work.
+
+## Local collection listing
+
+`SqliteDataProvider.list(scope, collection, {after, limit})` returns live records in record-ID order, excluding tombstones. It uses keyset pagination, returns `nextAfter` when another page exists, and bounds each page to at most 100 records and approximately 512 KiB of record data; a single larger record is returned by itself so pagination can progress. Like the provider's other direct methods, this method does not authenticate or authorize the caller.
+
+`registerDataListCapability` exposes listing through the authenticated capability registry. The host fixes the application and collection, supplies both collection-level `authorize` and a mandatory per-record `authorizeItem`, and provides a persistent secret 32-byte `cursorKey`. The operation accepts `{limit?, cursor?}` and returns `{items, nextCursor?}`. Each page scans at most `limit` records (default 50, maximum 100); because inaccessible records are filtered, an empty page can still have a continuation cursor. The cursor is authenticated and encrypted, fixed-size, and bound to the tenant, principal, application, collection and operation. Keep the key on the server and retain it across restarts; rotating it invalidates outstanding cursors. The host's policy must authorize access to every returned record and audit denied access where required.
+
+For example, with a host-managed key and policy functions:
+
+```js
+registerDataListCapability(registry, provider, {
+  candidate: {operationId: 'items.list', method: 'GET', path: '/items'},
+  applicationId: 'demo-app', collection: 'items', cursorKey,
+  authorize: actor => canListItems(actor),
+  authorizeItem: (actor, record) => canReadItem(actor, record)
+});
+```
+
+Each page is a snapshot of the scanned records, not a consistent snapshot across pages. Concurrent writes may cause records to move or change between requests, and an asynchronous record policy is not atomic with changes in the provider or an external policy store. Enforce strict revocation or transactional row policy in a provider designed for it. The existence and number of pages can reveal approximate collection size even though hidden record IDs are not exposed in cursors. A single record near the provider's 1 MiB maximum can exceed the generated app proxy's response limit; hosts should use smaller records or a production transport suited to larger results. Filtering, arbitrary sorting, production indexing and distributed query capabilities remain open.

@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
+import {randomBytes} from 'node:crypto';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {JSDOM} from 'jsdom';
 import {createProject} from '../dist/index.js';
-import {CapabilityRegistry,createCapabilityServer,registerDataCapability,registerStagedCapability,SqliteStagedOperations,SqliteDataProvider} from '../../core/dist/index.js';
+import {CapabilityRegistry,createCapabilityServer,registerDataCapability,registerDataListCapability,registerStagedCapability,SqliteStagedOperations,SqliteDataProvider} from '../../core/dist/index.js';
 
 const token='capability-secret-at-least-thirty-two-characters';
 test('generated app uses an authenticated loopback capability service without exposing its token', {timeout:15000},async()=>{
@@ -16,6 +17,7 @@ test('generated app uses an authenticated loopback capability service without ex
  const formFields=[{key:'name',label:'Name',type:'string',required:true},{key:'count',label:'Count',type:'integer',min:0},{key:'flag',label:'Flag',type:'boolean'}];
  const common={applicationId:'demo-app',collection:'items',authorize:ctx=>ctx.tenantId==='tenant'&&ctx.principalId==='local',validate:()=>true};
  for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,...(operation==='put'?{fields:formFields}:{}),candidate:{operationId:`items.${operation}`,method,path:'/items'}});
+ registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'demo-app',collection:'items',cursorKey:randomBytes(32),authorize:common.authorize,authorizeItem:()=>true});
  registry.register({operationId:'orders.create',method:'POST',path:'/orders'},{authorize:ctx=>ctx.principalId==='local',validate:input=>input.payload.item==='x',execute:()=>{externalCalls++;if(failExternal)throw Error('uncertain result');return {ok:true};}});
  for(const operation of ['stage','get','submit'])registerStagedCapability(registry,registry,staged,{candidate:{operationId:`orders.${operation}`,method:'POST',path:'/stage'},applicationId:'demo-app',externalOperationId:'orders.create',operation,authorize:ctx=>ctx.principalId==='local',validate:()=>true});
  const upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});
@@ -29,6 +31,7 @@ test('generated app uses an authenticated loopback capability service without ex
   assert.equal((await call('items.put',{id:'x',expectedRevision:null,value:{name:'Ada'}},'https://evil.example')).status,403);
   assert.equal((await call('items.put',{id:'x',expectedRevision:null,value:{name:'Ada'}})).body.result.revision,1);
   assert.deepEqual((await call('items.get',{id:'x'})).body.result.value,{name:'Ada'});
+  assert.deepEqual((await call('items.list',{limit:1})).body.result.items.map(item=>item.id),['x']);
   assert.equal((await call('items.put',{id:'x',expectedRevision:1,value:{name:'Ada',count:'wrong'}})).status,400);assert.equal(provider.get({tenantId:'tenant',applicationId:'demo-app'},'items','x').revision,1);
   assert.equal((await call('items.put',{id:'x',expectedRevision:null,value:{name:'Other'}})).status,409);
   const originalFetch=globalThis.fetch;
