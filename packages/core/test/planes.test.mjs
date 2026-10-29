@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createControlPlane, createDataPlane, SqliteApplicationStore } from '../dist/index.js';
+import { createControlPlane, createDataPlane, SqliteApplicationStore, createExtensionPublicationGuard, DevelopmentProposals } from '../dist/index.js';
 
 const token = 'a-strong-local-token-at-least-32-characters';
 const auth = {authorization: `Bearer ${token}`};
@@ -63,4 +63,24 @@ test('control plane rejects malformed and unauthorized mutations atomically', as
     assert.equal((await fetch(`${url}/draft/patches`, {method:'POST', headers:{...auth,'content-type':'application/json'}, body:' '.repeat(1024 * 1024 + 1)})).status, 413);
     assert.equal((await (await fetch(`${url}/draft`, {headers:auth})).json()).revision, 0);
   } finally { await stop(control); store.close(); }
+});
+
+test('extension references flow through proposals and require a publication guard',async()=>{
+ const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
+ const ref={id:'sample.extension',version:'1.0.0',scope:'application'};
+ const manifest={manifestVersion:1,...ref,runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:[],providers:[],permissions:[]};
+ const host={runtimeVersion:'0.1.0',renderer:'react',approved:[{...ref,permissions:[]}]};
+ const guard=createExtensionPublicationGuard([manifest],host,()=>({components:[],tools:[],providers:[]}));
+ for(const policy of [undefined,guard]) {
+  const store=new SqliteApplicationStore(':memory:',initial,policy),control=createControlPlane(store,token),proposals=new DevelopmentProposals(store);
+  try {
+   const url=await start(control);
+   const proposal=proposals.propose(0,[{op:'setExtensions',extensions:[ref]}]);assert.deepEqual(proposal.preview.extensions,[ref]);
+   proposals.approve(proposal.id);
+   assert.equal((await fetch(`${url}/draft/patches`,post({baseRevision:1,patches:[{op:'setExtensions',extensions:[{...ref,version:'bad'}]}]}))).status,400);
+   const response=await fetch(`${url}/publish`,post({expectedRevision:1}));
+   assert.equal(response.status,policy?201:409);
+   if(policy)assert.deepEqual((await response.json()).definition.extensions,[ref]);else assert.equal(store.getPublished(),undefined);
+  } finally {await stop(control);store.close();}
+ }
 });

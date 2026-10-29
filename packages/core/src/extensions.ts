@@ -109,6 +109,9 @@ export function createExtensionPublicationGuard(manifests: ExtensionManifest[], 
   // Validate configuration even when there are no application requirements.
   checkExtensionCompatibility(installed, target, {components:[], tools:[], providers:[]});
   return draft => {
+    for (const ref of draft.extensions ?? []) {
+      if (!installed.some(manifest => manifest.id === ref.id && manifest.version === ref.version && manifest.scope === ref.scope)) throw Error('Extension compatibility failed');
+    }
     const requirements = requirementsFor(structuredClone(draft));
     const result = checkExtensionCompatibility(installed, target, requirements);
     if (!result.compatible) throw Error('Extension compatibility failed');

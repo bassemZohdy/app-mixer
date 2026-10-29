@@ -37,6 +37,44 @@ test('publication guards enforce compatibility atomically in memory and SQLite',
  }
 });
 
+test('declared extensions require compatible publication policy in both repositories',async()=>{
+ const {ApplicationStore,SqliteApplicationStore,createExtensionPublicationGuard}=await import('../dist/index.js');
+ const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
+ const ref={id:'example.chart',version:'1.0.0',scope:'application'};
+ for(const create of [guard=>new ApplicationStore(initial,guard),guard=>new SqliteApplicationStore(':memory:',initial,guard)]) {
+  const unguarded=create(undefined);
+  try {
+   unguarded.apply(0,[{op:'setExtensions',extensions:[ref]}]);
+   assert.throws(()=>unguarded.publish(1),/Extension compatibility failed/);assert.equal(unguarded.getPublished(),undefined);
+   unguarded.apply(1,[{op:'setExtensions',extensions:[]}]);assert.equal(unguarded.publish(2).version,1);
+  } finally {unguarded.close?.();}
+  const guard=createExtensionPublicationGuard([manifest()],host(),()=>({components:[],tools:[],providers:[]}));
+  const guarded=create(guard);
+  try {
+   guarded.apply(0,[{op:'setExtensions',extensions:[ref]}]);assert.deepEqual(guarded.publish(1).definition.extensions,[ref]);
+   for(const invalid of [{...ref,version:'2.0.0'},{...ref,scope:'platform'},{...ref,id:'unknown'}]){
+    const revision=guarded.getDraft().revision;guarded.apply(revision,[{op:'setExtensions',extensions:[invalid]}]);
+    assert.throws(()=>guarded.publish(revision+1),/Extension compatibility failed/);assert.equal(guarded.getPublished().version,1);
+   }
+  } finally {guarded.close?.();}
+ }
+});
+
+test('extension references are bounded, exact and unique in patches and definitions',async()=>{
+ const {ApplicationStore}=await import('../dist/index.js');
+ const {isValidPatch}=await import('../dist/planes.js');
+ const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
+ const ref={id:'example.chart',version:'1.0.0',scope:'application'};
+ for(const refs of [[ref,ref],[{...ref,version:'1.0'}],[{...ref,scope:'unknown'}],[{...ref,extra:true}],Array(257).fill(ref),null]){
+  assert.equal(isValidPatch({op:'setExtensions',extensions:refs}),false);
+  assert.throws(()=>new ApplicationStore({...initial,extensions:refs}),/Invalid manifest/);
+  const store=new ApplicationStore(initial);assert.throws(()=>store.apply(0,[{op:'setExtensions',extensions:refs}]),/Invalid manifest/);assert.equal(store.getDraft().revision,0);
+ }
+ assert.equal(isValidPatch({op:'setExtensions',extensions:[ref]}),true);
+ assert.equal(isValidPatch({op:'setExtensions',extensions:[ref],extra:true}),false);
+ const store=new ApplicationStore(initial);assert.throws(()=>store.apply(0,[{op:'setExtensions'}]),/Invalid manifest/);assert.equal(store.getDraft().revision,0);
+});
+
 test('invalid publication policy fails closed', async()=>{
  const {ApplicationStore,createExtensionPublicationGuard}=await import('../dist/index.js');
  const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
