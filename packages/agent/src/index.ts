@@ -85,3 +85,5 @@ export { createOpenAIToolModel, createToolCallingModel } from './tool-model.js';
 export type { ToolModel } from './tool-model.js';
 export {SqliteAgentDefinitions,validateAgentManifest} from './persistent-definitions.js';
 export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';
+export {createConfiguredAgentRun} from './configured-runtime.js';
+export type {ConfiguredAgentIdentity,ConfiguredAgentBinding,ConfiguredAgentOptions} from './configured-runtime.js';

@@ -46,7 +46,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 
 ## P2: persistent agent foundation (new, pending)
 - [ ] P2-06 Define configurable independent agent entity, scope/ownership and versioned manifest (PA-01)
-  - In progress: validated independent-agent manifest and tenant-scoped immutable SQLite configuration versions. Host authorization and runtime integration remain. See [persistent-agent definitions](docs/persistent-agent-definitions.md).
+  - In progress: validated independent-agent manifest, tenant-scoped immutable SQLite configuration versions and host-authorized ephemeral runtime with a scoped capability allowlist. Production identity and quota enforcement remain. See [persistent-agent definitions](docs/persistent-agent-definitions.md).
 - [ ] P2-07 Implement agent lifecycle manager, durable run registry, pause/resume/cancel and recovery (PA-02, PA-04)
 - [ ] P2-08 Add event/webhook and scheduler activation, authenticated ingress, trigger dedup and concurrency limits (PA-03)
 - [ ] P2-09 Build durable action intent/outcome journal, stable idempotency and uncertain-result reconciliation (PA-05)
