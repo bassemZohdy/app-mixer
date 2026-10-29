@@ -5,7 +5,8 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentDefinitions,DurableAgentWorker,createAgentEventIngress} from '../dist/index.js';
+import {createHmac} from 'node:crypto';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentDefinitions,DurableAgentWorker,createAgentEventIngress,createSignedWebhookAuthenticator} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},event={sourceId:'source',principalId:'sender',eventId:'evt',eventType:'order.created',payload:{order:'one'}};
 const manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
 const settings={definitionVersion:1,maxAttempts:2,deadline:10000,maxPending:2};
@@ -54,4 +55,18 @@ test('concurrency limit is atomic across connections and released after settleme
 test('HTTP ingress reserves internal schedule source identifiers',async()=>{
  const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'schedule.forged'}),authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
  try{const response=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'order.created',payload:{}})});assert.equal(response.status,401);assert.equal(s.runs.list(scope).length,0);}finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
+});
+
+
+test('signed webhooks bind exact bytes, source and time, and deduplicate accepted deliveries',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const key=Buffer.alloc(32,42),original=Buffer.from(key),now=1700000000000,auth=createSignedWebhookAuthenticator({sources:[{tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:key}],clock:()=>now});key.fill(0);
+ let authorizations=0;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticateRaw:auth,authorize:(identity)=>{authorizations++;return identity.sourceId==='provider';},clock:()=>now});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
+ try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({agentId:'agent',eventId:'evt',eventType:'order.created',payload:{order:'one'}}),signed=(data=body,timestamp='1700000000',source='provider')=>{const signature=createHmac('sha256',original).update(`v1\n${timestamp}\n${source}\n`).update(data).digest('hex');return {'content-type':'application/json','x-app-mixer-source':source,'x-app-mixer-timestamp':timestamp,'x-app-mixer-signature':`v1=${signature}`};},post=(data,headers)=>fetch(url,{method:'POST',headers,body:data});
+  assert.equal((await post(body,signed())).status,202);assert.equal((await post(body,signed())).status,200);assert.equal((await post(body+' ',signed())).status,401);assert.equal((await post(body,signed(body,'1699999699'))).status,401);assert.equal((await post(body,signed(body,'1700000301'))).status,401);assert.equal((await post(body,signed(body,'1700000000','unknown'))).status,401);assert.equal((await post(body,{...signed(),'x-app-mixer-signature':'v1='+'0'.repeat(64)})).status,401);assert.equal(authorizations,2);assert.equal(s.runs.list(scope).length,1);
+ }finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
+});
+
+test('signed webhook configuration rejects weak keys, reserved and duplicate sources',()=>{
+ const source={tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:Buffer.alloc(32)};
+ assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,secret:Buffer.alloc(31)}]}),/configuration/);assert.throws(()=>createSignedWebhookAuthenticator({sources:[source,source]}),/configuration/);assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,sourceId:'schedule.foo'}]}),/configuration/);
 });

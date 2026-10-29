@@ -7,30 +7,40 @@ type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknow
 type Options={
  triggers:SqliteAgentTriggers;
  definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined};
- authenticate:(request:IncomingMessage)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
+ authenticate?: (request:IncomingMessage)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
+ authenticateRaw?: (request:IncomingMessage,body:Buffer)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
  maxPending:number;clock?:()=>number;
 };
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const reply=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));};
-async function read(req:IncomingMessage):Promise<EventRequest>{
+async function readBytes(req:IncomingMessage):Promise<Buffer>{
  if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??''))throw Error('CONTENT_TYPE');
  const parts:Buffer[]=[];let size=0;for await(const chunk of req){const part=Buffer.from(chunk);size+=part.length;if(size>256*1024)throw Error('TOO_LARGE');parts.push(part);}
- let value:unknown;try{value=JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw Error('INVALID');}
+ return Buffer.concat(parts);
+}
+function parse(raw:Buffer):EventRequest {
+ let value:unknown;try{value=JSON.parse(raw.toString('utf8'));}catch{throw Error('INVALID');}
  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('INVALID');
  const obj=value as Record<string,unknown>,keys=Object.keys(obj);if(keys.length!==4||!['agentId','eventId','eventType','payload'].every(key=>Object.hasOwn(obj,key))||!id(obj.agentId)||!id(obj.eventId)||!id(obj.eventType))throw Error('INVALID');
  return {agentId:obj.agentId,eventId:obj.eventId,eventType:obj.eventType,payload:obj.payload};
 }
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
- if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||typeof options.authenticate!=='function'||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authorize,maxPending}=options,clock=options.clock??Date.now;
+ if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid event ingress');
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending}=options,clock=options.clock??Date.now;
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
-  let source:SourceIdentity|undefined;try{source=await authenticate(req);}catch{}
+  let source:SourceIdentity|undefined,raw:Buffer|undefined;
+  if(authenticate){try{source=await authenticate(req);}catch{}
+   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
+   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
+  }
+  if(authenticateRaw||source){try{raw=await readBytes(req);}catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}}
+  if(authenticateRaw&&raw){try{source=await authenticateRaw(req,Buffer.from(raw));}catch{}}
   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
-  let event:EventRequest;try{event=await read(req);}catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}
+  let event:EventRequest;try{event=parse(raw!);}catch{reply(res,400,{error:'Invalid event'});return;}
   try{
    const definition=definitions.get(source.tenantId,event.agentId);
    if(!definition||!definition.manifest.lifecycle.enabled||definition.manifest.tenantId!==source.tenantId||definition.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}

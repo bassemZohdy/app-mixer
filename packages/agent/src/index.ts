@@ -128,3 +128,6 @@ export type {AgentTokenUsage,AgentTokenBudgetOptions} from './agent-token-budget
 
 export {SqliteAgentRunHistory} from './agent-run-history.js';
 export type {AgentRunEvent,AgentRunHistoryActor,AgentRunHistoryAccess,AgentRunHistoryOptions} from './agent-run-history.js';
+
+export {createSignedWebhookAuthenticator} from './signed-webhook.js';
+export type {SignedWebhookSource,SignedWebhookOptions} from './signed-webhook.js';
