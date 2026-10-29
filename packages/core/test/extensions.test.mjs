@@ -98,3 +98,30 @@ test('rejects malformed or unsafe schemas and undeclared configuration',async()=
  }
  const registry=new ExtensionRegistry(host());assert.throws(()=>registry.register(manifest(),bindings,{undeclared:'x'}),/configuration/);assert.deepEqual(registry.getManifests(),[]);
 });
+
+test('enforces configuration bounds and enumerated values before registration',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');const fn=()=>{},bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ const m={...manifest(),configSchema:{region:{type:'string',required:true,minLength:2,maxLength:4,enum:['us','eu']},limit:{type:'number',required:true,minimum:0,maximum:10,enum:[0,5,10]},enabled:{type:'boolean',required:true,enum:[true]}}};
+ for(const config of [
+  {region:'u',limit:0,enabled:true},{region:'other',limit:0,enabled:true},{region:'uk',limit:0,enabled:true},
+  {region:'us',limit:-1,enabled:true},{region:'us',limit:11,enabled:true},{region:'us',limit:1,enabled:true},
+  {region:'us',limit:10,enabled:false}
+ ]) {
+  const registry=new ExtensionRegistry(host());assert.throws(()=>registry.register(m,bindings,config),/Invalid extension configuration/);
+  assert.deepEqual(registry.getManifests(),[]);assert.equal(registry.get('components','chart'),undefined);
+ }
+ for(const limit of [0,5,10]) {const registry=new ExtensionRegistry(host());registry.register(m,bindings,{region:'eu',limit,enabled:true});assert.equal(registry.getConfiguration(m.id).limit,limit);}
+});
+
+test('rejects invalid or contradictory configuration constraints',()=>{
+ const rules=[
+  {type:'string',required:true,minLength:-1},{type:'string',required:true,maxLength:4097},
+  {type:'string',required:true,minLength:4,maxLength:3},{type:'string',required:true,minimum:0},
+  {type:'number',required:true,minimum:Infinity},{type:'number',required:true,minimum:2,maximum:1},
+  {type:'number',required:true,minLength:1},{type:'boolean',required:true,maximum:1},
+  {type:'string',required:true,enum:[]},{type:'string',required:true,enum:['x','x']},
+  {type:'string',required:true,minLength:2,enum:['x']},{type:'number',required:true,maximum:2,enum:[3]},
+  {type:'boolean',required:true,enum:[1]},{type:'number',required:true,enum:Array.from({length:65},(_,i)=>i)}
+ ];
+ for(const rule of rules)assert.throws(()=>check([{...manifest(),configSchema:{option:rule}}],host(),required()),/configuration schema/);
+});

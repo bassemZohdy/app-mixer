@@ -1,6 +1,10 @@
 import type { ApplicationDefinition, PublicationGuard } from './index.js';
 
-export type ExtensionConfigSchema = Record<string, {type:'string'|'number'|'boolean'; required:boolean}>;
+export type ExtensionConfigRule =
+  | {type:'string'; required:boolean; minLength?:number; maxLength?:number; enum?:string[]}
+  | {type:'number'; required:boolean; minimum?:number; maximum?:number; enum?:number[]}
+  | {type:'boolean'; required:boolean; enum?:boolean[]};
+export type ExtensionConfigSchema = Record<string, ExtensionConfigRule>;
 export type ExtensionConfiguration = Record<string, string | number | boolean>;
 
 /** Metadata for trusted, statically installed extensions. This is not a code loader. */
@@ -37,15 +41,34 @@ const configKey = (x:string) => idPattern.test(x) && !['__proto__','prototype','
 function validateConfigSchema(schema:unknown): void {
   if (!record(schema) || Object.keys(schema).length > 64) throw Error('Invalid extension configuration schema');
   for (const [key, rule] of Object.entries(schema)) {
-    if (!configKey(key) || !fields(rule,['type','required']) || !['string','number','boolean'].includes(rule.type as string) || typeof rule.required !== 'boolean') throw Error('Invalid extension configuration schema');
+    if (!configKey(key) || !record(rule) || !Object.hasOwn(rule,'type') || !Object.hasOwn(rule,'required') || !['string','number','boolean'].includes(rule.type as string) || typeof rule.required !== 'boolean') throw Error('Invalid extension configuration schema');
+    const allowed = rule.type === 'string' ? ['type','required','minLength','maxLength','enum'] : rule.type === 'number' ? ['type','required','minimum','maximum','enum'] : ['type','required','enum'];
+    if (Object.keys(rule).some(name => !allowed.includes(name))) throw Error('Invalid extension configuration schema');
+    if (rule.type === 'string') {
+      for (const name of ['minLength','maxLength']) if (Object.hasOwn(rule,name) && (!Number.isSafeInteger(rule[name]) || (rule[name] as number) < 0 || (rule[name] as number) > 4096)) throw Error('Invalid extension configuration schema');
+      if (typeof rule.minLength === 'number' && typeof rule.maxLength === 'number' && rule.minLength > rule.maxLength) throw Error('Invalid extension configuration schema');
+    }
+    if (rule.type === 'number') {
+      for (const name of ['minimum','maximum']) if (Object.hasOwn(rule,name) && (typeof rule[name] !== 'number' || !Number.isFinite(rule[name]))) throw Error('Invalid extension configuration schema');
+      if (typeof rule.minimum === 'number' && typeof rule.maximum === 'number' && rule.minimum > rule.maximum) throw Error('Invalid extension configuration schema');
+    }
+    if (Object.hasOwn(rule,'enum')) {
+      const values=rule.enum;
+      if (!Array.isArray(values) || values.length === 0 || values.length > 64 || new Set(values).size !== values.length || values.some(value => !matchesRule(rule as ExtensionConfigRule,value))) throw Error('Invalid extension configuration schema');
+    }
   }
+}
+function matchesRule(rule: ExtensionConfigRule, value: unknown): boolean {
+  if (rule.type === 'string') return typeof value === 'string' && value.length <= 4096 && value.length >= (rule.minLength ?? 0) && value.length <= (rule.maxLength ?? 4096);
+  if (rule.type === 'number') return typeof value === 'number' && Number.isFinite(value) && (rule.minimum === undefined || value >= rule.minimum) && (rule.maximum === undefined || value <= rule.maximum);
+  return typeof value === 'boolean';
 }
 function validateConfiguration(schema:ExtensionConfigSchema, config:unknown): asserts config is ExtensionConfiguration {
   if (!record(config) || Object.keys(config).length > 64) throw Error('Invalid extension configuration');
   for (const key of Object.keys(config)) {
     if (!Object.hasOwn(schema,key)) throw Error('Invalid extension configuration');
-    const value = config[key], type = schema[key].type;
-    if (typeof value !== type || (typeof value === 'string' && value.length > 4096) || (typeof value === 'number' && !Number.isFinite(value))) throw Error('Invalid extension configuration');
+    const value = config[key], rule = schema[key];
+    if (!matchesRule(rule,value) || (rule.enum !== undefined && !(rule.enum as unknown[]).includes(value))) throw Error('Invalid extension configuration');
   }
   for (const [key, rule] of Object.entries(schema)) if (rule.required && !Object.hasOwn(config,key)) throw Error('Invalid extension configuration');
 }
