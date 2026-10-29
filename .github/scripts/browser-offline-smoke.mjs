@@ -74,5 +74,6 @@ try{
  clearTimeout(timer);
  if(browser&&browser.exitCode===null&&browser.signalCode===null){const stopped=once(browser,'exit');browser.kill();await stopped;}
  if(server.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
- await rm(directory,{recursive:true,force:true});
+ await rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
+
