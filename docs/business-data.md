@@ -30,7 +30,7 @@ export const installedExtensions = [{
 }];
 ```
 
-The published application must reference that exact approved extension and declare a `record-editor` component; an optional `label` property sets its heading. The host fixes capability names in trusted code, not in the application definition. Users load an ID, edit a JSON object and explicitly save. A revision conflict retains the unsaved text, disables saving and asks the user to copy edits before loading the latest version. A control plane configured with the same trusted extension module serves an inert `data-editor.mjs` preview counterpart: controls are disabled and cannot invoke data capabilities. This is a basic JSON editor, not a schema-generated form.
+The published application must reference that exact approved extension and declare a `record-editor` component; an optional `label` property sets its heading. The host fixes capability names in trusted code, not in the application definition. Users load an ID, edit a JSON object and explicitly save. A revision conflict retains the unsaved text, disables saving and asks the user to copy edits before loading the latest version. A control plane configured with the same trusted extension module serves an inert `data-editor.mjs` preview counterpart: controls are disabled and cannot invoke data capabilities. Without host-defined fields this is a basic JSON editor; an optional typed form is described below.
 
 For explicitly staged external actions, generated apps include an optional `staged-editor.mjs` extension factory. A host can add it to the same trusted `extensions.mjs` registration:
 
@@ -43,3 +43,23 @@ const stagedEditor = createStagedEditor({
 ```
 
 Register `stagedEditor` under a declared component name such as `staged-editor`. The host supplies the stage, status and submit capabilities and their policies. The user enters a JSON object and stages it, then separately chooses Submit. A repeated stage with unchanged data during the current page session reuses its request key. The operation ID is visible so the user can check its status later. New transaction starts a distinct intent, even when the payload is unchanged; it does not cancel previous intents. On submission failure the editor disables submission and asks the user to check status; uncertain results require the host's administrative reconciliation. Preview controls are disabled. The in-memory request key does not survive a page reload; durable offline requests remain P2-04 work.
+
+### Host-defined record forms
+
+The same `createRecordEditor` factory accepts an optional trusted `fields` array to show a typed form instead of JSON:
+
+```js
+createRecordEditor({
+  getOperation: 'items.get', putOperation: 'items.put',
+  fields: [
+    {key: 'name', label: 'Name', type: 'string', required: true, maxLength: 120},
+    {key: 'quantity', label: 'Quantity', type: 'integer', min: 0},
+    {key: 'active', label: 'Active', type: 'boolean'},
+    {key: 'tier', label: 'Tier', type: 'string', options: ['standard', 'premium']}
+  ]
+});
+```
+
+This bounded local schema supports string, finite number, safe integer and boolean fields; string options, numeric minimum/maximum, string length and required fields are optional. The host chooses field names and constraints, and the application definition cannot override them. Fields have visible labels and required/optional markers, validation appears at the field and on save, and loading incompatible stored types fails without enabling save. Data outside the displayed fields is preserved. Clearing an optional field removes it when saved; an untouched existing empty string is preserved. A revision conflict keeps edits available for copying and disables save until a record is loaded again. The preview shows the same fields with disabled controls and performs no capability calls.
+
+This is a bounded host-defined field schema, not full JSON Schema: nested editing, arrays and general schema composition remain open. The client form is convenience validation only. Hosts must apply their authoritative schema validation and authorization in the capability service, including constraints on fields not displayed by the form. Data is saved only when the user explicitly chooses Save.
