@@ -112,6 +112,12 @@ export function createExtensionPublicationGuard(manifests: ExtensionManifest[], 
     for (const ref of draft.extensions ?? []) {
       if (!installed.some(manifest => manifest.id === ref.id && manifest.version === ref.version && manifest.scope === ref.scope)) throw Error('Extension compatibility failed');
     }
+    for (const page of draft.pages) for (const component of page.components) {
+      if (component.type !== 'Extension') continue;
+      const ref = draft.extensions?.find(item => item.id === component.extensionId);
+      const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
+      if (!manifest || !manifest.components.includes(component.name)) throw Error('Extension compatibility failed');
+    }
     const requirements = requirementsFor(structuredClone(draft));
     const result = checkExtensionCompatibility(installed, target, requirements);
     if (!result.compatible) throw Error('Extension compatibility failed');

@@ -75,6 +75,28 @@ test('extension references are bounded, exact and unique in patches and definiti
  const store=new ApplicationStore(initial);assert.throws(()=>store.apply(0,[{op:'setExtensions'}]),/Invalid manifest/);assert.equal(store.getDraft().revision,0);
 });
 
+test('publication checks each extension component against its declared owning extension',async()=>{
+ const {ApplicationStore,SqliteApplicationStore,createExtensionPublicationGuard}=await import('../dist/index.js');
+ const {isValidPatch}=await import('../dist/planes.js');
+ const initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',title:'Home',route:'/',components:[]}]};
+ const ref={id:'example.chart',version:'1.0.0',scope:'application'};
+ const component={id:'chart1',type:'Extension',extensionId:ref.id,name:'chart',props:{label:'Sales'}};
+ assert.equal(isValidPatch({op:'addComponent',pageId:'home',component}),true);
+ for(const invalid of [{...component,name:'Chart'}, {...component,extensionId:'bad/id'}, {...component,extra:true}])assert.equal(isValidPatch({op:'addComponent',pageId:'home',component:invalid}),false);
+ const guard=createExtensionPublicationGuard([manifest()],host(),()=>({components:[],tools:[],providers:[]}));
+ for(const create of [policy=>new ApplicationStore(initial,policy),policy=>new SqliteApplicationStore(':memory:',initial,policy)]){
+  const noGuard=create(undefined);
+  try {noGuard.apply(0,[{op:'addComponent',pageId:'home',component}]);assert.throws(()=>noGuard.publish(1),/compatibility/);} finally {noGuard.close?.();}
+  const store=create(guard);
+  try {
+   store.apply(0,[{op:'addComponent',pageId:'home',component}]);assert.throws(()=>store.publish(1),/compatibility/);
+   store.apply(1,[{op:'setExtensions',extensions:[ref]}]);assert.equal(store.publish(2).definition.pages[0].components[0].name,'chart');
+   store.apply(2,[{op:'addComponent',pageId:'home',component:{...component,id:'missing',name:'missing'}}]);
+   assert.throws(()=>store.publish(3),/compatibility/);assert.equal(store.getPublished().version,1);
+  } finally {store.close?.();}
+ }
+});
+
 test('invalid publication policy fails closed', async()=>{
  const {ApplicationStore,createExtensionPublicationGuard}=await import('../dist/index.js');
  const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};

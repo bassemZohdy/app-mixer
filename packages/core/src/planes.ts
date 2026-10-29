@@ -22,8 +22,10 @@ const exact = (obj: Record<string, unknown>, keys: string[]) => Object.keys(obj)
 const string = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1024;
 const revision = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 function component(value: unknown): value is Component {
-  if (!record(value) || !exact(value, ['id', 'type', 'props']) || !string(value.id) ||
-      !['Text','Card','Table','Input'].includes(value.type as string)) return false;
+  if (!record(value) || !string(value.id)) return false;
+  if (value.type === 'Extension') {
+    if (!exact(value, ['id','type','props','extensionId','name']) || typeof value.extensionId !== 'string' || !/^[a-z][a-z0-9.-]{0,127}$/.test(value.extensionId) || typeof value.name !== 'string' || !/^[a-z][a-z0-9.-]{0,127}$/.test(value.name)) return false;
+  } else if (!exact(value, ['id', 'type', 'props']) || !['Text','Card','Table','Input'].includes(value.type as string)) return false;
   if (value.props === undefined) return true;
   return record(value.props) && Object.keys(value.props).length <= 100 &&
     Object.entries(value.props).every(([key, prop]) => string(key) &&
