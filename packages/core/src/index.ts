@@ -148,3 +148,5 @@ export type {SignedPromotionPackage,PromotionSigningKey,PromotionSignatureEviden
 
 export {createJwtCapabilityAuthenticator} from './jwt-capability-auth.js';
 export type {JwtCapabilityActor,JwtCapabilityAuthOptions} from './jwt-capability-auth.js';
+
+export {SqliteJwtRevocations} from './jwt-revocations.js';
