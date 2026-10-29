@@ -49,3 +49,9 @@ test('concurrency limit is atomic across connections and released after settleme
  const s=setup();let other;try{other=new SqliteAgentRuns(s.path);s.runs.create(scope,'one',{definitionVersion:1,maxAttempts:1,deadline:1000},0);other.create(scope,'two',{definitionVersion:1,maxAttempts:1,deadline:1000},0);let first=s.runs.claim(scope,'one',1,'worker-a',100,10,1);assert.throws(()=>other.claim(scope,'two',1,'worker-b',100,10,1),/concurrency limit/);first=s.runs.settle(scope,'one',first.revision,first.leaseToken,'succeeded',11);assert.equal(first.status,'succeeded');assert.equal(other.claim(scope,'two',1,'worker-b',100,12,1).status,'running');}
  finally{other?.close();close(s);}
 });
+
+
+test('HTTP ingress reserves internal schedule source identifiers',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'schedule.forged'}),authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
+ try{const response=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'order.created',payload:{}})});assert.equal(response.status,401);assert.equal(s.runs.list(scope).length,0);}finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
+});

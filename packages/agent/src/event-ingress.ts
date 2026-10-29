@@ -28,7 +28,7 @@ export function createAgentEventIngress(options:Options):Server {
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   let source:SourceIdentity|undefined;try{source=await authenticate(req);}catch{}
-  if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)){reply(res,401,{error:'Unauthorized'});return;}
+  if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
   let event:EventRequest;try{event=await read(req);}catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}
   try{
