@@ -215,15 +215,22 @@ export class ExtensionRegistry {
     return this.registrations[kind].get(name);
   }
 
-  /** Resolve only registrations belonging to the application's declared, installed extensions. */
-  getForApplication(references: ExtensionReference[], kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
+  private resolveReferences(references:ExtensionReference[]):ExtensionManifest[] {
     if (!isValidExtensionReferences(references)) throw Error('Invalid extension references');
-    if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
-    const selected = references.map(ref => {
+    return references.map(ref => {
       const manifest = this.manifests.find(m => m.id === ref.id && m.version === ref.version && m.scope === ref.scope);
       if (!manifest) throw Error('Extension compatibility failed');
       return manifest;
     });
+  }
+
+  /** Check that every application reference is installed in this approved registry. */
+  validateReferences(references:ExtensionReference[]):void { this.resolveReferences(references); }
+
+  /** Resolve only registrations belonging to the application's declared, installed extensions. */
+  getForApplication(references: ExtensionReference[], kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
+    if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
+    const selected = this.resolveReferences(references);
     return selected.some(manifest => manifest[kind].includes(name)) ? this.registrations[kind].get(name) : undefined;
   }
 

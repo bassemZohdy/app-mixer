@@ -306,3 +306,34 @@ test('extension runtime bridges require declared references and preserve capabil
  assert.equal(await capabilities.invoke('lookup',{valid:true},context),'result');assert.deepEqual(calls,[{input:{valid:true},context:{tenantId:'tenant',principalId:'allowed'}}]);
  assert.deepEqual(audits,['attempt','denied','attempt','invalid','attempt','succeeded']);
 });
+
+test('runtime assembly registers declared components and operations with explicit host policies',async()=>{
+ const {ExtensionRegistry,createExtensionRuntime}=await import('../dist/index.js');
+ const {A2UIRenderer,APP_MIXER_CATALOG}=await import('@app-mixer/web');
+ const m={...manifest(),providers:['records']},ref={id:m.id,version:m.version,scope:m.scope},calls=[];
+ const chart=(c,_child,_data,doc)=>{const node=doc.createElement('p');node.textContent=c.label;return node;};
+ const registry=new ExtensionRegistry(host());registry.register(m,{components:{chart},tools:{lookup:(input,context)=>{calls.push({input,context});return 'ok';}},providers:{records:()=>['record']}});
+ const application={id:'demo',schemaVersion:1,revision:0,extensions:[ref],pages:[{id:'home',title:'Home',route:'/',components:[{id:'one',type:'Extension',extensionId:ref.id,name:'chart'},{id:'two',type:'Extension',extensionId:ref.id,name:'chart'}]}],extensionOperations:[{extensionId:ref.id,kind:'tool',name:'lookup'},{extensionId:ref.id,kind:'provider',name:'records'}]};
+ const audit=[],policy={authorize:context=>context.principalId==='allowed',validate:input=>input?.ok===true};
+ const bindings={componentValidators:{chart:c=>{if(typeof c.label!=='string')throw Error('Invalid chart');}},operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},...policy},records:{candidate:{operationId:'records',method:'GET',path:'/records'},...policy}}};
+ assert.throws(()=>createExtensionRuntime(application,registry,undefined,bindings),/Audit sink/);
+ const runtime=createExtensionRuntime(application,registry,event=>audit.push(event.outcome),bindings);
+ const doc={createElement(){return {ownerDocument:doc,children:[],dataset:{},style:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}},hostNode=doc.createElement();
+ const renderer=new A2UIRenderer(hostNode,runtime.components);
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'chart',label:'Sales'}]}});
+ assert.equal(hostNode.children[0].children[0].textContent,'Sales');
+ const context={tenantId:'tenant',principalId:'denied',origin:'ui'};
+ await assert.rejects(()=>runtime.capabilities.invoke('lookup',{ok:true},context),/forbidden/);
+ context.principalId='allowed';await assert.rejects(()=>runtime.capabilities.invoke('lookup',{ok:false},context),/Invalid capability input/);
+ assert.equal(await runtime.capabilities.invoke('lookup',{ok:true},context),'ok');assert.deepEqual(await runtime.capabilities.invoke('records',{ok:true},context),['record']);
+ assert.deepEqual(calls,[{input:{ok:true},context:{tenantId:'tenant',principalId:'allowed'}}]);
+ assert.deepEqual(audit,['attempt','denied','attempt','invalid','attempt','succeeded','attempt','succeeded']);
+ for(const [app,options] of [
+  [{...application,extensions:[{...ref,version:'2.0.0'}]},bindings],
+  [{...application,extensions:[]},bindings],
+  [application,{...bindings,operations:{lookup:bindings.operations.lookup}}],
+  [application,{...bindings,operations:{...bindings.operations,lookup:{...bindings.operations.lookup,candidate:{...bindings.operations.lookup.candidate,operationId:'other'}}}}],
+  [{...application,extensionOperations:[...application.extensionOperations,{extensionId:ref.id,kind:'provider',name:'lookup'}]},bindings]
+ ])assert.throws(()=>createExtensionRuntime(app,registry,()=>{},options));
+});

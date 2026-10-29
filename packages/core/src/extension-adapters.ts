@@ -1,7 +1,7 @@
-import { ComponentRegistry } from '@app-mixer/web';
-import { CapabilityRegistry, type CapabilityCandidate } from './capabilities.js';
+import { ComponentRegistry, basicRegistry } from '@app-mixer/web';
+import { CapabilityRegistry, type CapabilityCandidate, type CapabilityAuditSink } from './capabilities.js';
 import { ExtensionRegistry } from './extensions.js';
-import { isValidExtensionOperations, type ApplicationDefinition, type ExtensionOperation, type ExtensionReference } from './index.js';
+import { isValidExtensionOperations, validate, type ApplicationDefinition, type ExtensionOperation, type ExtensionReference } from './index.js';
 
 type CapabilityPolicy = {authorize:(context:{tenantId:string;principalId:string})=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>};
 
@@ -34,4 +34,37 @@ export function registerDeclaredExtensionCapability(
   if(!implementation)throw Error('Extension operation not available');
   const execute=implementation as unknown as (input:unknown,context:{tenantId:string;principalId:string})=>unknown|Promise<unknown>;
   target.register(candidate,{authorize:policy?.authorize,validate:policy?.validate,execute});
+}
+
+export type ExtensionRuntimeBindings = {
+  componentValidators?: Record<string, NonNullable<Parameters<ComponentRegistry['register']>[2]>>;
+  operations: Record<string, {candidate:CapabilityCandidate} & CapabilityPolicy>;
+};
+
+/** Construct fresh registries from a host-selected published definition. */
+export function createExtensionRuntime(application:ApplicationDefinition, extensions:ExtensionRegistry, audit:CapabilityAuditSink, bindings:ExtensionRuntimeBindings): {components:ComponentRegistry;capabilities:CapabilityRegistry} {
+  const snapshot=structuredClone(application);validate(snapshot);
+  if(!bindings || !bindings.operations || typeof bindings.operations!=='object' || Array.isArray(bindings.operations) || (bindings.componentValidators!==undefined && (!bindings.componentValidators || typeof bindings.componentValidators!=='object' || Array.isArray(bindings.componentValidators))))throw Error('Invalid extension runtime bindings');
+  const references=snapshot.extensions??[];
+  // Resolve every reference even if it contributes no components or operations.
+  extensions.validateReferences(references);
+  const components=basicRegistry(),capabilities=new CapabilityRegistry(audit),owners=new Map<string,string>();
+  for(const page of snapshot.pages)for(const component of page.components){
+    if(component.type!=='Extension')continue;
+    const implementation=extensions.getForExtension(references,component.extensionId,'components',component.name);
+    if(!implementation)throw Error('Extension component not available');
+    if(owners.has(component.name)){
+      if(owners.get(component.name)!==component.extensionId)throw Error('Duplicate extension component');
+      continue;
+    }
+    const validator=bindings.componentValidators && Object.hasOwn(bindings.componentValidators,component.name) ? bindings.componentValidators[component.name] : undefined;
+    components.register(component.name,implementation as unknown as Parameters<ComponentRegistry['register']>[1],validator);
+    owners.set(component.name,component.extensionId);
+  }
+  for(const operation of snapshot.extensionOperations??[]){
+    const binding=Object.hasOwn(bindings.operations,operation.name)?bindings.operations[operation.name]:undefined;
+    if(!binding)throw Error('Extension operation policy missing');
+    registerDeclaredExtensionCapability(capabilities,extensions,snapshot,operation,binding.candidate,binding);
+  }
+  return {components,capabilities};
 }
