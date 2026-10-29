@@ -81,6 +81,18 @@ export class EncryptedPublicationCache {
   if((latest?.revision??0)!==(previous?.revision??0)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
   store.put({id:this.id,revision,iv,ciphertext});await done;
  }
+ /** Re-encrypt an existing entry with a host-supplied key; callers must coordinate other cache instances. */
+ async rotateKey(nextKey:CryptoKey):Promise<boolean>{
+  if(!nextKey||nextKey.type!=='secret'||nextKey.extractable||nextKey.algorithm.name!=='AES-GCM'||!nextKey.usages.includes('encrypt')||!nextKey.usages.includes('decrypt'))throw Error('Invalid offline publication key');
+  const generation=this.generation;this.checkGeneration(generation);await this.permitted('read',generation);await this.permitted('write',generation);
+  const previous=await this.raw();if(!previous){this.checkGeneration(generation);return false;}const entry=await this.decode(previous,false);if(!entry){this.checkGeneration(generation);return false;}
+  const revision=previous.revision+1;if(!Number.isSafeInteger(revision))throw Error('Invalid offline publication revision');
+  const iv=this.crypt.getRandomValues(new Uint8Array(12));const ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},nextKey,encoder.encode(JSON.stringify(entry)));
+  await this.permitted('read',generation);await this.permitted('write',generation);
+  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications'),latest=await request(store.get(this.id)) as Envelope|undefined;
+  if(!latest||latest.revision!==previous.revision||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
+  store.put({id:this.id,revision,iv,ciphertext});await done;this.close();return true;
+ }
  async clear():Promise<void>{
   if(this.closed)throw Error('Offline publication cache changed');this.generation++;
   const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications'),current=await request(store.get(this.id)) as Envelope|undefined;

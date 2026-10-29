@@ -39,3 +39,23 @@ test('a clear during a read authorization check prevents a stale result',async()
  const db=new IDBFactory(),k=await key();let calls=0,resume,started;const gate=new Promise(r=>resume=r),ready=new Promise(r=>started=r);
  const a=await EncryptedPublicationCache.open(options(db,k,{authorize:async(_s,action)=>{if(action==='read'&&++calls===2){started();await gate;}return true;}})),b=await EncryptedPublicationCache.open(options(db,k));const p=publication(1);await a.store(p,tag(p));const pending=a.read();await ready;await b.clear();resume();await assert.rejects(pending,/cache changed/);a.close();b.close();
 });
+
+
+test('publication key rotation preserves the entry and closes the old handle',async()=>{
+ const db=new IDBFactory(),oldKey=await key(),newKey=await key();let now=100;const old=await EncryptedPublicationCache.open(options(db,oldKey,{clock:()=>now})),p=publication(2);await old.store(p,tag(p));now=500;assert.equal(await old.rotateKey(newKey),true);await assert.rejects(old.read(),/cache changed/);
+ const stale=await EncryptedPublicationCache.open(options(db,oldKey,{clock:()=>now}));await assert.rejects(stale.read(),/authenticate/);await assert.rejects(stale.store(publication(3),tag(publication(3))),/authenticate/);stale.close();
+ const fresh=await EncryptedPublicationCache.open(options(db,newKey,{clock:()=>now})),entry=await fresh.read();assert.deepEqual(entry.publication,p);assert.equal(entry.savedAt,100);assert.equal(entry.etag,tag(p));now=1101;assert.equal(await fresh.read(),undefined);fresh.close();
+});
+
+test('rotation fails closed on policy, bad keys and absent entries',async()=>{
+ const db=new IDBFactory(),oldKey=await key(),newKey=await key();let allowed=true;const cache=await EncryptedPublicationCache.open(options(db,oldKey,{authorize:()=>allowed}));assert.equal(await cache.rotateKey(newKey),false);const p=publication(1);await cache.store(p,tag(p));allowed=false;await assert.rejects(cache.rotateKey(newKey),/access denied/);allowed=true;const extractable=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);await assert.rejects(cache.rotateKey(extractable),/Invalid offline publication key/);assert.deepEqual((await cache.read()).publication,p);await cache.clear();assert.equal(await cache.rotateKey(newKey),false);cache.close();
+});
+
+test('concurrent publication writes or clears prevent stale key rotation',async()=>{
+ for(const action of ['store','clear']){const db=new IDBFactory(),oldKey=await key(),newKey=await key();let armed=false,resume,started;const gate=new Promise(r=>resume=r),ready=new Promise(r=>started=r),slow={subtle:{digest:webcrypto.subtle.digest.bind(webcrypto.subtle),decrypt:webcrypto.subtle.decrypt.bind(webcrypto.subtle),encrypt:async(...args)=>{if(armed){started();await gate;}return webcrypto.subtle.encrypt(...args);}},getRandomValues:webcrypto.getRandomValues.bind(webcrypto)};const rotating=await EncryptedPublicationCache.open(options(db,oldKey,{crypto:slow})),other=await EncryptedPublicationCache.open(options(db,oldKey)),p=publication(1);await rotating.store(p,tag(p));armed=true;const pending=rotating.rotateKey(newKey);await ready;if(action==='store'){const p2=publication(2,'new');await other.store(p2,tag(p2));}else await other.clear();resume();await assert.rejects(pending,/cache changed/);const current=await other.read();if(action==='store')assert.equal(current.publication.version,2);else assert.equal(current,undefined);rotating.close();other.close();}
+});
+
+
+test('permission revocation during rotation leaves the old key and data intact',async()=>{
+ const db=new IDBFactory(),oldKey=await key(),newKey=await key();let reads=0,deny=false,armed=false;const cache=await EncryptedPublicationCache.open(options(db,oldKey,{authorize:(_scope,action)=>{if(armed&&action==='read'&&++reads===2)deny=true;return !deny;}})),p=publication(1);await cache.store(p,tag(p));armed=true;await assert.rejects(cache.rotateKey(newKey),/access denied/);armed=false;deny=false;assert.deepEqual((await cache.read()).publication,p);const wrong=await EncryptedPublicationCache.open(options(db,newKey));await assert.rejects(wrong.read(),/authenticate/);wrong.close();cache.close();
+});
