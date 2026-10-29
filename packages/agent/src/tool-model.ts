@@ -9,6 +9,9 @@ type CapabilityTool = ReturnType<typeof createCapabilityTool>;
 export interface ToolModel {
   invoke(messages:BaseMessage[], options?:{signal?:AbortSignal}):Promise<BaseMessage>;
 }
+export interface LimitedToolModel extends ToolModel {
+  invokeLimited(messages:BaseMessage[], options:{signal?:AbortSignal;maxTotalTokens:number;callId:string}):Promise<{message:BaseMessage;usedTokens:number}>;
+}
 const State=Annotation.Root({
   messages:Annotation<BaseMessage[],BaseMessage[]>({reducer:(previous,next)=>previous.concat(next),default:()=>[]}),
   turns:Annotation<number>()

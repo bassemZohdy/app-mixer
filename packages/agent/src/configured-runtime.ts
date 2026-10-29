@@ -1,8 +1,10 @@
+import {randomUUID} from 'node:crypto';
+import {SqliteAgentTokenBudget} from './agent-token-budget.js';
 import {AgentApprovalRequired} from './approval-required.js';
 import {AgentDelegationExpired} from './delegation-expired.js';
 import {LangGraphAGUIAdapter,type RunInput} from './index.js';
 import {createCapabilityTool} from './capability-tool.js';
-import {createToolCallingModel,type ToolModel} from './tool-model.js';
+import {createToolCallingModel,type ToolModel,type LimitedToolModel} from './tool-model.js';
 import {SqliteAgentActionJournal} from './action-journal.js';
 import {SqliteAgentApprovals} from './agent-approvals.js';
 import {type BaseCheckpointSaver} from '@langchain/langgraph-checkpoint';
@@ -25,18 +27,21 @@ type Options={
  actionJournal?:{journal:SqliteAgentActionJournal;maxAttempts:number;prepareInput:(operationId:string,input:unknown,idempotencyKey:string)=>unknown};
  approval?:{store:SqliteAgentApprovals;leaseToken:string;expiresAt:number;required:(identity:AgentIdentity,operationId:string,input:unknown)=>boolean|Promise<boolean>};
  delegation?:DelegationOptions;
+ tokenBudget?:{budget:SqliteAgentTokenBudget;maxTokensPerCall:number};
  maxTurns?:number;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean};
 };
 
 /** Prepare one host-authorized ephemeral run from the current agent definition. */
 export async function createConfiguredAgentRun(options:Options):Promise<{run:(input:RunInput,options?:{signal?:AbortSignal})=>ReturnType<LangGraphAGUIAdapter['run']>;pendingApproval:()=>{actionId:string}|undefined}> {
  if(!options||!options.definitions||typeof options.definitions.get!=='function'||!options.registry||typeof options.registry.invoke!=='function'||typeof options.authorizeRun!=='function'||typeof options.authorizeCapability!=='function'||typeof options.createModel!=='function'||!Array.isArray(options.bindings)||!Number.isSafeInteger(options.expectedVersion)||options.expectedVersion<1)throw Error('Invalid configured agent');
- const {definitions,registry,authorizeRun,authorizeCapability,createModel,tenantId,agentId,expectedVersion,maxTurns,checkpoint,actionJournal,approval}=options;
+ const {definitions,registry,authorizeRun,authorizeCapability,createModel,tenantId,agentId,expectedVersion,maxTurns,checkpoint,actionJournal,approval,tokenBudget}=options;
  const configuredDelegation=options.delegation;
  if(configuredDelegation&&(!configuredDelegation.grant||typeof configuredDelegation.authorize!=='function'||(configuredDelegation.clock!==undefined&&typeof configuredDelegation.clock!=='function')))throw Error('Invalid delegation');
  const grant=configuredDelegation?structuredClone(configuredDelegation.grant):undefined;
  if(grant&&(!validId(grant.tenantId)||!validId(grant.agentId)||!validId(grant.runId)||!validId(grant.principalId)||!validId(grant.grantId)||!validId(grant.permissionVersion)||!Number.isSafeInteger(grant.expiresAt)||grant.expiresAt<0||(grant.revision!==undefined&&(!Number.isSafeInteger(grant.revision)||grant.revision<1))||grant.tenantId!==tenantId||grant.agentId!==agentId))throw Error('Invalid delegation');
  const delegationAuthorize=configuredDelegation?.authorize,delegationClock=configuredDelegation?.clock??Date.now;
+ if(tokenBudget&&(!(tokenBudget.budget instanceof SqliteAgentTokenBudget)||!Number.isSafeInteger(tokenBudget.maxTokensPerCall)||tokenBudget.maxTokensPerCall<1))throw Error('Invalid token budget');
+ const budgetStore=tokenBudget?.budget,maxTokensPerCall=tokenBudget?.maxTokensPerCall;
  if(approval&&(!actionJournal||!(approval.store instanceof SqliteAgentApprovals)||typeof approval.leaseToken!=='string'||!Number.isSafeInteger(approval.expiresAt)||typeof approval.required!=='function'))throw Error('Invalid approval policy');
  if(actionJournal&&(!(actionJournal.journal instanceof SqliteAgentActionJournal)||!Number.isSafeInteger(actionJournal.maxAttempts)||actionJournal.maxAttempts<1||actionJournal.maxAttempts>20||typeof actionJournal.prepareInput!=='function'))throw Error('Invalid action journal');
  const definition=definitions.get(tenantId,agentId);
@@ -70,9 +75,10 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
   }});
  });
  const model=await createModel(structuredClone(snapshot),[...tools]);if(!model||typeof model.invoke!=='function')throw Error('Invalid agent model');current();
- const adapter=new LangGraphAGUIAdapter(createToolCallingModel(model,tools,{maxTurns,checkpoint}),{direct:!!checkpoint});let used=false;
+ let activeModel:ToolModel=model;if(budgetStore){const limited=model as Partial<LimitedToolModel>;if(typeof limited.invokeLimited!=='function'||maxTokensPerCall!>snapshot.manifest.quotas.maxTokensPerRun)throw Error('Limited model required');activeModel={invoke:async(messages,options)=>{if(options?.signal?.aborted)throw Error('Agent run aborted');const callId=randomUUID(),reserved=maxTokensPerCall!;budgetStore.reserve(callId,reserved);if(options?.signal?.aborted){budgetStore.settle(callId,0);throw Error('Agent run aborted');}const response=await limited.invokeLimited!(messages,{signal:options?.signal,maxTotalTokens:reserved,callId});if(!response||!Number.isSafeInteger(response.usedTokens)||response.usedTokens<0)throw Error('Invalid model token usage');budgetStore.settle(callId,response.usedTokens);if(response.usedTokens>reserved)throw Error('Model token limit exceeded');return response.message;}};}
+ const adapter=new LangGraphAGUIAdapter(createToolCallingModel(activeModel,tools,{maxTurns,checkpoint}),{direct:!!checkpoint});let used=false;
  return {pendingApproval:()=>pendingActionId?{actionId:pendingActionId}:undefined,async *run(input,runOptions={}){
-  if(used)throw Error('Configured agent run already used');if(grant&&grant.runId!==input.runId)throw Error('Delegation run mismatch');if(checkpoint&&checkpoint.threadId!==input.runId)throw Error('Checkpoint run mismatch');if(actionJournal&&!actionJournal.journal.isBoundTo({tenantId,agentId},input.runId))throw Error('Action journal run mismatch');if(approval&&!approval.store.isBoundTo({tenantId,agentId},input.runId))throw Error('Approval run mismatch');used=true;current();
+  if(used)throw Error('Configured agent run already used');if(grant&&grant.runId!==input.runId)throw Error('Delegation run mismatch');if(checkpoint&&checkpoint.threadId!==input.runId)throw Error('Checkpoint run mismatch');if(actionJournal&&!actionJournal.journal.isBoundTo({tenantId,agentId},input.runId))throw Error('Action journal run mismatch');if(approval&&!approval.store.isBoundTo({tenantId,agentId},input.runId))throw Error('Approval run mismatch');if(budgetStore&&!budgetStore.isBoundTo({tenantId,agentId},input.runId,snapshot.manifest.quotas.maxTokensPerRun))throw Error('Token budget run mismatch');used=true;current();
   const deadline=AbortSignal.timeout(snapshot.manifest.lifecycle.runTimeoutMs);
   runSignal=runOptions.signal?AbortSignal.any([deadline,runOptions.signal]):deadline;
   if(runSignal.aborted||await authorizeRun({...identity})!==true)throw Error('Agent run forbidden');
