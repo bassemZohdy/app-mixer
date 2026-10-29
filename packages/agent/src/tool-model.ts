@@ -1,6 +1,7 @@
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, isAIMessage, type BaseMessage } from '@langchain/core/messages';
 import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
 import { ChatOpenAI } from '@langchain/openai';
+import {type BaseCheckpointSaver} from '@langchain/langgraph-checkpoint';
 import type { ChatMessage, OpenAIModelConfig, StreamingModel } from './index.js';
 import type { createCapabilityTool } from './capability-tool.js';
 
@@ -19,8 +20,9 @@ export function createOpenAIToolModel(config:OpenAIModelConfig, tools:Capability
   return {invoke:async(messages,options)=>model.invoke(config.systemPrompt?[new SystemMessage(config.systemPrompt),...messages]:messages,{signal:options?.signal})};
 }
 /** Runs a bounded LangGraph model/tool loop, yielding only the final text response. */
-export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], options:{systemPrompt?:string;maxTurns?:number}={}):StreamingModel {
-  const maxTurns=options.maxTurns??4;
+export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], options:{systemPrompt?:string;maxTurns?:number;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean}}={}):StreamingModel {
+  const maxTurns=options.maxTurns??4,checkpoint=options.checkpoint;
+  if(checkpoint&&(!checkpoint.saver||typeof checkpoint.saver.getTuple!=='function'||typeof checkpoint.threadId!=='string'||!checkpoint.threadId||typeof checkpoint.resume!=='boolean'))throw Error('Invalid checkpoint configuration');
   if(!Number.isSafeInteger(maxTurns)||maxTurns<1||maxTurns>10||tools.length>50) throw Error('Invalid tool configuration');
   const allowed=new Map<string,CapabilityTool>();
   for(const entry of tools){if(allowed.has(entry.name))throw Error('Duplicate tool');allowed.set(entry.name,entry);}
@@ -54,8 +56,10 @@ export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], 
         })
         .addEdge(START,'model')
         .addConditionalEdges('model',state=>{const last=state.messages.at(-1);return last&&isAIMessage(last)&&(last.tool_calls?.length??0)>0?'tools':END;},['tools',END])
-        .addEdge('tools','model').compile();
-      const result=await graph.invoke({messages:initial,turns:0},{signal});
+        .addEdge('tools','model').compile(checkpoint?{checkpointer:checkpoint.saver}:{});
+      const config=checkpoint?{signal,configurable:{thread_id:checkpoint.threadId}}:{signal};
+      if(checkpoint){const existing=await checkpoint.saver.getTuple(config);if(checkpoint.resume&&!existing)throw Error('Checkpoint unavailable');if(!checkpoint.resume&&existing)throw Error('Checkpoint already exists');}
+      const result=await graph.invoke(checkpoint?.resume?null:{messages:initial,turns:0},config);
       const last=result.messages.at(-1);
       if(!last||!isAIMessage(last)||typeof last.content!=='string')throw Error('Invalid final response');
       if(last.content)yield last.content;
