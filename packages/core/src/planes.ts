@@ -6,6 +6,7 @@ import { isValidExtensionReferences, isValidExtensionOperations } from './index.
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
+import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -91,12 +92,15 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
   const extensionModule=preview?.extensionModule ?? 'export const installedExtensions = [];';
   return server(async (req, res) => {
-    if (proposals && req.method === 'GET' && (req.url === '/development' || req.url === '/development/renderer.mjs' || req.url === '/development/extensions.mjs' || req.url === '/development/data-editor.mjs')) {
+    if (proposals && req.method === 'GET' && (req.url === '/development' || req.url === '/development/renderer.mjs' || req.url === '/development/extensions.mjs' || req.url === '/development/data-editor.mjs' || req.url === '/development/staged-editor.mjs')) {
       const host=req.headers.host, port=req.socket.localPort;
       if (host !== '127.0.0.1:'+port && host !== 'localhost:'+port) { respond(res,400,{error:'Invalid host'}); return; }
       if (req.url === '/development/renderer.mjs') {
         const source=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
         res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(source); return;
+      }
+      if (req.url === '/development/staged-editor.mjs') {
+        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(STAGED_EDITOR_PREVIEW); return;
       }
       if (req.url === '/development/data-editor.mjs') {
         res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(RECORD_EDITOR_PREVIEW); return;

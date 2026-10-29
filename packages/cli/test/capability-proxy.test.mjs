@@ -12,11 +12,11 @@ import {CapabilityRegistry,createCapabilityServer,registerDataCapability,registe
 
 const token='capability-secret-at-least-thirty-two-characters';
 test('generated app uses an authenticated loopback capability service without exposing its token', {timeout:15000},async()=>{
- const provider=new SqliteDataProvider(':memory:'),staged=new SqliteStagedOperations(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event));let externalCalls=0;
+ const provider=new SqliteDataProvider(':memory:'),staged=new SqliteStagedOperations(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event));let externalCalls=0,failExternal=false;
  const common={applicationId:'demo-app',collection:'items',authorize:ctx=>ctx.tenantId==='tenant'&&ctx.principalId==='local',validate:()=>true};
  for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,candidate:{operationId:`items.${operation}`,method,path:'/items'}});
- registry.register({operationId:'orders.create',method:'POST',path:'/orders'},{authorize:ctx=>ctx.principalId==='local',validate:input=>input.payload.item==='x',execute:()=>{externalCalls++;return {ok:true};}});
- for(const operation of ['stage','submit'])registerStagedCapability(registry,registry,staged,{candidate:{operationId:`orders.${operation}`,method:'POST',path:'/stage'},applicationId:'demo-app',externalOperationId:'orders.create',operation,authorize:ctx=>ctx.principalId==='local',validate:()=>true});
+ registry.register({operationId:'orders.create',method:'POST',path:'/orders'},{authorize:ctx=>ctx.principalId==='local',validate:input=>input.payload.item==='x',execute:()=>{externalCalls++;if(failExternal)throw Error('uncertain result');return {ok:true};}});
+ for(const operation of ['stage','get','submit'])registerStagedCapability(registry,registry,staged,{candidate:{operationId:`orders.${operation}`,method:'POST',path:'/stage'},applicationId:'demo-app',externalOperationId:'orders.create',operation,authorize:ctx=>ctx.principalId==='local',validate:()=>true});
  const upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});
  upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-capability-'));let server;
@@ -54,6 +54,22 @@ test('generated app uses an authenticated loopback capability service without ex
    textarea.value=JSON.stringify({name:'Unsaved'});save.click();await waitFor('changed elsewhere');
    assert.equal(save.disabled,true);assert.equal(JSON.parse(textarea.value).name,'Unsaved');
    dom.window.close();
+   const {createStagedEditor}=await import(pathToFileURL(join(target,'staged-editor.mjs')).href);
+   const stagedDom=new JSDOM('<!doctype html><div id="host"></div>'),stagedDoc=stagedDom.window.document,stagedRegistry=basicRegistry(),stagedEditor=createStagedEditor({stageOperation:'orders.stage',getOperation:'orders.get',submitOperation:'orders.submit'});
+   stagedRegistry.register('staged-editor',stagedEditor.render,stagedEditor.validate);const stagedRenderer=new A2UIRenderer(stagedDoc.getElementById('host'),stagedRegistry);
+   stagedRenderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+   stagedRenderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'staged-editor',label:'Order'}]}});
+   const stagedPayload=stagedDoc.querySelector('textarea'),stagedId=stagedDoc.querySelector('input'),[stage,check,submit]=stagedDoc.querySelectorAll('button'),stagedStatus=stagedDoc.querySelector('[role=status]');
+   const waitStaged=async phrase=>{for(let n=0;n<100&&!stagedStatus.textContent.includes(phrase);n++)await new Promise(resolve=>setTimeout(resolve,10));assert.match(stagedStatus.textContent,new RegExp(phrase));};
+   stagedPayload.value=JSON.stringify({item:'x'});stage.click();await waitStaged('Operation staged');assert.equal(externalCalls,1);assert.equal(submit.disabled,false);
+   const firstId=stagedId.value;stage.click();for(let n=0;n<100&&stage.disabled;n++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(stage.disabled,false);await waitStaged('Operation staged');assert.equal(stagedId.value,firstId);assert.equal(externalCalls,1);
+   submit.click();await waitStaged('Operation succeeded');assert.equal(externalCalls,2);assert.equal(submit.disabled,true);
+   stagedId.value=firstId;stagedId.dispatchEvent(new stagedDom.window.Event('input'));check.click();await waitStaged('Operation succeeded');assert.equal(submit.disabled,true);
+   failExternal=true;stagedPayload.value=JSON.stringify({item:'x',note:'second'});stage.click();await waitStaged('Operation staged');assert.notEqual(stagedId.value,firstId);
+   submit.click();await waitStaged('outcome may be uncertain');assert.equal(submit.disabled,true);
+   check.click();await waitStaged('Operation uncertain');assert.equal(submit.disabled,true);assert.equal(externalCalls,3);
+
+   stagedDom.window.close();
 
   } finally {globalThis.fetch=originalFetch;}
   assert.equal((await call('missing',{})).status,404);

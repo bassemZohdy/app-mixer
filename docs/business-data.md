@@ -31,3 +31,15 @@ export const installedExtensions = [{
 ```
 
 The published application must reference that exact approved extension and declare a `record-editor` component; an optional `label` property sets its heading. The host fixes capability names in trusted code, not in the application definition. Users load an ID, edit a JSON object and explicitly save. A revision conflict retains the unsaved text, disables saving and asks the user to copy edits before loading the latest version. A control plane configured with the same trusted extension module serves an inert `data-editor.mjs` preview counterpart: controls are disabled and cannot invoke data capabilities. This is a basic JSON editor, not a schema-generated form.
+
+For explicitly staged external actions, generated apps include an optional `staged-editor.mjs` extension factory. A host can add it to the same trusted `extensions.mjs` registration:
+
+```js
+import {createStagedEditor} from './staged-editor.mjs';
+// Add this entry to installedExtensions with the approved extension identity.
+const stagedEditor = createStagedEditor({
+  stageOperation: 'orders.stage', getOperation: 'orders.get', submitOperation: 'orders.submit'
+});
+```
+
+Register `stagedEditor` under a declared component name such as `staged-editor`. The host supplies the stage, status and submit capabilities and their policies. The user enters a JSON object and stages it, then separately chooses Submit. A repeated stage with unchanged data during the current page session reuses its request key. The operation ID is visible so the user can check its status later. On submission failure the editor disables submission and asks the user to check status; uncertain results require the host's administrative reconciliation. Preview controls are disabled. The in-memory request key does not survive a page reload; durable offline requests remain P2-04 work.
