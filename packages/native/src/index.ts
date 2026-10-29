@@ -142,6 +142,13 @@ type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;use
 export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
 export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any}):(props:NativeA2UIProps)=>any {
+  // Approximate the browser's default heading scale for the supported text variants.
+  // React Native's default font scaling remains enabled for accessibility.
+  const textStyles:Record<string,{fontSize:number;fontWeight?:'bold'}>={
+    h1:{fontSize:32,fontWeight:'bold'},h2:{fontSize:24,fontWeight:'bold'},
+    h3:{fontSize:18.72,fontWeight:'bold'},h4:{fontSize:16,fontWeight:'bold'},
+    h5:{fontSize:13.28,fontWeight:'bold'},caption:{fontSize:13.33}
+  };
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
   return function NativeA2UI({subscribe,onError,onAction}:NativeA2UIProps):any{
@@ -158,7 +165,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     },[subscribe]);
     const store=storeRef.current;
     const render=(node:NativeNode,surface:NativeSurface):any=>{
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{})},node.text);
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{}),...(node.variant&&Object.hasOwn(textStyles,node.variant)?{style:textStyles[node.variant]}:{})},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
