@@ -48,7 +48,7 @@ export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], 
           for(const call of response.tool_calls??[]){
             const selected=allowed.get(call.name);
             if(!selected||!call.id)throw Error('Unregistered tool call');
-            const result=await selected.invoke(call.args,{signal:config.signal});
+            const result=await selected.invoke(call.args,{signal:config.signal,configurable:{app_mixer_tool_call_id:call.id}});
             if(typeof result!=='string'||result.length>100000)throw Error('Invalid tool result');
             output.push(new ToolMessage({tool_call_id:call.id,content:result}));
           }
