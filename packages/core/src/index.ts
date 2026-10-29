@@ -92,3 +92,6 @@ export type { StagedCapabilityOptions } from './staged-capabilities.js';
 
 export { SqliteOfflineQueue } from './offline-queue.js';
 export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure } from './offline-queue.js';
+
+export { OfflineSyncWorker } from './offline-worker.js';
+export type { OfflineWorkerOptions } from './offline-worker.js';
