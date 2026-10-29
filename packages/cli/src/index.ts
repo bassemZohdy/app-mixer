@@ -8,6 +8,7 @@ export async function createProject(name:string,parent=process.cwd()):Promise<st
  await mkdir(target);
  const manifest={id:name,schemaVersion:1,revision:0,pages:[{id:"home",route:"/",title:"Home",components:[{id:"intro",type:"Text",props:{text:"Welcome to App Mixer"}}]}]};
  const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}main{display:grid;grid-template-columns:1fr 2fr;gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px}input{padding:10px}@media(max-width:700px){main{grid-template-columns:1fr}}</style><header>App Mixer</header><main><section><h2>Conversation</h2><p id="chat-status" role="status">Checking agent…</p><div id="chat-log" aria-live="polite"></div><form id="chat-form"><label for="chat-input">Message</label><input id="chat-input" placeholder="Ask agent" disabled><button id="chat-send" type="submit" disabled>Send</button></form></section><section><h2>Workspace</h2><button id="refresh-publication" hidden>Refresh publication</button><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,APP_MIXER_CATALOG,ClientPublishedCache} from '/renderer.mjs';
+import {prepareWorkspace} from '/workspace.mjs';
 const host=document.getElementById('pages');
 let cache;
 const render=async()=>{try {
@@ -15,20 +16,9 @@ const render=async()=>{try {
   if(cache) app=(await cache.refresh()).definition;
   else {const response=await fetch('/api/application');if(!response.ok)throw new Error('Could not load application');app=await response.json();}
   host.replaceChildren();
-  const renderer=new A2UIRenderer(host);
+  const {registry,components}=prepareWorkspace(app);
+  const renderer=new A2UIRenderer(host,registry);
   const surfaceId='workspace';
-  const components=[{id:'root',component:'Column',children:[]}];
-  for(const [index,page] of app.pages.entries()) {
-    const titleId='page-'+index;
-    components[0].children.push(titleId);
-    components.push({id:titleId,component:'Text',text:page.title,variant:'h2'});
-    for(const [itemIndex,item] of page.components.entries()) {
-      if(item.type!=='Text') throw new Error('Unsupported component type: '+item.type);
-      const itemId='page-'+index+'-item-'+itemIndex;
-      components[0].children.push(itemId);
-      components.push({id:itemId,component:'Text',text:String(item.props?.text??'')});
-    }
-  }
   renderer.apply({version:'v0.9.1',createSurface:{surfaceId,catalogId:APP_MIXER_CATALOG}});
   renderer.apply({version:'v0.9.1',updateComponents:{surfaceId,components}});
 } catch(error) { host.textContent='Unable to render application: '+error.message; }};
@@ -40,7 +30,7 @@ try {
       if(response.status===304)return {status:304};
       if(!response.ok)throw Error('Publication unavailable');
       return {status:200,etag:response.headers.get('etag'),publication:await response.json()};
-    },definition=>Array.isArray(definition.pages)&&definition.pages.every(page=>page&&typeof page.title==='string'&&Array.isArray(page.components)&&page.components.every(item=>item&&item.type==='Text')));
+    },definition=>{try{prepareWorkspace(definition);return true;}catch{return false;}});
     const button=document.getElementById('refresh-publication');button.hidden=false;button.addEventListener('click',()=>render());
   }
   await render();
@@ -94,7 +84,7 @@ createServer(async(req,res)=>{
     }catch{if(!res.destroyed){if(!res.headersSent)json(res,502,{error:'Agent unavailable'});else res.destroy();}}
     return;
   }
-  const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':null;
+  const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':null;
   if(!path){res.writeHead(404);res.end();return;}
   try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':path.endsWith('.mjs')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
 }).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
@@ -124,8 +114,48 @@ form.addEventListener('submit',async event=>{
   finally{input.disabled=false;button.disabled=false;input.focus();}
 });
 `;
+ const extensions=String.raw`// Trusted host code only. Each entry is {id, version, scope, components},
+// where components maps a name to {render, validate?}. No code is loaded from application definitions.
+export const installedExtensions = [];
+`;
+ const workspace=String.raw`import {basicRegistry} from './renderer.mjs';
+import {installedExtensions} from './extensions.mjs';
+const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+export function prepareWorkspace(app){
+  if(!object(app)||!Array.isArray(app.pages)||!Array.isArray(app.extensions??[]))throw Error('Invalid application');
+  const references=app.extensions??[], selected=new Map(), registry=basicRegistry();
+  if(references.length>256)throw Error('Too many extensions');
+  for(const ref of references){
+    if(!object(ref)||Object.keys(ref).length!==3||typeof ref.id!=='string'||typeof ref.version!=='string'||!['platform','development','application'].includes(ref.scope)||selected.has(ref.id))throw Error('Invalid extension reference');
+    const matches=installedExtensions.filter(item=>item.id===ref.id&&item.version===ref.version&&item.scope===ref.scope);
+    if(matches.length!==1||!object(matches[0].components))throw Error('Extension unavailable: '+ref.id);
+    selected.set(ref.id,matches[0]);
+  }
+  const components=[{id:'root',component:'Column',children:[]}], registered=new Map();
+  for(const [index,page] of app.pages.entries()){
+    if(!object(page)||typeof page.title!=='string'||!Array.isArray(page.components))throw Error('Invalid page');
+    const titleId='page-'+index;components[0].children.push(titleId);components.push({id:titleId,component:'Text',text:page.title,variant:'h2'});
+    for(const [itemIndex,item] of page.components.entries()){
+      if(!object(item))throw Error('Invalid component');
+      const itemId='page-'+index+'-item-'+itemIndex;components[0].children.push(itemId);
+      if(item.type==='Text'){components.push({id:itemId,component:'Text',text:String(item.props?.text??'')});continue;}
+      if(item.type!=='Extension'||typeof item.extensionId!=='string'||typeof item.name!=='string')throw Error('Unsupported component type: '+item.type);
+      const extension=selected.get(item.extensionId), binding=extension&&Object.hasOwn(extension.components,item.name)?extension.components[item.name]:undefined;
+      if(!binding||typeof binding.render!=='function'||(binding.validate!==undefined&&typeof binding.validate!=='function'))throw Error('Extension component unavailable: '+item.name);
+      const props=item.props??{};
+      if(!object(props)||Object.keys(props).length>100||Object.entries(props).some(([key,value])=>['id','component','__proto__','prototype','constructor'].includes(key)||!(typeof value==='string'||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))))throw Error('Invalid extension component properties');
+      const rendered={...props,id:itemId,component:item.name};
+      if(binding.validate)binding.validate(rendered);
+      if(!registered.has(item.name)){registry.register(item.name,binding.render,binding.validate);registered.set(item.name,item.extensionId);}
+      else if(registered.get(item.name)!==item.extensionId)throw Error('Duplicate extension component: '+item.name);
+      components.push(rendered);
+    }
+  }
+  return {registry,components};
+}
+`;
  const rendererSource=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
- await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\n")]);
+ await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}

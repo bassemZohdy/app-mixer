@@ -35,6 +35,13 @@ try {
   ], {timeout:45000, maxBuffer:1024*1024});
   assert.match(stdout, /Welcome to App Mixer/);
   assert.match(stdout, /data-surface-id="workspace"/);
+  await writeFile(join(target,'extensions.mjs'),`export const installedExtensions=[{id:'sample.chart',version:'1.0.0',scope:'application',components:{chart:{render:(c,_child,_data,doc)=>{const node=doc.createElement('p');node.textContent=c.label;return node;},validate:c=>{if(typeof c.label!=='string')throw Error('Invalid chart');}}}}];`);
+  await writeFile(join(target,'application.json'),JSON.stringify({id:'browser-test',schemaVersion:1,revision:0,extensions:[{id:'sample.chart',version:'1.0.0',scope:'application'}],pages:[{id:'home',route:'/',title:'Home',components:[{id:'chart',type:'Extension',extensionId:'sample.chart',name:'chart',props:{label:'Extension rendered'}}]}]}));
+  const extension=await exec(process.env.CHROME_BIN || 'google-chrome',[
+    '--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',
+    '--virtual-time-budget=5000',`--user-data-dir=${join(dir,'chrome-extension')}`,'--dump-dom',url
+  ],{timeout:45000,maxBuffer:1024*1024});
+  assert.match(extension.stdout, /Extension rendered/);
   const appHTML=await readFile(join(target,'index.html'),'utf8');
   const driver=`<script>let submitted=false;const check=setInterval(()=>{const button=document.getElementById('chat-send');if(!button.disabled&&!submitted){submitted=true;document.getElementById('chat-input').value='Hi';document.getElementById('chat-form').requestSubmit();}if(submitted&&document.getElementById('chat-log').textContent.includes('Agent: Hello from test')){document.body.dataset.chat='pass';clearInterval(check);}},25);setTimeout(()=>clearInterval(check),4000);</script>`;
   await writeFile(join(target,'index.html'),appHTML.replace('</html>',driver+'</html>'));
