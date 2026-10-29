@@ -25,13 +25,15 @@ export function registerStagedCapability(registry:CapabilityRegistry, external:C
     authorize,
     ...(authorizeInput?{authorizeInput}:{}),
     validate:async input=>{
-      if(!record(input)||Object.keys(input).length!==1)return false;
-      if(operation==='stage' ? !Object.hasOwn(input,'payload')||!record(input.payload) : !Object.hasOwn(input,'id')||!id(input.id))return false;
+      if(!record(input))return false;
+      if(operation==='stage'){
+        if(!Object.hasOwn(input,'payload')||!record(input.payload)||Object.keys(input).some(key=>!['payload','requestKey'].includes(key))||(Object.hasOwn(input,'requestKey')&&!id(input.requestKey)))return false;
+      } else if(Object.keys(input).length!==1||!Object.hasOwn(input,'id')||!id(input.id))return false;
       return await validate(structuredClone(input))===true;
     },
     execute:async(input,context)=>{
-      const value=input as {id:string;payload:Record<string,unknown>},scope={tenantId:context.tenantId,applicationId};
-      if(operation==='stage')return store.stage(scope,externalOperationId,value.payload);
+      const value=input as {id:string;payload:Record<string,unknown>;requestKey?:string},scope={tenantId:context.tenantId,applicationId};
+      if(operation==='stage')return store.stage(scope,externalOperationId,value.payload,value.requestKey);
       const staged=store.get(scope,value.id);
       if(!staged||staged.operationId!==externalOperationId){if(operation==='get')return null;throw Error('Operation not found');}
       if(operation==='get')return staged;

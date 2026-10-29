@@ -19,6 +19,7 @@ test('authenticated UI and agent calls share data capability policies and tenant
   assert.equal((await call('put',{id:'1',expectedRevision:null,value:{name:'Ada'},tenantId:'b'})).status,400);
   assert.equal((await call('put',{id:'1',expectedRevision:null,value:{name:'Ada'}})).body.result.revision,1);
   assert.deepEqual((await call('get',{id:'1'},'a','allowed','agent')).body.result.value,{name:'Ada'});
+  assert.equal((await call('put',{id:'1',expectedRevision:null,value:{name:'Grace'}})).status,409);
   assert.equal((await call('get',{id:'1'},'b')).body.result,null);
   assert.equal((await call('delete',{id:'1',expectedRevision:1},'a','allowed','agent')).status,200);
   assert.equal((await call('get',{id:'1'})).body.result,null);
