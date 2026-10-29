@@ -33,5 +33,14 @@ try{
  assert.equal(document.querySelector('input').value,'Grace');
  await React.act(()=>document.querySelector('[role="button"]').click());
  assert.equal(actions.length,1);assert.deepEqual(actions[0].action.context,{name:'Grace'});assert.deepEqual(errors,[]);
+ await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+  {id:'root',component:'Column',children:['heading','caption']},
+  {id:'heading',component:'Text',text:'Heading',variant:'h1'},
+  {id:'caption',component:'Text',text:'Caption',variant:'caption'}
+ ]}}));
+ const heading=document.querySelector('[role="heading"]');assert.ok(heading);
+ assert.equal(heading.style.fontSize,'32px');assert.equal(heading.style.fontWeight,'bold');
+ const caption=[...document.querySelectorAll('*')].find(element=>element.textContent==='Caption' && element.children.length===0);
+ assert.ok(caption);assert.equal(caption.style.fontSize,'13.33px');
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}
