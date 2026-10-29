@@ -58,5 +58,6 @@ jobs:
           )
           xcrun simctl boot "$simulator"
           xcrun simctl bootstatus "$simulator" -b
+          open -a Simulator
           cd "$RUNNER_TEMP/adapter_device_test"
-          flutter test integration_test/renderer_device_test.dart -d "$simulator"
+          flutter test --verbose --timeout 5m integration_test/renderer_device_test.dart -d "$simulator"
