@@ -20,9 +20,9 @@ function fieldControl(document,field) {
   control.required=field.required;error.setAttribute('role','alert');label.append(control,error);return {field,control,error,dirty:false};
 }
 
-export function createRecordEditor({getOperation,putOperation,fields}) {
+export function createRecordEditor({getOperation,putOperation,listOperation,fields}) {
   const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
-  if(!validOperation(getOperation)||!validOperation(putOperation))throw Error('Invalid record editor capabilities');
+  if(!validOperation(getOperation)||!validOperation(putOperation)||(listOperation!==undefined&&!validOperation(listOperation)))throw Error('Invalid record editor capabilities');
   const schema=normalizeFields(fields);
   const validate=component=>{
     if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
@@ -34,7 +34,7 @@ export function createRecordEditor({getOperation,putOperation,fields}) {
     id.disabled=true;value.disabled=true;idLabel.appendChild(id);valueLabel.appendChild(value);
     load.type='button';load.textContent='Load';load.disabled=true;save.type='button';save.textContent='Save';save.disabled=true;
     status.setAttribute('role','status');status.textContent='Preview only. Data operations are disabled.';
-    root.append(heading,idLabel,load);if(schema)for(const field of schema){const item=fieldControl(document,field);item.control.disabled=true;root.appendChild(item.control.parentElement);}else root.appendChild(valueLabel);root.append(save,status);return root;
+    root.append(heading);if(listOperation){const browse=document.createElement('button'),next=document.createElement('button');browse.type='button';browse.textContent='Browse records';browse.disabled=true;next.type='button';next.textContent='Next page';next.disabled=true;root.append(browse,next);}root.append(idLabel,load);if(schema)for(const field of schema){const item=fieldControl(document,field);item.control.disabled=true;root.appendChild(item.control.parentElement);}else root.appendChild(valueLabel);root.append(save,status);return root;
   };
   return {render,validate};
 }
