@@ -1,11 +1,12 @@
 import {createHash} from 'node:crypto';
+import {checkPromotionPackage} from './promotion.js';
 type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
 export type Page = {id:string;title:string;route:string;components:Component[]};
 export type ExtensionReference = {id:string;version:string;scope:'platform'|'development'|'application'};
 export type ExtensionOperation = {extensionId:string;kind:'tool'|'provider';name:string};
 export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[];extensions?:ExtensionReference[];extensionOperations?:ExtensionOperation[]};
-export type PublicationProvenance = {version:number;kind:'unknown'} | {version:number;kind:'publish';previousVersion:number;definitionSha256:string} | {version:number;kind:'rollback';previousVersion:number;sourceVersion:number;definitionSha256:string};
+export type PublicationProvenance = {version:number;kind:'unknown'} | {version:number;kind:'publish';previousVersion:number;definitionSha256:string} | {version:number;kind:'rollback';previousVersion:number;sourceVersion:number;definitionSha256:string} | {version:number;kind:'promotion';previousVersion:number;sourceEnvironment:string;targetEnvironment:string;sourceVersion:number;packageDigest:string;definitionSha256:string};
 export function definitionSha256(definition:ApplicationDefinition):string{return createHash('sha256').update(JSON.stringify(definition)).digest('hex');}
 export type PublicationGuard = (draft:ApplicationDefinition) => true;
 export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
@@ -63,6 +64,15 @@ export class ApplicationStore {
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
+ promote(input:unknown,expectedVersion:number,targetEnvironment:string){
+  if(!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw Error('Invalid version');
+  const item=checkPromotionPackage(input,targetEnvironment,this.draft.id),latest=this.published.at(-1)?.version??0;
+  if(latest!==expectedVersion)throw Error('Publication version conflict');
+  enforcePublicationGuard(this.publicationGuard,item.definition);
+  const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
+  const publication={version,definition:item.definition},hash=definitionSha256(item.definition);
+  this.published.push(publication);this.provenance.set(version,{version,kind:'promotion',previousVersion:latest,sourceEnvironment:item.sourceEnvironment,targetEnvironment,sourceVersion:item.sourceVersion,packageDigest:item.digest,definitionSha256:hash});return copy(publication);
+ }
  rollback(sourceVersion:number,expectedVersion:number){
   if(!Number.isSafeInteger(sourceVersion)||sourceVersion<1||!Number.isSafeInteger(expectedVersion)||expectedVersion<1)throw Error('Invalid version');
   const latest=this.published.at(-1);if(!latest||latest.version!==expectedVersion)throw Error('Publication version conflict');
@@ -73,6 +83,9 @@ export class ApplicationStore {
   const publication={version,definition},hash=definitionSha256(definition);this.published.push(publication);this.provenance.set(version,{version,kind:'rollback',previousVersion:expectedVersion,sourceVersion,definitionSha256:hash});return copy(publication);
  }
 }
+
+export { createPromotionPackage } from './promotion.js';
+export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
 export { createControlPlane, createDataPlane, createProposalPlane, createDevelopmentPlanes } from './planes.js';

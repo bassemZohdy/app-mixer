@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import {checkPromotionPackage, createPromotionPackage} from './promotion.js';
 import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
 
 type Published = { version: number; definition: ApplicationDefinition };
@@ -31,6 +32,18 @@ export class SqliteApplicationStore {
           CHECK((kind = 'publish' AND source_version IS NULL) OR (kind = 'rollback' AND source_version > 0 AND source_version < previous_version)),
           CHECK(length(definition_sha256) = 64)
         );
+        CREATE TABLE IF NOT EXISTS application_promotions (
+          app_id TEXT NOT NULL, version INTEGER NOT NULL, source_environment TEXT NOT NULL,
+          target_environment TEXT NOT NULL, source_version INTEGER NOT NULL, package_digest TEXT NOT NULL,
+          PRIMARY KEY (app_id,version)
+        );
+        CREATE TRIGGER IF NOT EXISTS promotion_no_replace BEFORE INSERT ON application_promotions
+          WHEN EXISTS (SELECT 1 FROM application_promotions WHERE app_id=NEW.app_id AND version=NEW.version)
+          BEGIN SELECT RAISE(ABORT, 'Promotion provenance is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS promotion_no_update BEFORE UPDATE ON application_promotions
+          BEGIN SELECT RAISE(ABORT, 'Promotion provenance is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS promotion_no_delete BEFORE DELETE ON application_promotions
+          BEGIN SELECT RAISE(ABORT, 'Promotion provenance is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS provenance_no_replace BEFORE INSERT ON application_publication_provenance
           WHEN EXISTS (SELECT 1 FROM application_publication_provenance WHERE app_id = NEW.app_id AND version = NEW.version)
           BEGIN SELECT RAISE(ABORT, 'Publication provenance is immutable'); END;
@@ -82,6 +95,15 @@ export class SqliteApplicationStore {
     if (!row) return {version,kind:'unknown'};
     const previousVersion = Number(row.previous_version), hash = row.definition_sha256;
     if (previousVersion !== version - 1 || typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash) || hash !== definitionSha256(publication.definition)) throw Error('Invalid publication provenance');
+    const promotion=this.db.prepare('SELECT source_environment,target_environment,source_version,package_digest FROM application_promotions WHERE app_id=? AND version=?').get(this.id,version);
+    if (promotion) {
+      if(row.kind!=='publish'||row.source_version!==null||typeof promotion.source_environment!=='string'||typeof promotion.target_environment!=='string'||typeof promotion.package_digest!=='string')throw Error('Invalid publication provenance');
+      const sourceVersion=Number(promotion.source_version);
+      const item=createPromotionPackage(promotion.source_environment,{version:sourceVersion,definition:publication.definition});
+      checkPromotionPackage(item,promotion.target_environment,this.id);
+      if(item.digest!==promotion.package_digest)throw Error('Invalid publication provenance');
+      return {version,kind:'promotion',previousVersion,sourceEnvironment:item.sourceEnvironment,targetEnvironment:promotion.target_environment,sourceVersion,packageDigest:item.digest,definitionSha256:hash};
+    }
     if (row.kind === 'publish' && row.source_version === null) return {version,kind:'publish',previousVersion,definitionSha256:hash};
     if (row.kind === 'rollback') {
       const sourceVersion=Number(row.source_version);
@@ -114,6 +136,21 @@ export class SqliteApplicationStore {
         .run(this.id, version, JSON.stringify(draft));
       this.db.prepare("INSERT INTO application_publication_provenance VALUES (?, ?, 'publish', ?, NULL, ?)").run(this.id, version, version-1, definitionSha256(draft));
       return { version, definition: draft };
+    });
+  }
+
+  promote(input: unknown, expectedVersion: number, targetEnvironment: string): Published {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw Error('Invalid version');
+    const item=checkPromotionPackage(input,targetEnvironment,this.id);
+    return this.transaction(() => {
+      const latest=this.getPublished()?.version ?? 0;
+      if(latest!==expectedVersion)throw Error('Publication version conflict');
+      enforcePublicationGuard(this.publicationGuard,item.definition);
+      const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
+      this.db.prepare('INSERT INTO application_publications (app_id,version,definition) VALUES (?,?,?)').run(this.id,version,JSON.stringify(item.definition));
+      this.db.prepare("INSERT INTO application_publication_provenance VALUES (?, ?, 'publish', ?, NULL, ?)").run(this.id,version,latest,definitionSha256(item.definition));
+      this.db.prepare('INSERT INTO application_promotions VALUES (?,?,?,?,?,?)').run(this.id,version,item.sourceEnvironment,targetEnvironment,item.sourceVersion,item.digest);
+      return {version,definition:item.definition};
     });
   }
 
