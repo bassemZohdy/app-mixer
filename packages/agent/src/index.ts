@@ -93,3 +93,5 @@ export {DurableAgentWorker} from './durable-worker.js';
 export type {DurableAgentWorkerOptions,DurableAgentWorkerOutcome} from './durable-worker.js';
 export {SqliteAgentCheckpointer} from './sqlite-checkpointer.js';
 export type {AgentCheckpointerOptions} from './sqlite-checkpointer.js';
+export {SqliteAgentActionJournal} from './action-journal.js';
+export type {AgentAction,AgentActionJournalOptions,AgentActionStatus} from './action-journal.js';

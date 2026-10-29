@@ -51,6 +51,7 @@ Progress counts checked items equally; a task is complete only after verificatio
   - In progress: local durable run registry, host-driven worker and lease-fenced LangGraph SQLite checkpoints with explicit recovery. Automatic scheduling, quotas, safe external-effect replay and production coordination remain. See [durable agent runs](docs/durable-agent-runs.md).
 - [ ] P2-08 Add event/webhook and scheduler activation, authenticated ingress, trigger dedup and concurrency limits (PA-03)
 - [ ] P2-09 Build durable action intent/outcome journal, stable idempotency and uncertain-result reconciliation (PA-05)
+  - In progress: lease-fenced SQLite action journal with stable keys, explicit reconciliation and optional configured-agent integration. Automatic reconciliation, production storage and downstream idempotency verification remain. See [agent action journal](docs/agent-action-journal.md).
 - [ ] P2-10 Implement configurable memory adapters, isolation, retention and provenance (PA-06)
 
 ## P3: persistent agent security and operations (new, pending)
