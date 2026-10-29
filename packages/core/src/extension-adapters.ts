@@ -1,6 +1,6 @@
 import { ComponentRegistry, basicRegistry } from '@app-mixer/web';
 import { CapabilityRegistry, type CapabilityCandidate, type CapabilityAuditSink } from './capabilities.js';
-import { ExtensionRegistry } from './extensions.js';
+import { ExtensionRegistry, createExtensionPublicationGuard, type ExtensionManifest, type ExtensionHost } from './extensions.js';
 import { isValidExtensionOperations, validate, type ApplicationDefinition, type ExtensionOperation, type ExtensionReference } from './index.js';
 
 type CapabilityPolicy = {authorize:(context:{tenantId:string;principalId:string})=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>};
@@ -80,4 +80,24 @@ export function createExtensionRuntime(application:ApplicationDefinition, extens
     registerDeclaredExtensionCapability(capabilities,extensions,snapshot,operation,binding.candidate,binding);
   }
   return {components,capabilities};
+}
+
+export type FlutterExtensionPlan = {version:1; applicationId:string; revision:number; components:({name:string} & ExtensionReference)[]};
+
+/** Produce metadata only; the host must select a published definition and authenticate delivery. */
+export function createFlutterExtensionPlan(application:ApplicationDefinition, manifests:ExtensionManifest[], host:ExtensionHost):FlutterExtensionPlan {
+  const snapshot=structuredClone(application);validate(snapshot);
+  if(host?.renderer!=='flutter')throw Error('Flutter host required');
+  const guard=createExtensionPublicationGuard(manifests,host,()=>({components:[],tools:[],providers:[]}));
+  guard(snapshot);
+  const components:FlutterExtensionPlan['components']=[],owners=new Map<string,string>();
+  for(const page of snapshot.pages)for(const component of page.components){
+    if(component.type!=='Extension')continue;
+    const ref=snapshot.extensions?.find(item=>item.id===component.extensionId);
+    if(!ref)throw Error('Extension compatibility failed');
+    if(owners.has(component.name)){if(owners.get(component.name)!==ref.id)throw Error('Duplicate extension component');continue;}
+    owners.set(component.name,ref.id);components.push({...ref,name:component.name});
+    if(components.length>1000)throw Error('Too many extension components');
+  }
+  return {version:1,applicationId:snapshot.id,revision:snapshot.revision,components};
 }
