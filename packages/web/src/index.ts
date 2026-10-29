@@ -132,7 +132,7 @@ export function basicRegistry(): ComponentRegistry {
   });
   return registry;
 }
-type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement> };
+type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
 export class A2UIRenderer {
   private readonly surfaces = new Map<string, Surface>();
   constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry(), private readonly onAction?: (message: ActionMessage) => void) {}
@@ -150,12 +150,13 @@ export class A2UIRenderer {
       if (this.surfaces.has(surfaceId)) throw Error('Surface already exists');
       const element = this.host.ownerDocument.createElement('div');
       element.dataset.surfaceId = surfaceId; this.host.appendChild(element);
-      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map()}); return;
+      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map(), componentRevision:{}}); return;
     }
     const surface = this.surfaces.get(surfaceId);
     if (!surface) throw Error('Unknown surface');
     if (kind === 'deleteSurface') { if (!only(payload, ['surfaceId'])) throw Error('Unsupported delete property'); surface.element.remove(); this.surfaces.delete(surfaceId); return; }
     let components = surface.components, data = surface.data;
+    const componentRevision = kind === 'updateComponents' ? {} : surface.componentRevision;
     if (kind === 'updateComponents') {
       if (!only(payload, ['surfaceId','components'])) throw Error('Unsupported components property');
       if (!Array.isArray(payload.components) || payload.components.length < 1 || payload.components.length > 1000) throw Error('Invalid components');
@@ -193,7 +194,7 @@ export class A2UIRenderer {
           }
         },
         action: (name, context) => {
-          if (this.surfaces.get(surfaceId) !== surface || !this.onAction) return;
+          if (this.surfaces.get(surfaceId) !== surface || surface.componentRevision !== componentRevision || !this.onAction) return;
           const resolved: Obj = {};
           for (const [key, value] of Object.entries(context)) {
             if (['__proto__','prototype','constructor'].includes(key)) throw Error('Unsafe action context');
@@ -209,7 +210,7 @@ export class A2UIRenderer {
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
     surface.element.replaceChildren(...(root ? [root] : []));
-    surface.components = components; surface.data = data; surface.controls = controls;
+    surface.components = components; surface.data = data; surface.controls = controls; surface.componentRevision = componentRevision;
   }
 }
 
