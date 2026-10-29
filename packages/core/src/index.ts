@@ -153,3 +153,5 @@ export {SqliteJwtRevocations} from './jwt-revocations.js';
 
 export {JwtJwksManager} from './jwt-jwks-manager.js';
 export type {JwtJwksManagerOptions} from './jwt-jwks-manager.js';
+export {discoverOidcJwks,createOidcJwtJwksManager} from './oidc-discovery.js';
+export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discovery.js';

@@ -21,5 +21,5 @@ export function createJwtCapabilityAuthenticator(options:JwtCapabilityAuthOption
    const actor=await resolveActor(structuredClone(payload));if(closed||current!==snapshot||!actor||!text(actor.tenantId)||!text(actor.principalId))return undefined;const fixed={tenantId:actor.tenantId,principalId:actor.principalId};if(isTokenActive&&await isTokenActive(structuredClone(payload))!==true)return undefined;const seconds=Math.floor(now()/1000);if(closed||current!==snapshot||seconds>=payload.exp+tolerance||seconds-payload.iat>maxAge+tolerance||payload.iat>seconds+tolerance)return undefined;return fixed;
   }catch{return undefined;}
  };
- return Object.assign(authenticate,{replaceKeys(input:JSONWebKeySet):void{if(closed)throw Error('JWT authenticator closed');current=makeKeySet(input);},close():void{closed=true;}});
+ return Object.assign(authenticate,{isIssuer(value:string):boolean{return value===issuerValue;},replaceKeys(input:JSONWebKeySet):void{if(closed)throw Error('JWT authenticator closed');current=makeKeySet(input);},close():void{closed=true;}});
 }
