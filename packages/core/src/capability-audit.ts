@@ -12,19 +12,19 @@ export class SqliteCapabilityAudit {
  constructor(path:string,options:{clock?:()=>number}={}){
   if(typeof path!=='string'||!path||!options||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid capability audit configuration');
   this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,sequence);');}catch(error){this.db.close();throw error;}
+  try{this.db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, invocation_id TEXT NOT NULL, operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,sequence);');}catch(error){this.db.close();throw error;}
  }
  /** Compatible with CapabilityRegistry's required audit sink. */
  record=(event:CapabilityAuditEvent):void=>{
-  if(!event||!text(event.operationId)||!text(event.tenantId)||!text(event.principalId)||!outcomes.has(event.outcome))throw Error('Invalid capability audit event');
+  if(!event||!text(event.invocationId)||!text(event.operationId)||!text(event.tenantId)||!text(event.principalId)||!outcomes.has(event.outcome))throw Error('Invalid capability audit event');
   const time=this.clock();if(!integer(time))throw Error('Invalid clock');
-  this.db.prepare('INSERT INTO capability_audit(recorded_at,operation_id,tenant_id,principal_id,outcome) VALUES (?,?,?,?,?)').run(time,event.operationId,event.tenantId,event.principalId,event.outcome);
+  this.db.prepare('INSERT INTO capability_audit(recorded_at,invocation_id,operation_id,tenant_id,principal_id,outcome) VALUES (?,?,?,?,?,?)').run(time,event.invocationId,event.operationId,event.tenantId,event.principalId,event.outcome);
  };
  /** Read only a host-authorized tenant, with stable sequence pagination. */
  list(tenantId:string,options:{after?:number;limit?:number}={}):StoredCapabilityAuditEvent[]{
   if(!text(tenantId)||!options||!integer(options.after??0)||!integer(options.limit??100)||(options.limit??100)<1||(options.limit??100)>1000)throw Error('Invalid capability audit query');
-  const rows=this.db.prepare('SELECT sequence,recorded_at,operation_id,tenant_id,principal_id,outcome FROM capability_audit WHERE tenant_id=? AND sequence>? ORDER BY sequence LIMIT ?').all(tenantId,options.after??0,options.limit??100);
-  return rows.map(row=>({sequence:Number(row.sequence),recordedAt:Number(row.recorded_at),operationId:String(row.operation_id),tenantId:String(row.tenant_id),principalId:String(row.principal_id),outcome:row.outcome as CapabilityAuditEvent['outcome']}));
+  const rows=this.db.prepare('SELECT sequence,recorded_at,invocation_id,operation_id,tenant_id,principal_id,outcome FROM capability_audit WHERE tenant_id=? AND sequence>? ORDER BY sequence LIMIT ?').all(tenantId,options.after??0,options.limit??100);
+  return rows.map(row=>({sequence:Number(row.sequence),recordedAt:Number(row.recorded_at),invocationId:String(row.invocation_id),operationId:String(row.operation_id),tenantId:String(row.tenant_id),principalId:String(row.principal_id),outcome:row.outcome as CapabilityAuditEvent['outcome']}));
  }
  close():void{this.db.close();}
 }
