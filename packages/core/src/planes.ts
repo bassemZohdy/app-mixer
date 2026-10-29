@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { ApplicationDefinition, Component, Page, Patch } from './index.js';
+import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenance } from './index.js';
 import { isValidExtensionReferences, isValidExtensionOperations } from './index.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
@@ -12,6 +12,7 @@ export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
   apply(revision: number, patches: Patch[]): ApplicationDefinition;
   publish(revision: number): { version: number; definition: ApplicationDefinition };
+  getPublicationProvenance?(version:number): PublicationProvenance | undefined;
   rollback?(sourceVersion: number, expectedVersion: number): { version: number; definition: ApplicationDefinition };
   getPublished(version?: number): { version: number; definition: ApplicationDefinition } | undefined;
 }
@@ -145,6 +146,15 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       const input = await body(req);
       if (!record(input) || !exact(input, ['expectedRevision']) || !revision(input.expectedRevision)) throw new RequestError(400, 'Invalid publish request');
       respond(res, 201, repository.publish(input.expectedRevision)); return;
+    }
+    const provenanceRoute = /^\/publications\/([1-9]\d*)\/provenance$/.exec(req.url ?? '');
+    if (req.method === 'GET' && provenanceRoute) {
+      const version=Number(provenanceRoute[1]);
+      if (!Number.isSafeInteger(version)) throw new RequestError(400, 'Invalid version');
+      if (!repository.getPublicationProvenance) throw new RequestError(501, 'Publication provenance unavailable');
+      const provenance=repository.getPublicationProvenance(version);
+      if (!provenance) throw Error('Publication not found');
+      respond(res,200,provenance); return;
     }
     if (req.method === 'POST' && req.url === '/rollback') {
       const input = await body(req);

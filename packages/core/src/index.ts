@@ -1,9 +1,12 @@
+import {createHash} from 'node:crypto';
 type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
 export type Page = {id:string;title:string;route:string;components:Component[]};
 export type ExtensionReference = {id:string;version:string;scope:'platform'|'development'|'application'};
 export type ExtensionOperation = {extensionId:string;kind:'tool'|'provider';name:string};
 export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[];extensions?:ExtensionReference[];extensionOperations?:ExtensionOperation[]};
+export type PublicationProvenance = {version:number;kind:'unknown'} | {version:number;kind:'publish';previousVersion:number;definitionSha256:string} | {version:number;kind:'rollback';previousVersion:number;sourceVersion:number;definitionSha256:string};
+export function definitionSha256(definition:ApplicationDefinition):string{return createHash('sha256').update(JSON.stringify(definition)).digest('hex');}
 export type PublicationGuard = (draft:ApplicationDefinition) => true;
 export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
  if(!guard){if(draft.extensions?.length || draft.extensionOperations?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw Error('Extension compatibility failed');return;}
@@ -41,10 +44,11 @@ export function validate(d:ApplicationDefinition):void {
  }
 }
 export class ApplicationStore {
- private draft:ApplicationDefinition;private published:{version:number;definition:ApplicationDefinition}[]=[];
+ private draft:ApplicationDefinition;private provenance=new Map<number,PublicationProvenance>();private published:{version:number;definition:ApplicationDefinition}[]=[];
  constructor(initial:ApplicationDefinition, private readonly publicationGuard?:PublicationGuard){validate(initial);if(publicationGuard!==undefined && typeof publicationGuard!=="function")throw Error("Invalid publication guard");this.draft=copy(initial);}
  getDraft(){return copy(this.draft);}
  getPublished(version?:number){if(version!==undefined&&(!Number.isSafeInteger(version)||version<1))throw Error("Invalid version");const p=version===undefined?this.published.at(-1):this.published.find(x=>x.version===version);return p?copy(p):undefined;}
+ getPublicationProvenance(version:number):PublicationProvenance|undefined{if(!Number.isSafeInteger(version)||version<1)throw Error('Invalid version');if(!this.published.some(p=>p.version===version))return undefined;return copy(this.provenance.get(version)??{version,kind:'unknown'});}
  apply(baseRevision:number,patches:Patch[]):ApplicationDefinition{
   if(baseRevision!==this.draft.revision)throw Error("Revision conflict");
   const candidate=copy(this.draft);
@@ -58,7 +62,7 @@ export class ApplicationStore {
   }}
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
  }
- publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)};this.published.push(p);return copy(p);}
+ publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  rollback(sourceVersion:number,expectedVersion:number){
   if(!Number.isSafeInteger(sourceVersion)||sourceVersion<1||!Number.isSafeInteger(expectedVersion)||expectedVersion<1)throw Error('Invalid version');
   const latest=this.published.at(-1);if(!latest||latest.version!==expectedVersion)throw Error('Publication version conflict');
@@ -66,7 +70,7 @@ export class ApplicationStore {
   if(sourceVersion>=expectedVersion)throw Error('Rollback requires an earlier version');
   const definition=copy(source.definition);validate(definition);enforcePublicationGuard(this.publicationGuard,definition);
   const version=latest.version+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
-  const publication={version,definition};this.published.push(publication);return copy(publication);
+  const publication={version,definition},hash=definitionSha256(definition);this.published.push(publication);this.provenance.set(version,{version,kind:'rollback',previousVersion:expectedVersion,sourceVersion,definitionSha256:hash});return copy(publication);
  }
 }
 
