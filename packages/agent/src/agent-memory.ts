@@ -44,6 +44,9 @@ export class SqliteAgentMemory {
   if(typeof row.value!=='string'||typeof row.provenance!=='string'||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1)throw Error('Invalid stored memory');
   return {id:String(row.memory_id),revision:Number(row.revision),value:JSON.parse(row.value),provenance:JSON.parse(row.provenance) as Provenance,expiresAt:Number(row.expires_at)};
  }
+ async assertAccess(actor:MemoryActor,scope:MemoryScope,action:MemoryAction,memoryId?:string):Promise<void>{
+  const c=checked(actor,scope);if(!['read','write','delete','list','purge'].includes(action)||(memoryId!==undefined&&!id(memoryId))||(['read','write','delete'].includes(action)&&memoryId===undefined))throw Error('Invalid memory access');await this.permit(c.actor,c.scope,action,memoryId);
+ }
  async get(actor:MemoryActor,scope:MemoryScope,memoryId:string):Promise<AgentMemoryRecord|undefined>{
   const checkedScope=checked(actor,scope);if(!id(memoryId))throw Error('Invalid memory ID');await this.permit(checkedScope.actor,checkedScope.scope,'read',memoryId);
   const row=this.row(checkedScope.scope,memoryId);return row?this.record(row,this.now()):undefined;
