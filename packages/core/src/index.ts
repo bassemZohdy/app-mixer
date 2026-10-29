@@ -129,3 +129,6 @@ export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailu
 
 export { OfflineSyncWorker } from './offline-worker.js';
 export type { OfflineWorkerOptions } from './offline-worker.js';
+
+export {createRecordFieldValidator} from './record-field-validator.js';
+export type {RecordField,RecordFieldValidatorOptions} from './record-field-validator.js';
