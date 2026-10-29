@@ -122,9 +122,14 @@ export class SqliteDataProvider implements DataProvider {
   list(scope:DataScope,collection:string,options:{after?:string;limit?:number}={}):DataRecordPage {
     checkKey(scope,collection,'validation');if(!options||typeof options!=='object'||Array.isArray(options)||(options.after!==undefined&&!identifier(options.after))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid data listing');
     const limit=options.limit??50,items:DataRecord[]=[];let bytes=0,more=false;
-    const rows=this.db.prepare('SELECT record_id,revision,value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 AND record_id>? ORDER BY record_id LIMIT ?').iterate(scope.tenantId,scope.applicationId,collection,options.after??'',limit+1);
-    for(const row of rows){if(typeof row.record_id!=='string'||!identifier(row.record_id)||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1||typeof row.value!=='string')throw Error('Invalid data record');const size=Buffer.byteLength(row.value,'utf8');if(items.length===limit||(items.length>0&&bytes+size>512*1024)){more=true;break;}items.push({id:row.record_id,revision:Number(row.revision),value:dataCopy(JSON.parse(row.value))});bytes+=size;}
-    return {items,...(more&&items.length?{nextAfter:items.at(-1)!.id}:{})};
+    // Read small metadata first and copy each BLOB separately; Node 22 SQLite text iteration can corrupt large values.
+    this.db.exec('BEGIN');try{
+      const rows=this.db.prepare('SELECT record_id,revision,length(CAST(value AS BLOB)) AS byte_size FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 AND record_id>? ORDER BY record_id LIMIT ?').all(scope.tenantId,scope.applicationId,collection,options.after??'',limit+1);
+      const read=this.db.prepare('SELECT CAST(value AS BLOB) AS value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND revision=? AND deleted=0');
+      for(const row of rows){if(typeof row.record_id!=='string'||!identifier(row.record_id)||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1||!Number.isSafeInteger(Number(row.byte_size))||Number(row.byte_size)<0)throw Error('Invalid data record');const size=Number(row.byte_size);if(items.length===limit||(items.length>0&&bytes+size>512*1024)){more=true;break;}const data=read.get(scope.tenantId,scope.applicationId,collection,row.record_id,row.revision as number);if(!data||!(data.value instanceof Uint8Array))throw Error('Invalid data record');items.push({id:row.record_id,revision:Number(row.revision),value:dataCopy(JSON.parse(Buffer.from(data.value).toString('utf8')))});bytes+=size;}
+      this.db.exec('COMMIT');return {items,...(more&&items.length?{nextAfter:items.at(-1)!.id}:{})};
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+
   }
   put(scope:DataScope,collection:string,id:string,value:Record<string,unknown>,expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord {
     checkKey(scope,collection,id);
