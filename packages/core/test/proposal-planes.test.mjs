@@ -61,15 +61,15 @@ test('review UI loads preview, approves draft, and publishes only on separate cl
     assert.match(response.headers.get('content-security-policy'),/frame-ancestors 'none'/);
     const html=await response.text();assert.doesNotMatch(html,new RegExp(developer));
     const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
-    const executable=script.replace(/^\s*import [^;]+;/,'');
-    const {A2UIRenderer,APP_MIXER_CATALOG}=await import('../../web/dist/index.js');
+    const executable=script.replace(/^\s*import [^;]+;\s*/gm,'');
+    const {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry}=await import('../../web/dist/index.js');
     const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
     const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
     elements.token.value=developer;elements['proposal-id'].value=proposal.id;
     const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};
     function element(){return {ownerDocument:document,children:[],style:{},dataset:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}
     Object.assign(elements['rendered-preview'],element());
-    runInNewContext(executable,{document,A2UIRenderer,APP_MIXER_CATALOG,fetch:(path,options)=>fetch(new URL(path,cp),options)});
+    runInNewContext(executable,{document,A2UIRenderer,APP_MIXER_CATALOG,basicRegistry,installedExtensions:[],fetch:(path,options)=>fetch(new URL(path,cp),options)});
     await elements.load.listeners.click();
     assert.match(elements.preview.textContent,/<script>unsafe<\/script>/);
     assert.equal(elements['rendered-preview'].children[0].children[0].children[0].textContent,'<script>unsafe</script>');
@@ -86,4 +86,36 @@ test('review UI loads preview, approves draft, and publishes only on separate cl
     assert.equal(elements.approve.disabled,true);
     assert.match(elements.status.textContent,/preview is unsupported/);
   }finally{await stop(planes.control);await stop(planes.proposal);}
+});
+
+test('review UI enables extension approval only when a trusted matching renderer can preview it',async()=>{
+ const {runInNewContext}=await import('node:vm');
+ const {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry}=await import('../../web/dist/index.js');
+ const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
+ const moduleSource=`export const installedExtensions=[{id:'sample.chart',version:'1.0.0',scope:'application',components:{chart:{render:(c,_child,_data,doc)=>{const node=doc.createElement('p');node.textContent=c.label;return node;},validate:c=>{if(typeof c.label!=='string')throw Error('Invalid chart');}}}}];`;
+ const planes=createDevelopmentPlanes(repo,developer,agent,undefined,{extensionModule:moduleSource});
+ try{
+  const cp=await start(planes.control),pp=await start(planes.proposal);
+  const servedModule=await (await fetch(`${cp}/development/extensions.mjs`)).text();assert.equal(servedModule,moduleSource);
+  const {installedExtensions}=await import('data:text/javascript;base64,'+Buffer.from(servedModule).toString('base64'));
+  const ref={id:'sample.chart',version:'1.0.0',scope:'application'};
+  const page={id:'home',route:'/',title:'Home',components:[{id:'chart',type:'Extension',extensionId:ref.id,name:'chart',props:{label:'Sales'}}]};
+  const proposal=await (await fetch(`${pp}/proposals`,post(agent,{baseRevision:0,patches:[{op:'setExtensions',extensions:[ref]},{op:'addPage',page}]}))).json();
+  const html=await (await fetch(`${cp}/development`)).text();
+  const executable=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm,'');
+  async function load(installedExtensions){
+   const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
+   const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
+   elements.token.value=developer;elements['proposal-id'].value=proposal.id;
+   const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};
+   function element(){return {ownerDocument:document,children:[],style:{},dataset:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}
+   Object.assign(elements['rendered-preview'],element());
+   runInNewContext(executable,{document,A2UIRenderer,APP_MIXER_CATALOG,basicRegistry,installedExtensions,fetch:(path,options)=>fetch(new URL(path,cp),options)});
+   await elements.load.listeners.click();return elements;
+  }
+  const missing=await load([]);assert.equal(missing.approve.disabled,true);assert.match(missing.status.textContent,/unsupported/);
+  const matched=await load(installedExtensions);
+  assert.equal(matched.approve.disabled,false);assert.equal(matched['rendered-preview'].children[0].children[0].children[1].textContent,'Sales');
+  await matched.approve.listeners.click();assert.equal(repo.getDraft().revision,1);assert.equal(repo.getPublished(),undefined);
+ }finally{await stop(planes.control);await stop(planes.proposal);}
 });
