@@ -89,3 +89,5 @@ export {createConfiguredAgentRun} from './configured-runtime.js';
 export type {ConfiguredAgentIdentity,ConfiguredAgentBinding,ConfiguredAgentOptions} from './configured-runtime.js';
 export {SqliteAgentRuns} from './durable-runs.js';
 export type {DurableAgentRun,AgentRunScope,AgentRunStatus} from './durable-runs.js';
+export {DurableAgentWorker} from './durable-worker.js';
+export type {DurableAgentWorkerOptions,DurableAgentWorkerOutcome} from './durable-worker.js';
