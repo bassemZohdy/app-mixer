@@ -83,3 +83,6 @@ export type { DataProvider, DataRecord, DataScope } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
 export type { StagedOperation, StagedStatus } from './staged-operations.js';
+
+export { registerDataCapability } from './data-capabilities.js';
+export type { DataCapabilityOptions } from './data-capabilities.js';
