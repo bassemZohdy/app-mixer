@@ -9,7 +9,7 @@ globalThis.window=dom.window;globalThis.document=dom.window.document;
 Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const React=require('react');const {createRoot}=require('react-dom/client');
 const View=({children,style})=>React.createElement('div',{style},children);
-const Text=({children,accessibilityRole})=>React.createElement('span',{'data-role':accessibilityRole},children);
+const Text=({children,accessibilityRole,style})=>React.createElement('span',{'data-role':accessibilityRole,style},children);
 let change;const TextInput=props=>{change=props.onChangeText;return React.createElement('input',{value:props.value,readOnly:true});};
 const Pressable=({children,onPress,disabled})=>React.createElement('button',{onClick:onPress,disabled},children);
 const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable});const root=createRoot(document.getElementById('app'));
@@ -23,6 +23,7 @@ try{
   receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['title','field','button']},{id:'title',component:'Text',text:{path:'/name'},variant:'h1'},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}},{id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/name'}}}}},{id:'label',component:'Text',text:'Save'}]}});
  });
  assert.equal(document.querySelector('span').textContent,'Native hello');assert.equal(document.querySelector('span').dataset.role,'header');
+ assert.equal(document.querySelector('span').style.fontSize,'32px');assert.equal(document.querySelector('span').style.fontWeight,'bold');
  assert.equal(document.querySelector('button').disabled,true);
  await React.act(()=>root.render(React.createElement(React.StrictMode,null,React.createElement(Component,{subscribe,onError:error=>errors.push(error),onAction:event=>actions.push(event)}))));
  await React.act(()=>change('Updated'));assert.equal(document.querySelector('span').textContent,'Updated');
@@ -37,6 +38,13 @@ try{
  assert.equal(unsubscribed,2);assert.equal(document.querySelector('span'),null);oldReceive({version:'invalid'});stale('late');assert.equal(errors.length,2);
  await React.act(()=>{newReceive({version:'v0.9.1',createSurface:{surfaceId:'new',catalogId:APP_MIXER_CATALOG}});newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'New source'}]}});});
  assert.equal(document.querySelector('span').textContent,'New source');
+ await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[
+  {id:'root',component:'Column',children:['one','two','three','four','five','caption','body']},
+  ...['h1','h2','h3','h4','h5','caption','body'].map((variant,i)=>({id:['one','two','three','four','five','caption','body'][i],component:'Text',text:variant,variant}))
+ ]}}));
+ const variants=[...document.querySelectorAll('span')];
+ assert.deepEqual(variants.map(node=>node.style.fontSize),['32px','24px','18.72px','16px','13.28px','13.33px','']);
+ assert.deepEqual(variants.map(node=>node.dataset.role??''),['header','header','header','header','header','','']);
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
  const root2=createRoot(document.getElementById('app'));let next;const failures=[];
  const broken=()=>()=>{throw Error('cleanup failed');},replacement=callback=>{next=callback;};
