@@ -97,7 +97,7 @@ export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
 export { createControlPlane, createDataPlane, createProposalPlane, createDevelopmentPlanes } from './planes.js';
-export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions } from './planes.js';
+export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
@@ -140,3 +140,6 @@ export {createRemotePromotionClient, RemotePromotionUncertainError} from './remo
 export type {RemotePromotionRequest, RemotePromotionDetails, RemotePromotionEvent, RemotePromotionOptions} from './remote-promotion.js';
 
 export {createRecordJsonSchemaValidator} from './record-json-schema.js';
+
+export {signPromotionPackage,createSignedPromotionVerifier} from './signed-promotion.js';
+export type {SignedPromotionPackage,PromotionSigningKey} from './signed-promotion.js';

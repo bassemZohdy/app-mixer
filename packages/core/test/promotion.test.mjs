@@ -5,7 +5,8 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
-import {ApplicationStore,SqliteApplicationStore,createPromotionPackage,createControlPlane,createDataPlane} from '../dist/index.js';
+import {generateKeyPairSync} from 'node:crypto';
+import {ApplicationStore,SqliteApplicationStore,createPromotionPackage,createControlPlane,createDataPlane,signPromotionPackage,createSignedPromotionVerifier} from '../dist/index.js';
 const initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',route:'/',title:'Source',components:[]}]};
 const packageFor=store=>createPromotionPackage('development',store.getPublished(1));
 
@@ -41,4 +42,14 @@ test('control planes export and import an authenticated package between environm
   assert.equal((await fetch(url(b)+'/promotion/import',post({package:pkg,targetEnvironment:'production',expectedVersion:0}))).status,409);
   assert.equal((await (await fetch(url(data)+'/application')).json()).definition.pages[0].title,'Source');const provenance=await (await fetch(url(b)+'/publications/1/provenance',{headers})).json();assert.equal(provenance.kind,'promotion');
  }finally{await Promise.all([a,b,data].map(s=>new Promise(r=>s.close(r))));}
+});
+
+
+test('signed promotion binds package, source, key and target',()=>{
+ const source=new ApplicationStore(initial);source.publish(0);const pkg=packageFor(source),{privateKey,publicKey}=generateKeyPairSync('ed25519'),other=generateKeyPairSync('ed25519'),signed=signPromotionPackage(pkg,'production','key-1',privateKey),verify=createSignedPromotionVerifier([{sourceEnvironment:'development',keyId:'key-1',publicKey}],'production');assert.deepEqual(verify(signed,'production','demo'),pkg);
+ const variants=[{...signed,signature:signed.signature.slice(0,-1)+(signed.signature.endsWith('A')?'B':'A')},{...signed,keyId:'other'},{...signed,targetEnvironment:'staging'},{...signed,package:{...pkg,definition:{...pkg.definition,id:'other'}}},{...signed,package:{...pkg,sourceEnvironment:'testing'}},{...signed,extra:true}];for(const value of variants)assert.throws(()=>verify(value,'production','demo'),/Invalid signed promotion/);assert.throws(()=>verify(signed,'staging','demo'),/Invalid signed promotion/);assert.throws(()=>verify(signed,'production','other'),/Invalid signed promotion/);assert.throws(()=>createSignedPromotionVerifier([{sourceEnvironment:'development',keyId:'key-1',publicKey},{sourceEnvironment:'development',keyId:'key-1',publicKey:other.publicKey}],'production'),/configuration/);assert.throws(()=>signPromotionPackage(pkg,'production','key-1',publicKey),/configuration/);const wrong=createSignedPromotionVerifier([{sourceEnvironment:'development',keyId:'key-1',publicKey:other.publicKey}],'production');assert.throws(()=>wrong(signed,'production','demo'),/Invalid signed promotion/);
+});
+
+test('target control plane enforces signed promotion and preserves optimistic concurrency',async()=>{
+ const source=new ApplicationStore(initial),target=new ApplicationStore(initial);source.publish(0);const pkg=packageFor(source),{privateKey,publicKey}=generateKeyPairSync('ed25519'),verify=createSignedPromotionVerifier([{sourceEnvironment:'development',keyId:'key-1',publicKey}],'production'),signed=signPromotionPackage(pkg,'production','key-1',privateKey),token='strong-token-at-least-thirty-two-characters',server=createControlPlane(target,token,undefined,undefined,undefined,{verify});server.listen(0,'127.0.0.1');await once(server,'listening');const url=`http://127.0.0.1:${server.address().port}/promotion/import`,post=(item,targetEnvironment='production')=>fetch(url,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({package:item,targetEnvironment,expectedVersion:0})});try{assert.equal((await post(pkg)).status,403);assert.equal((await post({...signed,signature:'A'.repeat(86)})).status,403);assert.equal((await post(signed,'staging')).status,403);assert.equal(target.getPublished(),undefined);assert.equal((await post(signed)).status,201);assert.equal((await post(signed)).status,409);assert.equal(target.getPublicationProvenance(1).packageDigest,pkg.digest);}finally{await new Promise(r=>server.close(r));}
 });

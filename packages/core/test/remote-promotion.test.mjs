@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {ApplicationStore,createControlPlane,createRemotePromotionClient,RemotePromotionUncertainError} from '../dist/index.js';
+import {generateKeyPairSync} from 'node:crypto';
+import {ApplicationStore,createControlPlane,createRemotePromotionClient,RemotePromotionUncertainError,signPromotionPackage,createSignedPromotionVerifier,createPromotionPackage} from '../dist/index.js';
 
 const initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',route:'/',title:'Source',components:[]}]};
 const sourceToken='source-secret-at-least-32-characters-long',targetToken='target-secret-at-least-32-characters-long';
@@ -35,4 +36,14 @@ test('rejects unsafe configuration and unexpected source identity before import'
  const source=new ApplicationStore(initial),target=new ApplicationStore(initial);source.publish(0);const a=createControlPlane(source,sourceToken),b=createControlPlane(target,targetToken),[sourceOrigin,targetOrigin]=await Promise.all([listen(a),listen(b)]);
  try{const client=createRemotePromotionClient(options(sourceOrigin,targetOrigin));await assert.rejects(client.promote({...request,applicationId:'other'}),/export failed/);assert.equal(target.getPublished(),undefined);
  }finally{await close(a,b);}
+});
+
+
+test('remote promotion signs a verified export for a signature-enforcing target',async()=>{
+ const source=new ApplicationStore(initial),target=new ApplicationStore(initial);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),verify=createSignedPromotionVerifier([{keyId:'release-key',sourceEnvironment:'development',publicKey}],'production'),a=createControlPlane(source,sourceToken),b=createControlPlane(target,targetToken,undefined,undefined,undefined,{verify}),[sourceOrigin,targetOrigin]=await Promise.all([listen(a),listen(b)]);try{const client=createRemotePromotionClient(options(sourceOrigin,targetOrigin,{signPackage:(pkg,details)=>signPromotionPackage(pkg,details.targetEnvironment,'release-key',privateKey)}));assert.equal((await client.promote(request)).version,1);assert.equal(target.getPublicationProvenance(1).sourceEnvironment,'development');}finally{await close(a,b);}
+});
+
+
+test('remote client rejects signer substitutions before sending an import',async()=>{
+ const source=new ApplicationStore(initial),target=new ApplicationStore(initial);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),verify=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'development',publicKey}],'production'),a=createControlPlane(source,sourceToken),b=createControlPlane(target,targetToken,undefined,undefined,undefined,{verify}),[sourceOrigin,targetOrigin]=await Promise.all([listen(a),listen(b)]);try{const client=createRemotePromotionClient(options(sourceOrigin,targetOrigin,{signPackage:pkg=>{pkg.definition.pages[0].title='substituted';const changed=createPromotionPackage(pkg.sourceEnvironment,{version:pkg.sourceVersion,definition:pkg.definition});return signPromotionPackage(changed,'production','key',privateKey);}}));await assert.rejects(client.promote(request),/signing failed/);assert.equal(target.getPublished(),undefined);}finally{await close(a,b);}
 });
