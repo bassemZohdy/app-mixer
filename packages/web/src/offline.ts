@@ -37,12 +37,13 @@ function canonical(value:unknown):string {
 }
 
 export class EncryptedBrowserQueue {
-  private constructor(private readonly db:IDBDatabase,private readonly crypt:Crypto,private readonly key:CryptoKey,private readonly partition:string){}
+  private constructor(private readonly db:IDBDatabase,private readonly crypt:Crypto,private readonly key:CryptoKey,private readonly partition:string,private readonly scope:BrowserQueueScope){}
   static async open(options:BrowserQueueOptions):Promise<EncryptedBrowserQueue>{
     const factory=options?.indexedDB??globalThis.indexedDB,crypt=options?.crypto??globalThis.crypto,scope=options?.scope,key=options?.key;
     if(options?.enabled!==true||!identifier(options.databaseName)||!scope||!identifier(scope.tenantId)||!identifier(scope.applicationId)||!identifier(scope.principalId)||!factory||!crypt?.subtle||typeof crypt.randomUUID!=='function'||!key||key.type!=='secret'||key.extractable||key.algorithm.name!=='AES-GCM'||!key.usages.includes('encrypt')||!key.usages.includes('decrypt'))throw Error('Invalid encrypted offline storage configuration');
-    const partition=hex(await crypt.subtle.digest('SHA-256',enc.encode(JSON.stringify([scope.tenantId,scope.applicationId,scope.principalId]))));
-    const request=factory.open(options.databaseName,1);
+    const fixedScope={tenantId:scope.tenantId,applicationId:scope.applicationId,principalId:scope.principalId},databaseName=options.databaseName;
+    const partition=hex(await crypt.subtle.digest('SHA-256',enc.encode(JSON.stringify([fixedScope.tenantId,fixedScope.applicationId,fixedScope.principalId]))));
+    const request=factory.open(databaseName,1);
     request.onupgradeneeded=()=>{const store=request.result.createObjectStore('offline',{keyPath:'id'});store.createIndex('partition','partition',{unique:false});};
     let blocked=false;
     const db=await new Promise<IDBDatabase>((resolve,reject)=>{
@@ -50,9 +51,10 @@ export class EncryptedBrowserQueue {
       request.onerror=()=>reject(request.error??Error('IndexedDB open failed'));
       request.onsuccess=()=>{if(blocked)request.result.close();else resolve(request.result);};
     });
-    db.onversionchange=()=>db.close();return new EncryptedBrowserQueue(db,crypt,key,partition);
+    db.onversionchange=()=>db.close();return new EncryptedBrowserQueue(db,crypt,key,partition,fixedScope);
   }
   close():void{this.db.close();}
+  getScope():BrowserQueueScope{return {...this.scope};}
   private async itemId(requestKey:string):Promise<string>{return hex(await this.crypt.subtle.digest('SHA-256',enc.encode(JSON.stringify([this.partition,requestKey]))));}
   private aad(id:string,version:number):Uint8Array<ArrayBuffer>{return enc.encode(JSON.stringify([this.partition,id,version]));}
   private async seal(item:BrowserQueueItem):Promise<Envelope>{
@@ -89,15 +91,18 @@ export class EncryptedBrowserQueue {
     return structuredClone(item);
   }
   /** Compare-and-swap transitions prevent two tabs from claiming the same entry. */
-  async transition(id:string,expectedVersion:number,action:'claim'|'succeed'|'conflict'|'uncertain'|'exhaust'|'requeue'|'discard'|'reconcileApplied'|'reconcileNotApplied'):Promise<BrowserQueueItem>{
+  async transition(id:string,expectedVersion:number,action:'claim'|'succeed'|'conflict'|'uncertain'|'exhaust'|'requeue'|'discard'|'reconcileApplied'|'reconcileNotApplied'|'release'|'exhaustPending'):Promise<BrowserQueueItem>{
     if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER)throw Error('Invalid offline version');
     const current=await this.get(id);if(!current||current.version!==expectedVersion)throw Error('Offline version conflict');
-    const transitions:Record<string,Partial<Record<BrowserQueueStatus,BrowserQueueStatus>>>={claim:{pending:'running'},succeed:{running:'succeeded'},conflict:{running:'conflict'},uncertain:{running:'uncertain'},exhaust:{running:'exhausted'},requeue:{running:'pending'},discard:{pending:'discarded',conflict:'discarded',exhausted:'discarded'},reconcileApplied:{uncertain:'succeeded'},reconcileNotApplied:{uncertain:'pending'}};
+    const transitions:Record<string,Partial<Record<BrowserQueueStatus,BrowserQueueStatus>>>={claim:{pending:'running'},succeed:{running:'succeeded'},conflict:{running:'conflict'},uncertain:{running:'uncertain'},exhaust:{running:'exhausted'},requeue:{running:'pending'},discard:{pending:'discarded',conflict:'discarded',exhausted:'discarded'},reconcileApplied:{uncertain:'succeeded'},reconcileNotApplied:{uncertain:'pending'},release:{running:'pending'},exhaustPending:{pending:'exhausted'}};
     const target=transitions[action]?.[current.status];if(!target)throw Error('Invalid offline transition');
-    if(action==='claim'&&current.attempts>=Number.MAX_SAFE_INTEGER)throw Error('Invalid offline attempt count');
-    const updated={...current,status:target,version:current.version+1,attempts:current.attempts+(action==='claim'?1:0)},envelope=await this.seal(updated);
+    if((action==='claim'&&current.attempts>=Number.MAX_SAFE_INTEGER)||(action==='release'&&current.attempts<1))throw Error('Invalid offline attempt count');
+    const updated={...current,status:target,version:current.version+1,attempts:current.attempts+(action==='claim'?1:action==='release'?-1:0)},envelope=await this.seal(updated);
     const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline'),latest=await req(store.get(id)) as Envelope|undefined;
     if(!latest||latest.partition!==this.partition||latest.version!==expectedVersion){tx.abort();try{await done;}catch{}throw Error('Offline version conflict');}
     store.put(envelope);await done;return structuredClone(updated);
   }
 }
+
+export { BrowserOfflineWorker } from './offline-worker.js';
+export type { BrowserOfflineFailure, BrowserOfflineWorkerOptions } from './offline-worker.js';

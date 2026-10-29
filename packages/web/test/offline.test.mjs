@@ -50,3 +50,11 @@ test('ciphertext and authenticated metadata tampering are rejected',async()=>{
  try{await assert.rejects(queue.get(item.id),/authenticate/);await assert.rejects(queue.list(),/authenticate/);}
  finally{db.close();queue.close();}
 });
+
+test('browser queue snapshots its scope before asynchronous initialization',async()=>{
+ const factory=new IDBFactory(),secret=await key(),mutable={...scope};
+ const opening=EncryptedBrowserQueue.open({enabled:true,databaseName:'scope-snapshot',scope:mutable,key:secret,indexedDB:factory,crypto:webcrypto});
+ mutable.principalId='other';const queue=await opening;
+ try{assert.deepEqual(queue.getScope(),scope);const exposed=queue.getScope();exposed.tenantId='changed';assert.deepEqual(queue.getScope(),scope);}
+ finally{queue.close();}
+});
