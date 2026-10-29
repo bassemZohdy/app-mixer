@@ -21,7 +21,7 @@ test('persists encrypted intents and deduplicates within the identity partition'
  await assert.rejects(queue.enqueue('orders.create','request-1',{customer:'different'}),/conflict/);
  const other=await EncryptedBrowserQueue.open(options(factory,secret,{...scope,principalId:'bob'}));
  assert.notEqual((await other.enqueue('orders.create','request-1',{customer:'other'})).id,item.id);assert.equal(await other.get(item.id),undefined);
- const rawdb=await request(factory.open('offline-test',2)),tx=rawdb.transaction('offline','readonly'),ended=done(tx),rows=await request(tx.objectStore('offline').getAll());await ended;
+ const rawdb=await request(factory.open('offline-test',3)),tx=rawdb.transaction('offline','readonly'),ended=done(tx),rows=await request(tx.objectStore('offline').getAll());await ended;
  assert.equal(rows.length,2);assert.doesNotMatch(JSON.stringify(rows),/sensitive|orders.create|request-1|alice/);rawdb.close();
  queue.close();const reopened=await EncryptedBrowserQueue.open(options(factory,secret));assert.equal((await reopened.get(item.id)).payload.customer,'sensitive');
  const wrong=await EncryptedBrowserQueue.open(options(factory,await key()));await assert.rejects(wrong.get(item.id),/authenticate/);
@@ -45,7 +45,7 @@ test('two tabs cannot claim the same intent and ambiguous results require reconc
 
 test('ciphertext and authenticated metadata tampering are rejected',async()=>{
  const factory=new IDBFactory(),secret=await key(),queue=await EncryptedBrowserQueue.open(options(factory,secret)),item=await queue.enqueue('save','key',{value:'secret'});
- const db=await request(factory.open('offline-test',2)),tx=db.transaction('offline','readwrite'),ended=done(tx),store=tx.objectStore('offline'),entry=await request(store.get(item.id));
+ const db=await request(factory.open('offline-test',3)),tx=db.transaction('offline','readwrite'),ended=done(tx),store=tx.objectStore('offline'),entry=await request(store.get(item.id));
  new Uint8Array(entry.ciphertext)[0]^=1;store.put(entry);await ended;
  try{await assert.rejects(queue.get(item.id),/authenticate/);await assert.rejects(queue.list(),/authenticate/);}
  finally{db.close();queue.close();}
