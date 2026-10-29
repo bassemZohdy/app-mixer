@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenance } from './index.js';
 import { isValidExtensionReferences, isValidExtensionOperations } from './index.js';
 import {createPromotionPackage,validEnvironment,type PromotionPackage} from './promotion.js';
+import type {PromotionSignatureEvidence,VerifiedPromotion} from './signed-promotion.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
@@ -15,6 +16,7 @@ export interface DefinitionRepository {
   apply(revision: number, patches: Patch[]): ApplicationDefinition;
   publish(revision: number): { version: number; definition: ApplicationDefinition };
   promote?(input:unknown,expectedVersion:number,targetEnvironment:string): { version: number; definition: ApplicationDefinition };
+  promoteVerified?(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence): { version: number; definition: ApplicationDefinition };
   getPublicationProvenance?(version:number): PublicationProvenance | undefined;
   rollback?(sourceVersion: number, expectedVersion: number): { version: number; definition: ApplicationDefinition };
   getPublished(version?: number): { version: number; definition: ApplicationDefinition } | undefined;
@@ -93,12 +95,12 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
 export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition) => Promise<{id:string}>;
 /** Trusted host-owned browser module source. It must not contain secrets. */
 export type DevelopmentPreviewOptions = {extensionModule?: string};
-export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string)=>PromotionPackage};
+export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string)=>PromotionPackage;verifyWithEvidence?:never}|{verify?:never;verifyWithEvidence:(input:unknown,targetEnvironment:string,applicationId:string)=>VerifiedPromotion};
 export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
-  if(promotionPolicy!==undefined&&(!promotionPolicy||typeof promotionPolicy.verify!=='function'))throw Error('Invalid promotion policy');
-  const verifyPromotion=promotionPolicy?.verify;
+  if(promotionPolicy!==undefined&&(!promotionPolicy||(typeof promotionPolicy.verify==='function')===(typeof promotionPolicy.verifyWithEvidence==='function')))throw Error('Invalid promotion policy');
+  const verifyPromotion=promotionPolicy?.verify,verifyWithEvidence=promotionPolicy?.verifyWithEvidence;
   const extensionModule=preview?.extensionModule ?? 'export const installedExtensions = [];';
   return server(async (req, res) => {
     if (proposals && req.method === 'GET' && (req.url === '/development' || req.url === '/development/renderer.mjs' || req.url === '/development/extensions.mjs' || req.url === '/development/data-editor.mjs' || req.url === '/development/staged-editor.mjs')) {
@@ -170,7 +172,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       const input=await body(req);
       if(!record(input)||!exact(input,['package','targetEnvironment','expectedVersion'])||!validEnvironment(input.targetEnvironment)||!revision(input.expectedVersion))throw new RequestError(400,'Invalid promotion request');
       if(!repository.promote)throw new RequestError(501,'Promotion unavailable');
-      let pkg=input.package;if(verifyPromotion){try{pkg=verifyPromotion(pkg,input.targetEnvironment,repository.getDraft().id);}catch{throw new RequestError(403,'Promotion signature invalid');}}
+      let pkg=input.package;if(verifyWithEvidence){if(!repository.promoteVerified)throw new RequestError(501,'Verified promotion unavailable');let verified:VerifiedPromotion;try{verified=verifyWithEvidence(pkg,input.targetEnvironment,repository.getDraft().id);}catch{throw new RequestError(403,'Promotion signature invalid');}respond(res,201,repository.promoteVerified(verified.package,input.expectedVersion,input.targetEnvironment,verified.evidence));return;}if(verifyPromotion){try{pkg=verifyPromotion(pkg,input.targetEnvironment,repository.getDraft().id);}catch{throw new RequestError(403,'Promotion signature invalid');}}
       respond(res,201,repository.promote(pkg,input.expectedVersion,input.targetEnvironment));return;
     }
     const provenanceRoute = /^\/publications\/([1-9]\d*)\/provenance$/.exec(req.url ?? '');
