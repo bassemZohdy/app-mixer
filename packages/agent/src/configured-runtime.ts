@@ -1,3 +1,4 @@
+import {AgentDelegationExpired} from './delegation-expired.js';
 import {LangGraphAGUIAdapter,type RunInput} from './index.js';
 import {createCapabilityTool} from './capability-tool.js';
 import {createToolCallingModel,type ToolModel} from './tool-model.js';
@@ -49,8 +50,8 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
   const entry={operationId:binding.operationId,toolName:binding.toolName,description:binding.description};bindings.set(entry.operationId,entry);names.add(entry.toolName);
  }
  let runSignal:AbortSignal|undefined;
- const checkActive=()=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();if(grant){const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw Error('Delegation expired');}};
- const checkDelegation=async(operationId:string,input:unknown)=>{if(!grant)return;const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw Error('Delegation expired');if(await delegationAuthorize!({...identity},{...grant},operationId,structuredClone(input))!==true)throw Error('Delegation forbidden');const after=delegationClock();if(!Number.isSafeInteger(after)||after<0||after>=grant.expiresAt)throw Error('Delegation expired');if(runSignal?.aborted)throw Error('Agent run aborted');current();};
+ const checkActive=()=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();if(grant){const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw new AgentDelegationExpired();}};
+ const checkDelegation=async(operationId:string,input:unknown)=>{if(!grant)return;const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw new AgentDelegationExpired();if(await delegationAuthorize!({...identity},{...grant},operationId,structuredClone(input))!==true)throw Error('Delegation forbidden');const after=delegationClock();if(!Number.isSafeInteger(after)||after<0||after>=grant.expiresAt)throw new AgentDelegationExpired();if(runSignal?.aborted)throw Error('Agent run aborted');current();};
  const authority=grant?JSON.stringify([identity.servicePrincipalId,grant.principalId]):undefined;
  const tools=snapshot.manifest.allowedCapabilities.map(operationId=>{
   const binding=bindings.get(operationId);if(!binding)throw Error('Configured capability unavailable');
