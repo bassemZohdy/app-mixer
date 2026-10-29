@@ -95,7 +95,7 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
 export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition) => Promise<{id:string}>;
 /** Trusted host-owned browser module source. It must not contain secrets. */
 export type DevelopmentPreviewOptions = {extensionModule?: string};
-export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string)=>PromotionPackage;verifyWithEvidence?:never}|{verify?:never;verifyWithEvidence:(input:unknown,targetEnvironment:string,applicationId:string)=>VerifiedPromotion};
+export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>PromotionPackage;verifyWithEvidence?:never}|{verify?:never;verifyWithEvidence:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>VerifiedPromotion};
 export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
@@ -172,7 +172,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       const input=await body(req);
       if(!record(input)||!exact(input,['package','targetEnvironment','expectedVersion'])||!validEnvironment(input.targetEnvironment)||!revision(input.expectedVersion))throw new RequestError(400,'Invalid promotion request');
       if(!repository.promote)throw new RequestError(501,'Promotion unavailable');
-      let pkg=input.package;if(verifyWithEvidence){if(!repository.promoteVerified)throw new RequestError(501,'Verified promotion unavailable');let verified:VerifiedPromotion;try{verified=verifyWithEvidence(pkg,input.targetEnvironment,repository.getDraft().id);}catch{throw new RequestError(403,'Promotion signature invalid');}respond(res,201,repository.promoteVerified(verified.package,input.expectedVersion,input.targetEnvironment,verified.evidence));return;}if(verifyPromotion){try{pkg=verifyPromotion(pkg,input.targetEnvironment,repository.getDraft().id);}catch{throw new RequestError(403,'Promotion signature invalid');}}
+      let pkg=input.package;if(verifyWithEvidence){if(!repository.promoteVerified)throw new RequestError(501,'Verified promotion unavailable');let verified:VerifiedPromotion;try{verified=verifyWithEvidence(pkg,input.targetEnvironment,repository.getDraft().id,input.expectedVersion);}catch{throw new RequestError(403,'Promotion signature invalid');}respond(res,201,repository.promoteVerified(verified.package,input.expectedVersion,input.targetEnvironment,verified.evidence));return;}if(verifyPromotion){try{pkg=verifyPromotion(pkg,input.targetEnvironment,repository.getDraft().id,input.expectedVersion);}catch{throw new RequestError(403,'Promotion signature invalid');}}
       respond(res,201,repository.promote(pkg,input.expectedVersion,input.targetEnvironment));return;
     }
     const provenanceRoute = /^\/publications\/([1-9]\d*)\/provenance$/.exec(req.url ?? '');

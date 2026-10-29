@@ -107,7 +107,7 @@ export class SqliteApplicationStore {
       const item=createPromotionPackage(promotion.source_environment,{version:sourceVersion,definition:publication.definition});
       checkPromotionPackage(item,promotion.target_environment,this.id);
       if(item.digest!==promotion.package_digest)throw Error('Invalid publication provenance');
-      const stored=this.db.prepare('SELECT evidence FROM application_promotion_signatures WHERE app_id=? AND version=?').get(this.id,version);let signature:PromotionSignatureEvidence|undefined;if(stored){try{signature=checkPromotionEvidence(item,promotion.target_environment,JSON.parse(String(stored.evidence)));}catch{throw Error('Invalid publication provenance');}}
+      const stored=this.db.prepare('SELECT evidence FROM application_promotion_signatures WHERE app_id=? AND version=?').get(this.id,version);let signature:PromotionSignatureEvidence|undefined;if(stored){try{signature=checkPromotionEvidence(item,promotion.target_environment,JSON.parse(String(stored.evidence)),previousVersion);}catch{throw Error('Invalid publication provenance');}}
       return {version,kind:'promotion',previousVersion,sourceEnvironment:item.sourceEnvironment,targetEnvironment:promotion.target_environment,sourceVersion,packageDigest:item.digest,definitionSha256:hash,...(signature?{signature}:{})};
     }
     if (row.kind === 'publish' && row.source_version === null) return {version,kind:'publish',previousVersion,definitionSha256:hash};
@@ -156,7 +156,7 @@ export class SqliteApplicationStore {
 
   promote(input: unknown, expectedVersion: number, targetEnvironment: string, evidence?:PromotionSignatureEvidence): Published {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw Error('Invalid version');
-    const item=checkPromotionPackage(input,targetEnvironment,this.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence);
+    const item=checkPromotionPackage(input,targetEnvironment,this.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence,expectedVersion);
     return this.transaction(() => {
       const latest=this.getPublished()?.version ?? 0;
       if(latest!==expectedVersion)throw Error('Publication version conflict');
