@@ -28,10 +28,10 @@ void main() {
       {'id': 'label', 'component': 'Text', 'text': 'Save'}
     ]}});
     await tester.pumpAndSettle();
-    expect(find.text('Ada'), findsOneWidget);
+    expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'Grace');
     await tester.pumpAndSettle();
-    expect(find.text('Grace'), findsWidgets);
+    expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Grace'), findsOneWidget);
     await tester.tap(find.byType(TextButton));
     await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
