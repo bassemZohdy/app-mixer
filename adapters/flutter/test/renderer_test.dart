@@ -6,6 +6,42 @@ import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 
 Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
 void main() {
+  testWidgets('renders isolated trusted extensions and preserves the surface on invalid updates', (tester) async {
+    final registry=FlutterComponentRegistry();
+    registry.register('chart', (context, props) => Text((props['options'] as Map)['label'] as String),
+      (component) => component['options'] is Map && (component['options'] as Map)['label'] is String);
+    expect(() => registry.register('chart', (context, props) => const SizedBox(), (component) => true), throwsArgumentError);
+    expect(() => registry.register('Text', (context, props) => const SizedBox(), (component) => true), throwsArgumentError);
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe:subscribe,onError:errors.add,extensions:registry))));
+    receive(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
+    final options={'label':'Chart'};
+    receive(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'chart','options':options,'text':{'unexpected':'value'}}]}));
+    options['label']='Changed outside';
+    await tester.pump();expect(find.text('Chart'),findsOneWidget);
+    receive(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'chart','options':{'label':42}}]}));
+    await tester.pump();expect(errors,hasLength(1));expect(find.text('Chart'),findsOneWidget);
+    receive(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'chart','children':[],'options':{'label':'No'}}]}));
+    await tester.pump();expect(errors,hasLength(2));expect(find.text('Chart'),findsOneWidget);
+  });
+  test('extension registries are captured and validators cannot mutate stored values', () {
+    final registry=FlutterComponentRegistry();
+    registry.register('chart', (context, props) => const SizedBox(), (component) {
+      (component['options'] as Map)['label']='validator mutation';return true;
+    });
+    final store=FlutterSurfaceStore(registry);
+    registry.register('later', (context, props) => const SizedBox(), (component) => true);
+    store.apply(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'chart','options':{'label':'original'}}]}));
+    final props=store.snapshot().single!.extensionProps!;
+    expect((props['options'] as Map)['label'],'original');
+    (props['options'] as Map)['label']='caller mutation';
+    expect((store.snapshot().single!.extensionProps!['options'] as Map)['label'],'original');
+    expect(() => store.apply(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'later'}]})),throwsFormatException);
+    expect((store.snapshot().single!.extensionProps!['options'] as Map)['label'],'original');
+  });
   testWidgets('renders updates atomically and ignores messages after cleanup', (tester) async {
     late void Function(Object?) receive;
     var unsubscribed = 0;
