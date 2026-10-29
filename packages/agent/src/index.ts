@@ -87,3 +87,5 @@ export {SqliteAgentDefinitions,validateAgentManifest} from './persistent-definit
 export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';
 export {createConfiguredAgentRun} from './configured-runtime.js';
 export type {ConfiguredAgentIdentity,ConfiguredAgentBinding,ConfiguredAgentOptions} from './configured-runtime.js';
+export {SqliteAgentRuns} from './durable-runs.js';
+export type {DurableAgentRun,AgentRunScope,AgentRunStatus} from './durable-runs.js';
