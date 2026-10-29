@@ -83,6 +83,23 @@ export class SqliteApplicationStore {
     });
   }
 
+  rollback(sourceVersion: number, expectedVersion: number): Published {
+    if (!Number.isSafeInteger(sourceVersion) || sourceVersion < 1 || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw Error('Invalid version');
+    return this.transaction(() => {
+      const latest = this.getPublished();
+      if (!latest || latest.version !== expectedVersion) throw Error('Publication version conflict');
+      const source = this.getPublished(sourceVersion);
+      if (!source) throw Error('Publication not found');
+      if (sourceVersion >= expectedVersion) throw Error('Rollback requires an earlier version');
+      enforcePublicationGuard(this.publicationGuard, source.definition);
+      const version = latest.version + 1;
+      if (!Number.isSafeInteger(version)) throw Error('Invalid version');
+      this.db.prepare('INSERT INTO application_publications (app_id, version, definition) VALUES (?, ?, ?)')
+        .run(this.id, version, JSON.stringify(source.definition));
+      return {version, definition: source.definition};
+    });
+  }
+
   private transaction<T>(operation: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try {

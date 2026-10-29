@@ -12,6 +12,7 @@ export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
   apply(revision: number, patches: Patch[]): ApplicationDefinition;
   publish(revision: number): { version: number; definition: ApplicationDefinition };
+  rollback?(sourceVersion: number, expectedVersion: number): { version: number; definition: ApplicationDefinition };
   getPublished(version?: number): { version: number; definition: ApplicationDefinition } | undefined;
 }
 
@@ -75,8 +76,8 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
     handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof Error && ['Revision conflict','Proposal is not pending','Extension compatibility failed'].includes(error.message)) respond(res, 409, {error:error.message});
-      else if (error instanceof Error && error.message === 'Proposal not found') respond(res, 404, {error:error.message});
+      else if (error instanceof Error && ['Revision conflict','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
+      else if (error instanceof Error && ['Proposal not found','Publication not found'].includes(error.message)) respond(res, 404, {error:error.message});
       else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
       else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal'].includes(error.message)) respond(res, 400, {error:error.message});
       else respond(res, 500, {error:'Internal server error'});
@@ -144,6 +145,12 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       const input = await body(req);
       if (!record(input) || !exact(input, ['expectedRevision']) || !revision(input.expectedRevision)) throw new RequestError(400, 'Invalid publish request');
       respond(res, 201, repository.publish(input.expectedRevision)); return;
+    }
+    if (req.method === 'POST' && req.url === '/rollback') {
+      const input = await body(req);
+      if (!record(input) || !exact(input, ['sourceVersion','expectedVersion']) || !revision(input.sourceVersion) || input.sourceVersion < 1 || !revision(input.expectedVersion) || input.expectedVersion < 1) throw new RequestError(400, 'Invalid rollback request');
+      if (!repository.rollback) throw new RequestError(501, 'Rollback unavailable');
+      respond(res, 201, repository.rollback(input.sourceVersion, input.expectedVersion)); return;
     }
     respond(res, 404, {error:'Not found'});
   });
