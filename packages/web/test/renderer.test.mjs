@@ -115,6 +115,16 @@ test('buttons are disabled without an action handler', () => {
   assert.equal(host.children[0].children[0].disabled,true);
 });
 
+test('custom registry validators run for disconnected components before commit', () => {
+  const doc={createElement:tag=>new Element(tag,doc)},host=doc.createElement('main');
+  const registry=new ComponentRegistry();
+  registry.register('Custom',(c,_child,_data,document)=>{const node=document.createElement('p');node.textContent=c.text;return node;},c=>{if(typeof c.text!=='string')throw Error('Invalid custom text');});
+  const renderer=new A2UIRenderer(host,registry);renderer.apply(create('main'));
+  renderer.apply(components('main',[{id:'root',component:'Custom',text:'Safe'}]));
+  assert.throws(()=>renderer.apply(components('main',[{id:'root',component:'Custom',text:'Changed'},{id:'unused',component:'Custom',text:42}])),/Invalid custom text/);
+  assert.equal(host.children[0].children[0].textContent,'Safe');
+});
+
 test('only current buttons dispatch after component replacement and surface recreation', () => {
   const doc={createElement:tag => new Element(tag,doc)}; const host=doc.createElement('main');
   const actions=[]; const renderer=new A2UIRenderer(host,basicRegistry(),message=>actions.push(message));
