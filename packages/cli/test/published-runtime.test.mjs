@@ -33,7 +33,7 @@ test('generated workspace renders and refreshes published definitions after agen
   const workspace=await import(pathToFileURL(join(target,'workspace.mjs')).href);
   const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^import [^;]+;\s*/gm,'');
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
-  await new AsyncFunction('document','fetch','A2UIRenderer','APP_MIXER_CATALOG','ClientPublishedCache','prepareWorkspace',script)(doc,path=>fetch(new URL(path,url)),module.A2UIRenderer,module.APP_MIXER_CATALOG,module.ClientPublishedCache,workspace.prepareWorkspace);
+  await new AsyncFunction('document','fetch','A2UIRenderer','APP_MIXER_CATALOG','ClientPublishedCache','prepareWorkspace','initializeOfflinePublication',script)(doc,path=>fetch(new URL(path,url)),module.A2UIRenderer,module.APP_MIXER_CATALOG,module.ClientPublishedCache,workspace.prepareWorkspace,async()=>null);
   assert.equal(host.children[0].children[0].children[0].textContent,'Published');assert.equal(button.hidden,false);
   const response=await fetch(`${url}/api/publication`);const etag=response.headers.get('etag');assert.equal((await fetch(`${url}/api/publication`,{headers:{'If-None-Match':etag}})).status,304);
   repo.apply(0,[{op:'setPageTitle',pageId:'home',title:'Updated'}]);repo.publish(1);

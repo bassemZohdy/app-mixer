@@ -3,7 +3,7 @@ const applicationId=__APP_ID__;
 const revision=new URL(self.location.href).searchParams.get('revision');
 const prefix='app-mixer-shell:'+applicationId+':';
 const cacheName=prefix+revision;
-const assets=['/','/renderer.mjs','/workspace.mjs','/extensions.mjs','/chat.mjs','/capabilities.mjs','/data-editor.mjs','/staged-editor.mjs','/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs'];
+const assets=['/','/renderer.mjs','/workspace.mjs','/extensions.mjs','/chat.mjs','/capabilities.mjs','/data-editor.mjs','/staged-editor.mjs','/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs','/offline-publications.js','/offline-publication-runtime.mjs','/offline-publication-host.mjs'];
 const valid=typeof revision==='string'&&/^[a-zA-Z0-9._-]{1,64}$/.test(revision);
 self.addEventListener('install',event=>event.waitUntil((async()=>{
   if(!valid)throw Error('Invalid offline shell revision');
