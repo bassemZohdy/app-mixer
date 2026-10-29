@@ -125,3 +125,6 @@ export type {AgentNotice,AgentNoticeActor,AgentNoticeAccess,AgentNoticeOptions} 
 
 export {SqliteAgentTokenBudget} from './agent-token-budget.js';
 export type {AgentTokenUsage,AgentTokenBudgetOptions} from './agent-token-budget.js';
+
+export {SqliteAgentRunHistory} from './agent-run-history.js';
+export type {AgentRunEvent,AgentRunHistoryActor,AgentRunHistoryAccess,AgentRunHistoryOptions} from './agent-run-history.js';
