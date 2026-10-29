@@ -55,3 +55,20 @@ test('runtime and preview editor accept the same component contract',async()=>{
   for(const factory of [preview.createRecordEditor,runtime.createRecordEditor])assert.throws(()=>factory({getOperation:'../bad',putOperation:'items.put'}),/Invalid/);
  } finally {await stop(planes.control);await stop(planes.proposal);await rm(dir,{recursive:true,force:true});}
 });
+
+test('staged editor preview shares its contract and cannot submit',async()=>{
+ const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]}),planes=createDevelopmentPlanes(repo,developer,agent);
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-staged-preview-'));
+ try {
+  const cp=await start(planes.control),response=await fetch(`${cp}/development/staged-editor.mjs`);assert.equal(response.status,200);
+  const source=await response.text(),preview=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const target=await createProject('demo-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href);
+  const options={stageOperation:'orders.stage',getOperation:'orders.get',submitOperation:'orders.submit'},a=preview.createStagedEditor(options),b=runtime.createStagedEditor(options);
+  for(const component of [{id:'root',component:'staged-editor'},{id:'root',component:'staged-editor',label:'Order'},{id:'root',component:'staged-editor',label:1},{id:'root',component:'staged-editor',label:'x'.repeat(121)},{id:'root',component:'staged-editor',unknown:'bad'}]){
+   const accepts=validate=>{try{validate(component);return true;}catch{return false;}};assert.equal(accepts(a.validate),accepts(b.validate));
+  }
+  for(const factory of [preview.createStagedEditor,runtime.createStagedEditor])assert.throws(()=>factory({...options,submitOperation:'../bad'}),/Invalid/);
+  const dom=new JSDOM('<!doctype html>'),root=a.render({label:'Order'},null,null,dom.window.document);
+  assert.ok([...root.querySelectorAll('button,input,textarea')].every(element=>element.disabled));assert.match(root.textContent,/Transactions are disabled/);dom.window.close();
+ } finally {await stop(planes.control);await stop(planes.proposal);await rm(dir,{recursive:true,force:true});}
+});

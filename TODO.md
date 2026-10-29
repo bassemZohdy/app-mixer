@@ -32,7 +32,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [ ] P2-02 Extension SDK and compatibility manifests
   - In progress: trusted static manifest, bounded nested configuration schema and defaults, approved implementation registry, explicit application references, component/tool/provider requirements, fail-closed publication without a guard, host-selected and automatically assembled web/capability/provider registries, static registrations in generated apps and preview, validated React Native extension components, host-registered Flutter widgets, and a checked metadata plan for selecting Flutter implementations. Full SDK integration and operational verification remain. See [extension scope](docs/extensions.md).
 - [ ] P2-03 Internal data provider and staged external transactions
-  - In progress: local SQLite record provider, authenticated capability bindings with optional record-level checks, durable request-deduplicated external staging and authenticated staging capabilities; an opt-in generated-app capability proxy; an opt-in JSON record editor; schema-driven forms and broader external provider verification remain. See [business data](docs/business-data.md).
+  - In progress: local SQLite record provider, authenticated capability bindings with optional record-level checks, durable request-deduplicated external staging and authenticated staging capabilities; an opt-in generated-app capability proxy; opt-in JSON record and staged-transaction editors; schema-driven forms and broader external provider verification remain. See [business data](docs/business-data.md).
 - [ ] P2-04 Offline-first queue, idempotency and conflict handling
 - [ ] P2-05 Schema migration, rollback and environment promotion
 
