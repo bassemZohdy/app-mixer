@@ -186,6 +186,47 @@ test('rejects invalid or contradictory configuration constraints',()=>{
  for(const rule of rules)assert.throws(()=>check([{...manifest(),configSchema:{option:rule}}],host(),required()),/configuration schema/);
 });
 
+test('materializes nested configuration defaults without retaining caller objects',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');const fn=()=>{},bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ const m={...manifest(),configSchema:{
+  connection:{type:'object',required:true,properties:{host:{type:'string',required:true},port:{type:'number',required:false,minimum:1,maximum:65535,default:443}}},
+  tags:{type:'array',required:false,maxItems:2,items:{type:'string',required:true,maxLength:8},default:['default']},
+  flags:{type:'object',required:false,properties:{enabled:{type:'boolean',required:false,default:true}},default:{}}
+ }};
+ const registry=new ExtensionRegistry(host()),input={connection:{host:'local'}};registry.register(m,bindings,input);
+ assert.deepEqual(registry.getConfiguration(m.id),{connection:{host:'local',port:443},tags:['default'],flags:{enabled:true}});
+ input.connection.host='changed';m.configSchema.tags.default.push('mutated');
+ const result=registry.getConfiguration(m.id);result.tags.push('changed');result.connection.host='changed';
+ assert.deepEqual(registry.getConfiguration('example.chart'),{connection:{host:'local',port:443},tags:['default'],flags:{enabled:true}});
+});
+
+test('rejects invalid nested schemas and configurations atomically',async()=>{
+ const {ExtensionRegistry}=await import('../dist/index.js');const fn=()=>{},bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ const rule={type:'object',required:true,properties:{name:{type:'string',required:true},values:{type:'array',required:false,maxItems:2,items:{type:'number',required:true,minimum:0}}}};
+ const m={...manifest(),configSchema:{settings:rule}};
+ const cycle={name:'safe'};cycle.self=cycle;
+ for(const settings of [{},{name:'safe',extra:true},{name:'safe',values:[-1]},{name:'safe',values:[1,2,3]},{name:'safe',values:[,1]},cycle,JSON.parse('{"name":"safe","constructor":1}')]){
+  const registry=new ExtensionRegistry(host());assert.throws(()=>registry.register(m,bindings,{settings}),/Invalid extension configuration/);assert.deepEqual(registry.getManifests(),[]);
+ }
+ const invalidRules=[
+  {type:'object',required:true},{type:'array',required:true},{type:'array',required:true,maxItems:257,items:{type:'string',required:true}},
+  {type:'boolean',required:true,default:true},{type:'string',required:false,minLength:2,default:'x'},
+  {type:'object',required:false,properties:{name:{type:'string',required:true}},default:{}},
+  {type:'array',required:false,items:{type:'number',required:true},default:[false]}
+ ];
+ for(const invalid of invalidRules)assert.throws(()=>check([{...manifest(),configSchema:{settings:invalid}}],host(),required()),/configuration schema/);
+ const recursive={type:'object',required:true,properties:{}};recursive.properties.next=recursive;
+ assert.throws(()=>check([{...manifest(),configSchema:{settings:recursive}}],host(),required()),/configuration schema/);
+ let deep={type:'string',required:true};for(let i=0;i<11;i++)deep={type:'object',required:true,properties:{child:deep}};
+ assert.throws(()=>check([{...manifest(),configSchema:{settings:deep}}],host(),required()),/configuration schema/);
+ const wide=Object.fromEntries(Array.from({length:5},(_,i)=>['group'+i,{type:'object',required:true,properties:Object.fromEntries(Array.from({length:60},(_,j)=>['item'+j,{type:'boolean',required:true}]))}]));
+ assert.throws(()=>check([{...manifest(),configSchema:wide}],host(),required()),/configuration schema/);
+ const matrix={...manifest(),configSchema:{rows:{type:'array',required:true,items:{type:'array',required:true,items:{type:'number',required:true}}}}};
+ const registry=new ExtensionRegistry(host());
+ assert.throws(()=>registry.register(matrix,bindings,{rows:Array.from({length:50},()=>Array(220).fill(1))}),/Invalid extension configuration/);
+ assert.deepEqual(registry.getManifests(),[]);
+});
+
 test('extension runtime bridges require declared references and preserve capability policy',async()=>{
  const {ExtensionRegistry,CapabilityRegistry,registerExtensionComponent,registerExtensionCapability}=await import('../dist/index.js');
  const {basicRegistry,A2UIRenderer,BASIC_CATALOG}=await import('@app-mixer/web');
