@@ -34,7 +34,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [ ] P2-03 Internal data provider and staged external transactions
   - In progress: local SQLite record provider, authenticated capability bindings with optional record-level checks, durable request-deduplicated external staging and authenticated staging capabilities; an opt-in generated-app capability proxy; opt-in JSON record and staged-transaction editors; schema-driven forms and broader external provider verification remain. See [business data](docs/business-data.md).
 - [ ] P2-04 Offline-first queue, idempotency and conflict handling
-  - In progress: opt-in durable local queue with deduplication, bounded retries, conflict and uncertainty states, explicit recovery and an opt-in synchronization worker. Secure client storage and conflict UI remain. See [offline queue](docs/offline-queue.md).
+  - In progress: opt-in durable local queue with deduplication, bounded retries, conflict and uncertainty states, explicit recovery and an opt-in synchronization worker and encrypted browser intent storage. Browser synchronization, mobile storage and conflict UI remain. See [offline queue](docs/offline-queue.md).
 - [ ] P2-05 Schema migration, rollback and environment promotion
 
 ## P3: production
