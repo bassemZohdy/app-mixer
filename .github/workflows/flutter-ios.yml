@@ -1,0 +1,62 @@
+name: Flutter iOS integration
+on:
+  pull_request:
+    paths:
+      - 'adapters/flutter/**'
+      - '.github/workflows/flutter-ios.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ios-integration:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified Flutter SDK
+        run: |
+          if [ "$(uname -m)" = arm64 ]; then
+            archive=flutter_macos_arm64_3.35.5-stable.zip
+            checksum=e0e9172e1d2da8418fd6e4530d273608fb94cfd1233a36b08bd6f093fbae9e29
+          else
+            archive=flutter_macos_3.35.5-stable.zip
+            checksum=49cd64314ec3cdeddd033d1ef43a0efc11e6cfa7e8c9afad24579bf977be8d18
+          fi
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/flutter.zip" "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$archive"
+          echo "$checksum  $RUNNER_TEMP/flutter.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/flutter.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Prepare iOS host
+        run: |
+          flutter create --no-pub --platforms=ios --project-name adapter_device_test "$RUNNER_TEMP/adapter_device_test"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          host = Path(os.environ['RUNNER_TEMP']) / 'adapter_device_test'
+          pubspec = host / 'pubspec.yaml'
+          text = pubspec.read_text()
+          package = Path(os.environ['GITHUB_WORKSPACE']) / 'adapters' / 'flutter'
+          text = text.replace('dependencies:\n', f'dependencies:\n  app_mixer_flutter:\n    path: {package}\n  integration_test:\n    sdk: flutter\n', 1)
+          pubspec.write_text(text)
+          PY
+          mkdir -p "$RUNNER_TEMP/adapter_device_test/integration_test"
+          cp adapters/flutter/integration_test/renderer_device_test.dart "$RUNNER_TEMP/adapter_device_test/integration_test/"
+          cd "$RUNNER_TEMP/adapter_device_test"
+          flutter pub get
+      - name: Run integration test on iOS simulator
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
+          simulator=$(python3 - <<'PY'
+          import json, os
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'simulators.json')) as f:
+              devices = json.load(f)['devices']
+          candidates = [device for runtime, group in devices.items() if 'iOS' in runtime for device in group if device.get('isAvailable') and device['name'].startswith('iPhone')]
+          if not candidates:
+              raise SystemExit('No available iPhone simulator')
+          print(candidates[0]['udid'])
+          PY
+          )
+          xcrun simctl boot "$simulator"
+          xcrun simctl bootstatus "$simulator" -b
+          cd "$RUNNER_TEMP/adapter_device_test"
+          flutter test integration_test/renderer_device_test.dart -d "$simulator"
