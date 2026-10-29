@@ -54,6 +54,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [ ] P2-09 Build durable action intent/outcome journal, stable idempotency and uncertain-result reconciliation (PA-05)
   - In progress: lease-fenced SQLite action journal with stable keys, explicit reconciliation and optional configured-agent integration. Automatic reconciliation, production storage and downstream idempotency verification remain. See [agent action journal](docs/agent-action-journal.md).
 - [ ] P2-10 Implement configurable memory adapters, isolation, retention and provenance (PA-06)
+  - In progress: opt-in, host-authorized SQLite memory with tenant/agent/owner/kind isolation, bounded retention, provenance, deletion and paginated export. Semantic retrieval, runtime integration and production adapters remain. See [agent memory](docs/agent-memory.md).
 
 ## P3: persistent agent security and operations (new, pending)
 - [ ] P3-05 Support service principals and optional delegated user identity with policy checks and expiry handling (PA-07)
