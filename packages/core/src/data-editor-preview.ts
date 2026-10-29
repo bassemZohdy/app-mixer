@@ -12,17 +12,24 @@ function normalizeFields(fields) {
   });
 }
 function fieldsFromJsonSchema(jsonSchema) {
-  const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
-  const keys=(value,allowed)=>Object.keys(value).every(key=>allowed.includes(key));
-  if(!object(jsonSchema)||!keys(jsonSchema,['$schema','type','properties','required','additionalProperties'])||jsonSchema.type!=='object'||(jsonSchema.$schema!==undefined&&jsonSchema.$schema!=='https://json-schema.org/draft/2020-12/schema')||!object(jsonSchema.properties)||(jsonSchema.additionalProperties!==undefined&&typeof jsonSchema.additionalProperties!=='boolean'))throw Error('Unsupported record JSON Schema form');
-  const required=jsonSchema.required===undefined?[]:jsonSchema.required;if(!Array.isArray(required)||required.some(key=>typeof key!=='string'||!Object.hasOwn(jsonSchema.properties,key))||new Set(required).size!==required.length)throw Error('Unsupported record JSON Schema form');
-  const fields=Object.entries(jsonSchema.properties).map(([key,property])=>{
-    if(!object(property)||!keys(property,['type','title','enum','minimum','maximum','minLength'])||!['string','number','integer','boolean'].includes(property.type)||(property.title!==undefined&&typeof property.title!=='string'))throw Error('Unsupported record JSON Schema form');
-    const needed=required.includes(key),numeric=property.type==='number'||property.type==='integer';
-    if((property.enum!==undefined&&property.type!=='string')||((property.minimum!==undefined||property.maximum!==undefined)&&!numeric)||(property.minLength!==undefined&&(property.type!=='string'||property.minLength!==1))||(needed&&property.type==='string'&&property.minLength!==1))throw Error('Unsupported record JSON Schema form');
-    return {key,label:property.title??key,type:property.type,required:needed,...(property.enum===undefined?{}:{options:property.enum}),...(property.minimum===undefined?{}:{min:property.minimum}),...(property.maximum===undefined?{}:{max:property.maximum})};
-  });
-  try{return normalizeFields(fields);}catch{throw Error('Unsupported record JSON Schema form');}
+  const object=value=>value&&typeof value==='object'&&!Array.isArray(value), keys=(value,allowed)=>Object.keys(value).every(key=>allowed.includes(key));
+  const fields=[],groups=[];
+  function visit(node,path,labels,needed,depth){
+    if(depth>5||!object(node)||!keys(node,depth===0?['$schema','type','properties','required','additionalProperties']:['type','title','properties','required','additionalProperties'])||node.type!=='object'||!object(node.properties)||(node.title!==undefined&&(typeof node.title!=='string'||!node.title.trim()||node.title.length>120))||(node.additionalProperties!==undefined&&typeof node.additionalProperties!=='boolean')||(depth===0&&node.$schema!==undefined&&node.$schema!=='https://json-schema.org/draft/2020-12/schema'))throw Error('Unsupported record JSON Schema form');
+    const required=node.required===undefined?[]:node.required;if(!Array.isArray(required)||required.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(required).size!==required.length)throw Error('Unsupported record JSON Schema form');
+    if(depth){groups.push({path, label:labels.join(' / '), required:needed});if(groups.length>40)throw Error('Unsupported record JSON Schema form');}
+    for(const [key,property] of Object.entries(node.properties)){
+      if(!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)||['constructor','prototype','__proto__'].includes(key)||!object(property))throw Error('Unsupported record JSON Schema form');
+      const next=[...path,key],name=property.title??key,requiredField=required.includes(key);
+      if(property.type==='object'){visit(property,next,[...labels,name],requiredField,depth+1);continue;}
+      if(!keys(property,['type','title','enum','minimum','maximum','minLength'])||!['string','number','integer','boolean'].includes(property.type)||(property.title!==undefined&&typeof property.title!=='string'))throw Error('Unsupported record JSON Schema form');
+      const numeric=property.type==='number'||property.type==='integer';if((property.enum!==undefined&&property.type!=='string')||((property.minimum!==undefined||property.maximum!==undefined)&&!numeric)||(property.minLength!==undefined&&(property.type!=='string'||property.minLength!==1))||(requiredField&&property.type==='string'&&property.minLength!==1))throw Error('Unsupported record JSON Schema form');
+      const field={key,label:[...labels,name].join(' / '),type:property.type,required:requiredField,...(property.enum===undefined?{}:{options:property.enum}),...(property.minimum===undefined?{}:{min:property.minimum}),...(property.maximum===undefined?{}:{max:property.maximum})};
+      try{fields.push({...normalizeFields([field])[0],path:next});}catch{throw Error('Unsupported record JSON Schema form');}
+      if(fields.length>40)throw Error('Unsupported record JSON Schema form');
+    }
+  }
+  visit(jsonSchema,[],[],true,0);if(!fields.length)throw Error('Unsupported record JSON Schema form');fields.groups=groups;return fields;
 }
 
 function fieldControl(document,field) {
@@ -50,7 +57,7 @@ export function createRecordEditor({getOperation,putOperation,listOperation,fiel
     id.disabled=true;value.disabled=true;idLabel.appendChild(id);valueLabel.appendChild(value);
     load.type='button';load.textContent='Load';load.disabled=true;save.type='button';save.textContent='Save';save.disabled=true;
     status.setAttribute('role','status');status.textContent='Preview only. Data operations are disabled.';
-    root.append(heading);if(listOperation){const browse=document.createElement('button'),next=document.createElement('button');browse.type='button';browse.textContent='Browse records';browse.disabled=true;next.type='button';next.textContent='Next page';next.disabled=true;root.append(browse,next);}root.append(idLabel,load);if(schema)for(const field of schema){const item=fieldControl(document,field);item.control.disabled=true;root.appendChild(item.control.parentElement);}else root.appendChild(valueLabel);root.append(save,status);return root;
+    root.append(heading);if(listOperation){const browse=document.createElement('button'),next=document.createElement('button');browse.type='button';browse.textContent='Browse records';browse.disabled=true;next.type='button';next.textContent='Next page';next.disabled=true;root.append(browse,next);}root.append(idLabel,load);if(schema){for(const group of schema.groups??[]){if(!group.required){const label=document.createElement('label'),control=document.createElement('input');control.type='checkbox';control.disabled=true;label.append(control,document.createTextNode(' Include '+group.label+' (clearing removes this object)'));root.appendChild(label);}}for(const field of schema){const item=fieldControl(document,field);item.control.disabled=true;root.appendChild(item.control.parentElement);}}else root.appendChild(valueLabel);root.append(save,status);return root;
   };
   return {render,validate};
 }
