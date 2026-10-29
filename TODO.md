@@ -46,6 +46,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 
 ## P2: persistent agent foundation (new, pending)
 - [ ] P2-06 Define configurable independent agent entity, scope/ownership and versioned manifest (PA-01)
+  - In progress: validated independent-agent manifest and tenant-scoped immutable SQLite configuration versions. Host authorization and runtime integration remain. See [persistent-agent definitions](docs/persistent-agent-definitions.md).
 - [ ] P2-07 Implement agent lifecycle manager, durable run registry, pause/resume/cancel and recovery (PA-02, PA-04)
 - [ ] P2-08 Add event/webhook and scheduler activation, authenticated ingress, trigger dedup and concurrency limits (PA-03)
 - [ ] P2-09 Build durable action intent/outcome journal, stable idempotency and uncertain-result reconciliation (PA-05)
@@ -57,6 +58,6 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [ ] P3-07 Agent trace/metrics/audit, quotas, budgets and administrative operational controls (PA-09)
 - [ ] P3-08 Production durable-store/worker portability, crash/restart and tenant-isolation acceptance tests (PA-10)
 
-Persistent-agent details: [requirements and architecture](docs/specs/persistent-agents.md), [ADR 0010](docs/adr/0010-configurable-persistent-agents.md). These are *planned* tasks, not implemented features.
+Persistent-agent details: [requirements and architecture](docs/specs/persistent-agents.md), [ADR 0010](docs/adr/0010-configurable-persistent-agents.md). The manifest store is implemented; the remaining persistent-agent capabilities are planned.
 
 A checked item means documentation or implementation is verified; future requirements are not completed merely by being described.

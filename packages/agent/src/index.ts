@@ -83,3 +83,5 @@ export type { DraftSnapshot, ProposalResult, ProposalClient } from './developmen
 export { createCapabilityTool } from './capability-tool.js';
 export { createOpenAIToolModel, createToolCallingModel } from './tool-model.js';
 export type { ToolModel } from './tool-model.js';
+export {SqliteAgentDefinitions,validateAgentManifest} from './persistent-definitions.js';
+export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';

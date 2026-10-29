@@ -1,6 +1,6 @@
 # Persistent Agents — requirements and architecture (proposed implementation)
 
-Status: planned, not implemented. Applies to Runtime/Data Plane. The agent is an **independent, configurable entity**, not intrinsically owned by an individual user. An agent may be bound at deployment to an organization, tenant, team, application, service identity, or individual user according to policy.
+Status: partially implemented. The local versioned definition store is available; runtime integration and the remaining capabilities are planned. Applies to Runtime/Data Plane. The agent is an **independent, configurable entity**, not intrinsically owned by an individual user. An agent may be bound at deployment to an organization, tenant, team, application, service identity, or individual user according to policy.
 
 ## Functional requirements
 - PA-01 Agent identity and configuration: stable agent ID, tenant/organization scope, owner/administrators, runtime configuration, allowed capabilities, model/provider, lifecycle policy, quotas and optional user association. User binding is one configuration, never the hard-coded default.
@@ -31,4 +31,4 @@ Status: planned, not implemented. Applies to Runtime/Data Plane. The agent is an
 
 Acceptance scenarios: independently configured organization agent executes without a logged-in user; separately configured personal agent cannot read organization-private memory without authorization; webhook and schedule reactivate paused agent; restart at each action boundary does not duplicate a committed side effect; expired delegation pauses until authorized renewal; an unavailable Control Plane does not halt independent published Data Plane runs; existing published UI works during agent outage.
 
-See [ADR 0010](../adr/0010-configurable-persistent-agents.md) and [TODO](../../TODO.md).
+See [persistent-agent definitions](../persistent-agent-definitions.md), [ADR 0010](../adr/0010-configurable-persistent-agents.md) and [TODO](../../TODO.md).
