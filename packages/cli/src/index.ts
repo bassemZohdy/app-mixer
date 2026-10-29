@@ -44,6 +44,11 @@ const bind=process.env.APP_MIXER_BIND||'127.0.0.1';
 if(!['127.0.0.1','0.0.0.0'].includes(bind))throw Error('Invalid bind address');
 let dataURL;
 try {const candidate=new URL(process.env.DATA_PLANE_URL||'');if(candidate.protocol==='http:'&&['127.0.0.1','localhost'].includes(candidate.hostname)&&candidate.pathname==='/application'&&!candidate.search&&!candidate.hash&&!candidate.username&&!candidate.password)dataURL=candidate;}catch{}
+let capabilityURL;
+try {
+  const candidate=new URL(process.env.CAPABILITY_URL||'');
+  if(candidate.protocol==='http:'&&['127.0.0.1','localhost'].includes(candidate.hostname)&&candidate.pathname==='/capabilities/'&&!candidate.search&&!candidate.hash&&!candidate.username&&!candidate.password&&(process.env.CAPABILITY_TOKEN||'').length>=32)capabilityURL=candidate;
+} catch {}
 let agentURL;
 try {
   const candidate=new URL(process.env.AGENT_URL || '');
@@ -66,6 +71,22 @@ createServer(async(req,res)=>{
     }catch{if(!res.destroyed)json(res,502,{error:'Publication unavailable'});}
     return;
   }
+  const capabilityMatch=req.method==='POST'&&/^\/api\/capabilities\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})$/.exec(req.url||'');
+  if(capabilityMatch){
+    if(req.headers.origin!=='http://'+host){json(res,403,{error:'Invalid origin'});return;}
+    if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'Expected JSON'});return;}
+    if(!capabilityURL){json(res,503,{error:'Capabilities are not configured'});return;}
+    const parts=[];let size=0,input;
+    try {for await(const chunk of req){size+=chunk.length;if(size>1024*1024){json(res,413,{error:'Request too large'});return;}parts.push(chunk);}input=JSON.parse(Buffer.concat(parts).toString('utf8'));}
+    catch{if(!res.destroyed)json(res,400,{error:'Invalid request'});return;}
+    try {
+      const upstream=await fetch(new URL(capabilityMatch[1]+'/invoke',capabilityURL),{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+process.env.CAPABILITY_TOKEN},body:JSON.stringify({origin:'ui',input}),redirect:'error',signal:AbortSignal.timeout(5000)});
+      if(![200,400,401,403,404,409,415,500,503].includes(upstream.status)||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||'')||!upstream.body)throw Error('Invalid capability response');
+      const chunks=[];let length=0;for await(const chunk of upstream.body){length+=chunk.length;if(length>1024*1024)throw Error('Capability response too large');chunks.push(chunk);}
+      const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));json(res,upstream.status,result);
+    }catch{if(!res.destroyed)json(res,502,{error:'Capability service unavailable'});}
+    return;
+  }
   if(req.method==='GET' && req.url==='/api/chat/status'){json(res,200,{enabled:!!agentURL});return;}
   if(req.method==='POST' && req.url==='/api/chat'){
     if(req.headers.origin!=='http://'+host){json(res,403,{error:'Invalid origin'});return;}
@@ -84,10 +105,19 @@ createServer(async(req,res)=>{
     }catch{if(!res.destroyed){if(!res.headersSent)json(res,502,{error:'Agent unavailable'});else res.destroy();}}
     return;
   }
-  const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':null;
+  const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':null;
   if(!path){res.writeHead(404);res.end();return;}
   try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':path.endsWith('.mjs')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
 }).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
+`;
+ const capabilities=String.raw`// Trusted application code invokes only host-registered capabilities.
+export async function invokeCapability(operationId,input){
+  if(typeof operationId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(operationId))throw Error('Invalid capability ID');
+  const response=await fetch('/api/capabilities/'+operationId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+  const body=await response.json();
+  if(!response.ok){const error=new Error(body.error||'Capability invocation failed');error.status=response.status;throw error;}
+  return body.result;
+}
 `;
  const chat=String.raw`const form=document.getElementById('chat-form'),input=document.getElementById('chat-input'),button=document.getElementById('chat-send'),status=document.getElementById('chat-status'),log=document.getElementById('chat-log');
 const threadId=crypto.randomUUID(),history=[];
@@ -155,7 +185,7 @@ export function prepareWorkspace(app){
 }
 `;
  const rendererSource=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
- await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\n")]);
+ await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
