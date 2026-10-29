@@ -1,3 +1,4 @@
+import {createRecordFieldValidator,type RecordField} from './record-field-validator.js';
 import {CapabilityRegistry, type CapabilityCandidate} from './capabilities.js';
 import {checkKey, type DataProvider} from './data-provider.js';
 
@@ -9,6 +10,8 @@ export type DataCapabilityOptions={
   operation:'get'|'put'|'delete';
   authorize:(context:PolicyContext)=>boolean|Promise<boolean>;
   validate:(input:unknown)=>boolean|Promise<boolean>;
+  fields?:RecordField[];
+  allowAdditionalFields?:boolean;
   authorizeRecord?:(context:PolicyContext, input:unknown)=>boolean|Promise<boolean>;
 };
 const record=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -20,6 +23,8 @@ const revision=(value:unknown):value is number=>Number.isSafeInteger(value)&&(va
 export function registerDataCapability(registry:CapabilityRegistry, provider:DataProvider, options:DataCapabilityOptions):void {
   if(!(registry instanceof CapabilityRegistry)||!provider||typeof provider.get!=='function'||typeof provider.put!=='function'||typeof provider.delete!=='function'||!options||!['get','put','delete'].includes(options.operation)||typeof options.authorize!=='function'||typeof options.validate!=='function'||(options.authorizeRecord!==undefined&&typeof options.authorizeRecord!=='function'))throw Error('Invalid data capability');
   const {applicationId,collection,operation,authorize,validate,authorizeRecord}=options;
+  if((options.fields!==undefined&&operation!=='put')||(options.allowAdditionalFields!==undefined&&options.fields===undefined))throw Error('Invalid data capability schema');
+  const validateFields=options.fields===undefined?undefined:createRecordFieldValidator(options.fields,{...(options.allowAdditionalFields===undefined?{}:{allowAdditionalFields:options.allowAdditionalFields})});
   checkKey({tenantId:'validation',applicationId},collection,'validation');
   registry.register(options.candidate,{
     authorize,
@@ -29,7 +34,7 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
       const base=operation==='get'?['id']:operation==='delete'?['id','expectedRevision']:['id','expectedRevision','value'];
       const hasSchema=operation!=='get'&&Object.hasOwn(input,'expectedSchemaVersion');
       const shape=fields(input,hasSchema?[...base,'expectedSchemaVersion']:base)&&(!hasSchema||(Number.isSafeInteger(input.expectedSchemaVersion)&&Number(input.expectedSchemaVersion)>=0))&&(operation==='get'||(operation==='delete'?revision(input.expectedRevision):(input.expectedRevision===null||revision(input.expectedRevision))&&record(input.value)));
-      return shape && await validate(structuredClone(input))===true;
+      return shape && (!validateFields||validateFields(input.value)) && await validate(structuredClone(input))===true;
     },
     execute:(input,context)=>{
       const value=input as {id:string;expectedRevision:number|null;value:Record<string,unknown>;expectedSchemaVersion?:number};

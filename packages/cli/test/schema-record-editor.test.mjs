@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {JSDOM} from 'jsdom';
 import {createProject} from '../dist/index.js';
+import {createRecordFieldValidator} from '../../core/dist/index.js';
 import {RECORD_EDITOR_PREVIEW} from '../../core/dist/data-editor-preview.js';
 const schema=[{key:'name',label:'Name',type:'string',required:true,maxLength:20},{key:'age',label:'Age',type:'integer',required:true,min:0,max:120},{key:'active',label:'Active',type:'boolean',required:true},{key:'tier',label:'Tier',type:'string',options:['standard','premium']},{key:'note',label:'Note',type:'string'}];
 const wait=async predicate=>{for(let n=0;n<200&&!predicate();n++)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate())};
@@ -23,6 +24,7 @@ test('new records require fields and unsupported loaded values cannot be overwri
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
 
 test('preview and runtime validate the same field definitions and preview is inert',async()=>{const s=await setup();let dom;try{const options={getOperation:'items.get',putOperation:'items.put'},good={...options,fields:schema};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){for(const bad of [[],[{key:'constructor',label:'X',type:'string'}],[{key:'x',label:'X',type:'number',maxLength:2}],[{key:'x',label:'X',type:'string',options:['a','a']}],[{key:'x',label:'X',type:'boolean',required:'yes'}],[{key:'x',label:'X',type:'integer',min:5,max:2}]])assert.throws(()=>factory({...options,fields:bad}),/Invalid record fields/);assert.doesNotThrow(()=>factory(good));}
+ for(const bad of [[],[{key:'constructor',label:'X',type:'string'}],[{key:'x',label:'X',type:'number',maxLength:2}],[{key:'x',label:'X',type:'string',options:['a','a']}],[{key:'x',label:'X',type:'boolean',required:'yes'}],[{key:'x',label:'X',type:'integer',min:5,max:2}]])assert.throws(()=>createRecordFieldValidator(bad),/Invalid record fields/);assert.doesNotThrow(()=>createRecordFieldValidator(schema));
  const f=render(s.preview.createRecordEditor);dom=f.dom;assert.ok([...f.root.querySelectorAll('button,input,select,textarea')].every(node=>node.disabled));assert.match(f.root.textContent,/Preview only/);assert.match(f.root.textContent,/Name \(required\)/);assert.equal(f.root.querySelector('script'),null);
  }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true})}});
 

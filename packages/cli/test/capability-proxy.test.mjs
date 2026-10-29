@@ -13,8 +13,9 @@ import {CapabilityRegistry,createCapabilityServer,registerDataCapability,registe
 const token='capability-secret-at-least-thirty-two-characters';
 test('generated app uses an authenticated loopback capability service without exposing its token', {timeout:15000},async()=>{
  const provider=new SqliteDataProvider(':memory:'),staged=new SqliteStagedOperations(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event));let externalCalls=0,failExternal=false;
+ const formFields=[{key:'name',label:'Name',type:'string',required:true},{key:'count',label:'Count',type:'integer',min:0},{key:'flag',label:'Flag',type:'boolean'}];
  const common={applicationId:'demo-app',collection:'items',authorize:ctx=>ctx.tenantId==='tenant'&&ctx.principalId==='local',validate:()=>true};
- for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,candidate:{operationId:`items.${operation}`,method,path:'/items'}});
+ for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,...(operation==='put'?{fields:formFields}:{}),candidate:{operationId:`items.${operation}`,method,path:'/items'}});
  registry.register({operationId:'orders.create',method:'POST',path:'/orders'},{authorize:ctx=>ctx.principalId==='local',validate:input=>input.payload.item==='x',execute:()=>{externalCalls++;if(failExternal)throw Error('uncertain result');return {ok:true};}});
  for(const operation of ['stage','get','submit'])registerStagedCapability(registry,registry,staged,{candidate:{operationId:`orders.${operation}`,method:'POST',path:'/stage'},applicationId:'demo-app',externalOperationId:'orders.create',operation,authorize:ctx=>ctx.principalId==='local',validate:()=>true});
  const upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});
@@ -28,6 +29,7 @@ test('generated app uses an authenticated loopback capability service without ex
   assert.equal((await call('items.put',{id:'x',expectedRevision:null,value:{name:'Ada'}},'https://evil.example')).status,403);
   assert.equal((await call('items.put',{id:'x',expectedRevision:null,value:{name:'Ada'}})).body.result.revision,1);
   assert.deepEqual((await call('items.get',{id:'x'})).body.result.value,{name:'Ada'});
+  assert.equal((await call('items.put',{id:'x',expectedRevision:1,value:{name:'Ada',count:'wrong'}})).status,400);assert.equal(provider.get({tenantId:'tenant',applicationId:'demo-app'},'items','x').revision,1);
   assert.equal((await call('items.put',{id:'x',expectedRevision:null,value:{name:'Other'}})).status,409);
   const originalFetch=globalThis.fetch;
   try {
@@ -55,7 +57,7 @@ test('generated app uses an authenticated loopback capability service without ex
    assert.equal(save.disabled,true);assert.equal(JSON.parse(textarea.value).name,'Unsaved');
    dom.window.close();
    provider.put({tenantId:'tenant',applicationId:'demo-app'},'items','x',{name:'External',count:2,flag:true,extra:'preserve'},3);
-   const formDom=new JSDOM('<!doctype html>'),form=schemaEditor();function schemaEditor(){return createRecordEditor({getOperation:'items.get',putOperation:'items.put',fields:[{key:'name',label:'Name',type:'string',required:true},{key:'count',label:'Count',type:'integer',min:0},{key:'flag',label:'Flag',type:'boolean'}]}).render({label:'Item'},null,null,formDom.window.document)}formDom.window.document.body.appendChild(form);
+   const formDom=new JSDOM('<!doctype html>'),form=schemaEditor();function schemaEditor(){return createRecordEditor({getOperation:'items.get',putOperation:'items.put',fields:formFields}).render({label:'Item'},null,null,formDom.window.document)}formDom.window.document.body.appendChild(form);
    const fields=[...form.querySelectorAll('label')].map(label=>label.querySelector('input,select')),[formLoad,formSave]=form.querySelectorAll('button'),formStatus=form.querySelector('[role=status]');fields[0].value='x';fields[0].dispatchEvent(new formDom.window.Event('input'));formLoad.click();for(let n=0;n<100&&formStatus.textContent!=='Record loaded.';n++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(formStatus.textContent,'Record loaded.');fields[1].value='Updated';fields[1].dispatchEvent(new formDom.window.Event('input'));fields[2].value='3';fields[2].dispatchEvent(new formDom.window.Event('input'));formSave.click();for(let n=0;n<100&&formStatus.textContent!=='Record saved.';n++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(formStatus.textContent,'Record saved.');assert.deepEqual(provider.get({tenantId:'tenant',applicationId:'demo-app'},'items','x').value,{name:'Updated',count:3,flag:true,extra:'preserve'});formDom.window.close();
    const {createStagedEditor}=await import(pathToFileURL(join(target,'staged-editor.mjs')).href);
    const stagedDom=new JSDOM('<!doctype html><div id="host"></div>'),stagedDoc=stagedDom.window.document,stagedRegistry=basicRegistry(),stagedEditor=createStagedEditor({stageOperation:'orders.stage',getOperation:'orders.get',submitOperation:'orders.submit'});

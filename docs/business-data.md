@@ -63,3 +63,19 @@ createRecordEditor({
 This bounded local schema supports string, finite number, safe integer and boolean fields; string options, numeric minimum/maximum, string length and required fields are optional. The host chooses field names and constraints, and the application definition cannot override them. Fields have visible labels and required/optional markers, validation appears at the field and on save, and loading incompatible stored types fails without enabling save. Data outside the displayed fields is preserved. Clearing an optional field removes it when saved; an untouched existing empty string is preserved. A revision conflict keeps edits available for copying and disables save until a record is loaded again. The preview shows the same fields with disabled controls and performs no capability calls.
 
 This is a bounded host-defined field schema, not full JSON Schema: nested editing, arrays and general schema composition remain open. The client form is convenience validation only. Hosts must apply their authoritative schema validation and authorization in the capability service, including constraints on fields not displayed by the form. Data is saved only when the user explicitly chooses Save.
+
+### Enforcing the same rules on writes
+
+A trusted host can also pass the same `fields` definition to the `put` registration of `registerDataCapability`. The capability validates its input shape, these field rules, and the host's existing `validate` callback before invoking the provider. For example:
+
+```js
+registerDataCapability(registry, provider, {
+  candidate: {operationId: 'items.put', method: 'PUT', path: '/items'},
+  applicationId: 'demo-app', collection: 'items', operation: 'put',
+  authorize: actor => canWriteItems(actor),
+  validate: input => additionalBusinessPolicy(input),
+  fields, allowAdditionalFields: true
+});
+```
+
+`createRecordFieldValidator(fields, options)` is also available for other trusted server paths. Schemas are validated and snapshotted at registration. Additional fields are allowed by default, matching the form's preservation of undisplayed data; set `allowAdditionalFields: false` for a closed record. Values must still meet the provider's bounded JSON restrictions. The server schema is host-owned: keep its configuration authoritative and do not trust a browser-supplied schema. Existing records are not automatically migrated or validated on read. Full JSON Schema, nested editing, conditional rules, and production schema governance remain separate work.
