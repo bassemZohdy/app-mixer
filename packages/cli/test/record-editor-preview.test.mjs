@@ -17,7 +17,7 @@ const post=(token,body)=>({method:'POST',headers:{authorization:`Bearer ${token}
 
 test('record editor extension previews safely without invoking business capabilities',async()=>{
  const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
- const source=`import {createRecordEditor} from './data-editor.mjs';export const installedExtensions=[{id:'example.records',version:'1.0.0',scope:'application',components:{'record-editor':createRecordEditor({getOperation:'items.get',putOperation:'items.put'})}}];`;
+ const source=`import {createRecordEditor} from './data-editor.mjs';export const installedExtensions=[{id:'example.records',version:'1.0.0',scope:'application',components:{'record-editor':createRecordEditor({getOperation:'items.get',putOperation:'items.put',fields:[{key:'active',label:'Active',type:'boolean'}]})}}];`;
  const planes=createDevelopmentPlanes(repo,developer,agent,undefined,{extensionModule:source});
  try {
   const cp=await start(planes.control),pp=await start(planes.proposal),ref={id:'example.records',version:'1.0.0',scope:'application'};
@@ -34,8 +34,8 @@ test('record editor extension previews safely without invoking business capabili
   for(let i=0;i<100&&document.getElementById('approve').disabled;i++)await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal(document.getElementById('approve').disabled,false);
   const preview=document.getElementById('rendered-preview');assert.equal(preview.querySelector('h3').textContent,'<script>unsafe</script>');assert.equal(preview.querySelector('script'),null);
-  assert.ok([...preview.querySelectorAll('button,input,textarea')].every(item=>item.disabled));
-  assert.match(preview.textContent,/Preview only/);assert.deepEqual(calls,[`/proposals/${proposal.id}`]);assert.equal(repo.getDraft().revision,0);
+  assert.ok([...preview.querySelectorAll('button,input,textarea,select')].every(item=>item.disabled));
+  assert.equal(preview.querySelector('select').disabled,true);assert.match(preview.textContent,/Preview only/);assert.deepEqual(calls,[`/proposals/${proposal.id}`]);assert.equal(repo.getDraft().revision,0);
   dom.window.close();
  } finally {await stop(planes.control);await stop(planes.proposal);}
 });
