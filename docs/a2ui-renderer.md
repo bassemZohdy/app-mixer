@@ -30,4 +30,4 @@ Protocol references: [A2UI v0.9.1 quickstart](https://a2ui.org/quickstart/) and 
 
 CI also starts a generated app and checks its rendered workspace in headless Chrome. This is a smoke test, not full protocol conformance.
 
-Pass an `onAction` callback as the third argument to `A2UIRenderer` to receive v0.9.1 action messages. Buttons are disabled without a callback. Only explicitly mapped event context is included; actions are never sent to a server by the renderer. The caller must authorize and route actions.
+Pass an `onAction` callback as the third argument to `A2UIRenderer` to receive v0.9.1 action messages. Buttons are disabled without a callback. Callbacks from buttons superseded by a component update or surface recreation are ignored. Only explicitly mapped event context is included; actions are never sent to a server by the renderer. The caller must authorize and route actions.

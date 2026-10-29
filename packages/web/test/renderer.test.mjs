@@ -115,6 +115,25 @@ test('buttons are disabled without an action handler', () => {
   assert.equal(host.children[0].children[0].disabled,true);
 });
 
+test('only current buttons dispatch after component replacement and surface recreation', () => {
+  const doc={createElement:tag => new Element(tag,doc)}; const host=doc.createElement('main');
+  const actions=[]; const renderer=new A2UIRenderer(host,basicRegistry(),message=>actions.push(message));
+  const button=name=>[{id:'root',component:'Button',child:'label',action:{event:{name}}},{id:'label',component:'Text',text:name}];
+  renderer.apply(create('main'));renderer.apply(components('main',button('old')));
+  const original=host.children[0].children[0];
+  renderer.apply(data('main',{value:'updated'}));original.dispatch('click');
+  assert.deepEqual(actions.map(message=>message.action.name),['old']);
+  assert.throws(()=>renderer.apply(components('main',[{id:'root',component:'Button'}])));
+  original.dispatch('click');assert.equal(actions.length,2);
+  renderer.apply(components('main',button('new')));
+  const current=host.children[0].children[0];original.dispatch('click');current.dispatch('click');
+  assert.deepEqual(actions.map(message=>message.action.name),['old','old','new']);
+  renderer.apply({version:'v0.9.1',deleteSurface:{surfaceId:'main'}});renderer.apply(create('main'));
+  renderer.apply(components('main',button('replacement')));current.dispatch('click');
+  assert.equal(actions.length,3);host.children[0].children[0].dispatch('click');
+  assert.equal(actions.at(-1).action.name,'replacement');
+});
+
 
 test('data model upserts nested paths and array deletion preserves indices', () => {
   const {host,renderer}=setup(); renderer.apply(create('main'));
