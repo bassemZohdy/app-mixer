@@ -6,8 +6,9 @@ import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 const script=await readFile(new URL('../../packages/web/dist/offline.js',import.meta.url));
+const workerScript=await readFile(new URL('../../packages/web/dist/offline-worker.js',import.meta.url));
 const fixture=`<!doctype html><body data-result="pending"><script type="module">
-import {EncryptedBrowserQueue} from '/offline.js';
+import {EncryptedBrowserQueue,BrowserOfflineWorker} from '/offline.js';
 try {
  const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
  const opts={enabled:true,databaseName:'smoke',scope:{tenantId:'t',applicationId:'a',principalId:'p'},key};
@@ -18,6 +19,10 @@ try {
  if(result.filter(x=>x.status==='fulfilled').length!==1)throw Error('Concurrent claim failed');
  const running=await a.get(item.id),uncertain=await a.transition(item.id,running.version,'uncertain');
  if((await b.transition(item.id,uncertain.version,'reconcileApplied')).status!=='succeeded')throw Error('Reconciliation failed');
+ const next=await a.enqueue('save','second',{name:'worker'});let dispatched=0;
+ const worker=new BrowserOfflineWorker(a,{intervalMs:100,maxPerPass:2,maxAttempts:2,isOnline:()=>true,resolveActor:()=>opts.scope,dispatch:()=>{dispatched++;},classify:()=> 'uncertain',onError:error=>{throw error;}});
+ worker.start();const limit=Date.now()+10000;while((await a.get(next.id)).status!=='succeeded'&&Date.now()<limit)await new Promise(resolve=>setTimeout(resolve,25));
+ await worker.stop();if(dispatched!==1||(await a.get(next.id)).status!=='succeeded')throw Error('Worker dispatch failed');
  const open=indexedDB.open('smoke',1);const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
  const tx=db.transaction('offline','readonly'),get=tx.objectStore('offline').getAll(),rows=await new Promise((resolve,reject)=>{get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);});
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');
@@ -31,7 +36,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/result'&&req.method==='POST'){
   const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
  }
- if(req.url==='/offline.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(script);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
+ if(req.url==='/offline.js'||req.url==='/offline-worker.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:workerScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
 });
 const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));let browser,timer;
 try{
