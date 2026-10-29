@@ -6,6 +6,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {JSDOM} from 'jsdom';
 import {createProject} from '../dist/index.js';
 import {CapabilityRegistry,createCapabilityServer,registerDataCapability,registerStagedCapability,SqliteStagedOperations,SqliteDataProvider} from '../../core/dist/index.js';
 
@@ -38,6 +39,22 @@ test('generated app uses an authenticated loopback capability service without ex
    assert.deepEqual(await client.invokeCapability('orders.submit',{id:order.id}),{ok:true});assert.equal(externalCalls,1);
    await assert.rejects(client.invokeCapability('items.put',{id:'x',expectedRevision:null,value:{name:'Other'}}),error=>error.status===409);
    await assert.rejects(client.invokeCapability('../escape',{}),/Invalid capability ID/);
+   const {createRecordEditor}=await import(pathToFileURL(join(target,'data-editor.mjs')).href);
+   const {basicRegistry,A2UIRenderer,APP_MIXER_CATALOG}=await import(pathToFileURL(join(target,'renderer.mjs')).href);
+   const dom=new JSDOM('<!doctype html><div id="host"></div>'),document=dom.window.document,registry=basicRegistry(),editor=createRecordEditor({getOperation:'items.get',putOperation:'items.put'});
+   registry.register('record-editor',editor.render,editor.validate);const renderer=new A2UIRenderer(document.getElementById('host'),registry);
+   renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+   renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'record-editor',label:'Item'}]}});
+   const field=document.querySelector('input'),textarea=document.querySelector('textarea'),[load,save]=document.querySelectorAll('button'),status=document.querySelector('[role=status]');
+   const waitFor=async phrase=>{for(let n=0;n<100&&!status.textContent.includes(phrase);n++)await new Promise(resolve=>setTimeout(resolve,10));assert.match(status.textContent,new RegExp(phrase));};
+   field.value='x';field.dispatchEvent(new dom.window.Event('input'));load.click();await waitFor('Record loaded');
+   textarea.value=JSON.stringify({name:'Changed'});save.click();await waitFor('Record saved');
+   assert.equal(provider.get({tenantId:'tenant',applicationId:'demo-app'},'items','x').value.name,'Changed');
+   provider.put({tenantId:'tenant',applicationId:'demo-app'},'items','x',{name:'External'},2);
+   textarea.value=JSON.stringify({name:'Unsaved'});save.click();await waitFor('changed elsewhere');
+   assert.equal(save.disabled,true);assert.equal(JSON.parse(textarea.value).name,'Unsaved');
+   dom.window.close();
+
   } finally {globalThis.fetch=originalFetch;}
   assert.equal((await call('missing',{})).status,404);
   assert.ok(events.some(event=>event.outcome==='succeeded'));assert.doesNotMatch(await (await fetch(`${url}/capabilities.mjs`)).text(),new RegExp(token));
