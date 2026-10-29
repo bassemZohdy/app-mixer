@@ -1,19 +1,23 @@
 import {EncryptedBrowserQueue,type BrowserQueueItem,type BrowserQueueScope} from './offline.js';
 export type OfflineConflictPanelOptions={
   loadCurrent:(operationId:string,payload:Record<string,unknown>,scope:BrowserQueueScope)=>unknown|Promise<unknown>;
+  authorizeMutation?:(action:'resolve'|'discard',item:BrowserQueueItem,payload?:Record<string,unknown>)=>boolean|Promise<boolean>;
+  authorizeRead?:()=>boolean|Promise<boolean>;
 };
 export type OfflineConflictPanel={refresh:()=>Promise<void>;dispose:()=>void};
 
 /** Host mounts this after unlocking the queue and supplying an authenticated current-state loader. */
 export function mountOfflineConflictPanel(root:HTMLElement,queue:EncryptedBrowserQueue,options:OfflineConflictPanelOptions):OfflineConflictPanel {
-  if(!root||!root.ownerDocument||typeof root.replaceChildren!=='function'||!(queue instanceof EncryptedBrowserQueue)||!options||typeof options.loadCurrent!=='function')throw Error('Invalid offline conflict panel');
-  const document=root.ownerDocument,loadCurrent=options.loadCurrent;let generation=0,disposed=false;
+  if(!root||!root.ownerDocument||typeof root.replaceChildren!=='function'||!(queue instanceof EncryptedBrowserQueue)||!options||typeof options.loadCurrent!=='function'||(options.authorizeMutation!==undefined&&typeof options.authorizeMutation!=='function')||(options.authorizeRead!==undefined&&typeof options.authorizeRead!=='function'))throw Error('Invalid offline conflict panel');
+  const document=root.ownerDocument,loadCurrent=options.loadCurrent,authorizeMutation=options.authorizeMutation,authorizeRead=options.authorizeRead;let generation=0,disposed=false;
   const node=<K extends keyof HTMLElementTagNameMap>(tag:K,text?:string):HTMLElementTagNameMap[K]=>{const element=document.createElement(tag);if(text!==undefined)element.textContent=text;return element;};
   async function refresh():Promise<void>{
     if(disposed)return;const current=++generation;
     const heading=node('h2','Offline operations'),status=node('p','Loading operations…'),list=node('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');root.replaceChildren(heading,status,list);
     try{
+      if(authorizeRead&&await authorizeRead()!==true)throw Error('Not authorized');
       const items=(await queue.list()).filter(item=>['conflict','uncertain','exhausted'].includes(item.status));
+      if(authorizeRead&&await authorizeRead()!==true)throw Error('Not authorized');
       if(disposed||current!==generation)return;
       if(!items.length){status.textContent='No operations need attention.';return;}
       status.textContent='Review operations that need attention.';
@@ -47,7 +51,7 @@ export function mountOfflineConflictPanel(root:HTMLElement,queue:EncryptedBrowse
     })();});
     discard.addEventListener('click',()=>{void (async()=>{
       if(busy)return;lock(true);
-      try{await queue.transition(item.id,item.version,'discard');if(isCurrent())await refresh();}
+      try{if(authorizeMutation&&await authorizeMutation('discard',structuredClone(item))!==true)throw Error('Not authorized');if(!isCurrent())return;await queue.transition(item.id,item.version,'discard');if(isCurrent())await refresh();}
       catch{if(isCurrent()){message.textContent='Unable to discard. Refresh and try again.';lock(false);}}
     })();});
     resolve.addEventListener('click',()=>{void (async()=>{
@@ -59,7 +63,7 @@ export function mountOfflineConflictPanel(root:HTMLElement,queue:EncryptedBrowse
         requestKey=crypt.randomUUID();lastPayload=serialized;
       }
       lock(true);
-      try{await queue.resolveConflict(item.id,item.version,requestKey,payload);if(isCurrent())await refresh();}
+      try{if(authorizeMutation&&await authorizeMutation('resolve',structuredClone(item),structuredClone(payload))!==true)throw Error('Not authorized');if(!isCurrent())return;await queue.resolveConflict(item.id,item.version,requestKey,payload);if(isCurrent())await refresh();}
       catch{if(isCurrent()){message.textContent='Unable to queue the resolution. Your edits are retained; refresh to check its state.';lock(false);}}
     })();});
     return section;
