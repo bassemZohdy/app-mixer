@@ -25,7 +25,7 @@ export class DurableAgentWorker {
   const validDefinition=()=>{const latest=definitions.get(scope.tenantId,scope.agentId);return !!latest&&latest.version===run!.definitionVersion&&latest.manifest.lifecycle.enabled&&latest.manifest.tenantId===scope.tenantId&&latest.manifest.agentId===scope.agentId;};
   if(await authorizeStart(structuredClone(run),structuredClone(definition))!==true)throw Error('Agent run forbidden');
   if(!validDefinition())throw Error('Agent definition changed');
-  run=runs.claim(scope,runId,run.revision,workerId,leaseMs,this.clock(),definition.manifest.quotas.maxConcurrentRuns);const token=run.leaseToken!;
+  run=runs.claim(scope,runId,run.revision,workerId,leaseMs,this.clock(),definition.manifest.quotas.maxConcurrentRuns,definition.manifest.quotas.maxRunsPerDay);const token=run.leaseToken!;
   const controller=new AbortController();let lost=false;
   const assertLease=()=>{
    const current=runs.get(scope,runId),now=this.clock();
