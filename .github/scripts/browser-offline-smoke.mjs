@@ -5,15 +5,20 @@ import {once} from 'node:events';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+const publicationScript=await readFile(new URL('../../packages/web/dist/offline-publications.js',import.meta.url));
 const script=await readFile(new URL('../../packages/web/dist/offline.js',import.meta.url));
 const workerScript=await readFile(new URL('../../packages/web/dist/offline-worker.js',import.meta.url));
 const uiScript=await readFile(new URL('../../packages/web/dist/offline-ui.js',import.meta.url));
 const runtimeScript=await readFile(new URL('../../packages/cli/templates/offline-runtime.mjs',import.meta.url));
 const fixture=`<!doctype html><body data-result="pending"><script type="module">
 import {EncryptedBrowserQueue,BrowserOfflineWorker,mountOfflineConflictPanel} from '/offline.js';
+import {EncryptedPublicationCache} from '/offline-publications.js';
 import {createGeneratedOfflineRuntime,mountGeneratedOfflineForm} from '/offline-runtime.mjs';
 try {
  const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+ const publication={version:1,definition:{id:'a',schemaVersion:1,title:'publication-secret'}};
+ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(publication)));const etag='"'+Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('')+'"';
+ const publications=await EncryptedPublicationCache.open({enabled:true,databaseName:'publication-smoke',scope:{tenantId:'t',principalId:'p',authorizationKey:'v1',applicationId:'a',schemaVersion:1},key,maxAgeMs:60000,authorize:()=>true,compatible:()=>true});await publications.store(publication,etag);if((await publications.read()).publication.definition.title!=='publication-secret')throw Error('Publication round trip failed');await publications.clear();if(await publications.read())throw Error('Publication clear failed');publications.close();
  const opts={enabled:true,databaseName:'smoke',scope:{tenantId:'t',applicationId:'a',principalId:'p'},key};
  const a=await EncryptedBrowserQueue.open(opts),b=await EncryptedBrowserQueue.open(opts);
  const item=await a.enqueue('save','request',{name:'private-value'});
@@ -55,6 +60,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/result'&&req.method==='POST'){
   const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
  }
+ if(req.url==='/offline-publications.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(publicationScript);return;}
  if(req.url==='/offline.js'||req.url==='/offline-worker.js'||req.url==='/offline-ui.js'||req.url==='/offline-runtime.mjs'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:req.url==='/offline-worker.js'?workerScript:req.url==='/offline-ui.js'?uiScript:runtimeScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
 });
 const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));let browser,timer;
