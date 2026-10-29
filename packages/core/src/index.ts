@@ -77,3 +77,9 @@ export { checkExtensionCompatibility, createExtensionPublicationGuard, Extension
 export { registerExtensionComponent, registerDeclaredNativeExtensionComponent, registerExtensionCapability, registerDeclaredExtensionCapability, createExtensionRuntime } from './extension-adapters.js';
 export type { ExtensionRuntimeBindings } from './extension-adapters.js';
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration } from './extensions.js';
+
+export { SqliteDataProvider } from './data-provider.js';
+export type { DataProvider, DataRecord, DataScope } from './data-provider.js';
+
+export { SqliteStagedOperations } from './staged-operations.js';
+export type { StagedOperation, StagedStatus } from './staged-operations.js';
