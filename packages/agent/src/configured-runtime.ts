@@ -1,3 +1,4 @@
+import {AgentApprovalRequired} from './approval-required.js';
 import {AgentDelegationExpired} from './delegation-expired.js';
 import {LangGraphAGUIAdapter,type RunInput} from './index.js';
 import {createCapabilityTool} from './capability-tool.js';
@@ -28,7 +29,7 @@ type Options={
 };
 
 /** Prepare one host-authorized ephemeral run from the current agent definition. */
-export async function createConfiguredAgentRun(options:Options):Promise<{run:(input:RunInput,options?:{signal?:AbortSignal})=>ReturnType<LangGraphAGUIAdapter['run']>}> {
+export async function createConfiguredAgentRun(options:Options):Promise<{run:(input:RunInput,options?:{signal?:AbortSignal})=>ReturnType<LangGraphAGUIAdapter['run']>;pendingApproval:()=>{actionId:string}|undefined}> {
  if(!options||!options.definitions||typeof options.definitions.get!=='function'||!options.registry||typeof options.registry.invoke!=='function'||typeof options.authorizeRun!=='function'||typeof options.authorizeCapability!=='function'||typeof options.createModel!=='function'||!Array.isArray(options.bindings)||!Number.isSafeInteger(options.expectedVersion)||options.expectedVersion<1)throw Error('Invalid configured agent');
  const {definitions,registry,authorizeRun,authorizeCapability,createModel,tenantId,agentId,expectedVersion,maxTurns,checkpoint,actionJournal,approval}=options;
  const configuredDelegation=options.delegation;
@@ -49,7 +50,7 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
   if(!binding||typeof binding.operationId!=='string'||typeof binding.toolName!=='string'||typeof binding.description!=='string'||bindings.has(binding.operationId)||names.has(binding.toolName))throw Error('Invalid configured tool');
   const entry={operationId:binding.operationId,toolName:binding.toolName,description:binding.description};bindings.set(entry.operationId,entry);names.add(entry.toolName);
  }
- let runSignal:AbortSignal|undefined;
+ let runSignal:AbortSignal|undefined,pendingActionId:string|undefined;
  const checkActive=()=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();if(grant){const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw new AgentDelegationExpired();}};
  const checkDelegation=async(operationId:string,input:unknown)=>{if(!grant)return;const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw new AgentDelegationExpired();if(await delegationAuthorize!({...identity},{...grant},operationId,structuredClone(input))!==true)throw Error('Delegation forbidden');const after=delegationClock();if(!Number.isSafeInteger(after)||after<0||after>=grant.expiresAt)throw new AgentDelegationExpired();if(runSignal?.aborted)throw Error('Agent run aborted');current();};
  const authority=grant?JSON.stringify([identity.servicePrincipalId,grant.principalId]):undefined;
@@ -62,7 +63,7 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
    await checkDelegation(operationId,input);checkActive();
    const actor={tenantId,principalId:grant?.principalId??identity.servicePrincipalId,origin:'agent' as const};
    if(actionJournal){if(!context?.toolCallId)throw Error('Missing action ID');let required=false;
-    if(approval){const decision=await approval.required({...identity},operationId,structuredClone(input));if(typeof decision!=='boolean')throw Error('Invalid approval policy result');required=decision;if(runSignal?.aborted)throw Error('Agent run aborted');current();if(required){const request=await approval.store.request({tenantId,principalId:identity.servicePrincipalId},approval.leaseToken,context.toolCallId,operationId,input,approval.expiresAt,authority);if(request.status!=='approved')throw Error('Approval required');}}
+    if(approval){const decision=await approval.required({...identity},operationId,structuredClone(input));if(typeof decision!=='boolean')throw Error('Invalid approval policy result');required=decision;if(runSignal?.aborted)throw Error('Agent run aborted');current();if(required){const request=await approval.store.request({tenantId,principalId:identity.servicePrincipalId},approval.leaseToken,context.toolCallId,operationId,input,approval.expiresAt,authority);if(request.status==='pending'){pendingActionId=context.toolCallId;throw new AgentApprovalRequired();}if(request.status!=='approved')throw Error('Approval unavailable');}}
     await checkDelegation(operationId,input);checkActive();
     return actionJournal.journal.invoke(context.toolCallId,operationId,input,actionJournal.maxAttempts,async (data,key)=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();await checkDelegation(operationId,data);checkActive();const mapped=actionJournal.prepareInput(operationId,data,key);return registry.invoke(operationId,mapped,actor);},required,authority);}
    return registry.invoke(operationId,structuredClone(input),actor);
@@ -70,7 +71,7 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
  });
  const model=await createModel(structuredClone(snapshot),[...tools]);if(!model||typeof model.invoke!=='function')throw Error('Invalid agent model');current();
  const adapter=new LangGraphAGUIAdapter(createToolCallingModel(model,tools,{maxTurns,checkpoint}),{direct:!!checkpoint});let used=false;
- return {async *run(input,runOptions={}){
+ return {pendingApproval:()=>pendingActionId?{actionId:pendingActionId}:undefined,async *run(input,runOptions={}){
   if(used)throw Error('Configured agent run already used');if(grant&&grant.runId!==input.runId)throw Error('Delegation run mismatch');if(checkpoint&&checkpoint.threadId!==input.runId)throw Error('Checkpoint run mismatch');if(actionJournal&&!actionJournal.journal.isBoundTo({tenantId,agentId},input.runId))throw Error('Action journal run mismatch');if(approval&&!approval.store.isBoundTo({tenantId,agentId},input.runId))throw Error('Approval run mismatch');used=true;current();
   const deadline=AbortSignal.timeout(snapshot.manifest.lifecycle.runTimeoutMs);
   runSignal=runOptions.signal?AbortSignal.any([deadline,runOptions.signal]):deadline;

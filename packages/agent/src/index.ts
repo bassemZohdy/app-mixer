@@ -1,3 +1,4 @@
+import {AgentApprovalRequired} from './approval-required.js';
 import {AgentDelegationExpired} from './delegation-expired.js';
 import { randomUUID } from 'node:crypto';
 import { EventType, type Event } from '@ag-ui/core';
@@ -73,7 +74,7 @@ export class LangGraphAGUIAdapter {
       yield {type:EventType.RUN_FINISHED,threadId,runId};
     } catch (error) {
       if (started) yield {type:EventType.TEXT_MESSAGE_END,messageId};
-      yield error instanceof AgentDelegationExpired?{type:EventType.RUN_ERROR,message:'Delegated authorization expired.',code:'AGENT_DELEGATION_EXPIRED'}:{type:EventType.RUN_ERROR,message:'The agent could not complete this run.',code:'AGENT_RUN_FAILED'};
+      yield error instanceof AgentApprovalRequired?{type:EventType.RUN_ERROR,message:'Human approval is required.',code:'AGENT_APPROVAL_REQUIRED'}:error instanceof AgentDelegationExpired?{type:EventType.RUN_ERROR,message:'Delegated authorization expired.',code:'AGENT_DELEGATION_EXPIRED'}:{type:EventType.RUN_ERROR,message:'The agent could not complete this run.',code:'AGENT_RUN_FAILED'};
     }
   }
 }
