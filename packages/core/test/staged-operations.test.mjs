@@ -90,3 +90,29 @@ test('staged external submission reconciles a lost response against an idempoten
   assert.equal(requests,1);assert.equal(effects.size,1);
  } finally {staged.close();await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
+
+test('staging retries with the same request key return one durable intent and reject mismatches',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'app-mixer-stage-dedup-')),path=join(dir,'db.sqlite');
+ const first=new SqliteStagedOperations(path),second=new SqliteStagedOperations(path);
+ try {
+  const op=first.stage(scope,'charge',{a:1,b:{x:2,y:3}},'request-1');
+  const retried=second.stage(scope,'charge',{b:{y:3,x:2},a:1},'request-1');
+  assert.deepEqual(retried,op);
+  assert.throws(()=>second.stage(scope,'charge',{a:2},'request-1'),/conflict/);
+  assert.throws(()=>second.stage(scope,'other',{a:1,b:{x:2,y:3}},'request-1'),/conflict/);
+  assert.notEqual(second.stage({...scope,tenantId:'other'},'charge',{a:2},'request-1').id,op.id);
+  assert.notEqual(second.stage({...scope,applicationId:'other'},'charge',{a:2},'request-1').id,op.id);
+  assert.notEqual(second.stage(scope,'charge',{a:2}).id,op.id);
+  const zero=first.stage(scope,'charge',{n:-0},'zero');assert.equal(second.stage(scope,'charge',{n:-0},'zero').id,zero.id);assert.equal(Object.is(zero.payload.n,-0),false);
+  assert.throws(()=>first.stage(scope,'charge',{},''),/Invalid/);
+ } finally {first.close();second.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('existing staging databases migrate without losing operations',async()=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const dir=mkdtempSync(join(tmpdir(),'app-mixer-stage-migration-')),path=join(dir,'db.sqlite'),db=new DatabaseSync(path);
+ db.exec(`CREATE TABLE staged_business_operations (tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, id TEXT NOT NULL, operation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY(tenant_id,application_id,id)); INSERT INTO staged_business_operations VALUES ('tenant','app','old','charge','old-key','{"amount":10}','staged');`);db.close();
+ const store=new SqliteStagedOperations(path);
+ try {assert.equal(store.get(scope,'old').idempotencyKey,'old-key');const op=store.stage(scope,'charge',{amount:10},'new-request');assert.equal(store.stage(scope,'charge',{amount:10},'new-request').id,op.id);}
+ finally {store.close();rmSync(dir,{recursive:true,force:true});}
+});

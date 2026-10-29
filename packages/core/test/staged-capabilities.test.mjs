@@ -14,12 +14,15 @@ test('authenticated staging is explicit and external submission rechecks actor p
   assert.equal((await call('stage',{payload:{quantity:2},tenantId:'other'})).status,400);
   const viewerOp=(await call('stage',{payload:{quantity:2}},'t','viewer')).body.result;
   assert.equal((await call('submit',{id:viewerOp.id},'t','viewer')).status,403);assert.equal((await call('get',{id:viewerOp.id},'t','viewer')).body.result.status,'uncertain');assert.equal(executions,0);
-  const op=(await call('stage',{payload:{quantity:2}})).body.result;assert.equal(op.status,'staged');assert.equal(executions,0);
+  const op=(await call('stage',{payload:{quantity:2},requestKey:'req-1'})).body.result;assert.equal(op.status,'staged');assert.equal(executions,0);
+  assert.equal((await call('stage',{payload:{quantity:2},requestKey:'req-1'},'t','allowed','agent')).body.result.id,op.id);
+  assert.equal((await call('stage',{payload:{quantity:3},requestKey:'req-1'})).status,409);
   assert.equal((await call('get',{id:op.id},'other')).body.result,null);
   assert.equal((await call('submit',{id:op.id},'t','denied','agent')).status,403);assert.equal(executions,0);
   const result=await call('submit',{id:op.id},'t','allowed','agent');assert.equal(result.status,200);assert.equal(result.body.result.key,op.idempotencyKey);
   assert.equal((await call('get',{id:op.id})).body.result.status,'succeeded');assert.equal(executions,1);
-  assert.equal((await call('submit',{id:op.id})).status,500);assert.equal(executions,1);
+  assert.equal((await call('stage',{payload:{quantity:2},requestKey:'req-1'})).body.result.status,'succeeded');
+  assert.equal((await call('submit',{id:op.id})).status,409);assert.equal(executions,1);
   assert.ok(audit.some(event=>event.operationId==='orders.create'&&event.outcome==='succeeded'));
  } finally {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));store.close();}
 });
