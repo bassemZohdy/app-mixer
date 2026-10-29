@@ -8,7 +8,7 @@ import {type AgentDefinitionVersion} from './persistent-definitions.js';
 
 type AgentIdentity={tenantId:string;agentId:string;definitionVersion:number;servicePrincipalId:string};
 type Binding={operationId:string;toolName:string;description:string};
-type Delegation={tenantId:string;agentId:string;runId:string;principalId:string;grantId:string;permissionVersion:string;expiresAt:number};
+type Delegation={tenantId:string;agentId:string;runId:string;principalId:string;grantId:string;permissionVersion:string;expiresAt:number;revision?:number};
 type DelegationOptions={grant:Delegation;authorize:(identity:AgentIdentity,grant:Delegation,operationId:string,input:unknown)=>boolean|Promise<boolean>;clock?:()=>number};
 const validId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 type Tool=ReturnType<typeof createCapabilityTool>;
@@ -33,7 +33,7 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
  const configuredDelegation=options.delegation;
  if(configuredDelegation&&(!configuredDelegation.grant||typeof configuredDelegation.authorize!=='function'||(configuredDelegation.clock!==undefined&&typeof configuredDelegation.clock!=='function')))throw Error('Invalid delegation');
  const grant=configuredDelegation?structuredClone(configuredDelegation.grant):undefined;
- if(grant&&(!validId(grant.tenantId)||!validId(grant.agentId)||!validId(grant.runId)||!validId(grant.principalId)||!validId(grant.grantId)||!validId(grant.permissionVersion)||!Number.isSafeInteger(grant.expiresAt)||grant.expiresAt<0||grant.tenantId!==tenantId||grant.agentId!==agentId))throw Error('Invalid delegation');
+ if(grant&&(!validId(grant.tenantId)||!validId(grant.agentId)||!validId(grant.runId)||!validId(grant.principalId)||!validId(grant.grantId)||!validId(grant.permissionVersion)||!Number.isSafeInteger(grant.expiresAt)||grant.expiresAt<0||(grant.revision!==undefined&&(!Number.isSafeInteger(grant.revision)||grant.revision<1))||grant.tenantId!==tenantId||grant.agentId!==agentId))throw Error('Invalid delegation');
  const delegationAuthorize=configuredDelegation?.authorize,delegationClock=configuredDelegation?.clock??Date.now;
  if(approval&&(!actionJournal||!(approval.store instanceof SqliteAgentApprovals)||typeof approval.leaseToken!=='string'||!Number.isSafeInteger(approval.expiresAt)||typeof approval.required!=='function'))throw Error('Invalid approval policy');
  if(actionJournal&&(!(actionJournal.journal instanceof SqliteAgentActionJournal)||!Number.isSafeInteger(actionJournal.maxAttempts)||actionJournal.maxAttempts<1||actionJournal.maxAttempts>20||typeof actionJournal.prepareInput!=='function'))throw Error('Invalid action journal');
