@@ -38,3 +38,15 @@ test('failed current-state load cannot enable resolution and dispose cancels sta
   await panel.refresh();const [review,,resolve]=root.querySelectorAll('button');review.click();assert.equal(resolve.disabled,true);panel.dispose();release({x:2});await new Promise(resolve=>setTimeout(resolve,20));assert.equal(root.childNodes.length,0);
  }finally{panel.dispose();queue.close();dom.window.close();}
 });
+
+test('host authorization can deny panel reads and conflict mutations',async()=>{
+ const queue=await setup(),dom=new JSDOM('<!doctype html><main></main>'),root=dom.window.document.querySelector('main'),item=await conflict(queue,'guarded',{name:'private'});let allowRead=false,allowMutation=false;
+ const panel=mountOfflineConflictPanel(root,queue,{loadCurrent:()=>({name:'server'}),authorizeRead:()=>allowRead,authorizeMutation:()=>allowMutation});
+ try{
+  await panel.refresh();assert.match(root.textContent,/Unable to load/);assert.doesNotMatch(root.textContent,/private/);
+  allowRead=true;await panel.refresh();const [review,discard,resolve]=root.querySelectorAll('button');review.click();await waitFor(()=>!resolve.disabled);
+  resolve.click();await waitFor(()=>root.textContent.includes('Unable to queue'));assert.equal((await queue.get(item.id)).status,'conflict');
+  discard.click();await waitFor(()=>root.textContent.includes('Unable to discard'));assert.equal((await queue.get(item.id)).status,'conflict');
+  allowMutation=true;discard.click();await waitFor(async()=>(await queue.get(item.id)).status==='discarded');
+ }finally{panel.dispose();queue.close();dom.window.close();}
+});

@@ -8,8 +8,10 @@ import {tmpdir} from 'node:os';
 const script=await readFile(new URL('../../packages/web/dist/offline.js',import.meta.url));
 const workerScript=await readFile(new URL('../../packages/web/dist/offline-worker.js',import.meta.url));
 const uiScript=await readFile(new URL('../../packages/web/dist/offline-ui.js',import.meta.url));
+const runtimeScript=await readFile(new URL('../../packages/cli/templates/offline-runtime.mjs',import.meta.url));
 const fixture=`<!doctype html><body data-result="pending"><script type="module">
 import {EncryptedBrowserQueue,BrowserOfflineWorker,mountOfflineConflictPanel} from '/offline.js';
+import {createGeneratedOfflineRuntime,mountGeneratedOfflineForm} from '/offline-runtime.mjs';
 try {
  const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
  const opts={enabled:true,databaseName:'smoke',scope:{tenantId:'t',applicationId:'a',principalId:'p'},key};
@@ -33,6 +35,13 @@ try {
  for(let i=0;i<100&&(await a.get(conflict.id)).status!=='discarded';i++)await new Promise(done=>setTimeout(done,20));
  const archived=await a.get(conflict.id);if(archived.status!=='discarded'||(await a.get(archived.replacementId)).payload.name!=='merged')throw Error('Conflict resolution failed');
  panel.dispose();root.remove();
+ const formRoot=document.createElement('main');document.body.append(formRoot);let online=false,generatedCalls=0;
+ const runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'generated-smoke',scope:opts.scope,key,operations:[{id:'save',label:'Save'}],intervalMs:100,maxPerPass:2,maxAttempts:2,isOnline:()=>online,resolveActor:()=>opts.scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{generatedCalls++;},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>({})});
+ const form=mountGeneratedOfflineForm(formRoot,runtime);runtime.start();formRoot.querySelector('textarea').value=JSON.stringify({name:'local'});formRoot.querySelector('form').requestSubmit();
+ for(let i=0;i<100&&(await runtime.list()).length===0;i++)await new Promise(done=>setTimeout(done,20));
+ if((await runtime.list()).length!==1||generatedCalls!==0)throw Error('Offline enqueue failed');online=true;
+ for(let i=0;i<100&&!(await runtime.list()).some(item=>item.status==='succeeded');i++)await new Promise(done=>setTimeout(done,20));
+ if(generatedCalls!==1||!(await runtime.list()).some(item=>item.status==='succeeded'))throw Error('Generated offline sync failed');form.dispose();await runtime.close();formRoot.remove();
  const open=indexedDB.open('smoke',1);const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
  const tx=db.transaction('offline','readonly'),get=tx.objectStore('offline').getAll(),rows=await new Promise((resolve,reject)=>{get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);});
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');
@@ -46,7 +55,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/result'&&req.method==='POST'){
   const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
  }
- if(req.url==='/offline.js'||req.url==='/offline-worker.js'||req.url==='/offline-ui.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:req.url==='/offline-worker.js'?workerScript:uiScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
+ if(req.url==='/offline.js'||req.url==='/offline-worker.js'||req.url==='/offline-ui.js'||req.url==='/offline-runtime.mjs'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:req.url==='/offline-worker.js'?workerScript:req.url==='/offline-ui.js'?uiScript:runtimeScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
 });
 const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));let browser,timer;
 try{
