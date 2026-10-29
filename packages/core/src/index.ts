@@ -59,6 +59,15 @@ export class ApplicationStore {
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)};this.published.push(p);return copy(p);}
+ rollback(sourceVersion:number,expectedVersion:number){
+  if(!Number.isSafeInteger(sourceVersion)||sourceVersion<1||!Number.isSafeInteger(expectedVersion)||expectedVersion<1)throw Error('Invalid version');
+  const latest=this.published.at(-1);if(!latest||latest.version!==expectedVersion)throw Error('Publication version conflict');
+  const source=this.published.find(p=>p.version===sourceVersion);if(!source)throw Error('Publication not found');
+  if(sourceVersion>=expectedVersion)throw Error('Rollback requires an earlier version');
+  const definition=copy(source.definition);validate(definition);enforcePublicationGuard(this.publicationGuard,definition);
+  const version=latest.version+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
+  const publication={version,definition};this.published.push(publication);return copy(publication);
+ }
 }
 
 export { SqliteApplicationStore } from './sqlite.js';
