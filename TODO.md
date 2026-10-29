@@ -40,7 +40,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 
 ## P3: production
 - [ ] P3-01 Identity, authorization, audit and isolation
-  - In progress: opt-in RS256 JWT access-token authentication with live host-managed key rotation, optional local token revocation and per-capability authorization. OIDC discovery, distributed revocation, production transport, identity provisioning and distributed audit remain. See [JWT capability authentication](docs/jwt-capability-auth.md).
+  - In progress: opt-in RS256 JWT access-token authentication with live host-managed key rotation, opt-in bounded JWKS refresh, optional local token revocation and per-capability authorization. OIDC discovery, distributed revocation, production transport, identity provisioning and distributed audit remain. See [JWT capability authentication](docs/jwt-capability-auth.md).
 - [ ] P3-02 Observability and production operational controls
 - [ ] P3-03 Optional remote Control Plane connector
 - [ ] P3-04 Kubernetes production deployment
