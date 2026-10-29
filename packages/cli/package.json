@@ -10,8 +10,9 @@
     "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
-    "@types/node": "^22.15.0"
+    "@types/node": "^22.15.0",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@app-mixer/web": "0.1.0"

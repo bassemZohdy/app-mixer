@@ -18,4 +18,16 @@ The capability HTTP endpoint reports revision conflicts, staging request conflic
 
 Generated local apps include `capabilities.mjs`, which trusted browser code can import and call as `invokeCapability(operationId, input)`. To opt in, configure `CAPABILITY_URL` as the local capability server's `http://127.0.0.1:PORT/capabilities/` (or `localhost`) and `CAPABILITY_TOKEN` as the server-side bearer credential. The generated server checks the request's same origin, bounds request and response sizes, and sends a UI invocation to the loopback service without delivering the credential to the browser. The capability service must authenticate that token and map it to a trusted actor, and host registrations still determine authorization and validation. Calls return the capability result; failures expose an HTTP status on the thrown error, including 409 for known conflicts.
 
-This integration is a local single-actor development profile. Same-origin checking is not user authentication; do not use the shared service credential to represent multiple users or expose the generated server to untrusted users. A production host needs real user authentication, per-user identity propagation, authorization and transport security. The generated app does not automatically register data capabilities or build a data-entry interface; host code must configure the service and call its approved operations.
+This integration is a local single-actor development profile. Same-origin checking is not user authentication; do not use the shared service credential to represent multiple users or expose the generated server to untrusted users. A production host needs real user authentication, per-user identity propagation, authorization and transport security. The generated app does not automatically register data capabilities; host code must configure the service and choose which operations the app can call.
+
+Generated apps also include an optional `data-editor.mjs` host-owned extension factory. To install a record editor, configure matching get and put capabilities on the server and add a trusted entry to the generated `extensions.mjs`:
+
+```js
+import {createRecordEditor} from './data-editor.mjs';
+export const installedExtensions = [{
+  id: 'example.records', version: '1.0.0', scope: 'application',
+  components: {'record-editor': createRecordEditor({getOperation: 'items.get', putOperation: 'items.put'})}
+}];
+```
+
+The published application must reference that exact approved extension and declare a `record-editor` component; an optional `label` property sets its heading. The host fixes capability names in trusted code, not in the application definition. Users load an ID, edit a JSON object and explicitly save. A revision conflict retains the unsaved text, disables saving and asks the user to copy edits before loading the latest version. The preview host needs its own compatible trusted preview renderer; the generated browser module is not automatically installed in the control plane. This is a basic JSON editor, not a schema-generated form.

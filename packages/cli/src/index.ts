@@ -105,7 +105,7 @@ createServer(async(req,res)=>{
     }catch{if(!res.destroyed){if(!res.headersSent)json(res,502,{error:'Agent unavailable'});else res.destroy();}}
     return;
   }
-  const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':null;
+  const path=req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':req.method==='GET'&&req.url==='/data-editor.mjs'?'data-editor.mjs':null;
   if(!path){res.writeHead(404);res.end();return;}
   try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':path.endsWith('.mjs')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
 }).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
@@ -185,7 +185,8 @@ export function prepareWorkspace(app){
 }
 `;
  const rendererSource=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
- await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
+ const dataEditor=await readFile(new URL('../templates/data-editor.mjs',import.meta.url));
+ await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
