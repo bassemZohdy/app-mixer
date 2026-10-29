@@ -37,11 +37,11 @@ function resolveFormSchema(root){
   return visit(root,[],0);
 }
 
-function fieldsFromJsonSchema(jsonSchema) {
+function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
   const object=value=>value&&typeof value==='object'&&!Array.isArray(value), keys=(value,allowed)=>Object.keys(value).every(key=>allowed.includes(key));
   const fields=[],groups=[],dependencies=[],conditions=[];
-  const itemTree=(node,depth=0)=>depth<=5&&object(node)&&object(node.properties)&&Object.values(node.properties).every(child=>object(child)&&(child.type==='object'?itemTree(child,depth+1):child.type==='array'?object(child.items)&&['string','number','integer','boolean'].includes(child.items.type):['string','number','integer','boolean'].includes(child.type)));
   function visit(node,path,labels,needed,depth){
+    if(++context.nodes>200||arrayDepth>3)throw Error('Unsupported record JSON Schema form');
     if(depth>5||!object(node)||!keys(node,depth===0?['$schema','type','properties','required','additionalProperties','dependentRequired','if','then','else']:['type','title','properties','required','additionalProperties','dependentRequired','if','then','else'])||node.type!=='object'||!object(node.properties)||(node.title!==undefined&&(typeof node.title!=='string'||!node.title.trim()||node.title.length>120))||(node.additionalProperties!==undefined&&typeof node.additionalProperties!=='boolean')||(depth===0&&node.$schema!==undefined&&node.$schema!=='https://json-schema.org/draft/2020-12/schema'))throw Error('Unsupported record JSON Schema form');
     const required=node.required===undefined?[]:node.required;if(!Array.isArray(required)||required.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(required).size!==required.length)throw Error('Unsupported record JSON Schema form');
     if(node.dependentRequired!==undefined){if(!object(node.dependentRequired)||Object.keys(node.dependentRequired).length>40)throw Error('Unsupported record JSON Schema form');for(const [trigger,requiredKeys] of Object.entries(node.dependentRequired)){if(!Object.hasOwn(node.properties,trigger)||!Array.isArray(requiredKeys)||requiredKeys.length>40||requiredKeys.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(requiredKeys).size!==requiredKeys.length)throw Error('Unsupported record JSON Schema form');dependencies.push({path:[...path],trigger,required:[...requiredKeys]});if(dependencies.length>40)throw Error('Unsupported record JSON Schema form');}}
@@ -54,14 +54,15 @@ function fieldsFromJsonSchema(jsonSchema) {
     }
     if(depth){groups.push({path, label:labels.join(' / '), required:needed});if(groups.length>40)throw Error('Unsupported record JSON Schema form');}
     for(const [key,property] of Object.entries(node.properties)){
+      if(++context.nodes>200)throw Error('Unsupported record JSON Schema form');
       if(!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)||['constructor','prototype','__proto__'].includes(key)||!object(property))throw Error('Unsupported record JSON Schema form');
       const next=[...path,key],name=property.title??key,requiredField=required.includes(key);
       if(property.type==='object'){visit(property,next,[...labels,name],requiredField,depth+1);continue;}
       if(property.type==='array'){
         if(object(property.items)&&property.items.type==='object'){
           const spec=property.items,minItems=property.minItems===undefined?0:property.minItems,maxItems=property.maxItems===undefined?50:property.maxItems;
-          if(!keys(property,['type','title','items','minItems','maxItems'])||!keys(spec,['type','title','properties','required','additionalProperties','dependentRequired','if','then','else'])||!itemTree(spec)||!Number.isSafeInteger(minItems)||!Number.isSafeInteger(maxItems)||minItems<0||maxItems<minItems||maxItems>50||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120))||(spec.title!==undefined&&(typeof spec.title!=='string'||!spec.title.trim()||spec.title.length>120)))throw Error('Unsupported record JSON Schema form');
-          const {title:unused,...itemSchema}=spec,itemFields=fieldsFromJsonSchema(itemSchema),label=[...labels,name].join(' / ');if(label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,type:'objectArray',path:next,required:requiredField,itemFields,minItems,maxItems});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;
+          if(!keys(property,['type','title','items','minItems','maxItems'])||!keys(spec,['type','title','properties','required','additionalProperties','dependentRequired','if','then','else'])||!object(spec.properties)||!Number.isSafeInteger(minItems)||!Number.isSafeInteger(maxItems)||minItems<0||maxItems<minItems||maxItems>50||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120))||(spec.title!==undefined&&(typeof spec.title!=='string'||!spec.title.trim()||spec.title.length>120)))throw Error('Unsupported record JSON Schema form');
+          const {title:unused,...itemSchema}=spec,itemFields=fieldsFromJsonSchema(itemSchema,context,arrayDepth+1),label=[...labels,name].join(' / ');if(label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,type:'objectArray',path:next,required:requiredField,itemFields,minItems,maxItems});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;
         }
         if(!keys(property,['type','title','items','minItems','maxItems'])||!object(property.items)||!keys(property.items,['type','enum','minimum','maximum','minLength','maxLength'])||!['string','number','integer','boolean'].includes(property.items.type)||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120)))throw Error('Unsupported record JSON Schema form');
         const spec=property.items,numeric=spec.type==='number'||spec.type==='integer',minItems=property.minItems===undefined?0:property.minItems,maxItems=property.maxItems===undefined?50:property.maxItems;
