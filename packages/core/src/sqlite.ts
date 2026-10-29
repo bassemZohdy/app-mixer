@@ -125,6 +125,15 @@ export class SqliteApplicationStore {
     });
   }
 
+  migrateDraft(expectedRevision: number, targetVersion: number): ApplicationDefinition {
+    return this.transaction(() => {
+      const store=new ApplicationStore(this.getDraft());
+      const draft=store.migrateDraft(expectedRevision,targetVersion);
+      this.db.prepare('UPDATE application_drafts SET revision = ?, definition = ? WHERE app_id = ?').run(draft.revision,JSON.stringify(draft),this.id);
+      return draft;
+    });
+  }
+
   publish(expectedRevision: number): Published {
     return this.transaction(() => {
       const draft = this.getDraft();

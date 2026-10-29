@@ -15,7 +15,7 @@ test('generated workspace uses only matching host-installed extension renderers'
   const {A2UIRenderer,APP_MIXER_CATALOG}=await import(pathToFileURL(join(target,'renderer.mjs')).href);
   const ref={id:'sample.chart',version:'1.0.0',scope:'application'};
   const item={id:'chart',type:'Extension',extensionId:ref.id,name:'chart',props:{label:'Sales'}};
-  const definition={extensions:[ref],pages:[{title:'Home',components:[item]}]};
+  const definition={schemaVersion:1,extensions:[ref],pages:[{title:'Home',components:[item]}]};
   assert.throws(()=>prepareWorkspace(definition),/unavailable/);
   installedExtensions.push({...ref,components:{chart:{render:(c,_child,_data,doc)=>{const node=doc.createElement('p');node.textContent=c.label;return node;},validate:c=>{if(typeof c.label!=='string')throw Error('Invalid chart');}}}});
   const doc={createElement(){return {ownerDocument:doc,children:[],dataset:{},style:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}},host=doc.createElement();

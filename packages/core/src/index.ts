@@ -2,10 +2,10 @@ import {createHash} from 'node:crypto';
 import {checkPromotionPackage} from './promotion.js';
 type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
-export type Page = {id:string;title:string;route:string;components:Component[]};
+export type Page = {id:string;title:string;route:string;components:Component[];description?:string};
 export type ExtensionReference = {id:string;version:string;scope:'platform'|'development'|'application'};
 export type ExtensionOperation = {extensionId:string;kind:'tool'|'provider';name:string};
-export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[];extensions?:ExtensionReference[];extensionOperations?:ExtensionOperation[]};
+export type ApplicationDefinition = {id:string;schemaVersion:1|2;revision:number;pages:Page[];extensions?:ExtensionReference[];extensionOperations?:ExtensionOperation[]};
 export type PublicationProvenance = {version:number;kind:'unknown'} | {version:number;kind:'publish';previousVersion:number;definitionSha256:string} | {version:number;kind:'rollback';previousVersion:number;sourceVersion:number;definitionSha256:string} | {version:number;kind:'promotion';previousVersion:number;sourceEnvironment:string;targetEnvironment:string;sourceVersion:number;packageDigest:string;definitionSha256:string};
 export function definitionSha256(definition:ApplicationDefinition):string{return createHash('sha256').update(JSON.stringify(definition)).digest('hex');}
 export type PublicationGuard = (draft:ApplicationDefinition) => true;
@@ -15,7 +15,7 @@ export function enforcePublicationGuard(guard:PublicationGuard | undefined, draf
  if(result instanceof Promise) result.catch(()=>{});
  if(result!==true)throw Error("Publication guard must synchronously return true");
 }
-export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"addComponent";pageId:string;component:Component}|{op:'setExtensions';extensions:ExtensionReference[]}|{op:'setExtensionOperations';operations:ExtensionOperation[]};
+export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"setPageDescription";pageId:string;description:string}|{op:"addComponent";pageId:string;component:Component}|{op:'setExtensions';extensions:ExtensionReference[]}|{op:'setExtensionOperations';operations:ExtensionOperation[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function isValidExtensionReferences(value:unknown):value is ExtensionReference[] {
  if(!Array.isArray(value)||value.length>256)return false;
@@ -36,11 +36,11 @@ export function isValidExtensionOperations(value:unknown):value is ExtensionOper
  return true;
 }
 export function validate(d:ApplicationDefinition):void {
- if(!d.id.trim()||d.schemaVersion!==1||!Number.isSafeInteger(d.revision)||d.revision<0)throw Error("Invalid manifest");
+ if(!d.id.trim()||![1,2].includes(d.schemaVersion)||!Number.isSafeInteger(d.revision)||d.revision<0)throw Error("Invalid manifest");
  if(d.extensions!==undefined&&!isValidExtensionReferences(d.extensions))throw Error('Invalid manifest');
  if(d.extensionOperations!==undefined&&!isValidExtensionOperations(d.extensionOperations))throw Error('Invalid manifest');
  const ids=new Set<string>(),routes=new Set<string>();
- for(const p of d.pages){if(!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw Error("Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
+ for(const p of d.pages){if((d.schemaVersion===1&&p.description!==undefined)||(d.schemaVersion===2&&(typeof p.description!=='string'||p.description.length>10000))||!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw Error("Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
  const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||(!['Text','Card','Table','Input'].includes(c.type) && !(c.type==='Extension' && typeof c.extensionId==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name))))throw Error("Invalid component");components.add(c.id);}
  }
 }
@@ -56,12 +56,20 @@ export class ApplicationStore {
   for(const p of patches){switch(p.op){
    case "addPage":candidate.pages.push(copy(p.page));break;
    case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.title=p.title;break;}
+   case "setPageDescription":{if(candidate.schemaVersion!==2||typeof p.description!=='string'||p.description.length>10000)throw Error('Invalid page description');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error('Unknown page');page.description=p.description;break;}
    case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.components.push(copy(p.component));break;}
    case 'setExtensions':if(!isValidExtensionReferences(p.extensions))throw Error('Invalid manifest');candidate.extensions=copy(p.extensions);break;
    case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw Error('Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
    default: throw Error("Unknown patch operation");
   }}
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
+ }
+ migrateDraft(expectedRevision:number,targetVersion:number):ApplicationDefinition{
+  if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!Number.isSafeInteger(targetVersion))throw Error('Invalid migration request');
+  if(expectedRevision!==this.draft.revision)throw Error('Revision conflict');
+  if(this.draft.schemaVersion!==1||targetVersion!==2)throw Error('Unsupported schema migration');
+  if(expectedRevision>=Number.MAX_SAFE_INTEGER)throw Error('Invalid migration request');
+  const candidate=copy(this.draft);candidate.schemaVersion=2;candidate.revision++;candidate.pages=candidate.pages.map(page=>({...page,description:''}));validate(candidate);this.draft=candidate;return copy(candidate);
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  promote(input:unknown,expectedVersion:number,targetEnvironment:string){
