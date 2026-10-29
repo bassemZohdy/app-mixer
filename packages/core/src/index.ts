@@ -1,10 +1,11 @@
-export type Component = {id:string;type:"Text"|"Card"|"Table"|"Input";props?:Record<string,string|number|boolean>};
+type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
+export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
 export type Page = {id:string;title:string;route:string;components:Component[]};
 export type ExtensionReference = {id:string;version:string;scope:'platform'|'development'|'application'};
 export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[];extensions?:ExtensionReference[]};
 export type PublicationGuard = (draft:ApplicationDefinition) => true;
 export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
- if(!guard){if(draft.extensions?.length)throw Error('Extension compatibility failed');return;}
+ if(!guard){if(draft.extensions?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw Error('Extension compatibility failed');return;}
  const result:unknown=guard(structuredClone(draft));
  if(result instanceof Promise) result.catch(()=>{});
  if(result!==true)throw Error("Publication guard must synchronously return true");
@@ -25,7 +26,7 @@ export function validate(d:ApplicationDefinition):void {
  if(d.extensions!==undefined&&!isValidExtensionReferences(d.extensions))throw Error('Invalid manifest');
  const ids=new Set<string>(),routes=new Set<string>();
  for(const p of d.pages){if(!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw Error("Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
- const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||!["Text","Card","Table","Input"].includes(c.type))throw Error("Invalid component");components.add(c.id);}
+ const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||(!['Text','Card','Table','Input'].includes(c.type) && !(c.type==='Extension' && typeof c.extensionId==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name))))throw Error("Invalid component");components.add(c.id);}
  }
 }
 export class ApplicationStore {
