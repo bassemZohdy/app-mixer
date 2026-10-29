@@ -91,8 +91,47 @@ class _FlutterExtension {
   final FlutterExtensionValidator validate;
 }
 
+/// A trusted widget implementation and its synchronous input validator.
+class FlutterExtensionComponent {
+  const FlutterExtensionComponent(this.builder, this.validate);
+  final FlutterExtensionBuilder builder;
+  final FlutterExtensionValidator validate;
+}
+
+/// A statically installed Flutter extension with its exact manifest identity.
+class FlutterInstalledExtension {
+  const FlutterInstalledExtension({required this.id, required this.version, required this.scope, required this.components});
+  final String id, version, scope;
+  final Map<String, FlutterExtensionComponent> components;
+}
+
 /// Static, trusted host registrations. The host owns compatibility and approval checks.
 class FlutterComponentRegistry {
+  FlutterComponentRegistry();
+
+  /// Resolve a trusted control-plane plan against local static implementations.
+  /// The caller authenticates the plan and chooses the expected publication.
+  factory FlutterComponentRegistry.fromPlan(Object? input, List<FlutterInstalledExtension> installed,
+      {required String applicationId, required int revision}) {
+    final plan=_object(_copy(input));
+    if (!_only(plan,['version','applicationId','revision','components']) || plan.length!=4 ||
+        plan['version'] is! int || plan['version']!=1 || plan['applicationId']!=applicationId || plan['revision'] is! int || plan['revision']!=revision ||
+        applicationId.trim().isEmpty || revision<0 || plan['components'] is! List || (plan['components'] as List).length>1000 || installed.length>256) {
+      throw FormatException('Invalid Flutter extension plan');
+    }
+    final registry=FlutterComponentRegistry(), names=<String>{};
+    for (final value in plan['components'] as List) {
+      final item=_object(value);
+      if (!_only(item,['id','version','scope','name']) || item.length!=4 || item['id'] is! String || item['version'] is! String || item['scope'] is! String || item['name'] is! String) throw FormatException('Invalid Flutter extension plan');
+      final name=item['name'] as String;
+      if (!names.add(name)) throw FormatException('Duplicate Flutter extension component');
+      final matches=installed.where((entry)=>entry.id==item['id'] && entry.version==item['version'] && entry.scope==item['scope']).toList();
+      if (matches.length!=1 || !matches.single.components.containsKey(name)) throw FormatException('Flutter extension not installed');
+      final component=matches.single.components[name]!;
+      registry.register(name,component.builder,component.validate);
+    }
+    return registry;
+  }
   final Map<String, _FlutterExtension> _entries = {};
   void register(String name, FlutterExtensionBuilder builder, FlutterExtensionValidator validate) {
     if (!RegExp(r'^[a-z][a-z0-9.-]{0,127}$').hasMatch(name) ||
