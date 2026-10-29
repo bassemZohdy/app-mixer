@@ -2,15 +2,16 @@ type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
 export type Page = {id:string;title:string;route:string;components:Component[]};
 export type ExtensionReference = {id:string;version:string;scope:'platform'|'development'|'application'};
-export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[];extensions?:ExtensionReference[]};
+export type ExtensionOperation = {extensionId:string;kind:'tool'|'provider';name:string};
+export type ApplicationDefinition = {id:string;schemaVersion:1;revision:number;pages:Page[];extensions?:ExtensionReference[];extensionOperations?:ExtensionOperation[]};
 export type PublicationGuard = (draft:ApplicationDefinition) => true;
 export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
- if(!guard){if(draft.extensions?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw Error('Extension compatibility failed');return;}
+ if(!guard){if(draft.extensions?.length || draft.extensionOperations?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw Error('Extension compatibility failed');return;}
  const result:unknown=guard(structuredClone(draft));
  if(result instanceof Promise) result.catch(()=>{});
  if(result!==true)throw Error("Publication guard must synchronously return true");
 }
-export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"addComponent";pageId:string;component:Component}|{op:'setExtensions';extensions:ExtensionReference[]};
+export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"addComponent";pageId:string;component:Component}|{op:'setExtensions';extensions:ExtensionReference[]}|{op:'setExtensionOperations';operations:ExtensionOperation[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function isValidExtensionReferences(value:unknown):value is ExtensionReference[] {
  if(!Array.isArray(value)||value.length>256)return false;
@@ -21,9 +22,19 @@ export function isValidExtensionReferences(value:unknown):value is ExtensionRefe
  }
  return true;
 }
+export function isValidExtensionOperations(value:unknown):value is ExtensionOperation[] {
+ if(!Array.isArray(value)||value.length>256)return false;
+ const seen=new Set<string>();
+ for(const operation of value){
+  if(!operation||typeof operation!=='object'||Array.isArray(operation)||Object.keys(operation).length!==3||!Object.hasOwn(operation,'extensionId')||!Object.hasOwn(operation,'kind')||!Object.hasOwn(operation,'name')||typeof operation.extensionId!=='string'||!/^[a-z][a-z0-9.-]{0,127}$/.test(operation.extensionId)||!['tool','provider'].includes(operation.kind)||typeof operation.name!=='string'||!/^[a-z][a-z0-9.-]{0,127}$/.test(operation.name))return false;
+  const key=JSON.stringify([operation.extensionId,operation.kind,operation.name]);if(seen.has(key))return false;seen.add(key);
+ }
+ return true;
+}
 export function validate(d:ApplicationDefinition):void {
  if(!d.id.trim()||d.schemaVersion!==1||!Number.isSafeInteger(d.revision)||d.revision<0)throw Error("Invalid manifest");
  if(d.extensions!==undefined&&!isValidExtensionReferences(d.extensions))throw Error('Invalid manifest');
+ if(d.extensionOperations!==undefined&&!isValidExtensionOperations(d.extensionOperations))throw Error('Invalid manifest');
  const ids=new Set<string>(),routes=new Set<string>();
  for(const p of d.pages){if(!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw Error("Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
  const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||(!['Text','Card','Table','Input'].includes(c.type) && !(c.type==='Extension' && typeof c.extensionId==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name))))throw Error("Invalid component");components.add(c.id);}
@@ -42,6 +53,7 @@ export class ApplicationStore {
    case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.title=p.title;break;}
    case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.components.push(copy(p.component));break;}
    case 'setExtensions':if(!isValidExtensionReferences(p.extensions))throw Error('Invalid manifest');candidate.extensions=copy(p.extensions);break;
+   case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw Error('Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
    default: throw Error("Unknown patch operation");
   }}
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
@@ -62,5 +74,5 @@ export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
 export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry } from './extensions.js';
-export { registerExtensionComponent, registerExtensionCapability } from './extension-adapters.js';
+export { registerExtensionComponent, registerExtensionCapability, registerDeclaredExtensionCapability } from './extension-adapters.js';
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration } from './extensions.js';

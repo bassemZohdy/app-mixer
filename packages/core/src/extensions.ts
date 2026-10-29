@@ -157,6 +157,11 @@ export function createExtensionPublicationGuard(manifests: ExtensionManifest[], 
       const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
       if (!manifest || !manifest.components.includes(component.name)) throw Error('Extension compatibility failed');
     }
+    for (const operation of draft.extensionOperations ?? []) {
+      const ref = draft.extensions?.find(item => item.id === operation.extensionId);
+      const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
+      if (!manifest || !manifest[operation.kind === 'tool' ? 'tools' : 'providers'].includes(operation.name)) throw Error('Extension compatibility failed');
+    }
     const requirements = requirementsFor(structuredClone(draft));
     const result = checkExtensionCompatibility(installed, target, requirements);
     if (!result.compatible) throw Error('Extension compatibility failed');
@@ -220,6 +225,15 @@ export class ExtensionRegistry {
       return manifest;
     });
     return selected.some(manifest => manifest[kind].includes(name)) ? this.registrations[kind].get(name) : undefined;
+  }
+
+  /** Resolve a name only when its declared owner is installed and selected. */
+  getForExtension(references: ExtensionReference[], extensionId: string, kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
+    const implementation=this.getForApplication(references,kind,name);
+    if(typeof extensionId!=='string'||!idPattern.test(extensionId))throw Error('Invalid extension lookup');
+    const ref=references.find(item=>item.id===extensionId);
+    const manifest=ref && this.manifests.find(item=>item.id===ref.id&&item.version===ref.version&&item.scope===ref.scope);
+    return manifest?.[kind].includes(name) ? implementation : undefined;
   }
 
   getConfiguration(id:string): ExtensionConfiguration | undefined {

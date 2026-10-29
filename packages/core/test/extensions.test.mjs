@@ -97,6 +97,56 @@ test('publication checks each extension component against its declared owning ex
  }
 });
 
+test('publication validates declared tool and provider requirements against their owner',async()=>{
+ const {ApplicationStore,SqliteApplicationStore,createExtensionPublicationGuard}=await import('../dist/index.js');
+ const {isValidPatch}=await import('../dist/planes.js');
+ const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
+ const m={...manifest(),providers:['records']},ref={id:m.id,version:m.version,scope:m.scope};
+ const operations=[{extensionId:m.id,kind:'tool',name:'lookup'},{extensionId:m.id,kind:'provider',name:'records'}];
+ const guard=createExtensionPublicationGuard([m],host(),()=>({components:[],tools:[],providers:[]}));
+ assert.equal(isValidPatch({op:'setExtensionOperations',operations}),true);
+ for(const invalid of [[operations[0],operations[0]],[{...operations[0],kind:'other'}],[{...operations[0],extra:true}],Array(257).fill(operations[0]),null])assert.equal(isValidPatch({op:'setExtensionOperations',operations:invalid}),false);
+ for(const create of [policy=>new ApplicationStore(initial,policy),policy=>new SqliteApplicationStore(':memory:',initial,policy)]){
+  const unguarded=create(undefined);
+  try{unguarded.apply(0,[{op:'setExtensionOperations',operations}]);assert.throws(()=>unguarded.publish(1),/compatibility/);}finally{unguarded.close?.();}
+  const store=create(guard);
+  try{
+   store.apply(0,[{op:'setExtensionOperations',operations}]);assert.throws(()=>store.publish(1),/compatibility/);
+   store.apply(1,[{op:'setExtensions',extensions:[ref]}]);assert.deepEqual(store.publish(2).definition.extensionOperations,operations);
+   for(const bad of [{...operations[0],name:'missing'},{...operations[1],kind:'tool'},{...operations[0],extensionId:'other'}]){
+    const revision=store.getDraft().revision;store.apply(revision,[{op:'setExtensionOperations',operations:[bad]}]);
+    assert.throws(()=>store.publish(revision+1),/compatibility/);assert.equal(store.getPublished().version,1);
+   }
+  }finally{store.close?.();}
+ }
+});
+
+test('declared provider capabilities preserve authorization validation and audit',async()=>{
+ const {ExtensionRegistry,CapabilityRegistry,registerDeclaredExtensionCapability}=await import('../dist/index.js');
+ const m={...manifest(),providers:['records']},ref={id:m.id,version:m.version,scope:m.scope};
+ const registry=new ExtensionRegistry(host()),calls=[];
+ registry.register(m,{components:{chart:()=>{}},tools:{lookup:()=>{}},providers:{records:(input,context)=>{calls.push({input,context});return 'data';}}});
+ const operation={extensionId:m.id,kind:'provider',name:'records'},application={id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[ref],extensionOperations:[operation]};
+ const outcomes=[],target=new CapabilityRegistry(event=>outcomes.push(event.outcome)),candidate={operationId:'records',method:'GET',path:'/records'};
+ const policy={authorize:context=>context.principalId==='allowed',validate:input=>input?.ok===true};
+ assert.throws(()=>registerDeclaredExtensionCapability(target,registry,{...application,extensionOperations:[]},operation,candidate,policy),/not declared/);
+ assert.throws(()=>registerDeclaredExtensionCapability(target,registry,application,{...operation,extensionId:'other'},candidate,policy),/not declared/);
+ assert.throws(()=>registerDeclaredExtensionCapability(target,registry,application,operation,{...candidate,operationId:'other'},policy),/not declared/);
+ registerDeclaredExtensionCapability(target,registry,application,operation,candidate,policy);
+ const context={tenantId:'tenant',principalId:'denied',origin:'ui'};
+ await assert.rejects(()=>target.invoke('records',{ok:true},context),/forbidden/);assert.equal(calls.length,0);
+ context.principalId='allowed';await assert.rejects(()=>target.invoke('records',{ok:false},context),/Invalid capability input/);assert.equal(calls.length,0);
+ assert.equal(await target.invoke('records',{ok:true},context),'data');
+ assert.deepEqual(calls,[{input:{ok:true},context:{tenantId:'tenant',principalId:'allowed'}}]);assert.deepEqual(outcomes,['attempt','denied','attempt','invalid','attempt','succeeded']);
+ const ownerless={...operation,name:'unknown'};
+ assert.throws(()=>registerDeclaredExtensionCapability(new CapabilityRegistry(()=>{}),registry,{...application,extensionOperations:[ownerless]},ownerless,{...candidate,operationId:'unknown'},policy),/not available/);
+ const other={...m,id:'other.extension',components:[],tools:[],providers:[]},otherRef={id:other.id,version:other.version,scope:other.scope};
+ const approved=host();approved.approved.push({...otherRef,permissions:other.permissions});
+ const two=new ExtensionRegistry(approved);two.register(m,{components:{chart:()=>{}},tools:{lookup:()=>{}},providers:{records:()=>{}}});two.register(other,{components:{},tools:{},providers:{}});
+ const wrongOwner={...operation,extensionId:other.id};
+ assert.throws(()=>registerDeclaredExtensionCapability(new CapabilityRegistry(()=>{}),two,{...application,extensions:[ref,otherRef],extensionOperations:[wrongOwner]},wrongOwner,candidate,policy),/not available/);
+});
+
 test('invalid publication policy fails closed', async()=>{
  const {ApplicationStore,createExtensionPublicationGuard}=await import('../dist/index.js');
  const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};

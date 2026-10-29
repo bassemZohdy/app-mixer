@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch } from './index.js';
-import { isValidExtensionReferences } from './index.js';
+import { isValidExtensionReferences, isValidExtensionOperations } from './index.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 
@@ -43,6 +43,7 @@ export function isValidPatch(value: unknown): value is Patch {
   if (value.op === 'setPageTitle') return exact(value, ['op','pageId','title']) && string(value.pageId) && string(value.title);
   if (value.op === 'addComponent') return exact(value, ['op','pageId','component']) && string(value.pageId) && component(value.component);
   if (value.op === 'setExtensions') return exact(value, ['op','extensions']) && isValidExtensionReferences(value.extensions);
+  if (value.op === 'setExtensionOperations') return exact(value, ['op','operations']) && isValidExtensionOperations(value.operations);
   return false;
 }
 async function body(req: IncomingMessage): Promise<unknown> {

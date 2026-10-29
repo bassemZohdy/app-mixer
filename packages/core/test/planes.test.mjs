@@ -68,19 +68,21 @@ test('control plane rejects malformed and unauthorized mutations atomically', as
 test('extension references flow through proposals and require a publication guard',async()=>{
  const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
  const ref={id:'sample.extension',version:'1.0.0',scope:'application'};
- const manifest={manifestVersion:1,...ref,runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:[],providers:[],permissions:[]};
+ const manifest={manifestVersion:1,...ref,runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:[],providers:['records'],permissions:[]};
+ const operation={extensionId:ref.id,kind:'provider',name:'records'};
  const host={runtimeVersion:'0.1.0',renderer:'react',approved:[{...ref,permissions:[]}]};
  const guard=createExtensionPublicationGuard([manifest],host,()=>({components:[],tools:[],providers:[]}));
  for(const policy of [undefined,guard]) {
   const store=new SqliteApplicationStore(':memory:',initial,policy),control=createControlPlane(store,token),proposals=new DevelopmentProposals(store);
   try {
    const url=await start(control);
-   const proposal=proposals.propose(0,[{op:'setExtensions',extensions:[ref]}]);assert.deepEqual(proposal.preview.extensions,[ref]);
+   const proposal=proposals.propose(0,[{op:'setExtensions',extensions:[ref]},{op:'setExtensionOperations',operations:[operation]}]);assert.deepEqual(proposal.preview.extensions,[ref]);assert.deepEqual(proposal.preview.extensionOperations,[operation]);
    proposals.approve(proposal.id);
    assert.equal((await fetch(`${url}/draft/patches`,post({baseRevision:1,patches:[{op:'setExtensions',extensions:[{...ref,version:'bad'}]}]}))).status,400);
+   assert.equal((await fetch(`${url}/draft/patches`,post({baseRevision:1,patches:[{op:'setExtensionOperations',operations:[{...operation,kind:'invalid'}]}]}))).status,400);
    const response=await fetch(`${url}/publish`,post({expectedRevision:1}));
    assert.equal(response.status,policy?201:409);
-   if(policy)assert.deepEqual((await response.json()).definition.extensions,[ref]);else assert.equal(store.getPublished(),undefined);
+   if(policy){const published=await response.json();assert.deepEqual(published.definition.extensions,[ref]);assert.deepEqual(published.definition.extensionOperations,[operation]);}else assert.equal(store.getPublished(),undefined);
   } finally {await stop(control);store.close();}
  }
 });
