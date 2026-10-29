@@ -145,3 +145,6 @@ export {createRecordJsonSchemaValidator} from './record-json-schema.js';
 
 export {signPromotionPackage,createSignedPromotionVerifier} from './signed-promotion.js';
 export type {SignedPromotionPackage,PromotionSigningKey,PromotionSignatureEvidence,VerifiedPromotion} from './signed-promotion.js';
+
+export {createJwtCapabilityAuthenticator} from './jwt-capability-auth.js';
+export type {JwtCapabilityActor,JwtCapabilityAuthOptions} from './jwt-capability-auth.js';

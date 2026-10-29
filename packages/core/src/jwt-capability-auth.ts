@@ -1,0 +1,23 @@
+import type {IncomingMessage} from 'node:http';
+import {createLocalJWKSet,jwtVerify,type JSONWebKeySet,type JWTPayload} from 'jose';
+
+export type JwtCapabilityActor={tenantId:string;principalId:string};
+export type JwtCapabilityAuthOptions={issuer:string;audience:string;jwks:JSONWebKeySet;maxTokenAgeSeconds:number;clockToleranceSeconds?:number;clock?:()=>number;resolveActor:(claims:JWTPayload)=>JwtCapabilityActor|undefined|Promise<JwtCapabilityActor|undefined>};
+const text=(x:unknown,max=256):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=max&&!/[\x00-\x1f\x7f]/.test(x);
+const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+/** Authenticate RFC 9068 RS256 access tokens against host-managed public keys. */
+export function createJwtCapabilityAuthenticator(options:JwtCapabilityAuthOptions){
+ if(!options||!text(options.issuer,2048)||!text(options.audience,2048)||!integer(options.maxTokenAgeSeconds)||options.maxTokenAgeSeconds<1||options.maxTokenAgeSeconds>86400||!integer(options.clockToleranceSeconds??0)||(options.clockToleranceSeconds??0)>60||(options.clock!==undefined&&typeof options.clock!=='function')||typeof options.resolveActor!=='function'||!options.jwks||!Array.isArray(options.jwks.keys)||options.jwks.keys.length<1||options.jwks.keys.length>100)throw Error('Invalid JWT authentication configuration');
+ let issuer:URL;try{issuer=new URL(options.issuer);}catch{throw Error('Invalid JWT authentication configuration');}if(issuer.protocol!=='https:'||issuer.username||issuer.password||issuer.search||issuer.hash)throw Error('Invalid JWT authentication configuration');
+ const seen=new Set<string>(),keys=options.jwks.keys.map(key=>{if(!key||key.kty!=='RSA'||!text(key.kid,128)||seen.has(key.kid)||typeof key.n!=='string'||!/^[A-Za-z0-9_-]+$/.test(key.n)||key.n.length>684||key.e!=='AQAB'||(key.alg!==undefined&&key.alg!=='RS256')||(key.use!==undefined&&key.use!=='sig')||(key.key_ops!==undefined&&(!Array.isArray(key.key_ops)||key.key_ops.length!==1||key.key_ops[0]!=='verify'))||['d','p','q','dp','dq','qi','oth'].some(name=>Object.hasOwn(key,name)))throw Error('Invalid JWT authentication configuration');const modulus=Buffer.from(key.n,'base64url');if(modulus.length<256||modulus.length>512||(modulus.length===256&&modulus[0]<128)||modulus.toString('base64url')!==key.n||modulus[0]===0)throw Error('Invalid JWT authentication configuration');seen.add(key.kid);return {kty:'RSA',kid:key.kid,n:key.n,e:key.e,alg:'RS256',use:'sig'};});
+ const jwks=createLocalJWKSet({keys}),issuerValue=options.issuer,audience=options.audience,maxAge=options.maxTokenAgeSeconds,tolerance=options.clockToleranceSeconds??0,clock=options.clock??Date.now,resolveActor=options.resolveActor;
+ const now=()=>{const n=clock();if(!integer(n)||!Number.isFinite(new Date(n).getTime()))throw Error('Invalid clock');return n;};
+ return async(req:IncomingMessage):Promise<JwtCapabilityActor|undefined>=>{
+  let authorization:string|undefined;for(let i=0;i<req.rawHeaders.length;i+=2)if(req.rawHeaders[i].toLowerCase()==='authorization'){if(authorization!==undefined)return undefined;authorization=req.rawHeaders[i+1];}
+  if(!authorization||authorization.length>8192)return undefined;const match=/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec(authorization);if(!match)return undefined;
+  try{const {payload,protectedHeader}=await jwtVerify(match[1],jwks,{issuer:issuerValue,audience,algorithms:['RS256'],typ:'at+jwt',requiredClaims:['exp','iat','sub','jti','client_id'],maxTokenAge:maxAge,clockTolerance:tolerance,currentDate:new Date(now())});
+   if(!text(protectedHeader.kid,128)||!seen.has(protectedHeader.kid)||!text(payload.sub)||!text(payload.jti)||!text(payload.client_id)||!integer(payload.iat)||!integer(payload.exp)||payload.exp<=payload.iat)return undefined;
+   const actor=await resolveActor(structuredClone(payload));const current=Math.floor(now()/1000);if(!actor||!text(actor.tenantId)||!text(actor.principalId)||current>=payload.exp+tolerance||current-payload.iat>maxAge+tolerance||payload.iat>current+tolerance)return undefined;return {tenantId:actor.tenantId,principalId:actor.principalId};
+  }catch{return undefined;}
+ };
+}
