@@ -8,13 +8,14 @@ export function createStagedEditor({stageOperation,getOperation,submitOperation}
        (component.label!==undefined&&(typeof component.label!=='string'||component.label.length>120)))throw Error('Invalid staged editor');
   };
   const render=(component,_child,_data,document)=>{
-    const root=document.createElement('section'),heading=document.createElement('h3'),payloadLabel=document.createElement('label'),payload=document.createElement('textarea'),stage=document.createElement('button'),idLabel=document.createElement('label'),id=document.createElement('input'),check=document.createElement('button'),submit=document.createElement('button'),status=document.createElement('p');
+    const root=document.createElement('section'),heading=document.createElement('h3'),payloadLabel=document.createElement('label'),payload=document.createElement('textarea'),stage=document.createElement('button'),newTransaction=document.createElement('button'),idLabel=document.createElement('label'),id=document.createElement('input'),check=document.createElement('button'),submit=document.createElement('button'),status=document.createElement('p');
     heading.textContent=component.label||'Staged transaction';payloadLabel.textContent='Transaction data (JSON object)';payload.value='{}';payloadLabel.appendChild(payload);
-    stage.type='button';stage.textContent='Stage';idLabel.textContent='Staged operation ID';idLabel.appendChild(id);check.type='button';check.textContent='Check status';submit.type='button';submit.textContent='Submit';submit.disabled=true;
+    stage.type='button';stage.textContent='Stage';newTransaction.type='button';newTransaction.textContent='New transaction';idLabel.textContent='Staged operation ID';idLabel.appendChild(id);check.type='button';check.textContent='Check status';submit.type='button';submit.textContent='Submit';submit.disabled=true;
     status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.textContent='Enter transaction data and stage it.';
-    root.append(heading,payloadLabel,stage,idLabel,check,submit,status);
+    root.append(heading,payloadLabel,stage,newTransaction,idLabel,check,submit,status);
     let busy=false,loadedId='',loadedStatus='',requestKey='',requestBody='';
-    const busyState=active=>{busy=active;payload.disabled=active;id.disabled=active;stage.disabled=active;check.disabled=active;submit.disabled=active||!loadedId||loadedStatus!=='staged';};
+    const busyState=active=>{busy=active;payload.disabled=active;id.disabled=active;stage.disabled=active;newTransaction.disabled=active;check.disabled=active;submit.disabled=active||!loadedId||loadedStatus!=='staged';};
+    newTransaction.addEventListener('click',()=>{if(busy)return;requestKey='';requestBody='';loadedId='';loadedStatus='';id.value='';submit.disabled=true;status.textContent='Ready to stage a new transaction. Previous operations remain available by ID.';});
     id.addEventListener('input',()=>{loadedId='';loadedStatus='';submit.disabled=true;status.textContent='Check this operation before submitting.';});
     const accept=(result,expected)=>{
       if(!result||typeof result!=='object'||typeof result.id!=='string'||!result.id||result.id.length>256||!['staged','submitting','uncertain','succeeded'].includes(result.status)||(expected&&result.id!==expected))throw Error('Invalid staged operation response');

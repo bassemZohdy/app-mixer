@@ -59,13 +59,13 @@ test('generated app uses an authenticated loopback capability service without ex
    stagedRegistry.register('staged-editor',stagedEditor.render,stagedEditor.validate);const stagedRenderer=new A2UIRenderer(stagedDoc.getElementById('host'),stagedRegistry);
    stagedRenderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
    stagedRenderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'staged-editor',label:'Order'}]}});
-   const stagedPayload=stagedDoc.querySelector('textarea'),stagedId=stagedDoc.querySelector('input'),[stage,check,submit]=stagedDoc.querySelectorAll('button'),stagedStatus=stagedDoc.querySelector('[role=status]');
+   const stagedPayload=stagedDoc.querySelector('textarea'),stagedId=stagedDoc.querySelector('input'),[stage,newTransaction,check,submit]=stagedDoc.querySelectorAll('button'),stagedStatus=stagedDoc.querySelector('[role=status]');
    const waitStaged=async phrase=>{for(let n=0;n<100&&!stagedStatus.textContent.includes(phrase);n++)await new Promise(resolve=>setTimeout(resolve,10));assert.match(stagedStatus.textContent,new RegExp(phrase));};
    stagedPayload.value=JSON.stringify({item:'x'});stage.click();await waitStaged('Operation staged');assert.equal(externalCalls,1);assert.equal(submit.disabled,false);
    const firstId=stagedId.value;stage.click();for(let n=0;n<100&&stage.disabled;n++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(stage.disabled,false);await waitStaged('Operation staged');assert.equal(stagedId.value,firstId);assert.equal(externalCalls,1);
    submit.click();await waitStaged('Operation succeeded');assert.equal(externalCalls,2);assert.equal(submit.disabled,true);
    stagedId.value=firstId;stagedId.dispatchEvent(new stagedDom.window.Event('input'));check.click();await waitStaged('Operation succeeded');assert.equal(submit.disabled,true);
-   failExternal=true;stagedPayload.value=JSON.stringify({item:'x',note:'second'});stage.click();await waitStaged('Operation staged');assert.notEqual(stagedId.value,firstId);
+   failExternal=true;newTransaction.click();assert.equal(stagedId.value,'');stage.click();await waitStaged('Operation staged');assert.notEqual(stagedId.value,firstId);
    submit.click();await waitStaged('outcome may be uncertain');assert.equal(submit.disabled,true);
    check.click();await waitStaged('Operation uncertain');assert.equal(submit.disabled,true);assert.equal(externalCalls,3);
 
