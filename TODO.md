@@ -58,7 +58,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 
 ## P3: persistent agent security and operations (new, pending)
 - [ ] P3-05 Support service principals and optional delegated user identity with policy checks and expiry handling (PA-07)
-  - In progress: explicit, scoped host-authorized delegation with expiry and revocation checks at capability invocation, and authority-bound durable action and approval records. A host-authorized local grant registry adds revisioned issuance, renewal, revocation and immutable history. Automated pause/renewal, notifications and production identity remain. See [persistent-agent definitions](docs/persistent-agent-definitions.md).
+  - In progress: explicit, scoped host-authorized delegation with expiry and revocation checks at capability invocation, and authority-bound durable action and approval records. A host-authorized local grant registry adds revisioned issuance, renewal, revocation and immutable history. Journaled workers can persist an expired-grant wait and gate resumption on authorized renewal. Notifications and production identity remain. See [persistent-agent definitions](docs/persistent-agent-definitions.md).
 - [ ] P3-06 Durable human approval/consent, expiration and audited decisions (PA-08)
   - In progress: host-authorized SQLite approval records, expiry, decision history and exact-action journal gating. Local human-facing review is available; notifications and production identity remain. See [agent approvals](docs/agent-approvals.md).
 - [ ] P3-07 Agent trace/metrics/audit, quotas, budgets and administrative operational controls (PA-09)

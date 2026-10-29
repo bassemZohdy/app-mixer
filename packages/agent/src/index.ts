@@ -1,3 +1,4 @@
+import {AgentDelegationExpired} from './delegation-expired.js';
 import { randomUUID } from 'node:crypto';
 import { EventType, type Event } from '@ag-ui/core';
 import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
@@ -70,9 +71,9 @@ export class LangGraphAGUIAdapter {
       if (!started) yield {type:EventType.TEXT_MESSAGE_START,messageId,role:'assistant'};
       yield {type:EventType.TEXT_MESSAGE_END,messageId};
       yield {type:EventType.RUN_FINISHED,threadId,runId};
-    } catch {
+    } catch (error) {
       if (started) yield {type:EventType.TEXT_MESSAGE_END,messageId};
-      yield {type:EventType.RUN_ERROR,message:'The agent could not complete this run.',code:'AGENT_RUN_FAILED'};
+      yield error instanceof AgentDelegationExpired?{type:EventType.RUN_ERROR,message:'Delegated authorization expired.',code:'AGENT_DELEGATION_EXPIRED'}:{type:EventType.RUN_ERROR,message:'The agent could not complete this run.',code:'AGENT_RUN_FAILED'};
     }
   }
 }
