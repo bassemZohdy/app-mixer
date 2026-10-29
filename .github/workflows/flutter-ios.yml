@@ -36,11 +36,13 @@ jobs:
           pubspec = host / 'pubspec.yaml'
           text = pubspec.read_text()
           package = Path(os.environ['GITHUB_WORKSPACE']) / 'adapters' / 'flutter'
-          text = text.replace('dependencies:\n', f'dependencies:\n  app_mixer_flutter:\n    path: {package}\n  integration_test:\n    sdk: flutter\n', 1)
+          text = text.replace('dependencies:\n', f'dependencies:\n  app_mixer_flutter:\n    path: {package}\n  integration_test:\n    sdk: flutter\n  flutter_driver:\n    sdk: flutter\n', 1)
           pubspec.write_text(text)
           PY
           mkdir -p "$RUNNER_TEMP/adapter_device_test/integration_test"
           cp adapters/flutter/integration_test/renderer_device_test.dart "$RUNNER_TEMP/adapter_device_test/integration_test/"
+          mkdir -p "$RUNNER_TEMP/adapter_device_test/test_driver"
+          printf "import 'package:integration_test/integration_test_driver.dart';\nFuture<void> main() => integrationDriver();\n" > "$RUNNER_TEMP/adapter_device_test/test_driver/integration_test.dart"
           cd "$RUNNER_TEMP/adapter_device_test"
           flutter pub get
       - name: Run integration test on iOS simulator
@@ -60,4 +62,6 @@ jobs:
           xcrun simctl bootstatus "$simulator" -b
           open -a Simulator
           cd "$RUNNER_TEMP/adapter_device_test"
-          flutter test --verbose --timeout 5m integration_test/renderer_device_test.dart -d "$simulator"
+          # Flutter 3.35's `flutter test` can miss the VM service log on iOS.
+          # `flutter drive` starts the log reader before launch and reports the same integration test result.
+          flutter drive --verbose --driver=test_driver/integration_test.dart --target=integration_test/renderer_device_test.dart -d "$simulator"
