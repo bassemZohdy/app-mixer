@@ -109,3 +109,5 @@ export {AgentSemanticMemory} from './semantic-memory.js';
 export type {AgentMemoryEmbedder,SemanticMemoryHit} from './semantic-memory.js';
 export {registerSemanticMemorySearch} from './semantic-memory-capability.js';
 export type {SemanticMemorySearchOptions} from './semantic-memory-capability.js';
+export {SqliteAgentApprovals} from './agent-approvals.js';
+export type {AgentApproval,AgentApprovalActor,AgentApprovalStatus,AgentApprovalAccess,AgentApprovalsOptions} from './agent-approvals.js';
