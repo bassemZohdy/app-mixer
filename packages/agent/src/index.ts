@@ -42,7 +42,7 @@ const State = Annotation.Root({messages:Annotation<ChatMessage[]>(), response:An
 
 /** Streams AG-UI events from a LangGraph run. Conversation history is supplied per run. */
 export class LangGraphAGUIAdapter {
-  constructor(private readonly model: StreamingModel) {}
+  constructor(private readonly model: StreamingModel, private readonly options: {direct?:boolean} = {}) {}
   async *run(input: RunInput, options: {signal?:AbortSignal} = {}): AsyncGenerator<Event> {
     validateRunInput(input);
     const {threadId,runId} = input;
@@ -61,7 +61,7 @@ export class LangGraphAGUIAdapter {
     yield {type:EventType.RUN_STARTED,threadId,runId};
     let started = false;
     try {
-      const stream = await graph.stream({messages:input.messages}, {streamMode:'custom',signal:options.signal});
+      const stream = this.options.direct ? this.model.stream(input.messages, options.signal) : await graph.stream({messages:input.messages}, {streamMode:'custom',signal:options.signal});
       for await (const delta of stream) {
         if (typeof delta !== 'string') throw Error('Invalid graph chunk');
         if (!started) { started = true; yield {type:EventType.TEXT_MESSAGE_START,messageId,role:'assistant'}; }
@@ -91,3 +91,5 @@ export {SqliteAgentRuns} from './durable-runs.js';
 export type {DurableAgentRun,AgentRunScope,AgentRunStatus} from './durable-runs.js';
 export {DurableAgentWorker} from './durable-worker.js';
 export type {DurableAgentWorkerOptions,DurableAgentWorkerOutcome} from './durable-worker.js';
+export {SqliteAgentCheckpointer} from './sqlite-checkpointer.js';
+export type {AgentCheckpointerOptions} from './sqlite-checkpointer.js';

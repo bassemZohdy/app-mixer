@@ -48,7 +48,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 - [ ] P2-06 Define configurable independent agent entity, scope/ownership and versioned manifest (PA-01)
   - In progress: validated independent-agent manifest, tenant-scoped immutable SQLite configuration versions and host-authorized ephemeral runtime with a scoped capability allowlist. Production identity and quota enforcement remain. See [persistent-agent definitions](docs/persistent-agent-definitions.md).
 - [ ] P2-07 Implement agent lifecycle manager, durable run registry, pause/resume/cancel and recovery (PA-02, PA-04)
-  - In progress: local durable run registry and host-driven worker with optimistic revisions, cooperative pause/cancel, fenced leases and explicit uncertain recovery. Checkpoints, automatic scheduling, quotas and production coordination remain. See [durable agent runs](docs/durable-agent-runs.md).
+  - In progress: local durable run registry, host-driven worker and lease-fenced LangGraph SQLite checkpoints with explicit recovery. Automatic scheduling, quotas, safe external-effect replay and production coordination remain. See [durable agent runs](docs/durable-agent-runs.md).
 - [ ] P2-08 Add event/webhook and scheduler activation, authenticated ingress, trigger dedup and concurrency limits (PA-03)
 - [ ] P2-09 Build durable action intent/outcome journal, stable idempotency and uncertain-result reconciliation (PA-05)
 - [ ] P2-10 Implement configurable memory adapters, isolation, retention and provenance (PA-06)
