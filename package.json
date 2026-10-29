@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspace @app-mixer/web && npm run build --workspaces",
     "test": "npm run build && node --test packages/core/test/*.test.mjs packages/cli/test/*.test.mjs packages/web/test/*.test.mjs packages/native/test/*.test.mjs packages/agent/test/*.test.mjs"
   },
   "engines": {

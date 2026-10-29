@@ -163,3 +163,33 @@ test('rejects invalid or contradictory configuration constraints',()=>{
  ];
  for(const rule of rules)assert.throws(()=>check([{...manifest(),configSchema:{option:rule}}],host(),required()),/configuration schema/);
 });
+
+test('extension runtime bridges require declared references and preserve capability policy',async()=>{
+ const {ExtensionRegistry,CapabilityRegistry,registerExtensionComponent,registerExtensionCapability}=await import('../dist/index.js');
+ const {basicRegistry,A2UIRenderer,BASIC_CATALOG}=await import('@app-mixer/web');
+ const registry=new ExtensionRegistry(host()),m=manifest(),calls=[];
+ const chart=(component,_child,_data,doc)=>{const element=doc.createElement('p');element.textContent=component.text;return element;};
+ const lookup=(input,context)=>{calls.push({input,context});return 'result';};
+ registry.register(m,{components:{chart},tools:{lookup},providers:{}});
+ const ref={id:m.id,version:m.version,scope:m.scope};
+ assert.equal(registry.getForApplication([], 'components','chart'),undefined);
+ assert.throws(()=>registry.getForApplication([{...ref,version:'2.0.0'}],'components','chart'),/compatibility/);
+ assert.throws(()=>registry.getForApplication([ref,ref],'components','chart'),/references/);
+ const renderers=basicRegistry();assert.throws(()=>registerExtensionComponent(renderers,registry,[],'chart'),/not available/);
+ registerExtensionComponent(renderers,registry,[ref],'chart',component=>{if(typeof component.text!=='string')throw Error('Invalid chart');});
+ const doc={createElement(tag){return {tagName:tag,ownerDocument:doc,children:[],dataset:{},style:{},textContent:'',appendChild(child){this.children.push(child);},replaceChildren(...children){this.children=children;}};}},root=doc.createElement('main');
+ const renderer=new A2UIRenderer(root,renderers);renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:BASIC_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'chart',text:'Rendered'}]}});
+ assert.equal(root.children[0].children[0].textContent,'Rendered');
+ assert.throws(()=>renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'unused',component:'chart',text:1}]}}),/Invalid chart/);
+ assert.equal(root.children[0].children[0].textContent,'Rendered');
+ const audits=[],capabilities=new CapabilityRegistry(event=>audits.push(event.outcome));
+ const candidate={operationId:'lookup',method:'GET',path:'/lookup'};
+ assert.throws(()=>registerExtensionCapability(capabilities,registry,[],candidate,{authorize:()=>true,validate:()=>true}),/not available/);
+ registerExtensionCapability(capabilities,registry,[ref],candidate,{authorize:context=>context.principalId==='allowed',validate:input=>input?.valid===true});
+ const context={tenantId:'tenant',principalId:'denied',origin:'ui'};
+ await assert.rejects(()=>capabilities.invoke('lookup',{valid:true},context),/forbidden/);assert.equal(calls.length,0);
+ context.principalId='allowed';await assert.rejects(()=>capabilities.invoke('lookup',{valid:false},context),/Invalid capability input/);assert.equal(calls.length,0);
+ assert.equal(await capabilities.invoke('lookup',{valid:true},context),'result');assert.deepEqual(calls,[{input:{valid:true},context:{tenantId:'tenant',principalId:'allowed'}}]);
+ assert.deepEqual(audits,['attempt','denied','attempt','invalid','attempt','succeeded']);
+});

@@ -1,4 +1,4 @@
-import type { ApplicationDefinition, PublicationGuard } from './index.js';
+import { isValidExtensionReferences, type ApplicationDefinition, type ExtensionReference, type PublicationGuard } from './index.js';
 
 export type ExtensionConfigRule =
   | {type:'string'; required:boolean; minLength?:number; maxLength?:number; enum?:string[]}
@@ -164,6 +164,18 @@ export class ExtensionRegistry {
   get(kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
     if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
     return this.registrations[kind].get(name);
+  }
+
+  /** Resolve only registrations belonging to the application's declared, installed extensions. */
+  getForApplication(references: ExtensionReference[], kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
+    if (!isValidExtensionReferences(references)) throw Error('Invalid extension references');
+    if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
+    const selected = references.map(ref => {
+      const manifest = this.manifests.find(m => m.id === ref.id && m.version === ref.version && m.scope === ref.scope);
+      if (!manifest) throw Error('Extension compatibility failed');
+      return manifest;
+    });
+    return selected.some(manifest => manifest[kind].includes(name)) ? this.registrations[kind].get(name) : undefined;
   }
 
   getConfiguration(id:string): ExtensionConfiguration | undefined {
