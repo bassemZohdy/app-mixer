@@ -105,7 +105,7 @@ export type { ExtensionRuntimeBindings, FlutterExtensionPlan } from './extension
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration } from './extensions.js';
 
 export { SqliteDataProvider } from './data-provider.js';
-export type { DataProvider, DataRecord, DataScope } from './data-provider.js';
+export type { DataProvider, DataRecord, DataScope, DataMigration, MigrationPreview } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
 export type { StagedOperation, StagedStatus } from './staged-operations.js';
