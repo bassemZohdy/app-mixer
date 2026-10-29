@@ -19,6 +19,8 @@ export class SqliteAgentRuns {
    lease_owner TEXT,lease_token TEXT,lease_until INTEGER,archived INTEGER NOT NULL DEFAULT 0,
    PRIMARY KEY(tenant_id,agent_id,run_id)
   );
+  CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
+  CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
@@ -48,9 +50,9 @@ export class SqliteAgentRuns {
    this.db.exec('COMMIT');return run;
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }
- claim(scope:RunScope,runId:string,revision:number,workerId:string,leaseMs:number,now=Date.now(),maxConcurrentRuns=1):DurableAgentRun {
-  if(!id(workerId)||!number(leaseMs)||leaseMs<1||leaseMs>3600000||!number(now)||now>Number.MAX_SAFE_INTEGER-leaseMs||!number(maxConcurrentRuns)||maxConcurrentRuns<1||maxConcurrentRuns>100)throw Error('Invalid lease');
-  return this.transition(scope,runId,revision,run=>{if(run.status!=='queued'||run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be claimed');const active=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('running','pause_requested','cancel_requested')").get(scope.tenantId,scope.agentId);if(Number(active?.n)>=maxConcurrentRuns)throw Error('Agent concurrency limit');run.status='running';run.attempts++;run.leaseOwner=workerId;run.leaseToken=randomUUID();run.leaseUntil=Math.min(now+leaseMs,run.deadline);});
+ claim(scope:RunScope,runId:string,revision:number,workerId:string,leaseMs:number,now=Date.now(),maxConcurrentRuns=1,maxRunsPerDay?:number):DurableAgentRun {
+  if(!id(workerId)||!number(leaseMs)||leaseMs<1||leaseMs>3600000||!number(now)||now>Number.MAX_SAFE_INTEGER-leaseMs||!number(maxConcurrentRuns)||maxConcurrentRuns<1||maxConcurrentRuns>100||(maxRunsPerDay!==undefined&&(!number(maxRunsPerDay)||maxRunsPerDay<1||maxRunsPerDay>1000000)))throw Error('Invalid lease');
+  return this.transition(scope,runId,revision,run=>{if(run.status!=='queued'||run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be claimed');const active=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('running','pause_requested','cancel_requested')").get(scope.tenantId,scope.agentId);if(Number(active?.n)>=maxConcurrentRuns)throw Error('Agent concurrency limit');const start=this.db.prepare('SELECT started_at FROM agent_run_starts WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);if(!start){const day=Math.floor(now/86400000)*86400000;if(maxRunsPerDay!==undefined){const count=this.db.prepare('SELECT COUNT(*) AS n FROM agent_run_starts WHERE tenant_id=? AND agent_id=? AND started_at>=? AND started_at<=?').get(scope.tenantId,scope.agentId,day,Math.min(day+86399999,Number.MAX_SAFE_INTEGER));if(Number(count?.n)>=maxRunsPerDay)throw Error('Agent daily run limit');}this.db.prepare('INSERT INTO agent_run_starts VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,now);}run.status='running';run.attempts++;run.leaseOwner=workerId;run.leaseToken=randomUUID();run.leaseUntil=Math.min(now+leaseMs,run.deadline);});
  }
  renew(scope:RunScope,runId:string,revision:number,token:string,leaseMs:number,now=Date.now()):DurableAgentRun {
   if(!id(token)||!number(leaseMs)||leaseMs<1||leaseMs>3600000||!number(now)||now>Number.MAX_SAFE_INTEGER-leaseMs)throw Error('Invalid lease');
