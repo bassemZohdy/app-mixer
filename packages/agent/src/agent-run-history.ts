@@ -18,7 +18,7 @@ export function ensureAgentRunHistory(db:DatabaseSync):void{db.exec(`
   INSERT INTO agent_run_events (tenant_id,agent_id,run_id,kind,revision,previous_status,status,attempts,definition_version,worker_id,archived,wait_kind,wait_subject,observed_at)
   VALUES (NEW.tenant_id,NEW.agent_id,NEW.run_id,'created',NEW.revision,NULL,NEW.status,NEW.attempts,NEW.definition_version,NEW.lease_owner,NEW.archived,NULL,NULL,CAST((julianday('now')-2440587.5)*86400000 AS INTEGER));
  END;
- CREATE TRIGGER IF NOT EXISTS agent_runs_capture_update AFTER UPDATE ON agent_runs BEGIN
+ CREATE TRIGGER IF NOT EXISTS agent_runs_capture_update AFTER UPDATE ON agent_runs WHEN NEW.status<>OLD.status OR NEW.archived<>OLD.archived OR NEW.attempts<>OLD.attempts OR NEW.lease_owner IS NOT OLD.lease_owner OR NEW.lease_token IS NOT OLD.lease_token OR NEW.definition_version<>OLD.definition_version BEGIN
   INSERT INTO agent_run_events (tenant_id,agent_id,run_id,kind,revision,previous_status,status,attempts,definition_version,worker_id,archived,wait_kind,wait_subject,observed_at)
   VALUES (NEW.tenant_id,NEW.agent_id,NEW.run_id,CASE WHEN NEW.archived<>OLD.archived THEN 'archived' WHEN NEW.status<>OLD.status THEN 'transition' ELSE 'updated' END,NEW.revision,OLD.status,NEW.status,NEW.attempts,NEW.definition_version,COALESCE(NEW.lease_owner,OLD.lease_owner),NEW.archived,
    CASE WHEN NEW.status='paused' AND EXISTS(SELECT 1 FROM agent_approval_waits WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) THEN 'approval' WHEN NEW.status='paused' AND EXISTS(SELECT 1 FROM agent_delegation_waits WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) THEN 'delegation' ELSE NULL END,
