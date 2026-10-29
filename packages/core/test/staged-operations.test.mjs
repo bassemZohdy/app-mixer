@@ -62,3 +62,31 @@ test('abandoned in-flight submissions remain uncertain after a process exit',asy
   store.reconcile(scope,id,'applied');assert.equal(store.get(scope,id).status,'succeeded');
  } finally {store.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('staged external submission reconciles a lost response against an idempotent HTTP service',async()=>{
+ const {createServer}=await import('node:http');
+ const effects=new Map();let requests=0;
+ const server=createServer(async(req,res)=>{
+  const chunks=[];for await(const chunk of req)chunks.push(chunk);
+  const payload=JSON.parse(Buffer.concat(chunks).toString());const key=req.headers['idempotency-key'];requests++;
+  if(!effects.has(key))effects.set(key,payload);
+  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({ok:true}));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const staged=new SqliteStagedOperations(':memory:'),op=staged.stage(scope,'orders.create',{sku:'ABC',quantity:2}),registry=new CapabilityRegistry(()=>{});
+ registry.register({operationId:'orders.create',method:'POST',path:'/orders'}, {
+  authorize:({principalId})=>principalId==='user',validate:input=>typeof input?.idempotencyKey==='string'&&input?.payload?.sku==='ABC',
+  execute:async input=>{
+   const response=await fetch(`http://127.0.0.1:${server.address().port}/orders`,{method:'POST',headers:{'content-type':'application/json','idempotency-key':input.idempotencyKey},body:JSON.stringify(input.payload)});
+   assert.equal(response.status,200);throw Error('response lost after external effect');
+  }
+ });
+ try {
+  await assert.rejects(staged.submit(scope,op.id,registry,context),/response lost/);
+  assert.equal(staged.get(scope,op.id).status,'uncertain');
+  assert.deepEqual(effects.get(op.idempotencyKey),{sku:'ABC',quantity:2});
+  staged.reconcile(scope,op.id,'applied');
+  await assert.rejects(staged.submit(scope,op.id,registry,context),/not staged/);
+  assert.equal(requests,1);assert.equal(effects.size,1);
+ } finally {staged.close();await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
+});
