@@ -78,7 +78,25 @@ registerDataCapability(registry, provider, {
 });
 ```
 
-`createRecordFieldValidator(fields, options)` is also available for other trusted server paths. Schemas are validated and snapshotted at registration. Additional fields are allowed by default, matching the form's preservation of undisplayed data; set `allowAdditionalFields: false` for a closed record. Values must still meet the provider's bounded JSON restrictions. The server schema is host-owned: keep its configuration authoritative and do not trust a browser-supplied schema. Existing records are not automatically migrated or validated on read. Full JSON Schema, nested editing, conditional rules, and production schema governance remain separate work.
+`createRecordFieldValidator(fields, options)` is also available for other trusted server paths. Schemas are validated and snapshotted at registration. Additional fields are allowed by default, matching the form's preservation of undisplayed data; set `allowAdditionalFields: false` for a closed record. Values must still meet the provider's bounded JSON restrictions. The server schema is host-owned: keep its configuration authoritative and do not trust a browser-supplied schema. Existing records are not automatically migrated or validated on read. JSON Schema-driven forms, nested editing and production schema governance remain separate work.
+
+### JSON Schema validation on writes
+
+A host can configure `jsonSchema` instead of `fields` on a `put` registration. The schema is snapshotted and compiled at registration as JSON Schema draft 2020-12; it can express nested objects and arrays, local references and conditional constraints. The capability enforces it in addition to the host's `validate` callback and normal authorization. `createRecordJsonSchemaValidator(schema)` exposes the same validator for other trusted server paths. For example:
+
+```js
+registerDataCapability(registry, provider, {
+  candidate: {operationId: 'items.put', method: 'PUT', path: '/items'},
+  applicationId: 'demo-app', collection: 'items', operation: 'put',
+  authorize: canWriteItems, validate: additionalBusinessPolicy,
+  jsonSchema: {
+    type: 'object', required: ['name'], additionalProperties: false,
+    properties: {name: {type: 'string', minLength: 1}, tags: {type: 'array', items: {type: 'string'}}}
+  }
+});
+```
+
+Only trusted hosts may configure schemas. Compilation is synchronous and does not fetch remote references; unresolved references, unknown keywords or formats and asynchronous schemas are rejected. Format plugins are not included. Schemas and records must also meet the provider's bounded JSON-object restrictions; boolean schemas are supported but records must be objects. AJV does not coerce values, apply defaults or remove fields. Regular expressions and complex schemas can be expensive on untrusted data, so hosts must review schemas and enforce their own request and resource limits. The schema is not stored with the collection and does not validate existing data or direct provider calls. Coordinate changes with migration, every writer and the editor. JSON Schema-driven form generation, nested visual editing and production schema governance remain open.
 
 ## Local collection listing
 

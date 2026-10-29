@@ -138,3 +138,5 @@ export type {DataListCapabilityOptions} from './data-list-capability.js';
 
 export {createRemotePromotionClient, RemotePromotionUncertainError} from './remote-promotion.js';
 export type {RemotePromotionRequest, RemotePromotionDetails, RemotePromotionEvent, RemotePromotionOptions} from './remote-promotion.js';
+
+export {createRecordJsonSchemaValidator} from './record-json-schema.js';
