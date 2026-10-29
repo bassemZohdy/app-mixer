@@ -5,6 +5,8 @@ import {type AgentRunScope} from './durable-runs.js';
 type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string};
 type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule};
 export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revision:number;generation:number;nextAt:number;config:ScheduleConfig};
+export type AgentScheduleCursor={nextAt:number;scheduleId:string};
+export type AgentSchedulePage={items:AgentSchedule[];next?:AgentScheduleCursor};
 type FireOptions={definitionVersion:number;maxAttempts:number;runTimeoutMs:number;maxPending:number};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
@@ -43,7 +45,8 @@ function next(rule:ScheduleRule,after:number):number{
 export class SqliteAgentSchedules {
  private readonly db:DatabaseSync;
  constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000;
-  CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));`);
+  CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));
+  CREATE INDEX IF NOT EXISTS agent_schedules_due ON agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id);`);
   for(const table of ['agent_runs','agent_trigger_inbox'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Trigger registry unavailable');
  }catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
@@ -53,6 +56,12 @@ export class SqliteAgentSchedules {
  due(scope:AgentRunScope,now:number,limit=100):AgentSchedule[]{
   this.check(scope,'validation');if(!integer(now)||!integer(limit)||limit<1||limit>100)throw Error('Invalid schedule query');
   const rows=this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit);return rows.map(row=>this.parse(row));
+ }
+ /** Bounded keyset scan; callers must restart a scan to revisit changed schedules. */
+ duePage(scope:AgentRunScope,now:number,limit=100,after?:AgentScheduleCursor):AgentSchedulePage{
+  this.check(scope,'validation');if(!integer(now)||!integer(limit)||limit<1||limit>100||(after!==undefined&&(!after||!integer(after.nextAt)||!id(after.scheduleId))))throw Error('Invalid schedule query');
+  const rows=after===undefined?this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit+1):this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? AND (next_at>? OR (next_at=? AND schedule_id>?)) ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,after.nextAt,after.nextAt,after.scheduleId,limit+1);
+  const items=rows.slice(0,limit).map(row=>this.parse(row)),last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{nextAt:last.nextAt,scheduleId:last.scheduleId}}:{})};
  }
  save(scope:AgentRunScope,scheduleId:string,config:ScheduleConfig,expectedRevision:number,now=Date.now()):AgentSchedule{
   this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now))throw Error('Invalid schedule');const safe=checkConfig(config),nextAt=next(safe.rule,now);
