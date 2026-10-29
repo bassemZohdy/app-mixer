@@ -32,14 +32,14 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
     validate:async input=>{
       if(!record(input)||!id(input.id))return false;
       const base=operation==='get'?['id']:operation==='delete'?['id','expectedRevision']:['id','expectedRevision','value'];
-      const hasSchema=operation!=='get'&&Object.hasOwn(input,'expectedSchemaVersion');
+      const hasSchema=Object.hasOwn(input,'expectedSchemaVersion');
       const shape=fields(input,hasSchema?[...base,'expectedSchemaVersion']:base)&&(!hasSchema||(Number.isSafeInteger(input.expectedSchemaVersion)&&Number(input.expectedSchemaVersion)>=0))&&(operation==='get'||(operation==='delete'?revision(input.expectedRevision):(input.expectedRevision===null||revision(input.expectedRevision))&&record(input.value)));
       return shape && (!validateFields||validateFields(input.value)) && await validate(structuredClone(input))===true;
     },
     execute:(input,context)=>{
       const value=input as {id:string;expectedRevision:number|null;value:Record<string,unknown>;expectedSchemaVersion?:number};
       const scope={tenantId:context.tenantId,applicationId};
-      if(operation==='get')return provider.get(scope,collection,value.id)??null;
+      if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw Error('Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
       if(operation==='put')return provider.put(scope,collection,value.id,value.value,value.expectedRevision,value.expectedSchemaVersion);
       provider.delete(scope,collection,value.id,value.expectedRevision as number,value.expectedSchemaVersion);return null;
     }
