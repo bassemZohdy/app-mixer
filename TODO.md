@@ -27,8 +27,8 @@ Progress counts checked items equally; a task is complete only after verificatio
 
 ## P2: portability and advanced data
 - [ ] P2-01 Angular/React/React Native/Flutter adapters and parity checks
-  - Implemented: React and Angular DOM bridges; React Native and Flutter subsets; shared layout, binding, action and rejection fixtures. CI exercises React, Angular, React Native for Web, Flutter VM, Flutter on Chrome, and a Flutter interaction on an Android emulator.
-  - Backlog: broader Android verification and iOS device verification require mobile emulators or devices; Flutter default layout alignment, typography and accessibility parity, and broader catalog/behavior parity also remain open. See [React Native](docs/react-native-adapter.md) and [Flutter](docs/flutter-adapter.md) scope.
+  - Implemented: React and Angular DOM bridges; React Native and Flutter subsets; shared layout, binding, action and rejection fixtures. CI exercises React, Angular, React Native for Web, Flutter VM, Flutter on Chrome, and a Flutter interaction on Android and iOS simulators.
+  - Backlog: broader mobile verification, including React Native device tests; Flutter default layout alignment, typography and accessibility parity, and broader catalog/behavior parity also remain open. See [React Native](docs/react-native-adapter.md) and [Flutter](docs/flutter-adapter.md) scope.
 - [ ] P2-02 Extension SDK and compatibility manifests
   - In progress: trusted static manifest, primitive configuration schema with bounds and enumerations, approved implementation registry, explicit application references and page component requirements, fail-closed publication without a guard, host-selected web/capability bridges and generated-app static registrations; nested configuration and defaults, provider and other renderer integration, development preview, automatic registration and tool/provider requirement derivation remain. See [extension scope](docs/extensions.md).
 - [ ] P2-03 Internal data provider and staged external transactions
