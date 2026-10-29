@@ -135,3 +135,6 @@ export type {RecordField,RecordFieldValidatorOptions} from './record-field-valid
 
 export {registerDataListCapability} from './data-list-capability.js';
 export type {DataListCapabilityOptions} from './data-list-capability.js';
+
+export {createRemotePromotionClient, RemotePromotionUncertainError} from './remote-promotion.js';
+export type {RemotePromotionRequest, RemotePromotionDetails, RemotePromotionEvent, RemotePromotionOptions} from './remote-promotion.js';
