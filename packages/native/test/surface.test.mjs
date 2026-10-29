@@ -1,9 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {APP_MIXER_CATALOG,NativeSurfaceStore} from '../dist/index.js';
+import {APP_MIXER_CATALOG,NativeSurfaceStore,NativeComponentRegistry} from '../dist/index.js';
 const create=id=>({version:'v0.9.1',createSurface:{surfaceId:id,catalogId:APP_MIXER_CATALOG}});
 const update=(id,components)=>({version:'v0.9.1',updateComponents:{surfaceId:id,components}});
 const remove=id=>({version:'v0.9.1',deleteSurface:{surfaceId:id}});
+test('trusted native extensions validate and isolate component updates',()=>{
+ const registry=new NativeComponentRegistry(),render=()=>null;
+ registry.register('chart',render,c=>Object.keys(c).every(key=>['id','component','label','options'].includes(key))&&typeof c.label==='string'&&typeof c.options?.color==='string');
+ assert.throws(()=>registry.register('chart',render,()=>true),/duplicate/);
+ assert.throws(()=>registry.register('Text',render,()=>true),/Invalid/);
+ const store=new NativeSurfaceStore(registry);store.apply(create('a'));
+ const exposed=registry.snapshot();exposed.get('chart').validate=()=>false;
+ const component={id:'root',component:'chart',label:'Sales',options:{color:'blue'}};
+ store.apply(update('a',[component]));component.options.color='changed';
+ const view=store.snapshot()[0].root;assert.deepEqual(view.extensionProps,{label:'Sales',options:{color:'blue'}});
+ view.extensionProps.options.color='mutated';assert.equal(store.snapshot()[0].root.extensionProps.options.color,'blue');
+ for(const invalid of [
+  {id:'root',component:'chart',label:1,options:{color:'blue'}},
+  {id:'root',component:'chart',label:'x',options:{color:'blue'},key:'bad'},
+  {id:'root',component:'chart',label:'x',options:{color:'blue'},children:[]},
+  {id:'root',component:'unknown',label:'x'}
+ ]){assert.throws(()=>store.apply(update('a',[invalid])));assert.equal(store.snapshot()[0].root.extensionProps.label,'Sales');}
+ registry.register('late',render,()=>true);assert.throws(()=>store.apply(update('a',[{id:'root',component:'late'}])),/Unsupported/);
+ const asyncRegistry=new NativeComponentRegistry();asyncRegistry.register('async',render,async()=>true);
+ const asyncStore=new NativeSurfaceStore(asyncRegistry);asyncStore.apply(create('a'));assert.throws(()=>asyncStore.apply(update('a',[{id:'root',component:'async'}])),/synchronous/);
+});
 test('renders static layouts incrementally and isolates surfaces',()=>{
  const store=new NativeSurfaceStore();store.apply(create('a'));store.apply(create('b'));
  const components=[{id:'root',component:'Row',children:['title','later'],justify:'spaceBetween'},{id:'title',component:'Text',text:'<safe>',variant:'h1'}];

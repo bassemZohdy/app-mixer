@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
-import {createReactNativeA2UIComponent,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
+import {createReactNativeA2UIComponent,NativeComponentRegistry,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
 if(!process.env.REACT_SMOKE_DEPS)throw Error('REACT_SMOKE_DEPS is required');
 const require=createRequire(resolve(process.env.REACT_SMOKE_DEPS,'package.json'));
 const {JSDOM}=require('jsdom');const dom=new JSDOM('<!doctype html><div id="app"></div>',{url:'http://localhost/'});
@@ -53,4 +53,14 @@ try{
  assert.deepEqual(failures,['cleanup failed']);
  await React.act(()=>{next({version:'v0.9.1',createSurface:{surfaceId:'after',catalogId:APP_MIXER_CATALOG}});next({version:'v0.9.1',updateComponents:{surfaceId:'after',components:[{id:'root',component:'Text',text:'Connected'}]}});});
  assert.match(document.getElementById('app').textContent,/Connected/);await React.act(()=>root2.unmount());
+ const extensions=new NativeComponentRegistry();
+ extensions.register('chart',({label})=>React.createElement(Text,null,label),component=>typeof component.label==='string');
+ const ExtensionComponent=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable},extensions);
+ const root3=createRoot(document.getElementById('app'));let extensionReceive;const extensionErrors=[];
+ await React.act(()=>root3.render(React.createElement(ExtensionComponent,{subscribe:callback=>{extensionReceive=callback;},onError:error=>extensionErrors.push(error)})));
+ await React.act(()=>{extensionReceive({version:'v0.9.1',createSurface:{surfaceId:'ext',catalogId:APP_MIXER_CATALOG}});extensionReceive({version:'v0.9.1',updateComponents:{surfaceId:'ext',components:[{id:'root',component:'chart',label:'Extension chart'}]}});});
+ assert.match(document.getElementById('app').textContent,/Extension chart/);
+ await React.act(()=>extensionReceive({version:'v0.9.1',updateComponents:{surfaceId:'ext',components:[{id:'root',component:'chart',label:42}]}}));
+ assert.equal(extensionErrors.length,1);assert.match(document.getElementById('app').textContent,/Extension chart/);
+ await React.act(()=>root3.unmount());
 }finally{dom.window.close();}
