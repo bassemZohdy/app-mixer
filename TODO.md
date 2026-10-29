@@ -63,7 +63,8 @@ Progress counts checked items equally; a task is complete only after verificatio
   - In progress: host-authorized SQLite approval records, expiry, decision history and exact-action journal gating. Local review, a durable request inbox and journal-checked approval waits are available; external notifications and production identity remain. See [agent approvals](docs/agent-approvals.md).
 - [ ] P3-07 Agent trace/metrics/audit, quotas, budgets and administrative operational controls (PA-09)
   - In progress: host-driven durable workers enforce SQLite concurrency and per-agent UTC daily distinct-run limits. An opt-in SQLite token reservation ledger supports a host-supplied limited model with verified usage and uncertain-call reconciliation. A host-authorized SQLite lifecycle history records run creation and transitions. Provider-specific enforcement, cost budgets, tracing, metrics and production coordination remain. See [durable agent runs](docs/durable-agent-runs.md).
-- [ ] P3-08 Production durable-store/worker portability, crash/restart and tenant-isolation acceptance tests (PA-10)
+- [ ] P3-08 Production durable-store/worker portability, crash/restart and tenant-isolation acceptance tests
+  - In progress: process-kill acceptance coverage for local SQLite action recovery before dispatch, after a simulated external commit and after journal completion, with tenant isolation. Production stores, real provider contracts and pod-level recovery remain. (PA-10)
 
 Persistent-agent details: [requirements and architecture](docs/specs/persistent-agents.md), [ADR 0010](docs/adr/0010-configurable-persistent-agents.md). The manifest store is implemented; the remaining persistent-agent capabilities are planned.
 
