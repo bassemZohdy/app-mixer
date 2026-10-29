@@ -44,12 +44,13 @@ test('generated app serves its workspace and definition', {timeout: 15000}, asyn
     const doc = {createElement: () => new Element(doc), getElementById: () => host};
     const host = new Element(doc);
     const module = await import(pathToFileURL(join(target, 'renderer.mjs')).href);
+    const workspace = await import(pathToFileURL(join(target, 'workspace.mjs')).href);
     const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
     assert.ok(script);
-    const executable = script.replace(/^import [^;]+;/, '');
+    const executable = script.replace(/^import [^;]+;\s*/gm, '');
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'APP_MIXER_CATALOG', executable)(
-      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.APP_MIXER_CATALOG
+    await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'APP_MIXER_CATALOG', 'prepareWorkspace', executable)(
+      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.APP_MIXER_CATALOG, workspace.prepareWorkspace
     );
     const rendered = host.children[0].children[0];
     assert.equal(rendered.children[0].textContent, 'Home');
