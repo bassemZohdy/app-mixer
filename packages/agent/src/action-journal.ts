@@ -30,7 +30,8 @@ export class SqliteAgentActionJournal {
     input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,
     attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,
     PRIMARY KEY(tenant_id,agent_id,run_id,action_id)
-   );`);}catch(error){this.db.close();throw error;}
+   );
+   CREATE TABLE IF NOT EXISTS agent_action_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));`);}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
  isBoundTo(scope:AgentRunScope,runId:string):boolean{return !!scope&&this.scope.tenantId===scope.tenantId&&this.scope.agentId===scope.agentId&&this.runId===runId;}
@@ -40,16 +41,17 @@ export class SqliteAgentActionJournal {
  private transaction<T>(callback:()=>T,withLease=true):T{this.db.exec('BEGIN IMMEDIATE');try{if(withLease)this.fence();const result=callback();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
  private metadata(row:Record<string,unknown>):AgentAction{return {actionId:String(row.action_id),operationId:String(row.operation_id),idempotencyKey:String(row.idempotency_key),status:row.status as ActionStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts)};}
  get(actionId:string):AgentAction|undefined{if(!valid(actionId))throw Error('Invalid action');const row=this.row(actionId);return row?this.metadata(row):undefined;}
- async invoke(actionId:string,operationId:string,input:unknown,maxAttempts:number,dispatch:(input:unknown,idempotencyKey:string)=>Promise<unknown>,requiresApproval=false):Promise<unknown>{
-  if(!valid(actionId)||!valid(operationId)||!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>20||typeof dispatch!=='function'||typeof requiresApproval!=='boolean')throw Error('Invalid action');
+ async invoke(actionId:string,operationId:string,input:unknown,maxAttempts:number,dispatch:(input:unknown,idempotencyKey:string)=>Promise<unknown>,requiresApproval=false,authority?:string):Promise<unknown>{
+  if(!valid(actionId)||!valid(operationId)||!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>20||typeof dispatch!=='function'||typeof requiresApproval!=='boolean'||(authority!==undefined&&(typeof authority!=='string'||authority.length<1||authority.length>1024)))throw Error('Invalid action');
   const serialized=actionJSON(input),hash=createHash('sha256').update(serialized).digest('hex');
   const prepared=this.transaction(()=>{
    let row=this.row(actionId);
-   if(!row){this.db.prepare("INSERT INTO agent_action_journal VALUES (?,?,?,?,?,?,?,?, 'ready',0,?,NULL)").run(...this.args(),actionId,operationId,serialized,hash,randomUUID(),maxAttempts);row=this.row(actionId)!;}
+   if(!row){this.db.prepare("INSERT INTO agent_action_journal VALUES (?,?,?,?,?,?,?,?, 'ready',0,?,NULL)").run(...this.args(),actionId,operationId,serialized,hash,randomUUID(),maxAttempts);row=this.row(actionId)!;if(authority!==undefined)this.db.prepare('INSERT INTO agent_action_authority VALUES (?,?,?,?,?)').run(...this.args(),actionId,authority);}
+   const bound=this.db.prepare('SELECT authority FROM agent_action_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);if((bound?.authority??undefined)!==authority)throw Error('Action authority conflict');
    if(row.operation_id!==operationId||row.input_hash!==hash||row.input_json!==serialized||Number(row.max_attempts)!==maxAttempts)throw Error('Action identity conflict');
    if(row.status==='succeeded')return {cached:true,result:row.result_json as string,key:String(row.idempotency_key)};
    if(row.status!=='ready'||Number(row.attempts)>=maxAttempts)throw Error('Action requires reconciliation');
-   if(requiresApproval){const approvalNow=this.clock();if(!Number.isSafeInteger(approvalNow)||approvalNow<0)throw Error('Invalid clock');const approval=this.db.prepare('SELECT operation_id,input_hash,input_json,definition_version,status,expires_at FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);const run=this.db.prepare('SELECT definition_version FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());if(!approval||approval.status!=='approved'||approval.operation_id!==operationId||approval.input_hash!==hash||approval.input_json!==serialized||approval.definition_version!==run?.definition_version||Number(approval.expires_at)<=approvalNow)throw Error('Approval required');}
+   if(requiresApproval){const approvalNow=this.clock();if(!Number.isSafeInteger(approvalNow)||approvalNow<0)throw Error('Invalid clock');const approval=this.db.prepare('SELECT operation_id,input_hash,input_json,definition_version,status,expires_at FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);const run=this.db.prepare('SELECT definition_version FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());const approvalAuthority=this.db.prepare('SELECT authority FROM agent_approval_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);if((approvalAuthority?.authority??undefined)!==authority)throw Error('Approval authority conflict');if(!approval||approval.status!=='approved'||approval.operation_id!==operationId||approval.input_hash!==hash||approval.input_json!==serialized||approval.definition_version!==run?.definition_version||Number(approval.expires_at)<=approvalNow)throw Error('Approval required');}
    this.db.prepare("UPDATE agent_action_journal SET status='dispatching',attempts=attempts+1 WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(...this.args(),actionId);
    return {cached:false,result:null,key:String(row.idempotency_key)};
   });
