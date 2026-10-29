@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "ajv": "^8.20.0",
+    "fake-indexeddb": "^6.2.4",
     "typescript": "^5.9.3"
   },
   "exports": {
@@ -20,6 +21,10 @@
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
+    },
+    "./offline": {
+      "types": "./dist/offline.d.ts",
+      "import": "./dist/offline.js"
     }
   }
 }
