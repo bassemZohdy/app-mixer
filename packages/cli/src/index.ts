@@ -7,13 +7,16 @@ export async function createProject(name:string,parent=process.cwd()):Promise<st
  try{await access(target);throw Error("Target exists");}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;}
  await mkdir(target);
  const manifest={id:name,schemaVersion:1,revision:0,pages:[{id:"home",route:"/",title:"Home",components:[{id:"intro",type:"Text",props:{text:"Welcome to App Mixer"}}]}]};
- const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}main{display:grid;grid-template-columns:1fr 2fr;gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px}input{padding:10px}@media(max-width:700px){main{grid-template-columns:1fr}}</style><header>App Mixer</header><main><section><h2>Conversation</h2><p id="chat-status" role="status">Checking agent…</p><div id="chat-log" aria-live="polite"></div><form id="chat-form"><label for="chat-input">Message</label><input id="chat-input" placeholder="Ask agent" disabled><button id="chat-send" type="submit" disabled>Send</button></form></section><section><h2>Workspace</h2><button id="refresh-publication" hidden>Refresh publication</button><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,APP_MIXER_CATALOG,ClientPublishedCache} from '/renderer.mjs';
+ const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}main{display:grid;grid-template-columns:1fr 2fr;gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px}input{padding:10px}@media(max-width:700px){main{grid-template-columns:1fr}}</style><header>App Mixer</header><main><section><h2>Conversation</h2><p id="chat-status" role="status">Checking agent…</p><div id="chat-log" aria-live="polite"></div><form id="chat-form"><label for="chat-input">Message</label><input id="chat-input" placeholder="Ask agent" disabled><button id="chat-send" type="submit" disabled>Send</button></form></section><section><h2>Workspace</h2><button id="refresh-publication" hidden>Refresh publication</button><p id="publication-status" role="status"></p><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,APP_MIXER_CATALOG,ClientPublishedCache} from '/renderer.mjs';
 import {prepareWorkspace} from '/workspace.mjs';
+import {createOfflinePublicationRuntime} from '/offline-publication-runtime.mjs';
+import {initializeOfflinePublication} from '/offline-publication-host.mjs';
 const host=document.getElementById('pages');
-let cache;
-const render=async()=>{try {
+let cache,offlineRuntime,renderGeneration=0;
+const render=async()=>{const generation=++renderGeneration;try {
   let app;
-  if(cache) app=(await cache.refresh()).definition;
+  if(offlineRuntime){const result=await offlineRuntime.refresh();if(generation!==renderGeneration)return;app=result.publication.definition;document.getElementById('publication-status').textContent=result.offline?'Showing saved offline publication.':'';}
+  else if(cache) app=(await cache.refresh()).definition;
   else {const response=await fetch('/api/application');if(!response.ok)throw new Error('Could not load application');app=await response.json();}
   host.replaceChildren();
   const {registry,components}=prepareWorkspace(app);
@@ -21,8 +24,16 @@ const render=async()=>{try {
   const surfaceId='workspace';
   renderer.apply({version:'v0.9.1',createSurface:{surfaceId,catalogId:APP_MIXER_CATALOG}});
   renderer.apply({version:'v0.9.1',updateComponents:{surfaceId,components}});
-} catch(error) { host.textContent='Unable to render application: '+error.message; }};
+} catch(error) { if(generation===renderGeneration){document.getElementById('publication-status').textContent='';host.textContent='Unable to render application: '+error.message;} }};
 try {
+  const offlineOptions=await initializeOfflinePublication();
+  if(offlineOptions){
+    if(offlineOptions.scope?.applicationId!==${JSON.stringify(name)}||offlineOptions.scope?.schemaVersion!==1||typeof offlineOptions.onReady!=='function')throw Error('Invalid offline publication host');
+    offlineRuntime=await createOfflinePublicationRuntime({...offlineOptions,compatible:definition=>{try{prepareWorkspace(definition);return true;}catch{return false;}}});
+    const button=document.getElementById('refresh-publication');button.hidden=false;button.addEventListener('click',()=>render());
+    const clearDisplay=()=>{renderGeneration++;document.getElementById('publication-status').textContent='';host.replaceChildren();};
+    offlineOptions.onReady({lock(){clearDisplay();offlineRuntime.close();button.hidden=true;},async clear(){clearDisplay();await offlineRuntime.clear();}});
+  } else {
   const state=await (await fetch('/api/publication/status')).json();
   if(state.configured){
     cache=new ClientPublishedCache({tenantId:'local',authorizationKey:'local',applicationId:${JSON.stringify(name)},schemaVersion:1},async etag=>{
@@ -32,6 +43,7 @@ try {
       return {status:200,etag:response.headers.get('etag'),publication:await response.json()};
     },definition=>{try{prepareWorkspace(definition);return true;}catch{return false;}});
     const button=document.getElementById('refresh-publication');button.hidden=false;button.addEventListener('click',()=>render());
+  }
   }
   await render();
 } catch(error) {host.textContent='Unable to render application: '+error.message;}
@@ -106,7 +118,7 @@ createServer(async(req,res)=>{
     return;
   }
   const shellWorkerRequest=req.method==='GET'&&/^\/offline-shell-sw\.js\?revision=[a-zA-Z0-9._-]{1,64}$/.test(req.url||'');
-  const path=shellWorkerRequest?'offline-shell-sw.js':req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':req.method==='GET'&&req.url==='/data-editor.mjs'?'data-editor.mjs':req.method==='GET'&&req.url==='/staged-editor.mjs'?'staged-editor.mjs':req.method==='GET'&&['/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs','/offline-shell-sw.js'].includes(req.url)?req.url.slice(1):null;
+  const path=shellWorkerRequest?'offline-shell-sw.js':req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':req.method==='GET'&&req.url==='/data-editor.mjs'?'data-editor.mjs':req.method==='GET'&&req.url==='/staged-editor.mjs'?'staged-editor.mjs':req.method==='GET'&&['/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs','/offline-shell-sw.js','/offline-publications.js','/offline-publication-runtime.mjs','/offline-publication-host.mjs'].includes(req.url)?req.url.slice(1):null;
   if(!path){res.writeHead(404);res.end();return;}
   try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':(path.endsWith('.mjs')||path.endsWith('.js'))?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
 }).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
@@ -189,12 +201,15 @@ export function prepareWorkspace(app){
  const dataEditor=await readFile(new URL('../templates/data-editor.mjs',import.meta.url));
  const stagedEditor=await readFile(new URL('../templates/staged-editor.mjs',import.meta.url));
  const offlineRuntime=await readFile(new URL('../templates/offline-runtime.mjs',import.meta.url));
+ const publicationRuntime=await readFile(new URL('../templates/offline-publication-runtime.mjs',import.meta.url));
+ const publicationHost=await readFile(new URL('../templates/offline-publication-host.mjs',import.meta.url));
+ const publicationSource=await readFile(new URL(import.meta.resolve('@app-mixer/web/offline-publications')));
  const shellTemplate=await readFile(new URL('../templates/offline-shell.mjs',import.meta.url),'utf8');
  const shellWorkerTemplate=await readFile(new URL('../templates/offline-shell-sw.js',import.meta.url),'utf8');
  const offlineShell=shellTemplate.replace('__APP_ID__',JSON.stringify(name)),offlineShellWorker=shellWorkerTemplate.replace('__APP_ID__',JSON.stringify(name));
  const offlineURL=new URL(import.meta.resolve('@app-mixer/web/offline'));
  const [offlineSource,offlineWorker,offlineUI]=await Promise.all([readFile(offlineURL),readFile(new URL('./offline-worker.js',offlineURL)),readFile(new URL('./offline-ui.js',offlineURL))]);
- await Promise.all([writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
+ await Promise.all([writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}

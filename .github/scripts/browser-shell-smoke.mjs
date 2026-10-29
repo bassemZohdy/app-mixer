@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createProject} from '../../packages/cli/dist/index.js';
@@ -12,15 +12,33 @@ let resolveResult,rejectResult,offline=false;
 const result=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;});
 try{
  const target=await createProject('shell-test',dir),html=await readFile(join(target,'index.html'),'utf8');
+ await writeFile(join(target,'offline-publication-host.mjs'),`export async function initializeOfflinePublication(){
+ const open=indexedDB.open('test-key',1);open.onupgradeneeded=()=>open.result.createObjectStore('keys');
+ const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
+ const get=db.transaction('keys').objectStore('keys').get('key');let key=await new Promise((resolve,reject)=>{get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);});
+ if(!key){key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);const tx=db.transaction('keys','readwrite');tx.objectStore('keys').put(key,'key');await new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});}db.close();
+ return {enabled:true,databaseName:'published-test',scope:{tenantId:'tenant',principalId:'user',authorizationKey:'v1',applicationId:'shell-test',schemaVersion:1},key,maxAgeMs:60000,authorize:()=>true,onReady:api=>window.offlinePublication=api,isOffline:()=>sessionStorage.getItem('shell-test-phase')==='offline',fetchPublication:async()=>{
+ if(sessionStorage.getItem('shell-test-phase')==='offline')throw Error('network unavailable');
+ if(sessionStorage.getItem('shell-test-phase')==='denied')return new Response('',{status:403});
+ const p={version:1,definition:{id:'shell-test',schemaVersion:1,pages:[{title:'Saved page',components:[]}]}};const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(p)));const tag='\"'+Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('')+'\"';return new Response(JSON.stringify(p),{status:200,headers:{etag:tag}});
+ }};}`);
  const driver=`<script type="module">
  try{
   if(!sessionStorage.getItem('shell-test-phase')){
+   for(let i=0;i<200&&!document.getElementById('pages').textContent.includes('Saved page');i++)await new Promise(resolve=>setTimeout(resolve,25));
+   if(!document.getElementById('pages').textContent.includes('Saved page'))throw Error('Online publication not rendered');
    const {enableOfflineShell}=await import('/offline-shell.mjs');await enableOfflineShell('v1');await navigator.serviceWorker.ready;
    for(let i=0;i<200&&!navigator.serviceWorker.controller;i++)await new Promise(resolve=>setTimeout(resolve,25));
    if(!navigator.serviceWorker.controller)throw Error('Service worker did not claim page');
    await fetch('/cut',{method:'POST'});sessionStorage.setItem('shell-test-phase','offline');location.reload();
   }else{
    if(!navigator.serviceWorker.controller)throw Error('Reload was not controlled');
+   for(let i=0;i<200&&!document.getElementById('publication-status').textContent.includes('offline');i++)await new Promise(resolve=>setTimeout(resolve,25));
+   if(!document.getElementById('pages').textContent.includes('Saved page')||!document.getElementById('publication-status').textContent.includes('offline'))throw Error('Offline publication not rendered');
+   sessionStorage.setItem('shell-test-phase','denied');document.getElementById('refresh-publication').click();
+   for(let i=0;i<200&&!document.getElementById('pages').textContent.includes('Unable to render');i++)await new Promise(resolve=>setTimeout(resolve,25));
+   if(document.getElementById('pages').textContent.includes('Saved page'))throw Error('Access denial fell back to saved publication');
+   window.offlinePublication.lock();if(document.getElementById('pages').textContent||!document.getElementById('refresh-publication').hidden)throw Error('Lock did not clear the workspace');
    const staticResult=await fetch('/offline-runtime.mjs'),dynamicResult=await fetch('/api/application');
    if(!staticResult.ok||dynamicResult.status!==503)throw Error('Unexpected offline responses');
    const names=await caches.keys(),name=names.find(value=>value==='app-mixer-shell:shell-test:v1');if(!name)throw Error('Missing shell cache');
@@ -50,5 +68,5 @@ try{
 }finally{
  clearTimeout(timer);if(browser&&browser.exitCode===null&&browser.signalCode===null){const stopped=once(browser,'exit');browser.kill();await stopped;}
  if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
- if(app&&app.exitCode===null&&app.signalCode===null){const stopped=once(app,'exit');app.kill();await stopped;}await rm(dir,{recursive:true,force:true});
+ if(app&&app.exitCode===null&&app.signalCode===null){const stopped=once(app,'exit');app.kill();await stopped;}await rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

@@ -49,8 +49,8 @@ test('generated app serves its workspace and definition', {timeout: 15000}, asyn
     assert.ok(script);
     const executable = script.replace(/^import [^;]+;\s*/gm, '');
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'APP_MIXER_CATALOG', 'prepareWorkspace', executable)(
-      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.APP_MIXER_CATALOG, workspace.prepareWorkspace
+    await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'APP_MIXER_CATALOG', 'prepareWorkspace', 'initializeOfflinePublication', executable)(
+      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.APP_MIXER_CATALOG, workspace.prepareWorkspace, async()=>null
     );
     const rendered = host.children[0].children[0];
     assert.equal(rendered.children[0].textContent, 'Home');
