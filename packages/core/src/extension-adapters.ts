@@ -12,6 +12,19 @@ export function registerExtensionComponent(target: ComponentRegistry, extensions
   target.register(name, implementation as unknown as Parameters<ComponentRegistry['register']>[1], validate);
 }
 
+/** Install an application-declared native extension into a host-owned native registry. */
+export function registerDeclaredNativeExtensionComponent(
+  target:{register:(name:string,render:(props:Record<string,unknown>)=>unknown,validate:(component:Record<string,unknown>)=>boolean)=>void},
+  extensions:ExtensionRegistry, application:ApplicationDefinition, extensionId:string, name:string,
+  validateComponent:(component:Record<string,unknown>)=>boolean
+):void {
+  const snapshot=structuredClone(application);validate(snapshot);
+  if(!snapshot.pages.some(page=>page.components.some(component=>component.type==='Extension'&&component.extensionId===extensionId&&component.name===name)))throw Error('Extension component not declared');
+  const implementation=extensions.getForExtension(snapshot.extensions??[],extensionId,'components',name);
+  if(!implementation)throw Error('Extension component not available');
+  target.register(name,implementation as unknown as (props:Record<string,unknown>)=>unknown,validateComponent);
+}
+
 /** Bind a host-selected extension tool to the normal capability policy, validation and audit boundary. */
 export function registerExtensionCapability(
   target: CapabilityRegistry, extensions: ExtensionRegistry, references: ExtensionReference[], candidate: CapabilityCandidate,

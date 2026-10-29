@@ -2,7 +2,7 @@
 export const APP_MIXER_CATALOG='https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json';
 export const BASIC_CATALOG='https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj=Record<string,unknown>;
-export type NativeNode={id:string;kind:'Text'|'Column'|'Row'|'Card'|'TextField'|'Button';text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;children:NativeNode[]};
+export type NativeNode={id:string;kind:string;text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;extensionProps?:Record<string,unknown>;children:NativeNode[]};
 export type NativeSurface={id:string;revision:number;root?:NativeNode};
 export type ActionMessage={version:'v0.9.1';action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string,unknown>}};
 const obj=(value:unknown):value is Obj=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -53,7 +53,17 @@ function updateData(data:unknown,path:string,value:unknown,remove:boolean):unkno
 }
 const aligns=['start','center','end','stretch'];
 const justifies=['start','center','end','spaceBetween','spaceAround','spaceEvenly'];
-function validate(c:unknown):asserts c is Obj {
+type NativeExtension={render:(props:Record<string,unknown>)=>unknown;validate:(component:Record<string,unknown>)=>boolean};
+/** Trusted host registrations; validators must synchronously return true for accepted components. */
+export class NativeComponentRegistry {
+  private readonly entries=new Map<string,NativeExtension>();
+  register(name:string,render:NativeExtension['render'],validate:NativeExtension['validate']):void {
+    if(typeof name!=='string'||!/^[a-z][a-z0-9.-]{0,127}$/.test(name)||['constructor','prototype','__proto__'].includes(name)||typeof render!=='function'||typeof validate!=='function'||this.entries.has(name))throw Error('Invalid or duplicate native extension');
+    this.entries.set(name,{render,validate});
+  }
+  snapshot():Map<string,NativeExtension>{return new Map([...this.entries].map(([name,entry])=>[name,{...entry}]));}
+}
+function validate(c:unknown,extensions:Map<string,NativeExtension>):asserts c is Obj {
   if(!obj(c)||!id(c.id)||typeof c.component!=='string')throw Error('Invalid component');
   if(c.component==='Text'){
     if(!only(c,['id','component','text','variant'])||(!(typeof c.text==='string'&&c.text.length<=10000)&&!(obj(c.text)&&only(c.text,['path'])&&typeof c.text.path==='string'&&pointer(c.text.path)))||(c.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string)))throw Error('Unsupported Text');
@@ -70,13 +80,22 @@ function validate(c:unknown):asserts c is Obj {
     }
   }else if(c.component==='Card'){
     if(!only(c,['id','component','child'])||!id(c.child))throw Error('Unsupported Card');
-  }else throw Error('Unsupported component');
+  }else {
+    const extension=extensions.get(c.component);
+    if(!extension||Object.keys(c).some(key=>['key','ref','children'].includes(key)))throw Error('Unsupported component');
+    const input=cloneData(c);
+    const result:unknown=extension.validate(input as Obj);
+    if(result instanceof Promise){result.catch(()=>{});throw Error('Native extension validator must be synchronous');}
+    if(result!==true)throw Error('Invalid native extension component');
+  }
 }
 type Surface={id:string;components:Map<string,Obj>;data:unknown;revision:number};
 /** Validates and commits updates atomically. */
 export class NativeSurfaceStore {
   private readonly surfaces=new Map<string,Surface>();
   private revision=0;
+  private readonly extensions:Map<string,NativeExtension>;
+  constructor(registry?:NativeComponentRegistry){this.extensions=registry?.snapshot()??new Map();}
   apply(message:unknown):void {
     if(!obj(message)||message.version!=='v0.9.1')throw Error('Unsupported A2UI version');
     const keys=['createSurface','updateComponents','updateDataModel','deleteSurface'].filter(key=>Object.hasOwn(message,key));
@@ -101,7 +120,7 @@ export class NativeSurfaceStore {
     }
     if(!only(payload,['surfaceId','components'])||!Array.isArray(payload.components)||payload.components.length<1||payload.components.length>1000)throw Error('Invalid components');
     const components=new Map(surface.components);
-    for(const c of payload.components){validate(c);components.set(c.id as string,{...c,...(Array.isArray(c.children)?{children:[...c.children]}:{}),...(obj(c.text)?{text:{...c.text}}:{}),...(obj(c.value)?{value:{...c.value}}:{}),...(obj(c.action)?{action:cloneData(c.action)}:{})});}
+    for(const c of payload.components){validate(c,this.extensions);const stored=this.extensions.has(c.component as string)?cloneData(c) as Obj:{...c,...(Array.isArray(c.children)?{children:[...c.children]}:{}),...(obj(c.text)?{text:{...c.text}}:{}),...(obj(c.value)?{value:{...c.value}}:{}),...(obj(c.action)?{action:cloneData(c.action)}:{})};components.set(c.id as string,stored);}
     if(components.size>1000)throw Error('Too many components');
     this.root(components,surface.data);surface.components=components;surface.revision=++this.revision;
   }
@@ -131,9 +150,10 @@ export class NativeSurfaceStore {
       if(ancestors.has(key)||ancestors.size>=100)throw Error('Cyclic or deeply nested components');
       const next=new Set(ancestors);next.add(key);
       const childIds=c.component==='Card'||c.component==='Button'?[c.child as string]:c.component==='Column'||c.component==='Row'?c.children as string[]:[];
-      const boundText=typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined;
+      const boundText=c.component==='Text'?(typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined):undefined;
       const fieldValue=c.component==='TextField'&&obj(c.value)?read(data,c.value.path as string):undefined;
-      return {id:key,kind:c.component as NativeNode['kind'],...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next)).filter((child):child is NativeNode=>child!==undefined)};
+      const extensionProps=this.extensions.has(c.component as string)?Object.fromEntries(Object.entries(cloneData(c) as Obj).filter(([name])=>name!=='id'&&name!=='component')):undefined;
+      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next)).filter((child):child is NativeNode=>child!==undefined)};
     };
     return visit('root',new Set());
   }
@@ -141,7 +161,9 @@ export class NativeSurfaceStore {
 type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;useRef:<T>(value:T)=>{current:T};useState:<T>(value:T)=>[T,(value:T)=>void];useEffect:(effect:()=>void|(()=>void),deps:unknown[])=>void};
 export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
-export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any}):(props:NativeA2UIProps)=>any {
+export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any},registry?:NativeComponentRegistry):(props:NativeA2UIProps)=>any {
+  const installed=registry?.snapshot()??new Map<string,NativeExtension>();
+  const fixedRegistry=new NativeComponentRegistry();for(const [name,entry] of installed)fixedRegistry.register(name,entry.render,entry.validate);
   // Approximate the browser's default heading scale for the supported text variants.
   // React Native's default font scaling remains enabled for accessibility.
   const textStyles:Record<string,{fontSize:number;fontWeight?:'bold'}>={
@@ -155,7 +177,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const [surfaces,setSurfaces]=React.useState<NativeSurface[]>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null);
     React.useEffect(()=>{errors.current=onError;actions.current=onAction;},[onError,onAction]);
     React.useEffect(()=>{
-      let active=true;const store=new NativeSurfaceStore();storeRef.current=store;setSurfaces([]);let stop:void|(()=>void);
+      let active=true;const store=new NativeSurfaceStore(fixedRegistry);storeRef.current=store;setSurfaces([]);let stop:void|(()=>void);
       try{stop=subscribe(message=>{if(!active)return;try{
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.TextInput&&message.updateComponents.components.some(c=>obj(c)&&c.component==='TextField'))throw Error('TextInput primitive is required');
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.Pressable&&message.updateComponents.components.some(c=>obj(c)&&c.component==='Button'))throw Error('Pressable primitive is required');
@@ -165,6 +187,8 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     },[subscribe]);
     const store=storeRef.current;
     const render=(node:NativeNode,surface:NativeSurface):any=>{
+      const extension=installed.get(node.kind);
+      if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
       if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{}),...(node.variant&&Object.hasOwn(textStyles,node.variant)?{style:textStyles[node.variant]}:{})},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;

@@ -337,3 +337,22 @@ test('runtime assembly registers declared components and operations with explici
   [{...application,extensionOperations:[...application.extensionOperations,{extensionId:ref.id,kind:'provider',name:'lookup'}]},bindings]
  ])assert.throws(()=>createExtensionRuntime(app,registry,()=>{},options));
 });
+
+test('native extension bridge installs only the declared approved owner',async()=>{
+ const {ExtensionRegistry,registerDeclaredNativeExtensionComponent}=await import('../dist/index.js');
+ const {NativeComponentRegistry,NativeSurfaceStore,APP_MIXER_CATALOG}=await import('../../native/dist/index.js');
+ const m={...manifest(),renderers:['react-native']},h={...host(),renderer:'react-native'},ref={id:m.id,version:m.version,scope:m.scope};
+ const extensions=new ExtensionRegistry(h),render=()=>null;
+ extensions.register(m,{components:{chart:render},tools:{lookup:()=>{}},providers:{}});
+ const component={id:'chart',type:'Extension',extensionId:ref.id,name:'chart'};
+ const application={id:'demo',schemaVersion:1,revision:0,extensions:[ref],pages:[{id:'home',title:'Home',route:'/',components:[component]}]};
+ const registry=new NativeComponentRegistry();
+ assert.throws(()=>registerDeclaredNativeExtensionComponent(registry,extensions,application,ref.id,'other',()=>true),/not declared/);
+ assert.throws(()=>registerDeclaredNativeExtensionComponent(registry,extensions,{...application,extensions:[]},ref.id,'chart',()=>true),/not available/);
+ registerDeclaredNativeExtensionComponent(registry,extensions,application,ref.id,'chart',c=>typeof c.label==='string');
+ const store=new NativeSurfaceStore(registry);store.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ store.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'chart',label:'Sales'}]}});
+ assert.equal(store.snapshot()[0].root.extensionProps.label,'Sales');
+ assert.throws(()=>store.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'chart',label:1}]}}),/Invalid native extension/);
+ assert.equal(store.snapshot()[0].root.extensionProps.label,'Sales');
+});
