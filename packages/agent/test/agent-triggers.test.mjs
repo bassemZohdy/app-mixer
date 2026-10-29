@@ -70,3 +70,15 @@ test('signed webhook configuration rejects weak keys, reserved and duplicate sou
  const source={tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:Buffer.alloc(32)};
  assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,secret:Buffer.alloc(31)}]}),/configuration/);assert.throws(()=>createSignedWebhookAuthenticator({sources:[source,source]}),/configuration/);assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,sourceId:'schedule.foo'}]}),/configuration/);
 });
+
+
+test('webhook key rotation accepts an overlap and rejects retired keys without losing deduplication',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const old=Buffer.alloc(32,42),next=Buffer.alloc(32,43),other=Buffer.alloc(32,44),now=1700000000000,source={tenantId:'tenant',principalId:'sender',sourceId:'provider'},body=JSON.stringify({agentId:'agent',eventId:'evt',eventType:'order.created',payload:{order:'one'}});let ingress;
+ const launch=async auth=>{ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticateRaw:auth,authorize:()=>true,clock:()=>now});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');};
+ const post=key=>fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','x-app-mixer-source':'provider','x-app-mixer-timestamp':'1700000000','x-app-mixer-signature':'v1='+createHmac('sha256',key).update('v1\n1700000000\nprovider\n').update(body).digest('hex')},body});
+ try{const mutableOld=Buffer.from(old),mutableNext=Buffer.from(next),previous=[mutableOld],auth=createSignedWebhookAuthenticator({sources:[{...source,secret:mutableNext,previousSecrets:previous},{...source,sourceId:'other',secret:other}],clock:()=>now});mutableOld.fill(0);mutableNext.fill(0);previous.length=0;await launch(auth);assert.equal((await post(old)).status,202);assert.equal((await post(next)).status,200);assert.equal((await post(other)).status,401);await new Promise(r=>ingress.close(r));ingress=null;await launch(createSignedWebhookAuthenticator({sources:[{...source,secret:next}],clock:()=>now}));assert.equal((await post(old)).status,401);assert.equal((await post(next)).status,200);assert.equal(s.runs.list(scope).length,1);}finally{if(ingress)await new Promise(r=>ingress.close(r));definitions.close();close(s);}
+});
+
+test('webhook rotation rejects invalid or duplicate previous keys',()=>{
+ const source={tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:Buffer.alloc(32,1)},k=Buffer.alloc(32,2);for(const previousSecrets of [null,'bad',[Buffer.alloc(31)],[k,k],[Buffer.alloc(32,1)],[k,Buffer.alloc(32,3),Buffer.alloc(32,4)]])assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,previousSecrets}]}),/configuration/);
+});
