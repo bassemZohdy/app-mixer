@@ -4,6 +4,7 @@ export type BrowserQueueStatus='pending'|'running'|'conflict'|'uncertain'|'exhau
 export type BrowserQueueItem={id:string;version:number;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:BrowserQueueStatus;attempts:number;replacementId?:string};
 export type BrowserQueueOptions={enabled:true;databaseName:string;scope:BrowserQueueScope;key:CryptoKey;indexedDB?:IDBFactory;crypto?:Crypto};
 type Envelope={id:string;partition:string;version:number;iv:Uint8Array<ArrayBuffer>;ciphertext:ArrayBuffer};
+type KeyMarker={id:string;partition:string;epoch:number;iv:Uint8Array<ArrayBuffer>;ciphertext:ArrayBuffer};
 const enc=new TextEncoder(),dec=new TextDecoder('utf-8',{fatal:true});
 const identifier=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=256&&!/[\u0000-\u001f]/.test(x);
 const record=(x:unknown):x is Record<string,unknown>=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -37,6 +38,7 @@ function canonical(value:unknown):string {
 }
 
 export class EncryptedBrowserQueue {
+  private closed=false;private marker:KeyMarker|undefined;
   private constructor(private readonly db:IDBDatabase,private readonly crypt:Crypto,private readonly key:CryptoKey,private readonly partition:string,private readonly scope:BrowserQueueScope){}
   static async open(options:BrowserQueueOptions):Promise<EncryptedBrowserQueue>{
     const factory=options?.indexedDB??globalThis.indexedDB,crypt=options?.crypto??globalThis.crypto,scope=options?.scope,key=options?.key;
@@ -51,9 +53,25 @@ export class EncryptedBrowserQueue {
       request.onerror=()=>reject(request.error??Error('IndexedDB open failed'));
       request.onsuccess=()=>{if(blocked)request.result.close();else resolve(request.result);};
     });
-    db.onversionchange=()=>db.close();return new EncryptedBrowserQueue(db,crypt,key,partition,fixedScope);
+    const queue=new EncryptedBrowserQueue(db,crypt,key,partition,fixedScope);db.onversionchange=()=>queue.close();try{await queue.initializeMarker();return queue;}catch(error){queue.close();throw error;}
   }
-  close():void{this.db.close();}
+  close():void{this.closed=true;this.db.close();}
+  private markerId():string{return '@queue-key:'+this.partition;}
+  private markerAad(epoch:number):Uint8Array<ArrayBuffer>{return enc.encode(JSON.stringify(['queue-key-v1',this.partition,epoch]));}
+  private sameMarker(value:unknown):boolean{
+    const expected=this.marker;if(value===undefined)return expected===undefined;if(!expected||!record(value)||value.id!==expected.id||value.partition!==expected.partition||value.epoch!==expected.epoch||!(value.iv instanceof Uint8Array)||!(value.ciphertext instanceof ArrayBuffer))return false;
+    const equal=(a:Uint8Array,b:Uint8Array)=>a.length===b.length&&a.every((byte,index)=>byte===b[index]);return equal(value.iv,expected.iv)&&equal(new Uint8Array(value.ciphertext),new Uint8Array(expected.ciphertext));
+  }
+  private async initializeMarker():Promise<void>{
+    const tx=this.db.transaction('offline','readonly'),done=complete(tx),value=await req(tx.objectStore('offline').get(this.markerId())) as KeyMarker|undefined;await done;
+    if(value!==undefined){if(!record(value)||value.id!==this.markerId()||value.partition!=='@meta:'+this.partition||!Number.isSafeInteger(value.epoch)||value.epoch<1||!(value.iv instanceof Uint8Array)||value.iv.length!==12||!(value.ciphertext instanceof ArrayBuffer)||value.ciphertext.byteLength!==28)throw Error('Invalid offline queue key marker');
+      try{const clear=await this.crypt.subtle.decrypt({name:'AES-GCM',iv:value.iv,additionalData:this.markerAad(value.epoch)},this.key,value.ciphertext);if(dec.decode(clear)!=='queue-key-v1')throw Error('Invalid marker');}catch{throw Error('Cannot authenticate offline queue key');}this.marker=value;
+    }
+    await this.ensureCurrent();
+  }
+  private async guard(store:IDBObjectStore,tx:IDBTransaction,done:Promise<void>):Promise<void>{const value=await req(store.get(this.markerId()));if(this.closed||!this.sameMarker(value)){tx.abort();try{await done;}catch{}throw Error('Offline queue key changed');}}
+  private async ensureCurrent():Promise<void>{if(this.closed)throw Error('Offline queue key changed');const tx=this.db.transaction('offline','readonly'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);await done;if(this.closed)throw Error('Offline queue key changed');}
+  private async newMarker(key:CryptoKey):Promise<KeyMarker>{const epoch=(this.marker?.epoch??0)+1;if(!Number.isSafeInteger(epoch))throw Error('Invalid offline queue key epoch');const iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.markerAad(epoch)},key,enc.encode('queue-key-v1'));return {id:this.markerId(),partition:'@meta:'+this.partition,epoch,iv,ciphertext};}
   getScope():BrowserQueueScope{return {...this.scope};}
   private async itemId(requestKey:string):Promise<string>{return hex(await this.crypt.subtle.digest('SHA-256',enc.encode(JSON.stringify([this.partition,requestKey]))));}
   private aad(id:string,version:number):Uint8Array<ArrayBuffer>{return enc.encode(JSON.stringify([this.partition,id,version]));}
@@ -73,34 +91,34 @@ export class EncryptedBrowserQueue {
   }
   async get(id:string):Promise<BrowserQueueItem|undefined>{
     if(!/^[a-f0-9]{64}$/.test(id))throw Error('Invalid offline ID');
-    const tx=this.db.transaction('offline','readonly'),done=complete(tx),entry=await req(tx.objectStore('offline').get(id)) as Envelope|undefined;await done;
-    if(!entry||entry.partition!==this.partition)return undefined;return this.unseal(entry);
+    const tx=this.db.transaction('offline','readonly'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);const entry=await req(store.get(id)) as Envelope|undefined;await done;
+    const result=!entry||entry.partition!==this.partition?undefined:await this.unseal(entry);await this.ensureCurrent();return result;
   }
   async list():Promise<BrowserQueueItem[]>{
-    const tx=this.db.transaction('offline','readonly'),done=complete(tx),entries=await req(tx.objectStore('offline').index('partition').getAll(this.partition)) as Envelope[];await done;
-    if(entries.length>1000)throw Error('Offline queue too large');return Promise.all(entries.map(entry=>this.unseal(entry)));
+    const tx=this.db.transaction('offline','readonly'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);const entries=await req(store.index('partition').getAll(this.partition)) as Envelope[];await done;
+    if(entries.length>1000)throw Error('Offline queue too large');const items=await Promise.all(entries.map(entry=>this.unseal(entry)));await this.ensureCurrent();return items;
   }
   /** Re-encrypt a quiescent partition atomically; callers must coordinate all other queue instances. */
   async rotateKey(nextKey:CryptoKey):Promise<number>{
     if(!nextKey||nextKey.type!=='secret'||nextKey.extractable||nextKey.algorithm.name!=='AES-GCM'||!nextKey.usages.includes('encrypt')||!nextKey.usages.includes('decrypt'))throw Error('Invalid offline queue key');
-    const read=this.db.transaction('offline','readonly'),readDone=complete(read),cursorRequest=read.objectStore('offline').index('partition').openCursor(this.partition),entries:Envelope[]=[];let bytes=0;
+    const read=this.db.transaction('offline','readonly'),readDone=complete(read),readStore=read.objectStore('offline');await this.guard(readStore,read,readDone);const cursorRequest=readStore.index('partition').openCursor(this.partition),entries:Envelope[]=[];let bytes=0;
     for(let cursor=await req(cursorRequest);cursor;cursor=await req(cursorRequest)){const entry=cursor.value as Envelope;if(!(entry.ciphertext instanceof ArrayBuffer)){read.abort();try{await readDone;}catch{}throw Error('Invalid encrypted offline entry');}bytes+=entry.ciphertext.byteLength;if(entries.length>=1000||bytes>64*1024*1024){read.abort();try{await readDone;}catch{}throw Error('Offline queue too large to rotate');}entries.push(entry);cursor.continue();}
-    await readDone;if(!entries.length)return 0;
+    await readDone;
     const items=await Promise.all(entries.map(entry=>this.unseal(entry)));if(items.some(item=>item.status==='running'))throw Error('Offline queue has running operations');if(items.some(item=>item.version>=Number.MAX_SAFE_INTEGER))throw Error('Invalid offline version');
-    const replacements=await Promise.all(items.map(item=>this.seal({...item,version:item.version+1},nextKey)));
-    const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline'),check=store.index('partition').openCursor(this.partition),versions=new Map(entries.map(entry=>[entry.id,entry.version]));let count=0;
+    const [replacements,marker]=await Promise.all([Promise.all(items.map(item=>this.seal({...item,version:item.version+1},nextKey))),this.newMarker(nextKey)]);
+    const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);const check=store.index('partition').openCursor(this.partition),versions=new Map(entries.map(entry=>[entry.id,entry.version]));let count=0;
     for(let cursor=await req(check);cursor;cursor=await req(check)){const entry=cursor.value as Envelope;count++;if(count>entries.length||entry.partition!==this.partition||!versions.has(entry.id)||versions.get(entry.id)!==entry.version){tx.abort();try{await done;}catch{}throw Error('Offline queue changed during rotation');}cursor.continue();}
     if(count!==entries.length){tx.abort();try{await done;}catch{}throw Error('Offline queue changed during rotation');}
-    for(const entry of replacements)store.put(entry);await done;this.close();return replacements.length;
+    for(const entry of replacements)store.put(entry);store.put(marker);await done;this.close();return replacements.length;
   }
   async enqueue(operationId:string,requestKey:string,payload:Record<string,unknown>):Promise<BrowserQueueItem>{
     if(!identifier(operationId)||!identifier(requestKey))throw Error('Invalid offline request');
     const normalized=copy(payload),id=await this.itemId(requestKey),item:BrowserQueueItem={id,version:1,operationId,requestKey,idempotencyKey:this.crypt.randomUUID(),payload:normalized,status:'pending',attempts:0},envelope=await this.seal(item);
     const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');
-    const existing=await req(store.get(id)) as Envelope|undefined;
+    await this.guard(store,tx,done);const existing=await req(store.get(id)) as Envelope|undefined;
     if(!existing){const count=await req(store.index('partition').count(this.partition));if(count>=1000){tx.abort();try{await done;}catch{}throw Error('Offline queue full');}store.add(envelope);}
     await done;
-    if(existing){const previous=await this.unseal(existing);if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized))throw Error('Offline request conflict');return previous;}
+    if(existing){const previous=await this.unseal(existing);await this.ensureCurrent();if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized))throw Error('Offline request conflict');return previous;}
     return structuredClone(item);
   }
   /** Atomically replace a reviewed conflict with a new, separately idempotent intent. */
@@ -118,7 +136,7 @@ export class EncryptedBrowserQueue {
     const original={...current,status:'discarded' as const,version:current.version+1,replacementId};
     const [originalEnvelope,replacementEnvelope]=await Promise.all([this.seal(original),this.seal(replacement)]);
     const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');
-    const latest=await req(store.get(id)) as Envelope|undefined,existing=await req(store.get(replacementId)) as Envelope|undefined,count=await req(store.index('partition').count(this.partition));
+    await this.guard(store,tx,done);const latest=await req(store.get(id)) as Envelope|undefined,existing=await req(store.get(replacementId)) as Envelope|undefined,count=await req(store.index('partition').count(this.partition));
     if(!latest||latest.partition!==this.partition||latest.version!==expectedVersion||existing||count>=1000){
       tx.abort();try{await done;}catch{}
       if(existing)throw Error('Offline request conflict');if(count>=1000)throw Error('Offline queue full');throw Error('Offline version conflict');
@@ -133,7 +151,7 @@ export class EncryptedBrowserQueue {
     const target=transitions[action]?.[current.status];if(!target)throw Error('Invalid offline transition');
     if((action==='claim'&&current.attempts>=Number.MAX_SAFE_INTEGER)||(action==='release'&&current.attempts<1))throw Error('Invalid offline attempt count');
     const updated={...current,status:target,version:current.version+1,attempts:current.attempts+(action==='claim'?1:action==='release'?-1:0)},envelope=await this.seal(updated);
-    const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline'),latest=await req(store.get(id)) as Envelope|undefined;
+    const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);const latest=await req(store.get(id)) as Envelope|undefined;
     if(!latest||latest.partition!==this.partition||latest.version!==expectedVersion){tx.abort();try{await done;}catch{}throw Error('Offline version conflict');}
     store.put(envelope);await done;return structuredClone(updated);
   }
