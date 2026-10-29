@@ -1,7 +1,7 @@
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {SqliteAgentRuns,type AgentRunScope,type DurableAgentRun} from './durable-runs.js';
 
-type Outcome='succeeded'|'failed'|'stopped'|'uncertain'|{status:'delegation_expired';grantId:string;revision:number};
+type Outcome='succeeded'|'failed'|'stopped'|'uncertain'|{status:'delegation_expired';grantId:string;revision:number}|{status:'approval_required';actionId:string};
 type WorkerOptions={
  runs:SqliteAgentRuns;
  definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined};
@@ -40,12 +40,12 @@ export class DurableAgentWorker {
    if(await authorizeStart(structuredClone(run),structuredClone(definition))!==true)throw Error('Agent run forbidden');
    assertLease();started=true;
    const result=await execute(structuredClone(run),{signal:controller.signal,assertLease});
-   if(typeof result==='string'&&['succeeded','failed','stopped','uncertain'].includes(result))outcome=result;else if(result&&typeof result==='object'&&result.status==='delegation_expired')outcome={status:'delegation_expired',grantId:result.grantId,revision:result.revision};
+   if(typeof result==='string'&&['succeeded','failed','stopped','uncertain'].includes(result))outcome=result;else if(result&&typeof result==='object'&&result.status==='delegation_expired')outcome={status:'delegation_expired',grantId:result.grantId,revision:result.revision};else if(result&&typeof result==='object'&&result.status==='approval_required')outcome={status:'approval_required',actionId:result.actionId};
   }catch{if(!started)outcome='failed';}
   finally{clearInterval(timer);}
   const current=runs.get(scope,runId);
   if(!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.leaseUntil===null||this.clock()>=current.leaseUntil)throw Error('Agent run lease lost');
-  if(typeof outcome==='object'){if(!lost&&current.status==='running'){try{return runs.pauseForDelegation(scope,runId,current.revision,token,outcome.grantId,outcome.revision,this.clock());}catch{outcome='uncertain';}}else outcome=current.status==='pause_requested'||current.status==='cancel_requested'?'stopped':'uncertain';}
+  if(typeof outcome==='object'){if(!lost&&current.status==='running'){try{return outcome.status==='approval_required'?runs.pauseForApproval(scope,runId,current.revision,token,outcome.actionId,this.clock()):runs.pauseForDelegation(scope,runId,current.revision,token,outcome.grantId,outcome.revision,this.clock());}catch{outcome='uncertain';}}else outcome=current.status==='pause_requested'||current.status==='cancel_requested'?'stopped':'uncertain';}
   if(lost&&outcome!=='succeeded'&&outcome!=='failed')outcome=current.status==='pause_requested'||current.status==='cancel_requested'?(outcome==='stopped'?'stopped':'uncertain'):'uncertain';
   if(outcome==='stopped'&&!['pause_requested','cancel_requested'].includes(current.status))outcome='uncertain';
   return runs.settle(scope,runId,current.revision,token,outcome,this.clock());

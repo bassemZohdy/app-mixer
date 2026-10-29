@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 
 type RunScope={tenantId:string;agentId:string};
 type RunStatus='queued'|'running'|'pause_requested'|'cancel_requested'|'paused'|'uncertain'|'succeeded'|'failed'|'cancelled';
-export type DurableAgentRun={tenantId:string;agentId:string;runId:string;definitionVersion:number;revision:number;status:RunStatus;attempts:number;maxAttempts:number;deadline:number;leaseOwner:string|null;leaseToken:string|null;leaseUntil:number|null;archived:boolean;delegationWait:{grantId:string;revision:number;principalId:string}|null};
+export type DurableAgentRun={tenantId:string;agentId:string;runId:string;definitionVersion:number;revision:number;status:RunStatus;attempts:number;maxAttempts:number;deadline:number;leaseOwner:string|null;leaseToken:string|null;leaseUntil:number|null;archived:boolean;delegationWait:{grantId:string;revision:number;principalId:string}|null;approvalWait:{actionId:string}|null};
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
 const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
 function scopeKey(scope:RunScope,runId:string):void{if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(runId))throw Error('Invalid run scope');}
@@ -19,13 +19,15 @@ export class SqliteAgentRuns {
    lease_owner TEXT,lease_token TEXT,lease_until INTEGER,archived INTEGER NOT NULL DEFAULT 0,
    PRIMARY KEY(tenant_id,agent_id,run_id)
   );
-  CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);}catch(error){this.db.close();throw error;}}
+  CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
+  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  get(scope:RunScope,runId:string):DurableAgentRun|undefined {
   scopeKey(scope,runId);const row=this.db.prepare('SELECT * FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
   if(!row)return undefined;
   const wait=this.db.prepare('SELECT grant_id,grant_revision,principal_id FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
-  return {delegationWait:wait?{grantId:String(wait.grant_id),revision:Number(wait.grant_revision),principalId:String(wait.principal_id)}:null,tenantId:scope.tenantId,agentId:scope.agentId,runId,definitionVersion:Number(row.definition_version),revision:Number(row.revision),status:row.status as RunStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts),deadline:Number(row.deadline),leaseOwner:row.lease_owner as string|null,leaseToken:row.lease_token as string|null,leaseUntil:row.lease_until===null?null:Number(row.lease_until),archived:row.archived===1};
+  const approvalWait=this.db.prepare('SELECT action_id FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
+  return {approvalWait:approvalWait?{actionId:String(approvalWait.action_id)}:null,delegationWait:wait?{grantId:String(wait.grant_id),revision:Number(wait.grant_revision),principalId:String(wait.principal_id)}:null,tenantId:scope.tenantId,agentId:scope.agentId,runId,definitionVersion:Number(row.definition_version),revision:Number(row.revision),status:row.status as RunStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts),deadline:Number(row.deadline),leaseOwner:row.lease_owner as string|null,leaseToken:row.lease_token as string|null,leaseUntil:row.lease_until===null?null:Number(row.lease_until),archived:row.archived===1};
  }
  list(scope:RunScope,options:{after?:string;limit?:number;includeArchived?:boolean}={}):DurableAgentRun[] {
   scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??100)||(options.limit??100)<1||(options.limit??100)>100||(options.includeArchived!==undefined&&typeof options.includeArchived!=='boolean'))throw Error('Invalid run listing');
@@ -59,8 +61,8 @@ export class SqliteAgentRuns {
   return this.transition(scope,runId,revision,run=>{
    if(action==='pause'&&run.status==='queued')run.status='paused';
    else if(action==='pause'&&run.status==='running')run.status='pause_requested';
-   else if(action==='resume'&&run.status==='paused'&&run.attempts<run.maxAttempts){if(run.delegationWait){const wait=run.delegationWait;const grant=this.db.prepare('SELECT principal_id,revision,revoked,expires_at FROM agent_delegations WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=?').get(scope.tenantId,scope.agentId,runId,wait.grantId);if(!grant||grant.principal_id!==wait.principalId||Number(grant.revision)<=wait.revision||grant.revoked===1||Number(grant.expires_at)<=now||run.deadline<=now)throw Error('Delegation renewal required');this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;}run.status='queued';}
-   else if(action==='cancel'&&(run.status==='queued'||run.status==='paused')){run.status='cancelled';this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;}
+   else if(action==='resume'&&run.status==='paused'&&run.attempts<run.maxAttempts){if(run.approvalWait){const approval=this.db.prepare('SELECT status,expires_at,definition_version FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(scope.tenantId,scope.agentId,runId,run.approvalWait.actionId);if(!approval||approval.status!=='approved'||Number(approval.expires_at)<=now||Number(approval.definition_version)!==run.definitionVersion||run.deadline<=now)throw Error('Approval required');this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;}if(run.delegationWait){const wait=run.delegationWait;const grant=this.db.prepare('SELECT principal_id,revision,revoked,expires_at FROM agent_delegations WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=?').get(scope.tenantId,scope.agentId,runId,wait.grantId);if(!grant||grant.principal_id!==wait.principalId||Number(grant.revision)<=wait.revision||grant.revoked===1||Number(grant.expires_at)<=now||run.deadline<=now)throw Error('Delegation renewal required');this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;}run.status='queued';}
+   else if(action==='cancel'&&(run.status==='queued'||run.status==='paused')){run.status='cancelled';this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;}
    else if(action==='cancel'&&(run.status==='running'||run.status==='pause_requested'))run.status='cancel_requested';
    else throw Error('Invalid run state');
   });
@@ -71,6 +73,16 @@ export class SqliteAgentRuns {
    if(outcome==='stopped'){if(run.status==='pause_requested')run.status='paused';else if(run.status==='cancel_requested')run.status='cancelled';else throw Error('Invalid run state');}
    else run.status=outcome;
    run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
+  });
+ }
+ /** Pause only after execution stopped and no journaled action has an uncertain outcome. */
+ pauseForApproval(scope:RunScope,runId:string,revision:number,token:string,actionId:string,now=Date.now()):DurableAgentRun {
+  if(!id(token)||!id(actionId)||!number(now))throw Error('Invalid approval wait');
+  return this.transition(scope,runId,revision,run=>{this.checkLease(run,token,now);if(run.status!=='running')throw Error('Invalid run state');
+   const approval=this.db.prepare('SELECT status,expires_at,definition_version FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(scope.tenantId,scope.agentId,runId,actionId);
+   if(!approval||!['pending','approved'].includes(String(approval.status))||Number(approval.expires_at)<=now||Number(approval.definition_version)!==run.definitionVersion)throw Error('Approval unavailable');
+   const table=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_action_journal'").get();if(!table)throw Error('Action journal required');const action=this.db.prepare("SELECT 1 AS found FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND status IN ('dispatching','uncertain') LIMIT 1").get(scope.tenantId,scope.agentId,runId);if(action)throw Error('Action requires reconciliation');
+   this.db.prepare('INSERT INTO agent_approval_waits VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,actionId);run.approvalWait={actionId};run.status='paused';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
   });
  }
  /** The worker has stopped before dispatch; a live lease and expired persisted grant are required. */
