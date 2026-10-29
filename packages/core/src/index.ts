@@ -86,3 +86,6 @@ export type { StagedOperation, StagedStatus } from './staged-operations.js';
 
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
+
+export { registerStagedCapability } from './staged-capabilities.js';
+export type { StagedCapabilityOptions } from './staged-capabilities.js';

@@ -1,5 +1,5 @@
 export type CapabilityCandidate = {operationId:string; method:string; path:string; summary?:string};
-export type InvocationContext = {tenantId:string; principalId:string; origin:'ui'|'agent'};
+export type InvocationContext = {tenantId:string; principalId:string; origin:'ui'|'agent'|'service'};
 export type CapabilityAuditEvent = {operationId:string; tenantId:string; principalId:string; outcome:'attempt'|'not_found'|'denied'|'invalid'|'succeeded'|'failed'};
 export type CapabilityAuditSink = (event:CapabilityAuditEvent) => void | Promise<void>;
 type PolicyContext = {tenantId:string; principalId:string};
@@ -46,7 +46,7 @@ export class CapabilityRegistry {
   }
   async invoke(operationId:string,input:unknown,context:InvocationContext):Promise<unknown> {
     if(typeof operationId!=='string' || !operationId.trim()) throw Error('Invalid capability ID');
-    if(!context || typeof context.tenantId!=='string' || !context.tenantId.trim() || typeof context.principalId!=='string' || !context.principalId.trim() || !['ui','agent'].includes(context.origin)) throw Error('Invalid invocation context');
+    if(!context || typeof context.tenantId!=='string' || !context.tenantId.trim() || typeof context.principalId!=='string' || !context.principalId.trim() || !['ui','agent','service'].includes(context.origin)) throw Error('Invalid invocation context');
     // Origin is intentionally not part of authorization or execution context.
     const policyContext={tenantId:context.tenantId,principalId:context.principalId};
     const audit = (outcome:CapabilityAuditEvent['outcome']) => this.audit({operationId,...policyContext,outcome});
