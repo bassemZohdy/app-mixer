@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 
 const appMixerCatalog = 'https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json';
@@ -83,11 +82,34 @@ dynamic _update(dynamic data, String path, dynamic value, bool remove) {
   return _copy(root);
 }
 
+typedef FlutterExtensionBuilder = Widget Function(BuildContext context, Map<String, dynamic> props);
+typedef FlutterExtensionValidator = bool Function(Map<String, dynamic> component);
+
+class _FlutterExtension {
+  const _FlutterExtension(this.builder, this.validate);
+  final FlutterExtensionBuilder builder;
+  final FlutterExtensionValidator validate;
+}
+
+/// Static, trusted host registrations. The host owns compatibility and approval checks.
+class FlutterComponentRegistry {
+  final Map<String, _FlutterExtension> _entries = {};
+  void register(String name, FlutterExtensionBuilder builder, FlutterExtensionValidator validate) {
+    if (!RegExp(r'^[a-z][a-z0-9.-]{0,127}$').hasMatch(name) ||
+        ['constructor','prototype','__proto__'].contains(name) || _entries.containsKey(name)) {
+      throw ArgumentError('Invalid or duplicate Flutter extension');
+    }
+    _entries[name] = _FlutterExtension(builder, validate);
+  }
+  Map<String, _FlutterExtension> _snapshot() => Map.of(_entries);
+}
+
 class NativeNode {
-  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value});
+  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.extensionProps});
   final String id, kind;
   final List<NativeNode> children;
   final String? text, variant, justify, align, label, value;
+  final Map<String, dynamic>? extensionProps;
 }
 class _Surface {
   _Surface(this.id, this.revision);
@@ -106,6 +128,8 @@ class SurfaceView {
 
 /// Validates a bounded subset and commits component updates atomically.
 class FlutterSurfaceStore {
+  FlutterSurfaceStore([FlutterComponentRegistry? registry]) : _extensions = registry?._snapshot() ?? {};
+  final Map<String, _FlutterExtension> _extensions;
   final Map<String, _Surface> _surfaces = {};
   int _revision = 0;
   void apply(Object? input) {
@@ -137,7 +161,7 @@ class FlutterSurfaceStore {
     final components = Map<String, Map<String, dynamic>>.from(surface.components);
     for (final value in list) {
       final component = _object(value); _validate(component);
-      components[component['id'] as String] = _object(jsonDecode(jsonEncode(component)));
+      components[component['id'] as String] = _object(_copy(component));
     }
     if (components.length > 1000) throw FormatException('Too many components');
     _root(components, surface.data); surface.components = components; surface.revision = ++_revision;
@@ -188,7 +212,11 @@ class FlutterSurfaceStore {
       }
     } else if (type == 'Card') {
       if (!_only(c, ['id','component','child']) || !_id(c['child'])) throw FormatException('Unsupported Card');
-    } else {throw FormatException('Unsupported component');}
+    } else {
+      final extension = _extensions[type];
+      if (extension == null || c.keys.any((key) => ['key','ref','children'].contains(key))) throw FormatException('Unsupported component');
+      if (!extension.validate(_object(_copy(c)))) throw FormatException('Invalid Flutter extension component');
+    }
   }
   NativeNode? _root(Map<String, Map<String, dynamic>> components, dynamic data) {
     if (!components.containsKey('root')) return null;
@@ -198,12 +226,14 @@ class FlutterSurfaceStore {
       final c = components[id]; if (c == null) return null;
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
-      final nextStretchDepth=stretchDepth+(c['align']=='stretch'?1:0);
+      final nextStretchDepth=stretchDepth+((c['component']=='Column'||c['component']=='Row')&&c['align']=='stretch'?1:0);
       if(nextStretchDepth>4) throw FormatException('Too many nested stretch layouts');
       final ids = c['component'] == 'Card' || c['component'] == 'Button' ? [c['child'] as String] : c['component'] == 'Column' || c['component'] == 'Row' ? List<String>.from(c['children'] as List) : <String>[];
-      final rawText=c['text']; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
+      final rawText=c['component']=='Text' ? c['text'] : null; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextStretchDepth)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['label'] as String?, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: c['variant'] as String?, justify: c['justify'] as String?, align: c['align'] as String?);
+      final isExtension=_extensions.containsKey(c['component']);
+      final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextStretchDepth)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
     }
     return visit('root', {}, 0);
   }
@@ -211,8 +241,9 @@ class FlutterSurfaceStore {
 
 /// Hosts an ordered message source; a new source must replay current surfaces.
 class AppMixerA2UI extends StatefulWidget {
-  const AppMixerA2UI({super.key, required this.subscribe, required this.onError, this.onAction});
+  const AppMixerA2UI({super.key, required this.subscribe, required this.onError, this.onAction, this.extensions});
   final A2UISubscribe subscribe;
+  final FlutterComponentRegistry? extensions;
   final void Function(Object error) onError;
   final void Function(Map<String,dynamic> action)? onAction;
   @override
@@ -225,10 +256,10 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
   @override
   void initState() {super.initState(); _connect();}
   @override
-  void didUpdateWidget(covariant AppMixerA2UI oldWidget) {super.didUpdateWidget(oldWidget); if (oldWidget.subscribe != widget.subscribe) _connect();}
+  void didUpdateWidget(covariant AppMixerA2UI oldWidget) {super.didUpdateWidget(oldWidget); if (oldWidget.subscribe != widget.subscribe || oldWidget.extensions != widget.extensions) _connect();}
   void _connect() {
     final generation = ++_generation;
-    _disconnect(); _store = FlutterSurfaceStore();
+    _disconnect(); _store = FlutterSurfaceStore(widget.extensions);
     try {
       _unsubscribe = widget.subscribe((message) {
         if (!mounted || generation != _generation) return;
@@ -249,6 +280,8 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
   }
   bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path) {
+    final extension=store._extensions[node.kind];
+    if (extension!=null) return extension.builder(context, _object(_copy(node.extensionProps)));
     if (node.kind == 'Text') {
       final theme = Theme.of(context).textTheme;
       final style = switch (node.variant) {
