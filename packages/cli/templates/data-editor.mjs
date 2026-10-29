@@ -21,9 +21,10 @@ function fieldControl(document,field) {
 
 
 // The host chooses the capabilities; application definitions only supply a label.
-export function createRecordEditor({getOperation,putOperation,listOperation,fields}) {
+export function createRecordEditor({getOperation,putOperation,listOperation,fields,expectedSchemaVersion}) {
   const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
   if(!validOperation(getOperation)||!validOperation(putOperation)||(listOperation!==undefined&&!validOperation(listOperation)))throw Error('Invalid record editor capabilities');
+  if(expectedSchemaVersion!==undefined&&(!Number.isSafeInteger(expectedSchemaVersion)||expectedSchemaVersion<0))throw Error('Invalid record schema version');
   const schema=normalizeFields(fields);
   const validate=component=>{
     if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
@@ -62,11 +63,11 @@ export function createRecordEditor({getOperation,putOperation,listOperation,fiel
       let parsed;if(schema){let valid=true;for(const item of controls)if(!checkField(item))valid=false;if(!valid){status.textContent='Check the fields marked above.';return;}parsed=JSON.parse(JSON.stringify(original));for(const item of controls){const next=readField(item);if(next===undefined){if(item.dirty||!Object.hasOwn(original,item.field.key))delete parsed[item.field.key];}else parsed[item.field.key]=next;}}else try{parsed=JSON.parse(value.value);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('Expected an object');}catch{status.textContent='Enter a valid JSON object.';return;}
       setBusy(true);
       try {
-        const result=await invokeCapability(putOperation,{id:loadedId,expectedRevision:revision,value:parsed});
+        const result=await invokeCapability(putOperation,{id:loadedId,expectedRevision:revision,value:parsed,...(expectedSchemaVersion===undefined?{}:{expectedSchemaVersion})});
         if(!result||result.id!==loadedId||!Number.isSafeInteger(result.revision)||result.revision<1)throw Error('Invalid save response');
         revision=result.revision;original=JSON.parse(JSON.stringify(parsed));lastSavedJSON=value.value;if(schema)for(const item of controls)item.dirty=false;status.textContent='Record saved.';
       } catch(error){
-        if(error.status===409){loadedId='';preserveEdits=true;status.textContent='Record changed elsewhere. Copy your edits, then load the latest version.';}
+        if(error.status===409){loadedId='';preserveEdits=true;status.textContent=error.message==='Data schema version conflict'?'Data schema changed. Copy your edits and update the editor configuration before reloading.':'Record changed elsewhere. Copy your edits, then load the latest version.';}
         else status.textContent=error.message||'Could not save record.';
       } finally {setBusy(false);}
     });

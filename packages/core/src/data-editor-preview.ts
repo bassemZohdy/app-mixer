@@ -20,9 +20,10 @@ function fieldControl(document,field) {
   control.required=field.required;error.setAttribute('role','alert');label.append(control,error);return {field,control,error,dirty:false};
 }
 
-export function createRecordEditor({getOperation,putOperation,listOperation,fields}) {
+export function createRecordEditor({getOperation,putOperation,listOperation,fields,expectedSchemaVersion}) {
   const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
   if(!validOperation(getOperation)||!validOperation(putOperation)||(listOperation!==undefined&&!validOperation(listOperation)))throw Error('Invalid record editor capabilities');
+  if(expectedSchemaVersion!==undefined&&(!Number.isSafeInteger(expectedSchemaVersion)||expectedSchemaVersion<0))throw Error('Invalid record schema version');
   const schema=normalizeFields(fields);
   const validate=component=>{
     if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
