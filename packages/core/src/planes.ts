@@ -11,6 +11,7 @@ import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
+  migrateDraft?(expectedRevision:number,targetVersion:number):ApplicationDefinition;
   apply(revision: number, patches: Patch[]): ApplicationDefinition;
   publish(revision: number): { version: number; definition: ApplicationDefinition };
   promote?(input:unknown,expectedVersion:number,targetEnvironment:string): { version: number; definition: ApplicationDefinition };
@@ -39,7 +40,7 @@ function component(value: unknown): value is Component {
        (typeof prop === 'string' && prop.length <= 10000)));
 }
 function page(value: unknown): value is Page {
-  return record(value) && exact(value, ['id','title','route','components']) &&
+  return record(value) && exact(value, ['id','title','route','components','description']) && (value.description===undefined||(typeof value.description==='string'&&value.description.length<=10000)) &&
     string(value.id) && string(value.title) && string(value.route) &&
     Array.isArray(value.components) && value.components.length <= 500 && value.components.every(component);
 }
@@ -47,6 +48,7 @@ export function isValidPatch(value: unknown): value is Patch {
   if (!record(value)) return false;
   if (value.op === 'addPage') return exact(value, ['op','page']) && page(value.page);
   if (value.op === 'setPageTitle') return exact(value, ['op','pageId','title']) && string(value.pageId) && string(value.title);
+  if (value.op === 'setPageDescription') return exact(value,['op','pageId','description']) && string(value.pageId) && typeof value.description === 'string' && value.description.length <= 10000;
   if (value.op === 'addComponent') return exact(value, ['op','pageId','component']) && string(value.pageId) && component(value.component);
   if (value.op === 'setExtensions') return exact(value, ['op','extensions']) && isValidExtensionReferences(value.extensions);
   if (value.op === 'setExtensionOperations') return exact(value, ['op','operations']) && isValidExtensionOperations(value.operations);
@@ -79,10 +81,10 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
     handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof Error && ['Revision conflict','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
+      else if (error instanceof Error && ['Revision conflict','Unsupported schema migration','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
       else if (error instanceof Error && ['Proposal not found','Publication not found'].includes(error.message)) respond(res, 404, {error:error.message});
       else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
-      else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal','Invalid promotion package'].includes(error.message)) respond(res, 400, {error:error.message});
+      else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal','Invalid promotion package','Invalid page description','Invalid migration request'].includes(error.message)) respond(res, 400, {error:error.message});
       else respond(res, 500, {error:'Internal server error'});
     });
   });
@@ -143,6 +145,12 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (!record(input) || !exact(input, ['baseRevision','patches']) || !revision(input.baseRevision) ||
           !Array.isArray(input.patches) || input.patches.length > 100 || !input.patches.every(isValidPatch)) throw new RequestError(400, 'Invalid patch request');
       respond(res, 200, repository.apply(input.baseRevision, input.patches)); return;
+    }
+    if (req.method === 'POST' && req.url === '/draft/migrate') {
+      const input=await body(req);
+      if(!record(input)||!exact(input,['expectedRevision','targetVersion'])||!revision(input.expectedRevision)||!revision(input.targetVersion)||input.targetVersion<1)throw new RequestError(400,'Invalid migration request');
+      if(!repository.migrateDraft)throw new RequestError(501,'Migration unavailable');
+      respond(res,200,repository.migrateDraft(input.expectedRevision,input.targetVersion));return;
     }
     if (req.method === 'POST' && req.url === '/publish') {
       const input = await body(req);

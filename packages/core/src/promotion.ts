@@ -8,7 +8,7 @@ const exact=(x:Record<string,unknown>,allowed:string[])=>Object.keys(x).every(k=
 export const validEnvironment=(x:unknown):x is string=>typeof x==='string'&&/^[a-z][a-z0-9-]{0,63}$/.test(x);
 function digest(payload:Omit<PromotionPackage,'digest'>):string{return createHash('sha256').update(JSON.stringify(payload)).digest('hex');}
 function checkedDefinition(value:unknown):ApplicationDefinition {
- if(!object(value)||!exact(value,['id','schemaVersion','revision','pages','extensions','extensionOperations'])||typeof value.id!=='string'||!value.id.trim()||value.id.length>256||value.schemaVersion!==1||!Number.isSafeInteger(value.revision)||Number(value.revision)<0||!Array.isArray(value.pages)||value.pages.length>500||!value.pages.every(page=>isValidPatch({op:'addPage',page}))||(value.extensions!==undefined&&!isValidExtensionReferences(value.extensions))||(value.extensionOperations!==undefined&&!isValidExtensionOperations(value.extensionOperations)))throw Error('Invalid promotion package');
+ if(!object(value)||!exact(value,['id','schemaVersion','revision','pages','extensions','extensionOperations'])||typeof value.id!=='string'||!value.id.trim()||value.id.length>256||![1,2].includes(Number(value.schemaVersion))||!Number.isSafeInteger(value.revision)||Number(value.revision)<0||!Array.isArray(value.pages)||value.pages.length>500||!value.pages.every(page=>isValidPatch({op:'addPage',page}))||(value.extensions!==undefined&&!isValidExtensionReferences(value.extensions))||(value.extensionOperations!==undefined&&!isValidExtensionOperations(value.extensionOperations)))throw Error('Invalid promotion package');
  try{validate(value as ApplicationDefinition);}catch{throw Error('Invalid promotion package');}
  return structuredClone(value) as ApplicationDefinition;
 }
