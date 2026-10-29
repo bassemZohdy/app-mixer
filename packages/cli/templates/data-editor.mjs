@@ -10,6 +10,32 @@ function normalizeFields(fields) {
     return {key:field.key,label:field.label,type:field.type,required:field.required===true,...(field.min===undefined?{}:{min:field.min}),...(field.max===undefined?{}:{max:field.max}),...(field.maxLength===undefined?{}:{maxLength:field.maxLength}),...(field.options===undefined?{}:{options:[...field.options]})};
   });
 }
+function resolveFormSchema(root){
+  const object=value=>value&&typeof value==='object'&&!Array.isArray(value);let count=0;
+  const pointer=ref=>{
+    if(ref==='#')return root;
+    if(typeof ref!=='string'||!ref.startsWith('#/')||ref.includes('%'))throw Error('Unsupported record JSON Schema form');
+    let value=root;for(const raw of ref.slice(2).split('/')){if(/~(?![01])/.test(raw))throw Error('Unsupported record JSON Schema form');const key=raw.replace(/~1/g,'/').replace(/~0/g,'~');if(!object(value)||!Object.hasOwn(value,key))throw Error('Unsupported record JSON Schema form');value=value[key];}return value;
+  };
+  const visit=(schema,stack,depth)=>{
+    if(++count>1000||depth>30)throw Error('Unsupported record JSON Schema form');
+    if(!object(schema))return schema;
+    if(Object.hasOwn(schema,'$ref')){
+      if(Object.keys(schema).some(key=>!['$ref','title'].includes(key))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
+      const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);if(!object(resolved))throw Error('Unsupported record JSON Schema form');
+      return Object.hasOwn(schema,'title')?{...resolved,title:schema.title}:resolved;
+    }
+    if(Object.hasOwn(schema,'$defs')&&!object(schema.$defs))throw Error('Unsupported record JSON Schema form');
+    const result=Object.create(null);for(const [key,value] of Object.entries(schema)){
+      if(key==='$defs')continue;
+      if(key==='properties'&&object(value)){const properties=Object.create(null);for(const [name,child] of Object.entries(value))properties[name]=visit(child,stack,depth+1);result[key]=properties;}
+      else if(key==='items')result[key]=visit(value,stack,depth+1);
+      else result[key]=value;
+    }return result;
+  };
+  return visit(root,[],0);
+}
+
 function fieldsFromJsonSchema(jsonSchema) {
   const object=value=>value&&typeof value==='object'&&!Array.isArray(value), keys=(value,allowed)=>Object.keys(value).every(key=>allowed.includes(key));
   const fields=[],groups=[];
@@ -80,7 +106,7 @@ export function createRecordEditor({getOperation,putOperation,listOperation,fiel
   if(!validOperation(getOperation)||!validOperation(putOperation)||(listOperation!==undefined&&!validOperation(listOperation)))throw Error('Invalid record editor capabilities');
   if(expectedSchemaVersion!==undefined&&(!Number.isSafeInteger(expectedSchemaVersion)||expectedSchemaVersion<0))throw Error('Invalid record schema version');
   if(fields!==undefined&&jsonSchema!==undefined)throw Error('Invalid record editor schema');
-  const schema=jsonSchema===undefined?normalizeFields(fields):fieldsFromJsonSchema(jsonSchema);
+  const schema=jsonSchema===undefined?normalizeFields(fields):fieldsFromJsonSchema(resolveFormSchema(jsonSchema));
   const validate=component=>{
     if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
        (component.label!==undefined&&(typeof component.label!=='string'||component.label.length>120)))throw Error('Invalid record editor');
