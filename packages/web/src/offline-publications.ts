@@ -3,6 +3,7 @@ export type OfflinePublicationScope={tenantId:string;principalId:string;authoriz
 export type OfflinePublication={version:number;definition:{id:string;schemaVersion:number;[key:string]:unknown}};
 export type OfflinePublicationOptions={enabled:true;databaseName:string;scope:OfflinePublicationScope;key:CryptoKey;maxAgeMs:number;authorize:(scope:OfflinePublicationScope,action:'read'|'write')=>boolean|Promise<boolean>;compatible:(definition:unknown)=>boolean;indexedDB?:IDBFactory;crypto?:Crypto;clock?:()=>number};
 type Envelope={id:string;revision:number;iv?:Uint8Array<ArrayBuffer>;ciphertext?:ArrayBuffer};
+type KeyMarker={id:string;epoch:number;iv:Uint8Array<ArrayBuffer>;ciphertext:ArrayBuffer};
 type Entry={publication:OfflinePublication;etag:string;savedAt:number};
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 const validId=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=256&&!/[\u0000-\u001f]/.test(x);
@@ -30,7 +31,7 @@ function jsonCopy(input:unknown):Record<string,unknown>{
 }
 
 export class EncryptedPublicationCache {
- private generation=0;private closed=false;
+ private generation=0;private closed=false;private marker:KeyMarker|undefined;
  private constructor(private readonly db:IDBDatabase,private readonly crypt:Crypto,private readonly key:CryptoKey,private readonly id:string,private readonly scope:OfflinePublicationScope,private readonly maxAgeMs:number,private readonly authorize:OfflinePublicationOptions['authorize'],private readonly compatible:OfflinePublicationOptions['compatible'],private readonly clock:()=>number){}
  static async open(options:OfflinePublicationOptions):Promise<EncryptedPublicationCache>{
   const factory=options?.indexedDB??globalThis.indexedDB,crypt=options?.crypto??globalThis.crypto,s=options?.scope,key=options?.key;
@@ -39,14 +40,30 @@ export class EncryptedPublicationCache {
   const id=hex(await crypt.subtle.digest('SHA-256',encoder.encode(JSON.stringify([scope.tenantId,scope.principalId,scope.authorizationKey,scope.applicationId,scope.schemaVersion]))));
   const open=factory.open(databaseName,1);open.onupgradeneeded=()=>open.result.createObjectStore('publications',{keyPath:'id'});let blocked=false;
   const db=await new Promise<IDBDatabase>((resolve,reject)=>{open.onblocked=()=>{blocked=true;reject(Error('Offline publication database blocked'));};open.onerror=()=>reject(open.error??Error('IndexedDB open failed'));open.onsuccess=()=>{if(blocked)open.result.close();else resolve(open.result);};});
-  db.onversionchange=()=>db.close();return new EncryptedPublicationCache(db,crypt,key,id,scope,maxAgeMs,authorize,compatible,clock);
+  const cache=new EncryptedPublicationCache(db,crypt,key,id,scope,maxAgeMs,authorize,compatible,clock);db.onversionchange=()=>cache.close();try{await cache.initializeMarker();return cache;}catch(error){cache.close();throw error;}
  }
  close():void{this.closed=true;this.generation++;this.db.close();}
+ private markerId():string{return '@publication-key:'+this.id;}
+ private markerAad(epoch:number):Uint8Array<ArrayBuffer>{return encoder.encode(JSON.stringify(['publication-key-v1',this.id,epoch]));}
+ private sameMarker(value:unknown):boolean{
+  const expected=this.marker;if(value===undefined)return expected===undefined;if(!expected||!object(value)||value.id!==expected.id||value.epoch!==expected.epoch||!(value.iv instanceof Uint8Array)||!(value.ciphertext instanceof ArrayBuffer))return false;
+  const equal=(a:Uint8Array,b:Uint8Array)=>a.length===b.length&&a.every((byte,index)=>byte===b[index]);return equal(value.iv,expected.iv)&&equal(new Uint8Array(value.ciphertext),new Uint8Array(expected.ciphertext));
+ }
+ private async initializeMarker():Promise<void>{
+  const tx=this.db.transaction('publications','readonly'),done=finished(tx),value=await request(tx.objectStore('publications').get(this.markerId())) as KeyMarker|undefined;await done;
+  if(value!==undefined){if(!object(value)||value.id!==this.markerId()||!Number.isSafeInteger(value.epoch)||value.epoch<1||!(value.iv instanceof Uint8Array)||value.iv.length!==12||!(value.ciphertext instanceof ArrayBuffer)||value.ciphertext.byteLength!==34)throw Error('Invalid offline publication key marker');
+   try{const clear=await this.crypt.subtle.decrypt({name:'AES-GCM',iv:value.iv,additionalData:this.markerAad(value.epoch)},this.key,value.ciphertext);if(decoder.decode(clear)!=='publication-key-v1')throw Error('Invalid marker');}catch{throw Error('Cannot authenticate offline publication key');}this.marker=value;
+  }
+  await this.ensureCurrent();
+ }
+ private async guard(store:IDBObjectStore,tx:IDBTransaction,done:Promise<void>):Promise<void>{const value=await request(store.get(this.markerId()));if(this.closed||!this.sameMarker(value)){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}}
+ private async ensureCurrent():Promise<void>{if(this.closed)throw Error('Offline publication cache changed');const tx=this.db.transaction('publications','readonly'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);await done;if(this.closed)throw Error('Offline publication cache changed');}
+ private async newMarker(key:CryptoKey):Promise<KeyMarker>{const epoch=(this.marker?.epoch??0)+1;if(!Number.isSafeInteger(epoch))throw Error('Invalid offline publication key epoch');const iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.markerAad(epoch)},key,encoder.encode('publication-key-v1'));return {id:this.markerId(),epoch,iv,ciphertext};}
  private checkGeneration(generation:number):void{if(this.closed||generation!==this.generation)throw Error('Offline publication cache changed');}
  private async permitted(action:'read'|'write',generation:number):Promise<void>{if(await this.authorize({...this.scope},action)!==true)throw Error('Offline publication access denied');this.checkGeneration(generation);}
  private now():number{const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid clock');return n;}
  private aad(revision:number):Uint8Array<ArrayBuffer>{return encoder.encode(JSON.stringify([this.id,revision]));}
- private async raw():Promise<Envelope|undefined>{const tx=this.db.transaction('publications','readonly'),done=finished(tx),value=await request(tx.objectStore('publications').get(this.id)) as Envelope|undefined;await done;if(value&&(!Number.isSafeInteger(value.revision)||value.revision<1||value.id!==this.id))throw Error('Invalid offline publication entry');return value;}
+ private async raw():Promise<Envelope|undefined>{if(this.closed)throw Error('Offline publication cache changed');const tx=this.db.transaction('publications','readonly'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const value=await request(store.get(this.id)) as Envelope|undefined;await done;if(value&&(!Number.isSafeInteger(value.revision)||value.revision<1||value.id!==this.id))throw Error('Invalid offline publication entry');return value;}
  private async verify(publication:unknown,etag:unknown,checkCompatibility=true):Promise<OfflinePublication>{
   const normalized=jsonCopy(publication),definition=normalized.definition;
   if(!Number.isSafeInteger(normalized.version)||(normalized.version as number)<1||!object(definition)||definition.id!==this.scope.applicationId||definition.schemaVersion!==this.scope.schemaVersion||typeof etag!=='string'||!/^"[a-f0-9]{64}"$/.test(etag)||(checkCompatibility&&this.compatible(structuredClone(definition))!==true))throw Error('Incompatible offline publication');
@@ -77,25 +94,25 @@ export class EncryptedPublicationCache {
   const entry={publication:normalized,etag,savedAt:this.now()},iv=this.crypt.getRandomValues(new Uint8Array(12));
   const ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},this.key,encoder.encode(JSON.stringify(entry)));
   await this.permitted('write',generation);
-  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications'),latest=await request(store.get(this.id)) as Envelope|undefined;
+  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const latest=await request(store.get(this.id)) as Envelope|undefined;
   if((latest?.revision??0)!==(previous?.revision??0)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
   store.put({id:this.id,revision,iv,ciphertext});await done;
  }
- /** Re-encrypt an existing entry with a host-supplied key; callers must coordinate other cache instances. */
+ /** Switch the scope to a host-supplied key, preserving any existing entry. */
  async rotateKey(nextKey:CryptoKey):Promise<boolean>{
   if(!nextKey||nextKey.type!=='secret'||nextKey.extractable||nextKey.algorithm.name!=='AES-GCM'||!nextKey.usages.includes('encrypt')||!nextKey.usages.includes('decrypt'))throw Error('Invalid offline publication key');
   const generation=this.generation;this.checkGeneration(generation);await this.permitted('read',generation);await this.permitted('write',generation);
-  const previous=await this.raw();if(!previous){this.checkGeneration(generation);return false;}const entry=await this.decode(previous,false);if(!entry){this.checkGeneration(generation);return false;}
-  const revision=previous.revision+1;if(!Number.isSafeInteger(revision))throw Error('Invalid offline publication revision');
-  const iv=this.crypt.getRandomValues(new Uint8Array(12));const ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},nextKey,encoder.encode(JSON.stringify(entry)));
+  const previous=await this.raw(),entry=previous?await this.decode(previous,false):undefined;
+  const revision=(previous?.revision??0)+1;if(!Number.isSafeInteger(revision))throw Error('Invalid offline publication revision');
+  let replacement:Envelope={id:this.id,revision};if(entry){const iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},nextKey,encoder.encode(JSON.stringify(entry)));replacement={id:this.id,revision,iv,ciphertext};}const marker=await this.newMarker(nextKey);
   await this.permitted('read',generation);await this.permitted('write',generation);
-  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications'),latest=await request(store.get(this.id)) as Envelope|undefined;
-  if(!latest||latest.revision!==previous.revision||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
-  store.put({id:this.id,revision,iv,ciphertext});await done;this.close();return true;
+  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const latest=await request(store.get(this.id)) as Envelope|undefined;
+  if((latest?.revision??0)!==(previous?.revision??0)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
+  store.put(replacement);store.put(marker);await done;this.close();return !!entry;
  }
  async clear():Promise<void>{
   if(this.closed)throw Error('Offline publication cache changed');this.generation++;
-  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications'),current=await request(store.get(this.id)) as Envelope|undefined;
+  const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const current=await request(store.get(this.id)) as Envelope|undefined;
   const revision=(current?.revision??0)+1;if(!Number.isSafeInteger(revision)||revision<1){tx.abort();try{await done;}catch{}throw Error('Invalid offline publication revision');}
   store.put({id:this.id,revision});await done;
  }
