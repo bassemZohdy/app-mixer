@@ -124,6 +124,24 @@ void main() {
     expect(store.snapshot().single?.text,'Safe');
   });
 
+  test('array bindings expose only canonical element indices', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateDataModel',{'surfaceId':'main','value':{'items':['first','second']}}));
+    for(final path in ['/items/length','/items/01','/items/-1','/items/2','/items/1']) {
+      store.apply(message('updateComponents',{'surfaceId':'main','components':[
+        {'id':'root','component':'Button','child':'label','action':{'event':{'name':'save','context':{'value':{'path':path}}}}},
+        {'id':'label','component':'Text','text':{'path':path}}
+      ]}));
+      final revision=store.views().single.revision;
+      expect(store.snapshot().single?.children.single.text,path=='/items/1'?'second':'');
+      if(path=='/items/1') {
+        expect(((store.action('main','root',revision)['action'] as Map)['context'] as Map)['value'],'second');
+      } else {
+        expect(()=>store.action('main','root',revision),throwsFormatException);
+      }
+    }
+  });
+
   test('deleted array elements differ from null in action context', () {
     final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
     store.apply(message('updateDataModel',{'surfaceId':'main','value':{'items':[null,'gone']}}));

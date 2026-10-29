@@ -104,6 +104,20 @@ test('deleted array elements differ from null in action context on web and nativ
  assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).action.context.value)),[null,null]);assert.deepEqual(JSON.parse(JSON.stringify(nativeEvent.action.context.value)),[null,null]);
 });
 
+test('array bindings expose only canonical element indices across web and native',()=>{
+ const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateDataModel',{surfaceId:'main',value:{items:['first','second']}}));
+ for(const path of ['/items/length','/items/01','/items/-1','/items/2']){
+  apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path}}}}},{id:'label',component:'Text',text:{path}}]}));
+  assert.equal(host.children[0].children[0].children[0].textContent,'');assert.equal(native.snapshot()[0].root.children[0].text,'');
+  assert.throws(()=>host.children[0].children[0].listeners.click(),/not found/);assert.throws(()=>native.action('main','root',native.snapshot()[0].revision),/not found/);
+ }
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/1'}}}}},{id:'label',component:'Text',text:{path:'/items/1'}}]}));
+ host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.value,'second');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.value,'second');
+});
+
 test('web and native reject null paths and optional properties atomically',()=>{
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
  const apply=value=>{web.apply(value);native.apply(value);};

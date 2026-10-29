@@ -34,7 +34,7 @@ function cloneData(value:unknown):unknown {
 }
 function read(data:unknown,path:string):unknown {
   let current=data;
-  for(const key of pointer(path)){if(!obj(current)&&!Array.isArray(current))return undefined;if(!Object.hasOwn(current,key))return undefined;current=(current as Record<string,unknown>)[key];}
+  for(const key of pointer(path)){if(!obj(current)&&!Array.isArray(current))return undefined;if(Array.isArray(current)&&(!/^(0|[1-9]\d*)$/.test(key)||Number(key)>=current.length))return undefined;if(!Object.hasOwn(current,key))return undefined;current=(current as Record<string,unknown>)[key];}
   return current;
 }
 function updateData(data:unknown,path:string,value:unknown,remove:boolean):unknown {

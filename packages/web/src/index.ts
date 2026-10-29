@@ -23,6 +23,7 @@ function read(data: unknown, path: string): unknown {
   let result = data;
   for (const key of pointer(path)) {
     if (!obj(result) && !Array.isArray(result)) return undefined;
+    if (Array.isArray(result) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= result.length)) return undefined;
     if (!Object.hasOwn(result, key)) return undefined;
     result = (result as Record<string, unknown>)[key];
   }
