@@ -130,6 +130,26 @@ test('web and native reject null paths and optional properties atomically',()=>{
  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
 });
 
+test('web and native validate components before they are connected to the tree',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]}));
+ const invalid=[
+  {id:'unused',component:'Text',text:{path:'/safe',extra:true}},
+  {id:'unused',component:'Text',text:'x'.repeat(10001)},
+  {id:'unused',component:'Row',children:[],align:'invalid'},
+  {id:'unused',component:'Card',child:''},
+  {id:'unused',component:'TextField',label:'Name',value:{path:'/'}},
+  {id:'unused',component:'Button',child:'root',action:{event:{name:'go',context:{value:Infinity}}}}
+ ];
+ for(const component of invalid){
+  const update=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Changed'},component]});
+  assert.throws(()=>web.apply(update));assert.throws(()=>native.apply(update));
+  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
+ }
+});
+
 test('web and native reject unsafe or oversized model updates atomically',()=>{
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
  const apply=value=>{web.apply(value);native.apply(value);};

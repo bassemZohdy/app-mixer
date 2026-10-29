@@ -87,11 +87,33 @@ function children(c: Obj): string[] {
 /** Only trusted application code may register render functions; incoming messages cannot execute code. */
 export class ComponentRegistry {
   private readonly entries = new Map<string, Renderer>();
-  register(name: string, renderer: Renderer): this {
-    if (!id(name) || typeof renderer !== 'function' || this.entries.has(name)) throw Error('Invalid or duplicate component');
-    this.entries.set(name, renderer); return this;
+  private readonly validators = new Map<string, (component: Obj) => void>();
+  register(name: string, renderer: Renderer, validate?: (component: Obj) => void): this {
+    if (!id(name) || typeof renderer !== 'function' || (validate !== undefined && typeof validate !== 'function') || this.entries.has(name)) throw Error('Invalid or duplicate component');
+    this.entries.set(name, renderer); if (validate) this.validators.set(name, validate); return this;
   }
   get(name: string): Renderer | undefined { return this.entries.get(name); }
+  validate(name: string, component: Obj): void { this.validators.get(name)?.(component); }
+}
+function validateBasic(c: Obj): void {
+  const type = c.component;
+  if (type === 'Text') {
+    if (!only(c,['id','component','text','variant'])) throw Error('Unsupported Text property');
+    if ((!(typeof c.text === 'string' && c.text.length <= 10000) && !(obj(c.text) && only(c.text,['path']) && typeof c.text.path === 'string' && pointer(c.text.path))) || (c.variant !== undefined && !['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string))) throw Error('Unsupported Text');
+  } else if (type === 'Column' || type === 'Row') {
+    if (!only(c,['id','component','children','justify','align']) || !Array.isArray(c.children) || c.children.length > 1000 || !c.children.every(id) || (c.justify !== undefined && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].includes(c.justify as string)) || (c.align !== undefined && !['start','center','end','stretch'].includes(c.align as string))) throw Error('Unsupported layout');
+  } else if (type === 'Card') {
+    if (!only(c,['id','component','child']) || !id(c.child)) throw Error('Unsupported Card');
+  } else if (type === 'TextField') {
+    if (!only(c,['id','component','label','value','variant']) || typeof c.label !== 'string' || !obj(c.value) || !only(c.value,['path']) || typeof c.value.path !== 'string' || pointer(c.value.path).length === 0 || (c.variant !== undefined && !['shortText','longText'].includes(c.variant as string))) throw Error('Unsupported TextField');
+  } else if (type === 'Button') {
+    if (!only(c,['id','component','child','action','variant']) || !id(c.child) || (c.variant !== undefined && !['default','primary','borderless'].includes(c.variant as string)) || !obj(c.action) || !only(c.action,['event']) || !obj(c.action.event) || !only(c.action.event,['name','context']) || !id(c.action.event.name) || (c.action.event.context !== undefined && !obj(c.action.event.context))) throw Error('Unsupported Button');
+    for (const [key,value] of Object.entries((c.action.event.context ?? {}) as Obj)) {
+      if (['__proto__','prototype','constructor'].includes(key)) throw Error('Unsafe action context');
+      if (obj(value)) { if (!only(value,['path']) || typeof value.path !== 'string') throw Error('Unsupported action context'); pointer(value.path); }
+      else if (value !== null && typeof value !== 'string' && typeof value !== 'boolean' && !(typeof value === 'number' && Number.isFinite(value))) throw Error('Unsupported action context');
+    }
+  } else throw Error('Unsupported component');
 }
 export function basicRegistry(): ComponentRegistry {
   const registry = new ComponentRegistry();
@@ -102,7 +124,7 @@ export function basicRegistry(): ComponentRegistry {
     const variants: Record<string,string> = {h1:'h1', h2:'h2', h3:'h3', h4:'h4', h5:'h5', caption:'small', body:'p'};
     const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant] : 'p';
     const element = doc.createElement(tag); element.textContent = textValue(c.text, data); return element;
-  });
+  }, validateBasic);
   for (const type of ['Column', 'Row']) registry.register(type, (c, child, _data, doc) => {
     if (!only(c, ['id','component','children','justify','align'])) throw Error('Unsupported layout property');
     const justify: Record<string,string> = {start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
@@ -115,12 +137,12 @@ export function basicRegistry(): ComponentRegistry {
     if (typeof c.align === 'string') element.style.alignItems = align[c.align];
     for (const childId of children(c)) element.appendChild(child(childId));
     return element;
-  });
+  }, validateBasic);
   registry.register('Card', (c, child, _data, doc) => {
     if (!only(c, ['id','component','child'])) throw Error('Unsupported Card property');
     if (!id(c.child)) throw Error('Invalid Card child');
     const element = doc.createElement('section'); element.appendChild(child(c.child)); return element;
-  });
+  }, validateBasic);
   registry.register('TextField', (c, _child, data, doc, interaction) => {
     if (!only(c, ['id','component','label','value','variant'])) throw Error('Unsupported TextField property');
     if (typeof c.label !== 'string' || !obj(c.value) || !only(c.value, ['path']) || typeof c.value.path !== 'string') throw Error('Invalid TextField');
@@ -137,7 +159,7 @@ export function basicRegistry(): ComponentRegistry {
     input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
     interaction.controls.set(c.id as string, input);
     wrapper.appendChild(input); return wrapper;
-  });
+  }, validateBasic);
   registry.register('Button', (c, child, _data, doc, interaction) => {
     if (!only(c, ['id','component','child','action','variant']) || !id(c.child)) throw Error('Invalid Button');
     if (c.variant !== undefined && !['default','primary','borderless'].includes(c.variant as string)) throw Error('Unsupported Button variant');
@@ -154,7 +176,7 @@ export function basicRegistry(): ComponentRegistry {
     button.appendChild(child(c.child));
     button.addEventListener('click', () => interaction.action(event.name as string, context));
     return button;
-  });
+  }, validateBasic);
   return registry;
 }
 type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
@@ -188,6 +210,7 @@ export class A2UIRenderer {
       components = new Map(surface.components);
       for (const c of payload.components) {
         if (!obj(c) || !id(c.id) || !id(c.component) || !this.registry.get(c.component)) throw Error('Unsupported component');
+        this.registry.validate(c.component, c);
         components.set(c.id, structuredClone(c));
       }
       if (components.size > 1000) throw Error('Too many components');
