@@ -103,3 +103,5 @@ export {SqliteAgentSchedules} from './agent-schedules.js';
 export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFireOptions} from './agent-schedules.js';
 export {AgentScheduleWorker} from './schedule-worker.js';
 export type {AgentScheduleWorkerOptions} from './schedule-worker.js';
+export {SqliteAgentMemory} from './agent-memory.js';
+export type {AgentMemoryRecord,AgentMemoryScope,AgentMemoryActor,AgentMemoryProvenance,AgentMemoryAction,AgentMemoryOptions} from './agent-memory.js';
