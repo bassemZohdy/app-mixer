@@ -26,6 +26,10 @@
     "./offline": {
       "types": "./dist/offline.d.ts",
       "import": "./dist/offline.js"
+    },
+    "./offline-publications": {
+      "types": "./dist/offline-publications.d.ts",
+      "import": "./dist/offline-publications.js"
     }
   }
 }
