@@ -45,9 +45,8 @@ export class EncryptedBrowserQueue {
     if(options?.enabled!==true||!identifier(options.databaseName)||!scope||!identifier(scope.tenantId)||!identifier(scope.applicationId)||!identifier(scope.principalId)||!factory||!crypt?.subtle||typeof crypt.randomUUID!=='function'||!key||key.type!=='secret'||key.extractable||key.algorithm.name!=='AES-GCM'||!key.usages.includes('encrypt')||!key.usages.includes('decrypt'))throw Error('Invalid encrypted offline storage configuration');
     const fixedScope={tenantId:scope.tenantId,applicationId:scope.applicationId,principalId:scope.principalId},databaseName=options.databaseName;
     const partition=hex(await crypt.subtle.digest('SHA-256',enc.encode(JSON.stringify([fixedScope.tenantId,fixedScope.applicationId,fixedScope.principalId]))));
-    const request=factory.open(databaseName,1);
-    request.onupgradeneeded=()=>{const store=request.result.createObjectStore('offline',{keyPath:'id'});store.createIndex('partition','partition',{unique:false});};
-    let blocked=false;
+    const request=factory.open(databaseName,2);let blocked=false;
+    request.onupgradeneeded=()=>{if(blocked){request.transaction?.abort();return;}if(!request.result.objectStoreNames.contains('offline')){const store=request.result.createObjectStore('offline',{keyPath:'id'});store.createIndex('partition','partition',{unique:false});}};
     const db=await new Promise<IDBDatabase>((resolve,reject)=>{
       request.onblocked=()=>{blocked=true;reject(Error('Offline database upgrade blocked'));};
       request.onerror=()=>reject(request.error??Error('IndexedDB open failed'));
