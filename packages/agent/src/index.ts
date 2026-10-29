@@ -134,3 +134,6 @@ export type {SignedWebhookSource,SignedWebhookOptions} from './signed-webhook.js
 
 export {createGithubWebhookAdapter} from './github-webhook.js';
 export type {GithubWebhookOptions} from './github-webhook.js';
+
+export {DurableAgentDispatcher} from './durable-dispatcher.js';
+export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';

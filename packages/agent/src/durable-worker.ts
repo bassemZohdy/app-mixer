@@ -17,6 +17,7 @@ export class DurableAgentWorker {
   if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid agent worker');
   this.clock=options.clock??Date.now;
  }
+ usesRegistry(runs:SqliteAgentRuns):boolean{return this.options.runs===runs;}
  async runOnce(scope:AgentRunScope,runId:string):Promise<DurableAgentRun>{
   scope={tenantId:scope.tenantId,agentId:scope.agentId};const {runs,definitions,workerId,leaseMs,pollMs,authorizeStart,execute}=this.options;
   let run=runs.get(scope,runId);if(!run||run.archived||run.status!=='queued')throw Error('Run unavailable');

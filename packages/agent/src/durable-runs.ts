@@ -20,6 +20,7 @@ export class SqliteAgentRuns {
    lease_owner TEXT,lease_token TEXT,lease_until INTEGER,archived INTEGER NOT NULL DEFAULT 0,
    PRIMARY KEY(tenant_id,agent_id,run_id)
   );
+  CREATE INDEX IF NOT EXISTS agent_runs_queued ON agent_runs(tenant_id,agent_id,status,archived,run_id);
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
@@ -36,6 +37,11 @@ export class SqliteAgentRuns {
   scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??100)||(options.limit??100)<1||(options.limit??100)>100||(options.includeArchived!==undefined&&typeof options.includeArchived!=='boolean'))throw Error('Invalid run listing');
   const rows=this.db.prepare('SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id>? AND (?=1 OR archived=0) ORDER BY run_id LIMIT ?').all(scope.tenantId,scope.agentId,options.after??'',options.includeArchived?1:0,options.limit??100);
   return rows.map(row=>this.get(scope,String(row.run_id))!);
+ }
+ /** Return a bounded page of queued run IDs; host authorization remains required. */
+ queuedPage(scope:RunScope,options:{after?:string;limit?:number}={}):{runIds:string[];next?:string}{
+  scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid queued run query');
+  const limit=options.limit??50,rows=this.db.prepare("SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status='queued' AND archived=0 AND run_id>? ORDER BY run_id LIMIT ?").all(scope.tenantId,scope.agentId,options.after??'',limit+1),runIds=rows.slice(0,limit).map(row=>String(row.run_id));return {runIds,...(rows.length>limit?{next:runIds[runIds.length-1]!}:{})};
  }
  create(scope:RunScope,runId:string,config:{definitionVersion:number;maxAttempts:number;deadline:number},now=Date.now()):DurableAgentRun {
   scopeKey(scope,runId);if(!config||!number(config.definitionVersion)||config.definitionVersion<1||!number(config.maxAttempts)||config.maxAttempts<1||config.maxAttempts>100||!number(config.deadline)||!number(now)||config.deadline<=now)throw Error('Invalid run configuration');
