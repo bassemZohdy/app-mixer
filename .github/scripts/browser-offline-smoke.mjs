@@ -19,6 +19,7 @@ try {
  const publication={version:1,definition:{id:'a',schemaVersion:1,title:'publication-secret'}};
  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(publication)));const etag='"'+Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('')+'"';
  const publications=await EncryptedPublicationCache.open({enabled:true,databaseName:'publication-smoke',scope:{tenantId:'t',principalId:'p',authorizationKey:'v1',applicationId:'a',schemaVersion:1},key,maxAgeMs:60000,authorize:()=>true,compatible:()=>true});await publications.store(publication,etag);if((await publications.read()).publication.definition.title!=='publication-secret')throw Error('Publication round trip failed');await publications.clear();if(await publications.read())throw Error('Publication clear failed');publications.close();
+ const legacyRequest=indexedDB.open('legacy-smoke',1);legacyRequest.onupgradeneeded=()=>{const store=legacyRequest.result.createObjectStore('offline',{keyPath:'id'});store.createIndex('partition','partition');};const legacy=await new Promise((resolve,reject)=>{legacyRequest.onsuccess=()=>resolve(legacyRequest.result);legacyRequest.onerror=()=>reject(legacyRequest.error);});let upgraded=false;legacy.onversionchange=()=>{upgraded=true;legacy.close();};const migrated=await EncryptedBrowserQueue.open({enabled:true,databaseName:'legacy-smoke',scope:{tenantId:'t',applicationId:'a',principalId:'p'},key});if(!upgraded)throw Error('Legacy connection not closed');const rejected=await new Promise(resolve=>{const old=indexedDB.open('legacy-smoke',1);old.onsuccess=()=>{old.result.close();resolve(false);};old.onerror=()=>resolve(old.error.name==='VersionError');});if(!rejected)throw Error('Legacy client was not fenced');migrated.close();
  const opts={enabled:true,databaseName:'smoke',scope:{tenantId:'t',applicationId:'a',principalId:'p'},key};
  const a=await EncryptedBrowserQueue.open(opts),b=await EncryptedBrowserQueue.open(opts);
  const item=await a.enqueue('save','request',{name:'private-value'});
@@ -47,7 +48,7 @@ try {
  if((await runtime.list()).length!==1||generatedCalls!==0)throw Error('Offline enqueue failed');online=true;
  for(let i=0;i<100&&!(await runtime.list()).some(item=>item.status==='succeeded');i++)await new Promise(done=>setTimeout(done,20));
  if(generatedCalls!==1||!(await runtime.list()).some(item=>item.status==='succeeded'))throw Error('Generated offline sync failed');form.dispose();await runtime.close();formRoot.remove();
- const open=indexedDB.open('smoke',1);const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
+ const open=indexedDB.open('smoke',2);const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
  const tx=db.transaction('offline','readonly'),get=tx.objectStore('offline').getAll(),rows=await new Promise((resolve,reject)=>{get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);});
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');
  db.close();a.close();b.close();document.body.dataset.result='pass';
