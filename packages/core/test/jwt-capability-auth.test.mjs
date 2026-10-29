@@ -2,8 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
 import {once} from 'node:events';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {SignJWT} from 'jose';
-import {CapabilityRegistry,createCapabilityServer,createJwtCapabilityAuthenticator} from '../dist/index.js';
+import {CapabilityRegistry,createCapabilityServer,createJwtCapabilityAuthenticator,SqliteJwtRevocations} from '../dist/index.js';
 const issuer='https://identity.example.test/',audience='https://api.example.test',time=1700000000000;
 const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048}),other=generateKeyPairSync('rsa',{modulusLength:2048}),jwk={...publicKey.export({format:'jwk'}),kid:'one',alg:'RS256',use:'sig'};
 const config=overrides=>({issuer,audience,jwks:{keys:[jwk]},maxTokenAgeSeconds:600,clock:()=>time,resolveActor:claims=>claims.tenant==='tenant-a'?{tenantId:claims.tenant,principalId:claims.sub}:undefined,...overrides});
@@ -34,4 +37,17 @@ test('key replacement or close rejects authentication already awaiting identity 
 
 test('a rejected key update does not invalidate an in-flight valid authentication',async()=>{
  let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),auth=createJwtCapabilityAuthenticator(config({resolveActor:async()=>{started();await gate;return {tenantId:'tenant-a',principalId:'alice'};}})),pending=auth(req('Bearer '+await token()));await ready;assert.throws(()=>auth.replaceKeys({keys:[jwk,jwk]}),/configuration/);resume();assert.deepEqual(await pending,{tenantId:'tenant-a',principalId:'alice'});auth.close();
+});
+
+
+test('durable scoped revocation blocks JWT capability calls and survives restart',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'jwt-revoke-')),path=join(dir,'revocations.sqlite');let store,other,server;try{let now=time;store=new SqliteJwtRevocations(path,{issuer,clock:()=>now});other=new SqliteJwtRevocations(path,{issuer:'https://other.example/',clock:()=>now});const auth=createJwtCapabilityAuthenticator(config({clock:()=>now,isTokenActive:claims=>store.isTokenActive(claims)})),registry=new CapabilityRegistry(()=>{});let calls=0;registry.register({operationId:'read',method:'POST',path:'/read'},{authorize:()=>true,validate:()=>true,execute:()=>{calls++;return {ok:true};}});server=createCapabilityServer(registry,auth,()=>{});server.listen(0,'127.0.0.1');await once(server,'listening');const url=`http://127.0.0.1:${server.address().port}/capabilities/read/invoke`,value=await token(),post=()=>fetch(url,{method:'POST',headers:{authorization:'Bearer '+value,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal((await post()).status,200);store.revoke('token-1',time+400000);store.revoke('token-1',time+350000);assert.equal((await post()).status,401);assert.equal(other.isTokenActive({iss:'https://other.example/',jti:'token-1'}),true);assert.equal(other.isTokenActive({iss:issuer,jti:'token-1'}),false);store.close();store=new SqliteJwtRevocations(path,{issuer,clock:()=>now});assert.equal((await post()).status,401);assert.equal(store.prune(time,1),0);now=time+350000;assert.equal(store.prune(now,1),0);now=time+400000;assert.equal(store.prune(now,1),1);assert.equal(store.isTokenActive({iss:issuer,jti:'token-1'}),true);assert.equal((await post()).status,401);assert.equal(calls,1);assert.throws(()=>store.prune(now+1),/Invalid/);assert.throws(()=>store.revoke('id',now),/Invalid/);}finally{if(server?.listening)await new Promise(r=>server.close(r));store?.close();other?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('revocation during asynchronous identity mapping and status errors fail closed',async()=>{
+ const store=new SqliteJwtRevocations(':memory:',{issuer,clock:()=>time});try{let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),auth=createJwtCapabilityAuthenticator(config({resolveActor:async()=>{started();await gate;return {tenantId:'tenant-a',principalId:'alice'};},isTokenActive:claims=>store.isTokenActive(claims)})),pending=auth(req('Bearer '+await token()));await ready;store.revoke('token-1',time+400000);resume();assert.equal(await pending,undefined);const failing=createJwtCapabilityAuthenticator(config({isTokenActive:()=>{throw Error('unavailable');}}));assert.equal(await failing(req('Bearer '+await token())),undefined);failing.close();auth.close();}finally{store.close();}
+});
+
+test('concurrent revocations cannot shorten retention and pruning is issuer scoped',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'jwt-revoke-multi-')),path=join(dir,'db.sqlite');let a,b;try{let now=time;a=new SqliteJwtRevocations(path,{issuer,clock:()=>now});b=new SqliteJwtRevocations(path,{issuer,clock:()=>now});a.revoke('one',time+3000);b.revoke('one',time+1000);b.revoke('two',time+2000);now=time+2000;assert.equal(a.prune(now,1),1);assert.equal(a.isTokenActive({iss:issuer,jti:'one'}),false);assert.equal(b.isTokenActive({iss:issuer,jti:'two'}),true);now=time+3000;assert.equal(b.prune(now,1),1);assert.equal(a.isTokenActive({iss:issuer,jti:'one'}),true);}finally{a?.close();b?.close();rmSync(dir,{recursive:true,force:true});}
 });
