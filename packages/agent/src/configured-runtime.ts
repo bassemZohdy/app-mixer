@@ -49,6 +49,7 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
   const entry={operationId:binding.operationId,toolName:binding.toolName,description:binding.description};bindings.set(entry.operationId,entry);names.add(entry.toolName);
  }
  let runSignal:AbortSignal|undefined;
+ const checkActive=()=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();if(grant){const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw Error('Delegation expired');}};
  const checkDelegation=async(operationId:string,input:unknown)=>{if(!grant)return;const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw Error('Delegation expired');if(await delegationAuthorize!({...identity},{...grant},operationId,structuredClone(input))!==true)throw Error('Delegation forbidden');const after=delegationClock();if(!Number.isSafeInteger(after)||after<0||after>=grant.expiresAt)throw Error('Delegation expired');if(runSignal?.aborted)throw Error('Agent run aborted');current();};
  const authority=grant?JSON.stringify([identity.servicePrincipalId,grant.principalId]):undefined;
  const tools=snapshot.manifest.allowedCapabilities.map(operationId=>{
@@ -57,12 +58,12 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
    if(!runSignal||runSignal.aborted)throw Error('Agent run aborted');current();
    if(await authorizeCapability({...identity},operationId,structuredClone(input))!==true)throw Error('Agent capability forbidden');
    if(runSignal?.aborted)throw Error('Agent run aborted');current();
-   await checkDelegation(operationId,input);
+   await checkDelegation(operationId,input);checkActive();
    const actor={tenantId,principalId:grant?.principalId??identity.servicePrincipalId,origin:'agent' as const};
    if(actionJournal){if(!context?.toolCallId)throw Error('Missing action ID');let required=false;
     if(approval){const decision=await approval.required({...identity},operationId,structuredClone(input));if(typeof decision!=='boolean')throw Error('Invalid approval policy result');required=decision;if(runSignal?.aborted)throw Error('Agent run aborted');current();if(required){const request=await approval.store.request({tenantId,principalId:identity.servicePrincipalId},approval.leaseToken,context.toolCallId,operationId,input,approval.expiresAt,authority);if(request.status!=='approved')throw Error('Approval required');}}
-    await checkDelegation(operationId,input);
-    return actionJournal.journal.invoke(context.toolCallId,operationId,input,actionJournal.maxAttempts,async (data,key)=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();await checkDelegation(operationId,data);const mapped=actionJournal.prepareInput(operationId,data,key);return registry.invoke(operationId,mapped,actor);},required,authority);}
+    await checkDelegation(operationId,input);checkActive();
+    return actionJournal.journal.invoke(context.toolCallId,operationId,input,actionJournal.maxAttempts,async (data,key)=>{if(runSignal?.aborted)throw Error('Agent run aborted');current();await checkDelegation(operationId,data);checkActive();const mapped=actionJournal.prepareInput(operationId,data,key);return registry.invoke(operationId,mapped,actor);},required,authority);}
    return registry.invoke(operationId,structuredClone(input),actor);
   }});
  });
