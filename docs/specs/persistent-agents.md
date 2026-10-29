@@ -1,6 +1,6 @@
 # Persistent Agents — requirements and architecture (proposed implementation)
 
-Status: partially implemented. The local versioned definition store, host-authorized ephemeral runtime and durable run registry are available; checkpointed execution and the remaining capabilities are planned. Applies to Runtime/Data Plane. The agent is an **independent, configurable entity**, not intrinsically owned by an individual user. An agent may be bound at deployment to an organization, tenant, team, application, service identity, or individual user according to policy.
+Status: partially implemented. The local versioned definition store, host-authorized ephemeral runtime, durable run registry and host-driven worker are available; checkpointed execution and the remaining capabilities are planned. Applies to Runtime/Data Plane. The agent is an **independent, configurable entity**, not intrinsically owned by an individual user. An agent may be bound at deployment to an organization, tenant, team, application, service identity, or individual user according to policy.
 
 ## Functional requirements
 - PA-01 Agent identity and configuration: stable agent ID, tenant/organization scope, owner/administrators, runtime configuration, allowed capabilities, model/provider, lifecycle policy, quotas and optional user association. User binding is one configuration, never the hard-coded default.
