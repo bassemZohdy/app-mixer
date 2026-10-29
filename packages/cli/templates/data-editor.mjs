@@ -10,6 +10,20 @@ function normalizeFields(fields) {
     return {key:field.key,label:field.label,type:field.type,required:field.required===true,...(field.min===undefined?{}:{min:field.min}),...(field.max===undefined?{}:{max:field.max}),...(field.maxLength===undefined?{}:{maxLength:field.maxLength}),...(field.options===undefined?{}:{options:[...field.options]})};
   });
 }
+function fieldsFromJsonSchema(jsonSchema) {
+  const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
+  const keys=(value,allowed)=>Object.keys(value).every(key=>allowed.includes(key));
+  if(!object(jsonSchema)||!keys(jsonSchema,['$schema','type','properties','required','additionalProperties'])||jsonSchema.type!=='object'||(jsonSchema.$schema!==undefined&&jsonSchema.$schema!=='https://json-schema.org/draft/2020-12/schema')||!object(jsonSchema.properties)||(jsonSchema.additionalProperties!==undefined&&typeof jsonSchema.additionalProperties!=='boolean'))throw Error('Unsupported record JSON Schema form');
+  const required=jsonSchema.required===undefined?[]:jsonSchema.required;if(!Array.isArray(required)||required.some(key=>typeof key!=='string'||!Object.hasOwn(jsonSchema.properties,key))||new Set(required).size!==required.length)throw Error('Unsupported record JSON Schema form');
+  const fields=Object.entries(jsonSchema.properties).map(([key,property])=>{
+    if(!object(property)||!keys(property,['type','title','enum','minimum','maximum','minLength'])||!['string','number','integer','boolean'].includes(property.type)||(property.title!==undefined&&typeof property.title!=='string'))throw Error('Unsupported record JSON Schema form');
+    const needed=required.includes(key),numeric=property.type==='number'||property.type==='integer';
+    if((property.enum!==undefined&&property.type!=='string')||((property.minimum!==undefined||property.maximum!==undefined)&&!numeric)||(property.minLength!==undefined&&(property.type!=='string'||property.minLength!==1))||(needed&&property.type==='string'&&property.minLength!==1))throw Error('Unsupported record JSON Schema form');
+    return {key,label:property.title??key,type:property.type,required:needed,...(property.enum===undefined?{}:{options:property.enum}),...(property.minimum===undefined?{}:{min:property.minimum}),...(property.maximum===undefined?{}:{max:property.maximum})};
+  });
+  try{return normalizeFields(fields);}catch{throw Error('Unsupported record JSON Schema form');}
+}
+
 function fieldControl(document,field) {
   const label=document.createElement('label'),title=document.createElement('span'),error=document.createElement('small'),control=field.type==='boolean'||field.options?document.createElement('select'):document.createElement('input');
   label.style.display='block';label.style.margin='0.75rem 0';title.style.display='block';control.style.display='block';control.style.width='100%';control.style.maxWidth='28rem';control.style.boxSizing='border-box';error.style.display='block';
@@ -21,11 +35,12 @@ function fieldControl(document,field) {
 
 
 // The host chooses the capabilities; application definitions only supply a label.
-export function createRecordEditor({getOperation,putOperation,listOperation,fields,expectedSchemaVersion}) {
+export function createRecordEditor({getOperation,putOperation,listOperation,fields,jsonSchema,expectedSchemaVersion}) {
   const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
   if(!validOperation(getOperation)||!validOperation(putOperation)||(listOperation!==undefined&&!validOperation(listOperation)))throw Error('Invalid record editor capabilities');
   if(expectedSchemaVersion!==undefined&&(!Number.isSafeInteger(expectedSchemaVersion)||expectedSchemaVersion<0))throw Error('Invalid record schema version');
-  const schema=normalizeFields(fields);
+  if(fields!==undefined&&jsonSchema!==undefined)throw Error('Invalid record editor schema');
+  const schema=jsonSchema===undefined?normalizeFields(fields):fieldsFromJsonSchema(jsonSchema);
   const validate=component=>{
     if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
        (component.label!==undefined&&(typeof component.label!=='string'||component.label.length>120)))throw Error('Invalid record editor');
