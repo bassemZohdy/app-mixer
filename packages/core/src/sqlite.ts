@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { ApplicationStore, validate, enforcePublicationGuard, type ApplicationDefinition, type Patch, type PublicationGuard } from './index.js';
+import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
 
 type Published = { version: number; definition: ApplicationDefinition };
 
@@ -23,6 +23,21 @@ export class SqliteApplicationStore {
           app_id TEXT NOT NULL, version INTEGER NOT NULL, definition TEXT NOT NULL,
           PRIMARY KEY (app_id, version)
         );
+        CREATE TABLE IF NOT EXISTS application_publication_provenance (
+          app_id TEXT NOT NULL, version INTEGER NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('publish','rollback')),
+          previous_version INTEGER NOT NULL, source_version INTEGER, definition_sha256 TEXT NOT NULL,
+          PRIMARY KEY (app_id, version),
+          CHECK(previous_version = version - 1),
+          CHECK((kind = 'publish' AND source_version IS NULL) OR (kind = 'rollback' AND source_version > 0 AND source_version < previous_version)),
+          CHECK(length(definition_sha256) = 64)
+        );
+        CREATE TRIGGER IF NOT EXISTS provenance_no_replace BEFORE INSERT ON application_publication_provenance
+          WHEN EXISTS (SELECT 1 FROM application_publication_provenance WHERE app_id = NEW.app_id AND version = NEW.version)
+          BEGIN SELECT RAISE(ABORT, 'Publication provenance is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS provenance_no_update BEFORE UPDATE ON application_publication_provenance
+          BEGIN SELECT RAISE(ABORT, 'Publication provenance is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS provenance_no_delete BEFORE DELETE ON application_publication_provenance
+          BEGIN SELECT RAISE(ABORT, 'Publication provenance is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS publications_no_replace BEFORE INSERT ON application_publications
           WHEN EXISTS (SELECT 1 FROM application_publications WHERE app_id = NEW.app_id AND version = NEW.version)
           BEGIN SELECT RAISE(ABORT, 'Published versions are immutable'); END;
@@ -60,6 +75,24 @@ export class SqliteApplicationStore {
     return { version: Number(row.version), definition };
   }
 
+  getPublicationProvenance(version: number): PublicationProvenance | undefined {
+    const publication = this.getPublished(version);
+    if (!publication) return undefined;
+    const row = this.db.prepare('SELECT kind, previous_version, source_version, definition_sha256 FROM application_publication_provenance WHERE app_id = ? AND version = ?').get(this.id, version);
+    if (!row) return {version,kind:'unknown'};
+    const previousVersion = Number(row.previous_version), hash = row.definition_sha256;
+    if (previousVersion !== version - 1 || typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash) || hash !== definitionSha256(publication.definition)) throw Error('Invalid publication provenance');
+    if (row.kind === 'publish' && row.source_version === null) return {version,kind:'publish',previousVersion,definitionSha256:hash};
+    if (row.kind === 'rollback') {
+      const sourceVersion=Number(row.source_version);
+      if (!Number.isSafeInteger(sourceVersion) || sourceVersion<1 || sourceVersion>=previousVersion) throw Error('Invalid publication provenance');
+      const source=this.getPublished(sourceVersion);
+      if (!source || definitionSha256(source.definition)!==hash) throw Error('Invalid publication provenance');
+      return {version,kind:'rollback',previousVersion,sourceVersion,definitionSha256:hash};
+    }
+    throw Error('Invalid publication provenance');
+  }
+
   apply(baseRevision: number, patches: Patch[]): ApplicationDefinition {
     return this.transaction(() => {
       const store = new ApplicationStore(this.getDraft());
@@ -79,6 +112,7 @@ export class SqliteApplicationStore {
       const version = Number(row!.version) + 1;
       this.db.prepare('INSERT INTO application_publications (app_id, version, definition) VALUES (?, ?, ?)')
         .run(this.id, version, JSON.stringify(draft));
+      this.db.prepare("INSERT INTO application_publication_provenance VALUES (?, ?, 'publish', ?, NULL, ?)").run(this.id, version, version-1, definitionSha256(draft));
       return { version, definition: draft };
     });
   }
@@ -96,6 +130,7 @@ export class SqliteApplicationStore {
       if (!Number.isSafeInteger(version)) throw Error('Invalid version');
       this.db.prepare('INSERT INTO application_publications (app_id, version, definition) VALUES (?, ?, ?)')
         .run(this.id, version, JSON.stringify(source.definition));
+      this.db.prepare("INSERT INTO application_publication_provenance VALUES (?, ?, 'rollback', ?, ?, ?)").run(this.id, version, expectedVersion, sourceVersion, definitionSha256(source.definition));
       return {version, definition: source.definition};
     });
   }
