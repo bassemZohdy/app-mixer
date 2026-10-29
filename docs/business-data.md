@@ -98,3 +98,9 @@ registerDataListCapability(registry, provider, {
 ```
 
 Each page is a snapshot of the scanned records, not a consistent snapshot across pages. Concurrent writes may cause records to move or change between requests, and an asynchronous record policy is not atomic with changes in the provider or an external policy store. Enforce strict revocation or transactional row policy in a provider designed for it. The existence and number of pages can reveal approximate collection size even though hidden record IDs are not exposed in cursors. A single record near the provider's 1 MiB maximum can exceed the generated app proxy's response limit; hosts should use smaller records or a production transport suited to larger results. Filtering, arbitrary sorting, production indexing and distributed query capabilities remain open.
+
+### Browsing records in the editor
+
+A host can add `listOperation: 'items.list'` to `createRecordEditor` after registering an authorized list capability. The editor then offers Browse records and Next page controls. Selecting an ID explicitly loads that record through the separate get capability, which must apply its own authorization. Empty filtered pages can still have a next page. IDs are rendered as text, including IDs with surrounding spaces, and are sent unchanged to the get capability. A selected record is not automatically saved. If the current editor contains unsaved changes, selecting another listed record is blocked so the user can save or copy those changes first. The control-plane preview displays disabled browsing controls and makes no data calls.
+
+The list capability's per-record policy and the get capability's policy both remain authoritative. Browsing does not provide a consistent cross-page snapshot or replace record-level access checks; see the listing limitations below.
