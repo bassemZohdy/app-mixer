@@ -356,3 +356,23 @@ test('native extension bridge installs only the declared approved owner',async()
  assert.throws(()=>store.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'chart',label:1}]}}),/Invalid native extension/);
  assert.equal(store.snapshot()[0].root.extensionProps.label,'Sales');
 });
+
+
+test('Flutter extension plans contain only approved declared owners and match the Dart fixture', async () => {
+ const {createFlutterExtensionPlan}=await import('../dist/index.js');
+ const {readFileSync}=await import('node:fs');
+ const m={...manifest(),renderers:['flutter']},h={...host(),renderer:'flutter'};
+ const ref={id:m.id,version:m.version,scope:m.scope};
+ const component={id:'one',type:'Extension',extensionId:ref.id,name:'chart'};
+ const app={id:'demo',schemaVersion:1,revision:0,extensions:[ref],pages:[{id:'home',title:'Home',route:'/',components:[component,{...component,id:'two'}]}]};
+ const expected=JSON.parse(readFileSync(new URL('../../../adapters/flutter/test/fixtures/extension-plan.json',import.meta.url),'utf8'));
+ assert.deepEqual(createFlutterExtensionPlan(app,[m],h),expected);
+ for(const [a,ms,hostValue] of [
+  [{...app,extensions:[]},[m],h],
+  [{...app,extensions:[{...ref,version:'2.0.0'}]},[m],h],
+  [app,[{...m,components:[]}],h],
+  [app,[m],{...h,approved:[]}],
+  [app,[m],{...h,renderer:'react'}],
+  [app,[{...m,permissions:['admin']}],h],
+ ])assert.throws(()=>createFlutterExtensionPlan(a,ms,hostValue));
+});
