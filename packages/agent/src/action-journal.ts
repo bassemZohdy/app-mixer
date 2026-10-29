@@ -5,6 +5,8 @@ import {type AgentRunScope} from './durable-runs.js';
 type ActionStatus='ready'|'dispatching'|'uncertain'|'succeeded'|'failed';
 export type AgentAction={actionId:string;operationId:string;idempotencyKey:string;status:ActionStatus;attempts:number;maxAttempts:number};
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;clock?:()=>number};
+export type ActionVerificationRequest={scope:AgentRunScope;runId:string;action:AgentAction;input:unknown;authority?:string};
+export type ActionVerification={outcome:'unknown'|'not_applied'|'failed'}|{outcome:'applied';result:unknown};
 const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 export function actionJSON(value:unknown):string{
  let count=0;const stack=new Set<object>();
@@ -76,6 +78,20 @@ export class SqliteAgentActionJournal {
   this.transaction(()=>{this.requireUncertainRun();const row=this.row(actionId);if(!row||row.status!=='uncertain')throw Error('Invalid action state');
    if(outcome==='not_applied'&&Number(row.attempts)>=Number(row.max_attempts))throw Error('Action attempts exhausted');
    this.db.prepare('UPDATE agent_action_journal SET status=?,result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(outcome==='applied'?'succeeded':outcome==='not_applied'?'ready':'failed',serialized,...this.args(),actionId);
+  },false);
+ }
+ /** Verify externally without replaying; the host authorizes the verifier and stops the old worker. */
+ async reconcileWith(actionId:string,verify:(request:ActionVerificationRequest)=>Promise<ActionVerification>):Promise<ActionVerification['outcome']>{
+  if(!valid(actionId)||typeof verify!=='function')throw Error('Invalid action verification');
+  const snapshot=this.transaction(()=>{this.requireUncertainRun();const run=this.db.prepare('SELECT revision FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args()),row=this.row(actionId);if(!run||!row||row.status!=='uncertain')throw Error('Invalid action state');const authority=this.db.prepare('SELECT authority FROM agent_action_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);return {revision:Number(run.revision),action:this.metadata(row),input:String(row.input_json),authority:authority?.authority as string|undefined};},false);
+  const request:ActionVerificationRequest={scope:{...this.scope},runId:this.runId,action:{...snapshot.action},input:JSON.parse(snapshot.input),...(snapshot.authority===undefined?{}:{authority:snapshot.authority})};
+  const decision:unknown=await verify(request);if(!decision||typeof decision!=='object'||Array.isArray(decision))throw Error('Invalid action verification');const d=decision as Record<string,unknown>,outcome=d.outcome;
+  if(typeof outcome!=='string'||!['unknown','applied','not_applied','failed'].includes(outcome)||Object.keys(d).some(k=>k!=='outcome'&&k!=='result')||(outcome==='applied'?!Object.hasOwn(d,'result'):Object.hasOwn(d,'result')))throw Error('Invalid action verification');
+  const serialized=outcome==='applied'?actionJSON(d.result):null;
+  return this.transaction(()=>{this.requireUncertainRun();const run=this.db.prepare('SELECT revision FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args()),row=this.row(actionId);if(!run||Number(run.revision)!==snapshot.revision||!row||row.status!=='uncertain'||Number(row.attempts)!==snapshot.action.attempts||row.idempotency_key!==snapshot.action.idempotencyKey||row.input_json!==snapshot.input)throw Error('Action verification stale');
+   if(outcome==='not_applied'&&Number(row.attempts)>=Number(row.max_attempts))throw Error('Action attempts exhausted');
+   if(outcome!=='unknown')this.db.prepare('UPDATE agent_action_journal SET status=?,result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(outcome==='applied'?'succeeded':outcome==='not_applied'?'ready':'failed',serialized,...this.args(),actionId);
+   return outcome as ActionVerification['outcome'];
   },false);
  }
  private requireUncertainRun():void{const run=this.db.prepare('SELECT status FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());if(!run||run.status!=='uncertain')throw Error('Run is not uncertain');}
