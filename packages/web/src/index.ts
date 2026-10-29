@@ -28,10 +28,34 @@ function read(data: unknown, path: string): unknown {
   }
   return result;
 }
+function cloneData(value: unknown): unknown {
+  const ancestors = new Set<object>(); let count = 0;
+  const visit = (input: unknown, depth: number): unknown => {
+    if (++count > 10000 || depth > 100) throw Error('Data model too large');
+    // Undefined represents a deleted array element internally.
+    if (input === undefined || input === null || typeof input === 'string' || typeof input === 'boolean' || (typeof input === 'number' && Number.isFinite(input))) return input;
+    if (!obj(input) && !Array.isArray(input)) throw Error('Unsupported data value');
+    if (ancestors.has(input)) throw Error('Cyclic data model');
+    ancestors.add(input);
+    let result: unknown;
+    if (Array.isArray(input)) result = input.map(item => visit(item, depth + 1));
+    else {
+      const output: Obj = {};
+      for (const [key, item] of Object.entries(input)) {
+        if (['__proto__','prototype','constructor'].includes(key)) throw Error('Unsafe data key');
+        output[key] = visit(item, depth + 1);
+      }
+      result = output;
+    }
+    ancestors.delete(input);
+    return result;
+  };
+  return visit(value, 0);
+}
 function update(data: unknown, path: string, value: unknown, remove: boolean): unknown {
   const keys = pointer(path);
-  if (!keys.length) return remove ? {} : structuredClone(value);
-  const root: unknown = structuredClone(data);
+  if (!keys.length) return remove ? {} : cloneData(value);
+  const root: unknown = cloneData(data);
   let current: unknown = root;
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i];
@@ -47,9 +71,9 @@ function update(data: unknown, path: string, value: unknown, remove: boolean): u
   const last = keys[keys.length - 1];
   if (Array.isArray(current)) {
     if (!/^(0|[1-9]\d*)$/.test(last) || Number(last) >= current.length) throw Error('Invalid array index');
-    if (remove) current[Number(last)] = undefined; else current[Number(last)] = structuredClone(value);
-  } else if (remove) delete current[last]; else current[last] = structuredClone(value);
-  return root;
+    if (remove) current[Number(last)] = undefined; else current[Number(last)] = cloneData(value);
+  } else if (remove) delete current[last]; else current[last] = cloneData(value);
+  return cloneData(root);
 }
 function textValue(value: unknown, data: unknown): string {
   const result = typeof value === 'string' ? value : obj(value) && typeof value.path === 'string' ? read(data, value.path) : undefined;

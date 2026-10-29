@@ -116,6 +116,27 @@ test('web and native reject null paths and optional properties atomically',()=>{
  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
 });
 
+test('web and native reject unsafe or oversized model updates atomically',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateDataModel',{surfaceId:'main',value:{name:'Safe'}}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/name'}}]}));
+ const cyclic={};cyclic.self=cyclic;
+ let deep='leaf';for(let i=0;i<102;i++)deep={child:deep};
+ for(const value of [JSON.parse('{"nested":{"__proto__":"bad"}}'),cyclic,deep,Array(10001).fill(0),Infinity,1n]){
+  const invalid=message('updateDataModel',{surfaceId:'main',value});
+  assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));
+  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
+ }
+ apply(message('updateDataModel',{surfaceId:'main',path:'/existing',value:Array(6000).fill(0)}));
+ const combined=message('updateDataModel',{surfaceId:'main',path:'/extra',value:Array(5000).fill(0)});
+ assert.throws(()=>web.apply(combined));assert.throws(()=>native.apply(combined));
+ assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
+ apply(message('updateDataModel',{surfaceId:'main',path:'/name',value:'Still safe'}));
+ assert.equal(host.children[0].children[0].textContent,'Still safe');assert.equal(native.snapshot()[0].root.text,'Still safe');
+});
+
 test('shared invalid messages leave web and native surfaces unchanged',async()=>{
  const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/rejections.json',import.meta.url),'utf8'));
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
