@@ -6,7 +6,7 @@ type ActionStatus='ready'|'dispatching'|'uncertain'|'succeeded'|'failed';
 export type AgentAction={actionId:string;operationId:string;idempotencyKey:string;status:ActionStatus;attempts:number;maxAttempts:number};
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;clock?:()=>number};
 const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-function safeJSON(value:unknown):string{
+export function actionJSON(value:unknown):string{
  let count=0;const stack=new Set<object>();
  const visit=(input:unknown,depth:number):unknown=>{
   if(++count>10000||depth>40)throw Error('Invalid action data');
@@ -40,21 +40,22 @@ export class SqliteAgentActionJournal {
  private transaction<T>(callback:()=>T,withLease=true):T{this.db.exec('BEGIN IMMEDIATE');try{if(withLease)this.fence();const result=callback();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
  private metadata(row:Record<string,unknown>):AgentAction{return {actionId:String(row.action_id),operationId:String(row.operation_id),idempotencyKey:String(row.idempotency_key),status:row.status as ActionStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts)};}
  get(actionId:string):AgentAction|undefined{if(!valid(actionId))throw Error('Invalid action');const row=this.row(actionId);return row?this.metadata(row):undefined;}
- async invoke(actionId:string,operationId:string,input:unknown,maxAttempts:number,dispatch:(input:unknown,idempotencyKey:string)=>Promise<unknown>):Promise<unknown>{
-  if(!valid(actionId)||!valid(operationId)||!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>20||typeof dispatch!=='function')throw Error('Invalid action');
-  const serialized=safeJSON(input),hash=createHash('sha256').update(serialized).digest('hex');
+ async invoke(actionId:string,operationId:string,input:unknown,maxAttempts:number,dispatch:(input:unknown,idempotencyKey:string)=>Promise<unknown>,requiresApproval=false):Promise<unknown>{
+  if(!valid(actionId)||!valid(operationId)||!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>20||typeof dispatch!=='function'||typeof requiresApproval!=='boolean')throw Error('Invalid action');
+  const serialized=actionJSON(input),hash=createHash('sha256').update(serialized).digest('hex');
   const prepared=this.transaction(()=>{
    let row=this.row(actionId);
    if(!row){this.db.prepare("INSERT INTO agent_action_journal VALUES (?,?,?,?,?,?,?,?, 'ready',0,?,NULL)").run(...this.args(),actionId,operationId,serialized,hash,randomUUID(),maxAttempts);row=this.row(actionId)!;}
    if(row.operation_id!==operationId||row.input_hash!==hash||row.input_json!==serialized||Number(row.max_attempts)!==maxAttempts)throw Error('Action identity conflict');
    if(row.status==='succeeded')return {cached:true,result:row.result_json as string,key:String(row.idempotency_key)};
    if(row.status!=='ready'||Number(row.attempts)>=maxAttempts)throw Error('Action requires reconciliation');
+   if(requiresApproval){const approvalNow=this.clock();if(!Number.isSafeInteger(approvalNow)||approvalNow<0)throw Error('Invalid clock');const approval=this.db.prepare('SELECT operation_id,input_hash,input_json,definition_version,status,expires_at FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);const run=this.db.prepare('SELECT definition_version FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());if(!approval||approval.status!=='approved'||approval.operation_id!==operationId||approval.input_hash!==hash||approval.input_json!==serialized||approval.definition_version!==run?.definition_version||Number(approval.expires_at)<=approvalNow)throw Error('Approval required');}
    this.db.prepare("UPDATE agent_action_journal SET status='dispatching',attempts=attempts+1 WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(...this.args(),actionId);
    return {cached:false,result:null,key:String(row.idempotency_key)};
   });
   if(prepared.cached)return JSON.parse(prepared.result!);
   try{
-   const result=safeJSON(await dispatch(JSON.parse(serialized),prepared.key));
+   const result=actionJSON(await dispatch(JSON.parse(serialized),prepared.key));
    this.transaction(()=>{const row=this.row(actionId);if(!row||row.status!=='dispatching')throw Error('Action state conflict');this.db.prepare("UPDATE agent_action_journal SET status='succeeded',result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(result,...this.args(),actionId);});
    return JSON.parse(result);
   }catch(error){
@@ -69,7 +70,7 @@ export class SqliteAgentActionJournal {
  /** Host must verify the external outcome before reconciling an uncertain action. */
  reconcile(actionId:string,outcome:'applied'|'not_applied'|'failed',result?:unknown):void{
   if(!valid(actionId)||!['applied','not_applied','failed'].includes(outcome)||(outcome!=='applied'&&result!==undefined))throw Error('Invalid reconciliation');
-  const serialized=outcome==='applied'?safeJSON(result):null;
+  const serialized=outcome==='applied'?actionJSON(result):null;
   this.transaction(()=>{this.requireUncertainRun();const row=this.row(actionId);if(!row||row.status!=='uncertain')throw Error('Invalid action state');
    if(outcome==='not_applied'&&Number(row.attempts)>=Number(row.max_attempts))throw Error('Action attempts exhausted');
    this.db.prepare('UPDATE agent_action_journal SET status=?,result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(outcome==='applied'?'succeeded':outcome==='not_applied'?'ready':'failed',serialized,...this.args(),actionId);

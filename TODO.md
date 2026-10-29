@@ -59,6 +59,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 ## P3: persistent agent security and operations (new, pending)
 - [ ] P3-05 Support service principals and optional delegated user identity with policy checks and expiry handling (PA-07)
 - [ ] P3-06 Durable human approval/consent, expiration and audited decisions (PA-08)
+  - In progress: host-authorized SQLite approval records, expiry, decision history and exact-action journal gating. Human-facing review, notifications and production identity remain. See [agent approvals](docs/agent-approvals.md).
 - [ ] P3-07 Agent trace/metrics/audit, quotas, budgets and administrative operational controls (PA-09)
 - [ ] P3-08 Production durable-store/worker portability, crash/restart and tenant-isolation acceptance tests (PA-10)
 
