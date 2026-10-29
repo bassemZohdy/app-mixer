@@ -10,7 +10,8 @@ export const DEVELOPMENT_UI = `<!doctype html>
 <section><h2>Patch</h2><pre id="patch">No proposal loaded.</pre><h2>Rendered preview</h2><div id="rendered-preview"></div><h2>Preview definition</h2><pre id="preview">No proposal loaded.</pre></section>
 <button id="approve" type="button" disabled>Approve draft change</button><button id="reject" type="button" disabled>Reject</button><button id="publish" type="button" disabled>Publish approved revision</button>
 <script type="module">
-import {A2UIRenderer,APP_MIXER_CATALOG} from '/development/renderer.mjs';
+import {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry} from '/development/renderer.mjs';
+import {installedExtensions} from '/development/extensions.mjs';
 (()=>{
 const instruction=document.getElementById('instruction'),generate=document.getElementById('generate'),token=document.getElementById('token'),proposalId=document.getElementById('proposal-id'),status=document.getElementById('status'),patch=document.getElementById('patch'),preview=document.getElementById('preview'),load=document.getElementById('load'),approve=document.getElementById('approve'),reject=document.getElementById('reject'),publish=document.getElementById('publish');
 const rendered=document.getElementById('rendered-preview');
@@ -18,15 +19,32 @@ let current, approvedRevision, approvedId;
 function renderPreview(definition){
   rendered.replaceChildren();
   try{
-    const renderer=new A2UIRenderer(rendered),surfaceId='preview';
+    const registry=basicRegistry(),selected=new Map(),registered=new Map(),surfaceId='preview';
+    if(!Array.isArray(definition.extensions??[])||(definition.extensions??[]).length>256)throw Error('Invalid extension references');
+    for(const ref of definition.extensions??[]){
+      if(!ref||typeof ref.id!=='string'||typeof ref.version!=='string'||!['platform','development','application'].includes(ref.scope)||Object.keys(ref).length!==3||selected.has(ref.id))throw Error('Invalid extension reference');
+      const matches=installedExtensions.filter(item=>item.id===ref.id&&item.version===ref.version&&item.scope===ref.scope);
+      if(matches.length!==1||!matches[0].components||typeof matches[0].components!=='object'||Array.isArray(matches[0].components))throw Error('Extension unavailable: '+ref.id);
+      selected.set(ref.id,matches[0]);
+    }
     const components=[{id:'root',component:'Column',children:[]}];
     for(const [i,page] of definition.pages.entries()){
       const title='page-'+i;components[0].children.push(title);components.push({id:title,component:'Text',text:page.title,variant:'h2'});
       for(const [j,item] of page.components.entries()){
-        if(item.type!=='Text')throw Error('Rendered preview does not support '+item.type);
-        const id='page-'+i+'-item-'+j;components[0].children.push(id);components.push({id,component:'Text',text:String(item.props?.text??'')});
+        const id='page-'+i+'-item-'+j;components[0].children.push(id);
+        if(item.type==='Text'){components.push({id,component:'Text',text:String(item.props?.text??'')});continue;}
+        if(item.type!=='Extension'||typeof item.extensionId!=='string'||typeof item.name!=='string')throw Error('Rendered preview does not support '+item.type);
+        const extension=selected.get(item.extensionId),binding=extension&&Object.hasOwn(extension.components,item.name)?extension.components[item.name]:undefined;
+        if(!binding||typeof binding.render!=='function'||(binding.validate!==undefined&&typeof binding.validate!=='function'))throw Error('Extension component unavailable: '+item.name);
+        const props=item.props??{};
+        if(!props||typeof props!=='object'||Array.isArray(props)||Object.keys(props).length>100||Object.entries(props).some(([key,value])=>['id','component','__proto__','prototype','constructor'].includes(key)||!(typeof value==='string'||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))))throw Error('Invalid extension component properties');
+        const component={...props,id,component:item.name};if(binding.validate)binding.validate(component);
+        if(!registered.has(item.name)){registry.register(item.name,binding.render,binding.validate);registered.set(item.name,item.extensionId);}
+        else if(registered.get(item.name)!==item.extensionId)throw Error('Duplicate extension component: '+item.name);
+        components.push(component);
       }
     }
+    const renderer=new A2UIRenderer(rendered,registry);
     renderer.apply({version:'v0.9.1',createSurface:{surfaceId,catalogId:APP_MIXER_CATALOG}});
     renderer.apply({version:'v0.9.1',updateComponents:{surfaceId,components}});return true;
   }catch(error){rendered.textContent=error.message;return false;}

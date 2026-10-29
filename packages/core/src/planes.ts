@@ -82,15 +82,22 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
 }
 /** Local-development control plane. Bind to loopback and protect its token. */
 export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition) => Promise<{id:string}>;
-export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner): Server {
+/** Trusted host-owned browser module source. It must not contain secrets. */
+export type DevelopmentPreviewOptions = {extensionModule?: string};
+export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
+  if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
+  const extensionModule=preview?.extensionModule ?? 'export const installedExtensions = [];';
   return server(async (req, res) => {
-    if (proposals && req.method === 'GET' && (req.url === '/development' || req.url === '/development/renderer.mjs')) {
+    if (proposals && req.method === 'GET' && (req.url === '/development' || req.url === '/development/renderer.mjs' || req.url === '/development/extensions.mjs')) {
       const host=req.headers.host, port=req.socket.localPort;
       if (host !== '127.0.0.1:'+port && host !== 'localhost:'+port) { respond(res,400,{error:'Invalid host'}); return; }
       if (req.url === '/development/renderer.mjs') {
         const source=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
         res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(source); return;
+      }
+      if (req.url === '/development/extensions.mjs') {
+        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(extensionModule); return;
       }
       res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"});
       res.end(DEVELOPMENT_UI); return;
@@ -163,8 +170,8 @@ export function createProposalPlane(proposals: DevelopmentProposals, token: stri
   });
 }
 /** Construct both local-development planes with distinct credentials. */
-export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string, develop?: DevelopmentRunner) {
+export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions) {
   if (developerToken === agentToken) throw Error('Developer and agent tokens must differ');
   const proposals = new DevelopmentProposals(repository);
-  return {control:createControlPlane(repository,developerToken,proposals,develop), proposal:createProposalPlane(proposals,agentToken)};
+  return {control:createControlPlane(repository,developerToken,proposals,develop,preview), proposal:createProposalPlane(proposals,agentToken)};
 }
