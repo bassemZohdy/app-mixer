@@ -9,6 +9,7 @@ export type DataCapabilityOptions={
   operation:'get'|'put'|'delete';
   authorize:(context:PolicyContext)=>boolean|Promise<boolean>;
   validate:(input:unknown)=>boolean|Promise<boolean>;
+  authorizeRecord?:(context:PolicyContext, input:unknown)=>boolean|Promise<boolean>;
 };
 const record=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const fields=(value:Record<string,unknown>,names:string[])=>Object.keys(value).length===names.length&&names.every(name=>Object.hasOwn(value,name));
@@ -17,11 +18,12 @@ const revision=(value:unknown):value is number=>Number.isSafeInteger(value)&&(va
 
 /** Install one host-approved collection operation in the normal capability boundary. */
 export function registerDataCapability(registry:CapabilityRegistry, provider:DataProvider, options:DataCapabilityOptions):void {
-  if(!(registry instanceof CapabilityRegistry)||!provider||typeof provider.get!=='function'||typeof provider.put!=='function'||typeof provider.delete!=='function'||!options||!['get','put','delete'].includes(options.operation)||typeof options.authorize!=='function'||typeof options.validate!=='function')throw Error('Invalid data capability');
-  const {applicationId,collection,operation,authorize,validate}=options;
+  if(!(registry instanceof CapabilityRegistry)||!provider||typeof provider.get!=='function'||typeof provider.put!=='function'||typeof provider.delete!=='function'||!options||!['get','put','delete'].includes(options.operation)||typeof options.authorize!=='function'||typeof options.validate!=='function'||(options.authorizeRecord!==undefined&&typeof options.authorizeRecord!=='function'))throw Error('Invalid data capability');
+  const {applicationId,collection,operation,authorize,validate,authorizeRecord}=options;
   checkKey({tenantId:'validation',applicationId},collection,'validation');
   registry.register(options.candidate,{
     authorize,
+    ...(authorizeRecord?{authorizeInput:authorizeRecord}:{}),
     validate:async input=>{
       if(!record(input)||!id(input.id))return false;
       const shape=operation==='get'?fields(input,['id']):operation==='delete'?fields(input,['id','expectedRevision'])&&revision(input.expectedRevision):fields(input,['id','expectedRevision','value'])&&(input.expectedRevision===null||revision(input.expectedRevision))&&record(input.value);

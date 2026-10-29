@@ -6,6 +6,7 @@ type PolicyContext = {tenantId:string; principalId:string};
 type Binding = {
   authorize:(context:PolicyContext) => boolean | Promise<boolean>;
   validate:(input:unknown) => boolean | Promise<boolean>;
+  authorizeInput?:(context:PolicyContext, input:unknown) => boolean | Promise<boolean>;
   execute:(input:unknown, context:PolicyContext) => unknown | Promise<unknown>;
 };
 const object = (value:unknown):value is Record<string,unknown> => value !== null && typeof value==='object' && !Array.isArray(value);
@@ -39,7 +40,7 @@ export class CapabilityRegistry {
     if(!candidate || typeof candidate.operationId!=='string' || !candidate.operationId.trim() ||
        typeof candidate.path!=='string' || !candidate.path.startsWith('/') ||
        typeof candidate.method!=='string' || !methods.has(candidate.method.toLowerCase()) ||
-       !binding || typeof binding.authorize!=='function' || typeof binding.validate!=='function' || typeof binding.execute!=='function') throw Error('Invalid capability registration');
+       !binding || typeof binding.authorize!=='function' || typeof binding.validate!=='function' || (binding.authorizeInput!==undefined && typeof binding.authorizeInput!=='function') || typeof binding.execute!=='function') throw Error('Invalid capability registration');
     if(this.bindings.has(candidate.operationId)) throw Error('Capability already registered');
     this.bindings.set(candidate.operationId,{candidate:structuredClone(candidate),binding:{...binding}});
   }
@@ -61,6 +62,12 @@ export class CapabilityRegistry {
     try { safeInput=structuredClone(input); valid=await entry.binding.validate(structuredClone(safeInput)) === true; }
     catch(error) { await audit('failed'); throw error; }
     if(!valid) { await audit('invalid'); throw Error('Invalid capability input'); }
+    if(entry.binding.authorizeInput){
+      let allowed:boolean;
+      try { allowed=await entry.binding.authorizeInput({...policyContext},structuredClone(safeInput))===true; }
+      catch(error) { await audit('failed'); throw error; }
+      if(!allowed) { await audit('denied'); throw Error('Capability forbidden'); }
+    }
     let result:unknown;
     try { result=await entry.binding.execute(safeInput,{...policyContext}); }
     catch(error) { await audit('failed'); throw error; }
