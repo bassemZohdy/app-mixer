@@ -118,3 +118,6 @@ export type {AgentApprovalServerOptions} from './approval-server.js';
 
 export {SqliteAgentDelegations} from './agent-delegations.js';
 export type {AgentDelegationActor,AgentDelegationAccess,AgentDelegationRecord,AgentDelegationStoreOptions} from './agent-delegations.js';
+
+export {SqliteAgentNotices} from './agent-notices.js';
+export type {AgentNotice,AgentNoticeActor,AgentNoticeAccess,AgentNoticeOptions} from './agent-notices.js';

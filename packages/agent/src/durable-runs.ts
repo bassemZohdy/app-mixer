@@ -1,3 +1,4 @@
+import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 
@@ -18,7 +19,7 @@ export class SqliteAgentRuns {
    lease_owner TEXT,lease_token TEXT,lease_until INTEGER,archived INTEGER NOT NULL DEFAULT 0,
    PRIMARY KEY(tenant_id,agent_id,run_id)
   );
-  CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);}catch(error){this.db.close();throw error;}}
+  CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  get(scope:RunScope,runId:string):DurableAgentRun|undefined {
   scopeKey(scope,runId);const row=this.db.prepare('SELECT * FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
@@ -79,7 +80,7 @@ export class SqliteAgentRuns {
    const grant=this.db.prepare('SELECT principal_id,revision,revoked,expires_at FROM agent_delegations WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=?').get(scope.tenantId,scope.agentId,runId,grantId);
    if(!grant||grant.revoked===1||Number(grant.revision)!==grantRevision||Number(grant.expires_at)>now)throw Error('Delegation is not expired');
    const table=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_action_journal'").get();if(!table)throw Error('Action journal required');{const action=this.db.prepare("SELECT 1 AS found FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND status IN ('dispatching','uncertain') LIMIT 1").get(scope.tenantId,scope.agentId,runId);if(action)throw Error('Action requires reconciliation');}
-   this.db.prepare('INSERT INTO agent_delegation_waits VALUES (?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,runId,grantId,grantRevision,String(grant.principal_id));run.delegationWait={grantId,revision:grantRevision,principalId:String(grant.principal_id)};run.status='paused';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
+   this.db.prepare('INSERT INTO agent_delegation_waits VALUES (?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,runId,grantId,grantRevision,String(grant.principal_id));insertAgentNotice(this.db,scope,runId,'delegation_renewal_required',grantId,grantRevision,now);run.delegationWait={grantId,revision:grantRevision,principalId:String(grant.principal_id)};run.status='paused';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
   });
  }
  recoverExpired(scope:RunScope,runId:string,revision:number,now=Date.now()):DurableAgentRun {

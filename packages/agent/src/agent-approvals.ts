@@ -1,3 +1,4 @@
+import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {actionJSON} from './action-journal.js';
@@ -22,6 +23,7 @@ export class SqliteAgentApprovals {
    CREATE TRIGGER IF NOT EXISTS approval_events_no_replace BEFORE INSERT ON agent_approval_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_approval_events WHERE event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Approval events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS approval_events_no_update BEFORE UPDATE ON agent_approval_events BEGIN SELECT RAISE(ABORT,'Approval events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS approval_events_no_delete BEFORE DELETE ON agent_approval_events BEGIN SELECT RAISE(ABORT,'Approval events are immutable'); END;`);
+  ensureAgentNoticeSchema(this.db);
   }catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
@@ -40,7 +42,7 @@ export class SqliteAgentApprovals {
    const previous=this.row(actionId);if(previous){const bound=this.db.prepare('SELECT authority FROM agent_approval_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);if((bound?.authority??undefined)!==authority)throw Error('Approval authority conflict');if(previous.operation_id!==operationId||previous.input_hash!==hash||previous.input_json!==payload||Number(previous.definition_version)!==Number(run.definition_version))throw Error('Approval identity conflict');return this.convert(previous,now);}
    const count=this.db.prepare('SELECT COUNT(*) AS n FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());if(Number(count?.n)>=1000)throw Error('Approval quota exceeded');
    if(expiresAt<=now||expiresAt>Number(run.deadline)||expiresAt-now>86400000)throw Error('Invalid approval expiration');
-   this.db.prepare("INSERT INTO agent_approvals VALUES (?,?,?,?,?,?,?,?,'pending',?,?,NULL,NULL)").run(...this.args(),actionId,operationId,payload,hash,Number(run.definition_version),expiresAt,requester.principalId);if(authority!==undefined)this.db.prepare('INSERT INTO agent_approval_authority VALUES (?,?,?,?,?)').run(...this.args(),actionId,authority);this.event(actionId,'requested',requester.principalId,now);return this.convert(this.row(actionId)!,now);
+   this.db.prepare("INSERT INTO agent_approvals VALUES (?,?,?,?,?,?,?,?,'pending',?,?,NULL,NULL)").run(...this.args(),actionId,operationId,payload,hash,Number(run.definition_version),expiresAt,requester.principalId);if(authority!==undefined)this.db.prepare('INSERT INTO agent_approval_authority VALUES (?,?,?,?,?)').run(...this.args(),actionId,authority);this.event(actionId,'requested',requester.principalId,now);insertAgentNotice(this.db,this.scope,this.runId,'approval_requested',actionId,0,now);return this.convert(this.row(actionId)!,now);
   });
  }
  async get(actor:Actor,actionId:string):Promise<AgentApproval|undefined>{const who=this.actor(actor);if(!valid(actionId))throw Error('Invalid approval');const row=this.row(actionId);await this.permit(who,'read',actionId,row?String(row.operation_id):'unknown');const current=this.row(actionId);return current?this.convert(current,this.now()):undefined;}
