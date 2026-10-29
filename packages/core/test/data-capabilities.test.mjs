@@ -40,3 +40,20 @@ test('host configuration and validation are mandatory and scope is fixed at regi
   assert.equal(provider.get({tenantId:'t',applicationId:'second'},'other','1'),undefined);
  } finally {provider.close();}
 });
+
+test('record policy sees validated input, denies both origins and cannot mutate the write',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));let policyCalls=0;
+ const options={candidate:{operationId:'restricted.put',method:'PUT',path:'/restricted'},applicationId:'app',collection:'items',operation:'put',
+  authorize:()=>true,validate:input=>typeof input.value.name==='string',
+  authorizeRecord:(context,input)=>{policyCalls++;const allowed=input.id===context.principalId;input.value.name='modified by policy';context.tenantId='other';return allowed;}};
+ registerDataCapability(registry,provider,options);
+ try {
+  for(const origin of ['ui','agent'])await assert.rejects(registry.invoke('restricted.put',{id:'other',expectedRevision:null,value:{name:'bad'}},{tenantId:'t',principalId:'alice',origin}),/forbidden/);
+  await assert.rejects(registry.invoke('restricted.put',{id:'alice',expectedRevision:null,value:{name:3}},{tenantId:'t',principalId:'alice',origin:'ui'}),/Invalid capability input/);
+  assert.equal(policyCalls,2);
+  await registry.invoke('restricted.put',{id:'alice',expectedRevision:null,value:{name:'original'}},{tenantId:'t',principalId:'alice',origin:'agent'});
+  assert.deepEqual(provider.get({tenantId:'t',applicationId:'app'},'items','alice').value,{name:'original'});
+  assert.equal(provider.get({tenantId:'other',applicationId:'app'},'items','alice'),undefined);
+  assert.deepEqual(events,['attempt','denied','attempt','denied','attempt','invalid','attempt','succeeded']);
+ } finally {provider.close();}
+});

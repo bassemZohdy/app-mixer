@@ -48,3 +48,17 @@ test('audit is mandatory, records outcomes without payloads, and fails closed be
   await assert.rejects(registry.invoke('missing',{}, {tenantId:'t',principalId:'allowed',origin:'ui'}),/not found/);
   assert.deepEqual(records.slice(-2).map(e=>e.outcome),['attempt','not_found']);
 });
+
+test('input-aware authorization is isolated, fail-closed and audited',async()=>{
+ const events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));let executeCount=0;
+ registry.register({operationId:'guarded',method:'POST',path:'/guarded'}, {
+  authorize:()=>true,validate:input=>typeof input.value==='string',
+  authorizeInput:(ctx,input)=>{if(input.value==='throw')throw Error('policy failed');input.value='mutated';ctx.tenantId='changed';return false;},
+  execute:()=>{executeCount++;}
+ });
+ const context={tenantId:'t',principalId:'p',origin:'ui'};
+ await assert.rejects(registry.invoke('guarded',{value:'x'},context),/forbidden/);
+ await assert.rejects(registry.invoke('guarded',{value:'throw'},context),/policy failed/);
+ assert.equal(executeCount,0);assert.deepEqual(events,['attempt','denied','attempt','failed']);
+ assert.throws(()=>registry.register({operationId:'bad',method:'GET',path:'/'},{authorize:()=>true,validate:()=>true,authorizeInput:'bad',execute:()=>{}}),/Invalid/);
+});
