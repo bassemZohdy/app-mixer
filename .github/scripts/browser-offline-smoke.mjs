@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {execFile} from 'node:child_process';
+import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {promisify} from 'node:util';
 const script=await readFile(new URL('../../packages/web/dist/offline.js',import.meta.url));
 const fixture=`<!doctype html><body data-result="pending"><script type="module">
 import {EncryptedBrowserQueue} from '/offline.js';
@@ -24,11 +23,26 @@ try {
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');
  db.close();a.close();b.close();document.body.dataset.result='pass';
 }catch(error){document.body.dataset.result='fail';document.body.append(String(error));}
+await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:document.body.dataset.result+':'+document.body.textContent});
 </script></body>`;
-const server=createServer((req,res)=>{if(req.url==='/offline.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(script);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}});
-const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));
+let resolveResult,rejectResult;
+const browserResult=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;});
+const server=createServer(async(req,res)=>{
+ if(req.url==='/result'&&req.method==='POST'){
+  const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
+ }
+ if(req.url==='/offline.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(script);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
+});
+const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));let browser,timer;
 try{
  server.listen(0,'127.0.0.1');await once(server,'listening');
- const {stdout}=await promisify(execFile)(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--virtual-time-budget=8000',`--user-data-dir=${join(directory,'profile')}`,'--dump-dom',`http://127.0.0.1:${server.address().port}/`],{timeout:45000,maxBuffer:1024*1024});
- assert.match(stdout,/<body data-result="pass">/);
-}finally{if(server.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(directory,{recursive:true,force:true});}
+ browser=spawn(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',`--user-data-dir=${join(directory,'profile')}`,`http://127.0.0.1:${server.address().port}/`],{stdio:['ignore','ignore','pipe']});
+ browser.stderr.resume();browser.once('error',rejectResult);browser.once('exit',code=>rejectResult(Error(`Browser exited before reporting: ${code}`)));
+ timer=setTimeout(()=>rejectResult(Error('Browser offline test timed out')),30000);
+ const result=await browserResult;assert.match(result,/^pass:/);
+}finally{
+ clearTimeout(timer);
+ if(browser&&browser.exitCode===null&&browser.signalCode===null){const stopped=once(browser,'exit');browser.kill();await stopped;}
+ if(server.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+ await rm(directory,{recursive:true,force:true});
+}
