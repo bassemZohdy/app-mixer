@@ -99,3 +99,7 @@ export {SqliteAgentTriggers} from './agent-triggers.js';
 export type {TriggerRecord,AgentTriggerInput,AgentTriggerEnqueueOptions} from './agent-triggers.js';
 export {createAgentEventIngress} from './event-ingress.js';
 export type {AgentEventIngressOptions,AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+export {SqliteAgentSchedules} from './agent-schedules.js';
+export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFireOptions} from './agent-schedules.js';
+export {AgentScheduleWorker} from './schedule-worker.js';
+export type {AgentScheduleWorkerOptions} from './schedule-worker.js';
