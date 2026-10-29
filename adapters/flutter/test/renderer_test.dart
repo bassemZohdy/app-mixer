@@ -26,6 +26,24 @@ void main() {
     receive(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'chart','children':[],'options':{'label':'No'}}]}));
     await tester.pump();expect(errors,hasLength(2));expect(find.text('Chart'),findsOneWidget);
   });
+  testWidgets('replaces the subscription when the host replaces its registry', (tester) async {
+    final first=FlutterComponentRegistry(), second=FlutterComponentRegistry();
+    first.register('chart', (context, props) => const Text('First'), (component) => true);
+    second.register('chart', (context, props) => const Text('Second'), (component) => true);
+    var stops=0;
+    final receivers=<void Function(Object?)>[];
+    VoidCallback? subscribe(void Function(Object?) callback) {
+      receivers.add(callback);
+      callback(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
+      callback(message('updateComponents', {'surfaceId':'main','components':[{'id':'root','component':'chart'}]}));
+      return () {stops++;};
+    }
+    final errors=<Object>[];
+    Widget screen(FlutterComponentRegistry registry) => MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe:subscribe,onError:errors.add,extensions:registry)));
+    await tester.pumpWidget(screen(first));await tester.pump();expect(find.text('First'),findsOneWidget);
+    await tester.pumpWidget(screen(second));await tester.pump();expect(stops,1);expect(find.text('Second'),findsOneWidget);
+    receivers.first({'version':'invalid'});expect(errors,isEmpty);
+  });
   test('extension registries are captured and validators cannot mutate stored values', () {
     final registry=FlutterComponentRegistry();
     registry.register('chart', (context, props) => const SizedBox(), (component) {
