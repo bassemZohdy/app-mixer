@@ -47,3 +47,30 @@ test('competing decisions admit exactly one',async()=>{
  const s=setup();try{await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);const results=await Promise.allSettled([s.approvals.decide(human,'action','approved'),s.approvals.decide(human,'action','rejected')]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal((await s.approvals.history(human,'action')).length,2);}
  finally{close(s);}
 });
+
+test('journal never reuses a cached action across different delegated authorities',async()=>{
+ const s=setup();try{
+  const authority=JSON.stringify(['service','user1']);let effects=0;
+  assert.deepEqual(await s.journal.invoke('action','pay',{amount:10},2,async()=>{effects++;return {ok:true}},false,authority),{ok:true});
+  await assert.rejects(s.journal.invoke('action','pay',{amount:10},2,async()=>{effects++;return null},false,JSON.stringify(['service','user2'])),/authority conflict/);
+  await assert.rejects(s.journal.invoke('action','pay',{amount:10},2,async()=>null),/authority conflict/);
+  assert.deepEqual(await s.journal.invoke('action','pay',{amount:10},2,async()=>null,false,authority),{ok:true});assert.equal(effects,1);
+ }finally{close(s);}
+});
+
+test('approval remains bound to the reviewed delegated authority across retries',async()=>{
+ const s=setup();try{const authority=JSON.stringify(['service','user1']);await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90,authority);await assert.rejects(s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90,JSON.stringify(['service','user2'])),/authority conflict/);await s.approvals.decide(human,'action','approved');await assert.rejects(s.journal.invoke('action','pay',{amount:10},2,async()=>null,true,JSON.stringify(['service','user2'])),/authority conflict/);assert.equal(await s.journal.invoke('action','pay',{amount:10},2,async()=>true,true,authority),true);
+ }finally{close(s);}
+});
+
+test('delegated approval review and recovery retain the user authority through dispatch',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');let next;try{
+  definitions.save('tenant',{manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:['pay'],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}},0);
+  let effects=0;const registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:actor=>actor.principalId==='user1',validate:()=>true,execute:()=>{effects++;return true;}});
+  const make=(journal,leaseToken,principalId)=>createConfiguredAgentRun({definitions,tenantId:'tenant',agentId:'agent',expectedVersion:1,bindings:[{operationId:'pay',toolName:'pay',description:'Pay'}],registry,authorizeRun:()=>true,authorizeCapability:()=>true,delegation:{grant:{tenantId:'tenant',agentId:'agent',runId:'run',principalId,grantId:'grant',permissionVersion:'v1',expiresAt:90},authorize:()=>true,clock:()=>s.now},actionJournal:{journal,maxAttempts:2,prepareInput:(_op,data)=>data},approval:{store:s.approvals,leaseToken,expiresAt:90,required:()=>true},createModel:()=>{let turn=0;return {async invoke(){return ++turn===1?new AIMessage({content:'',tool_calls:[{id:'action',name:'pay',args:{query:{amount:10}}}]}):new AIMessage('Done');}};}});
+  const collect=async iterable=>{const events=[];for await(const event of iterable)events.push(event);return events;},input={threadId:'thread',runId:'run',messages:[{role:'user',content:'Pay'}]};
+  assert.equal((await collect((await make(s.journal,s.run.leaseToken,'user1')).run(input))).at(-1).type,'RUN_ERROR');assert.equal((await s.approvals.get(human,'action')).authority,JSON.stringify(['service','user1']));
+  s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);await s.approvals.decide(human,'action','approved');s.run=s.runs.reconcile(scope,'run',s.run.revision,'retry',21);s.run=s.runs.claim(scope,'run',s.run.revision,'worker2',100,22);s.now=23;next=new SqliteAgentActionJournal(s.path,{scope,runId:'run',leaseToken:s.run.leaseToken,clock:()=>s.now});
+  assert.equal((await collect((await make(next,s.run.leaseToken,'user2')).run(input))).at(-1).type,'RUN_ERROR');assert.equal(effects,0);assert.equal((await collect((await make(next,s.run.leaseToken,'user1')).run(input))).at(-1).type,'RUN_FINISHED');assert.equal(effects,1);
+ }finally{next?.close();definitions.close();close(s);}
+});

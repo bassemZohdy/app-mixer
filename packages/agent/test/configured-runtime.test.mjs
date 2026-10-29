@@ -47,3 +47,12 @@ test('preparation rejects disabled, cross-tenant, missing and unapproved tools',
   const unlisted={...base,allowedCapabilities:[]};s.definitions.save('t',unlisted,1);let visible;s.options.expectedVersion=2;s.options.createModel=(_d,tools)=>{visible=tools.length;return {async invoke(){return new AIMessage({content:'',tool_calls:[{id:'c',name:'lookup',args:{}}]});}};};const run=await createConfiguredAgentRun(s.options);assert.equal(visible,0);assert.equal((await collect(run.run(input))).at(-1).type,'RUN_ERROR');assert.equal(s.count(),0);
  }finally{s.definitions.close();}
 });
+
+test('explicit scoped delegation invokes as the user only while host policy and expiry permit it',async()=>{
+ for(const mode of ['allowed','expired','revoked','wrong-tenant','wrong-run','expires-during-check']){const s=setup();try{
+  let now=10,calls=0,contexts=[];const registry=new CapabilityRegistry(e=>contexts.push(e));registry.register({operationId:'lookup',method:'GET',path:'/lookup'},{authorize:ctx=>ctx.principalId==='user',validate:()=>true,execute:()=>{calls++;return {ok:true}}});s.options.registry=registry;
+  const grant={tenantId:mode==='wrong-tenant'?'other':'t',agentId:'agent',runId:mode==='wrong-run'?'other':'run',principalId:'user',grantId:'grant',permissionVersion:'v1',expiresAt:mode==='expired'?10:20};let checks=0;s.options.delegation={grant,clock:()=>now,authorize:(identity,g,operation)=>{assert.equal(identity.servicePrincipalId,'svc');assert.equal(g.principalId,'user');assert.equal(operation,'lookup');checks++;if(mode==='expires-during-check')now=20;return mode!=='revoked';}};
+  if(mode==='wrong-tenant'){await assert.rejects(createConfiguredAgentRun(s.options),/Invalid delegation/);continue}const run=await createConfiguredAgentRun(s.options);grant.principalId='forged';
+  if(mode==='wrong-run'){await assert.rejects(collect(run.run(input)),/run mismatch/);continue}const events=await collect(run.run(input));assert.equal(events.at(-1).type,mode==='allowed'?'RUN_FINISHED':'RUN_ERROR');assert.equal(calls,mode==='allowed'?1:0);if(mode==='allowed'){assert.ok(checks>0);assert.ok(contexts.every(e=>e.principalId==='user'));}
+ }finally{s.definitions.close();}}
+});
