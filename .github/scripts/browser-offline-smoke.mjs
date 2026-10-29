@@ -7,8 +7,9 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 const script=await readFile(new URL('../../packages/web/dist/offline.js',import.meta.url));
 const workerScript=await readFile(new URL('../../packages/web/dist/offline-worker.js',import.meta.url));
+const uiScript=await readFile(new URL('../../packages/web/dist/offline-ui.js',import.meta.url));
 const fixture=`<!doctype html><body data-result="pending"><script type="module">
-import {EncryptedBrowserQueue,BrowserOfflineWorker} from '/offline.js';
+import {EncryptedBrowserQueue,BrowserOfflineWorker,mountOfflineConflictPanel} from '/offline.js';
 try {
  const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
  const opts={enabled:true,databaseName:'smoke',scope:{tenantId:'t',applicationId:'a',principalId:'p'},key};
@@ -23,6 +24,15 @@ try {
  const worker=new BrowserOfflineWorker(a,{intervalMs:100,maxPerPass:2,maxAttempts:2,isOnline:()=>true,resolveActor:()=>opts.scope,dispatch:()=>{dispatched++;},classify:()=> 'uncertain',onError:error=>{throw error;}});
  worker.start();const limit=Date.now()+10000;while((await a.get(next.id)).status!=='succeeded'&&Date.now()<limit)await new Promise(resolve=>setTimeout(resolve,25));
  await worker.stop();if(dispatched!==1||(await a.get(next.id)).status!=='succeeded')throw Error('Worker dispatch failed');
+ const conflictItem=await a.enqueue('save','conflict',{name:'queued'}),claim=await a.transition(conflictItem.id,1,'claim'),conflict=await a.transition(conflictItem.id,claim.version,'conflict');
+ const root=document.createElement('main');document.body.append(root);const panel=mountOfflineConflictPanel(root,a,{loadCurrent:()=>({name:'server'})});await panel.refresh();
+ const [review,,resolve]=root.querySelectorAll('button');review.click();
+ for(let i=0;i<100&&resolve.disabled;i++)await new Promise(done=>setTimeout(done,20));
+ if(resolve.disabled||!root.textContent.includes('server'))throw Error('Conflict review failed');
+ root.querySelector('textarea').value=JSON.stringify({name:'merged'});resolve.click();
+ for(let i=0;i<100&&(await a.get(conflict.id)).status!=='discarded';i++)await new Promise(done=>setTimeout(done,20));
+ const archived=await a.get(conflict.id);if(archived.status!=='discarded'||(await a.get(archived.replacementId)).payload.name!=='merged')throw Error('Conflict resolution failed');
+ panel.dispose();root.remove();
  const open=indexedDB.open('smoke',1);const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
  const tx=db.transaction('offline','readonly'),get=tx.objectStore('offline').getAll(),rows=await new Promise((resolve,reject)=>{get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);});
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');
@@ -36,7 +46,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/result'&&req.method==='POST'){
   const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
  }
- if(req.url==='/offline.js'||req.url==='/offline-worker.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:workerScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
+ if(req.url==='/offline.js'||req.url==='/offline-worker.js'||req.url==='/offline-ui.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:req.url==='/offline-worker.js'?workerScript:uiScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
 });
 const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));let browser,timer;
 try{

@@ -1,7 +1,7 @@
 /** Encrypted browser storage for explicitly enabled offline intents. The host owns keys and synchronization. */
 export type BrowserQueueScope={tenantId:string;applicationId:string;principalId:string};
 export type BrowserQueueStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
-export type BrowserQueueItem={id:string;version:number;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:BrowserQueueStatus;attempts:number};
+export type BrowserQueueItem={id:string;version:number;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:BrowserQueueStatus;attempts:number;replacementId?:string};
 export type BrowserQueueOptions={enabled:true;databaseName:string;scope:BrowserQueueScope;key:CryptoKey;indexedDB?:IDBFactory;crypto?:Crypto};
 type Envelope={id:string;partition:string;version:number;iv:Uint8Array<ArrayBuffer>;ciphertext:ArrayBuffer};
 const enc=new TextEncoder(),dec=new TextDecoder('utf-8',{fatal:true});
@@ -67,7 +67,7 @@ export class EncryptedBrowserQueue {
     try{
       const bytes=await this.crypt.subtle.decrypt({name:'AES-GCM',iv:envelope.iv,additionalData:this.aad(envelope.id,envelope.version)},this.key,envelope.ciphertext);
       const value=JSON.parse(dec.decode(bytes)) as BrowserQueueItem;
-      if(!record(value)||value.id!==envelope.id||value.version!==envelope.version||!identifier(value.operationId)||!identifier(value.requestKey)||!identifier(value.idempotencyKey)||!['pending','running','conflict','uncertain','exhausted','succeeded','discarded'].includes(value.status)||!Number.isSafeInteger(value.attempts)||value.attempts<0||Object.keys(value).length!==8||await this.itemId(value.requestKey)!==value.id)throw Error('Invalid entry');
+      if(!record(value)||value.id!==envelope.id||value.version!==envelope.version||!identifier(value.operationId)||!identifier(value.requestKey)||!identifier(value.idempotencyKey)||!['pending','running','conflict','uncertain','exhausted','succeeded','discarded'].includes(value.status)||!Number.isSafeInteger(value.attempts)||value.attempts<0||(Object.keys(value).length!==8&&Object.keys(value).length!==9)||(value.replacementId!==undefined&&(value.status!=='discarded'||typeof value.replacementId!=='string'||!/^[a-f0-9]{64}$/.test(value.replacementId)))||(Object.keys(value).length===9&&!Object.hasOwn(value,'replacementId'))||await this.itemId(value.requestKey)!==value.id)throw Error('Invalid entry');
       value.payload=copy(value.payload);return value;
     }catch{throw Error('Cannot authenticate offline entry');}
   }
@@ -90,6 +90,28 @@ export class EncryptedBrowserQueue {
     if(existing){const previous=await this.unseal(existing);if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized))throw Error('Offline request conflict');return previous;}
     return structuredClone(item);
   }
+  /** Atomically replace a reviewed conflict with a new, separately idempotent intent. */
+  async resolveConflict(id:string,expectedVersion:number,requestKey:string,payload:Record<string,unknown>):Promise<BrowserQueueItem>{
+    if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER||!identifier(requestKey))throw Error('Invalid conflict resolution');
+    const normalized=copy(payload),replacementId=await this.itemId(requestKey),current=await this.get(id);
+    if(!current||replacementId===id)throw Error('Invalid conflict resolution');
+    if(current.status==='discarded'&&current.version===expectedVersion+1&&current.replacementId===replacementId){
+      const previous=await this.get(replacementId);
+      if(!previous||previous.operationId!==current.operationId||canonical(previous.payload)!==canonical(normalized))throw Error('Offline request conflict');
+      return previous;
+    }
+    if(current.status!=='conflict'||current.version!==expectedVersion)throw Error('Offline version conflict');
+    const replacement:BrowserQueueItem={id:replacementId,version:1,operationId:current.operationId,requestKey,idempotencyKey:this.crypt.randomUUID(),payload:normalized,status:'pending',attempts:0};
+    const original={...current,status:'discarded' as const,version:current.version+1,replacementId};
+    const [originalEnvelope,replacementEnvelope]=await Promise.all([this.seal(original),this.seal(replacement)]);
+    const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');
+    const latest=await req(store.get(id)) as Envelope|undefined,existing=await req(store.get(replacementId)) as Envelope|undefined,count=await req(store.index('partition').count(this.partition));
+    if(!latest||latest.partition!==this.partition||latest.version!==expectedVersion||existing||count>=1000){
+      tx.abort();try{await done;}catch{}
+      if(existing)throw Error('Offline request conflict');if(count>=1000)throw Error('Offline queue full');throw Error('Offline version conflict');
+    }
+    store.put(originalEnvelope);store.add(replacementEnvelope);await done;return structuredClone(replacement);
+  }
   /** Compare-and-swap transitions prevent two tabs from claiming the same entry. */
   async transition(id:string,expectedVersion:number,action:'claim'|'succeed'|'conflict'|'uncertain'|'exhaust'|'requeue'|'discard'|'reconcileApplied'|'reconcileNotApplied'|'release'|'exhaustPending'):Promise<BrowserQueueItem>{
     if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER)throw Error('Invalid offline version');
@@ -106,3 +128,5 @@ export class EncryptedBrowserQueue {
 
 export { BrowserOfflineWorker } from './offline-worker.js';
 export type { BrowserOfflineFailure, BrowserOfflineWorkerOptions } from './offline-worker.js';
+export { mountOfflineConflictPanel } from './offline-ui.js';
+export type { OfflineConflictPanel, OfflineConflictPanelOptions } from './offline-ui.js';
