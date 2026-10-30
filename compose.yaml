@@ -28,6 +28,9 @@ services:
     <<: *local-image
     command: ["node", "deploy/local/service.mjs", "data"]
     network_mode: service:workspace
+    environment:
+      DATA_HEALTH_ENABLED: "true"
+      DATA_METRICS_TOKEN: ${DATA_METRICS_TOKEN:-}
     volumes: ["definitions:/data"]
     depends_on:
       workspace:
