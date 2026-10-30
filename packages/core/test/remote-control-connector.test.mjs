@@ -13,6 +13,33 @@ async function listen(server){server.listen(0,'127.0.0.1');await once(server,'li
 async function close(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 function config(sourceOrigin,repository,extra={}){return {sourceOrigin,sourceToken:token,sourceEnvironment:'development',targetEnvironment:'production',applicationId:'demo',repository,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},...extra};}
 
+test('advancing imports reject replay and older sources after reopening while preserving signed evidence',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'remote-advance-')),path=join(dir,'app.sqlite'),source=new ApplicationStore(definition);source.publish(0);source.publish(0);source.publish(0);
+ const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,env,version)=>signPromotionPackage(pkg,env,'release',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'release',sourceEnvironment:'development',publicKey}],'production',{requireVersionBound:true}),remote=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer),url=await listen(remote);let target=new SqliteApplicationStore(path,definition);
+ const options={requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence};
+ try{
+  let connector=createRemoteControlConnector(config(url,target,options));assert.equal((await connector.importPublication({...request,sourceVersion:2})).version,1);assert.equal(target.getPublicationProvenance(1).signature.keyId,'release');target.close();target=new SqliteApplicationStore(path,definition);connector=createRemoteControlConnector(config(url,target,options));
+  for(const sourceVersion of [1,2])await assert.rejects(connector.importPublication({...request,sourceVersion,expectedVersion:1}),RemoteControlImportUncertainError);
+  assert.equal(target.getPublished().version,1);assert.equal((await connector.importPublication({...request,sourceVersion:3,expectedVersion:1})).version,2);assert.equal(target.getPublicationProvenance(2).sourceVersion,3);
+ }finally{target.close();await close(remote);rmSync(dir,{recursive:true,force:true});}
+});
+
+test('advancing promotion is scoped to environment and fenced by the publication version',()=>{
+ for(const store of [new ApplicationStore(definition),new SqliteApplicationStore(':memory:',definition)])try{
+  const pkg=(environment,version)=>createPromotionPackage(environment,{version,definition});
+  store.promoteAdvancing(pkg('development',2),0,'production');
+  assert.throws(()=>store.promoteAdvancing(pkg('development',1),1,'production'),/did not advance/);
+  assert.throws(()=>store.promoteAdvancing(pkg('development',3),0,'production'),/version conflict/);
+  store.promoteAdvancing(pkg('staging',1),1,'production');store.promoteAdvancing(pkg('development',1),2,'testing');
+  assert.throws(()=>store.promoteAdvancing(pkg('development',2),3,'production'),/did not advance/);assert.equal(store.getPublished().version,3);
+ }finally{store.close?.();}
+});
+
+test('separate SQLite connections see the same advancing floor and target fence',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'remote-advance-race-')),path=join(dir,'app.sqlite'),first=new SqliteApplicationStore(path,definition),second=new SqliteApplicationStore(path,definition),pkg=version=>createPromotionPackage('development',{version,definition});
+ try{first.promoteAdvancing(pkg(3),0,'production');assert.throws(()=>second.promoteAdvancing(pkg(2),1,'production'),/did not advance/);second.promoteAdvancing(pkg(4),1,'production');assert.throws(()=>first.promoteAdvancing(pkg(5),1,'production'),/version conflict/);assert.equal(first.getPublished().version,2);assert.equal(first.getPublicationProvenance(2).sourceVersion,4);}finally{first.close();second.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('imports authenticated publications locally and keeps serving during source outage',async()=>{
  const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);const remote=createControlPlane(source,token),local=createDataPlane(target),[url,localUrl]=await Promise.all([listen(remote),listen(local)]),events=[];
  try{const connector=createRemoteControlConnector(config(url,target,{audit:event=>events.push(event.phase)}));const result=await connector.importPublication(request);assert.equal(result.version,1);assert.equal(target.getPublicationProvenance(1).sourceEnvironment,'development');assert.deepEqual(events,['attempt','source_verified','import_authorized','completed']);assert.equal((await (await fetch(localUrl+'/application')).json()).version,1);await close(remote);await assert.rejects(connector.importPublication({...request,expectedVersion:1}),/export failed/);assert.equal((await (await fetch(localUrl+'/application')).json()).version,1);}finally{if(remote.listening)await close(remote);await close(local);}
