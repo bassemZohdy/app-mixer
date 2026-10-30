@@ -13,5 +13,5 @@ COPY --from=build /app/packages/core/package.json ./packages/core/package.json
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/web/package.json ./packages/web/package.json
 COPY --from=build /app/packages/web/dist ./packages/web/dist
-COPY deploy/kubernetes/test-support/agent-recovery/recovery.mjs ./deploy/kubernetes/test-support/agent-recovery/recovery.mjs
+COPY deploy/kubernetes/test-support/agent-recovery/*.mjs ./deploy/kubernetes/test-support/agent-recovery/
 CMD ["node", "deploy/kubernetes/test-support/agent-recovery/recovery.mjs", "idle"]
