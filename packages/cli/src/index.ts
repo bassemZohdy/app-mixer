@@ -52,6 +52,9 @@ try {
  const server=String.raw`import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {once} from 'node:events';
+import {createPublicationTracing} from './publication-tracing.mjs';
+const flag=name=>{const value=process.env[name]??'false';if(value!=='true'&&value!=='false')throw Error('Invalid '+name);return value==='true';};
+const tracing=await createPublicationTracing({enabled:flag('WORKSPACE_TRACING_ENABLED'),trustIncoming:flag('WORKSPACE_TRACING_TRUST_INCOMING'),propagate:flag('WORKSPACE_TRACING_PROPAGATE')});
 const port=Number(process.env.PORT||3000);
 const publicationSchemaVersion=/^[12]$/.test(process.env.PUBLICATION_SCHEMA_VERSION||'1')?Number(process.env.PUBLICATION_SCHEMA_VERSION||'1'):null;
 const bind=process.env.APP_MIXER_BIND||'127.0.0.1';
@@ -74,16 +77,18 @@ createServer(async(req,res)=>{
   if(host!==('127.0.0.1:'+req.socket.localPort) && host!==('localhost:'+req.socket.localPort)){json(res,400,{error:'Invalid host'});return;}
   if(req.method==='GET' && req.url==='/api/publication/status'){json(res,200,{configured:!!process.env.DATA_PLANE_URL,schemaVersion:publicationSchemaVersion});return;}
   if(req.method==='GET' && req.url==='/api/publication'){
+    return tracing.handle(req,res,async()=>{
     if(!dataURL){json(res,503,{error:'Data plane is not configured'});return;}
     try{
-      const upstream=await fetch(dataURL,{headers:req.headers['if-none-match']?{'If-None-Match':req.headers['if-none-match']}:{},redirect:'error',signal:AbortSignal.timeout(5000)});
+      await tracing.upstream(async(traceHeaders,report)=>{
+      const upstream=await fetch(dataURL,{headers:{...traceHeaders,...(req.headers['if-none-match']?{'If-None-Match':req.headers['if-none-match']}:{})},redirect:'error',signal:AbortSignal.timeout(5000)});report(upstream.status);
       const etag=upstream.headers.get('etag');
       if(upstream.status===304&&etag){res.writeHead(304,{'etag':etag,'cache-control':'no-store'});res.end();return;}
       if(upstream.status!==200||!etag||!upstream.body)throw Error('Invalid publication response');
       const chunks=[];let size=0;for await(const chunk of upstream.body){size+=chunk.length;if(size>1024*1024)throw Error('Publication too large');chunks.push(chunk);}
-      res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','etag':etag});res.end(Buffer.concat(chunks));
+      res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','etag':etag});res.end(Buffer.concat(chunks));});
     }catch{if(!res.destroyed)json(res,502,{error:'Publication unavailable'});}
-    return;
+    });
   }
   const capabilityMatch=req.method==='POST'&&/^\/api\/capabilities\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})$/.exec(req.url||'');
   if(capabilityMatch){
@@ -202,6 +207,7 @@ export function prepareWorkspace(app){
 `;
  const rendererSource=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
  const dataEditor=await readFile(new URL('../templates/data-editor.mjs',import.meta.url));
+ const publicationTracing=await readFile(new URL('../templates/publication-tracing.mjs',import.meta.url));
  const stagedEditor=await readFile(new URL('../templates/staged-editor.mjs',import.meta.url));
  const offlineRuntime=await readFile(new URL('../templates/offline-runtime.mjs',import.meta.url));
  const publicationRuntime=await readFile(new URL('../templates/offline-publication-runtime.mjs',import.meta.url));
@@ -212,7 +218,7 @@ export function prepareWorkspace(app){
  const offlineShell=shellTemplate.replace('__APP_ID__',JSON.stringify(name)),offlineShellWorker=shellWorkerTemplate.replace('__APP_ID__',JSON.stringify(name));
  const offlineURL=new URL(import.meta.resolve('@app-mixer/web/offline'));
  const [offlineSource,offlineWorker,offlineUI]=await Promise.all([readFile(offlineURL),readFile(new URL('./offline-worker.js',offlineURL)),readFile(new URL('./offline-ui.js',offlineURL))]);
- await Promise.all([writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
+ await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
