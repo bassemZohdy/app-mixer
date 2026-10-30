@@ -110,8 +110,8 @@ export { SqliteApplicationStore } from './sqlite.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
 export { RemoteRolloutPoller } from './remote-rollout-poller.js';
 export type { RemoteRolloutPollerOptions, RemoteRolloutResult } from './remote-rollout-poller.js';
-export { createControlPlane, createDataPlane, createProposalPlane, createDevelopmentPlanes } from './planes.js';
-export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
+export { createControlPlane, createDataPlane, createDataPlaneHttps, createProposalPlane, createDevelopmentPlanes } from './planes.js';
+export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
