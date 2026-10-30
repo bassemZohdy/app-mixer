@@ -5,7 +5,8 @@ import {createServer} from 'node:http';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {ApplicationStore,SqliteApplicationStore,createControlPlane,createDataPlane,createRemoteControlConnector,RemoteControlImportUncertainError} from '../dist/index.js';
+import {generateKeyPairSync} from 'node:crypto';
+import {ApplicationStore,SqliteApplicationStore,createControlPlane,createDataPlane,createRemoteControlConnector,RemoteControlImportUncertainError,signPromotionPackage,createSignedPromotionVerifier,createPromotionPackage} from '../dist/index.js';
 
 const definition={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',route:'/',title:'Home',components:[]}]},token='source-secret-at-least-32-characters-long',request={actor:{tenantId:'t',principalId:'admin'},sourceVersion:1,expectedVersion:0};
 async function listen(server){server.listen(0,'127.0.0.1');await once(server,'listening');return `http://127.0.0.1:${server.address().port}`;}
@@ -44,4 +45,20 @@ test('rejects wrong publication identity and oversized responses without changin
 test('stale target versions and denied publication guards never overwrite local data',async()=>{
  const source=new ApplicationStore(definition),target=new ApplicationStore(definition,()=>false);source.publish(0);const remote=createControlPlane(source,token),url=await listen(remote);
  try{const connector=createRemoteControlConnector(config(url,target));await assert.rejects(connector.importPublication(request),RemoteControlImportUncertainError);assert.equal(target.getPublished(),undefined);const other=new ApplicationStore(definition);other.publish(0);await assert.rejects(createRemoteControlConnector(config(url,other)).importPublication(request),RemoteControlImportUncertainError);assert.equal(other.getPublished().version,1);}finally{await close(remote);}
+});
+
+test('signed remote import binds target version and stores verifiable signer evidence',async()=>{
+ const source=new ApplicationStore(definition),target=new SqliteApplicationStore(':memory:',definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,env,version)=>signPromotionPackage(pkg,env,'release',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'release',sourceEnvironment:'development',publicKey}],'production',{requireVersionBound:true}),remote=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer),url=await listen(remote);
+ try{const connector=createRemoteControlConnector(config(url,target,{verifyWithEvidence:verifier.verifyWithEvidence}));assert.equal((await connector.importPublication(request)).version,1);const proof=target.getPublicationProvenance(1).signature;assert.equal(proof.keyId,'release');assert.equal(proof.expectedVersion,0);await assert.rejects(connector.importPublication(request),RemoteControlImportUncertainError);assert.equal(target.getPublished().version,1);}finally{target.close();await close(remote);}
+});
+
+test('signed mode rejects unsigned exports and untrusted signing keys before local writes',async()=>{
+ const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);const {privateKey}=generateKeyPairSync('ed25519'),trusted=generateKeyPairSync('ed25519'),verify=createSignedPromotionVerifier([{keyId:'release',sourceEnvironment:'development',publicKey:trusted.publicKey}],'production',{requireVersionBound:true}),unsigned=createControlPlane(source,token),signed=createControlPlane(source,token,undefined,undefined,undefined,undefined,(pkg,env,version)=>signPromotionPackage(pkg,env,'release',privateKey,version)),[a,b]=await Promise.all([listen(unsigned),listen(signed)]);
+ try{for(const url of [a,b])await assert.rejects(createRemoteControlConnector(config(url,target,{verifyWithEvidence:verify.verifyWithEvidence})).importPublication(request),/export failed/);assert.equal(target.getPublished(),undefined);}finally{await Promise.all([close(unsigned),close(signed)]);}
+});
+
+test('signed mode rejects package tampering and replay at another target version',async()=>{
+ const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),verify=createSignedPromotionVerifier([{keyId:'release',sourceEnvironment:'development',publicKey}],'production',{requireVersionBound:true}),signed=signPromotionPackage(createPromotionPackage('development',source.getPublished()),'production','release',privateKey,0);let document=structuredClone(signed);
+ const remote=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(document));}),url=await listen(remote),connector=createRemoteControlConnector(config(url,target,{verifyWithEvidence:verify.verifyWithEvidence}));
+ try{document.package.definition.pages[0].title='Tampered';await assert.rejects(connector.importPublication(request),/export failed/);assert.equal(target.getPublished(),undefined);document=structuredClone(signed);await assert.rejects(connector.importPublication({...request,expectedVersion:1}),/export failed/);assert.equal(target.getPublished(),undefined);}finally{await close(remote);}
 });
