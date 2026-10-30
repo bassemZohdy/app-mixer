@@ -1,0 +1,52 @@
+name: React Native iOS integration
+on:
+  pull_request:
+    paths:
+      - 'packages/native/**'
+      - '.github/workflows/react-native-ios.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ios-integration:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build adapter and generate host
+        run: |
+          npm ci
+          npm run build --workspace @app-mixer/native
+          npx --yes @react-native-community/cli@20.0.2 init MixerDevice --version 0.83.1 --skip-install --skip-git-init --directory "$RUNNER_TEMP/MixerDevice"
+          cp packages/native/device-test/App.js "$RUNNER_TEMP/MixerDevice/App.js"
+          cp packages/native/dist/index.js "$RUNNER_TEMP/MixerDevice/app-mixer.js"
+          cd "$RUNNER_TEMP/MixerDevice"
+          npm install --no-audit --no-fund
+      - name: Prepare iOS UI test host
+        run: |
+          cd "$RUNNER_TEMP/MixerDevice/ios"
+          mkdir -p MixerDeviceUITests
+          cp "$GITHUB_WORKSPACE/packages/native/device-test/MixerDeviceUITests.swift" MixerDeviceUITests/
+          ruby "$GITHUB_WORKSPACE/packages/native/device-test/add-ios-tests.rb"
+          pod install
+      - name: Run UI test on iOS simulator
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
+          simulator=$(python3 - <<'PY'
+          import json, os
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'simulators.json')) as f:
+              devices = json.load(f)['devices']
+          candidates = [device for runtime, group in devices.items() if 'iOS' in runtime for device in group if device.get('isAvailable') and device['name'].startswith('iPhone')]
+          if not candidates:
+              raise SystemExit('No available iPhone simulator')
+          print(candidates[0]['udid'])
+          PY
+          )
+          xcrun simctl boot "$simulator"
+          xcrun simctl bootstatus "$simulator" -b
+          cd "$RUNNER_TEMP/MixerDevice/ios"
+          xcodebuild test -workspace MixerDevice.xcworkspace -scheme MixerDeviceUITests -configuration Release -destination "platform=iOS Simulator,id=$simulator" CODE_SIGNING_ALLOWED=NO
