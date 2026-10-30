@@ -1,6 +1,8 @@
 import {SqliteAgentMemory,type AgentMemoryScope,type AgentMemoryActor,type AgentMemoryProvenance} from './agent-memory.js';
 
 type Embedder={modelId:string;dimensions:number;embed:(text:string)=>Promise<number[]>};
+export type SemanticMemorySearchOptions={minSimilarity?:number};
+export const validSimilarity=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=-1&&value<=1;
 export type SemanticMemoryHit={id:string;revision:number;text:string;score:number;provenance:AgentMemoryProvenance;expiresAt:number};
 const validId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const validText=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=2000;
@@ -23,15 +25,15 @@ export class AgentSemanticMemory {
   const vector=normalize(await this.embed(text),this.dimensions);
   await this.memory.put(safeActor,safeScope,memoryId,{format:'semantic-v1',modelId:this.modelId,text,vector},safeOptions);
  }
- async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5):Promise<SemanticMemoryHit[]>{
-  return this.searchInternal(actor,scope,query,limit,false);
+ async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
+  return this.searchInternal(actor,scope,query,limit,false,options);
  }
  /** Fuse semantic rank with exact normalized word matches; never expands the authorized scope. */
- async searchHybrid(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5):Promise<SemanticMemoryHit[]>{
-  return this.searchInternal(actor,scope,query,limit,true);
+ async searchHybrid(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
+  return this.searchInternal(actor,scope,query,limit,true,options);
  }
- private async searchInternal(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit:number,hybrid:boolean):Promise<SemanticMemoryHit[]>{
-  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validText(query)||!Number.isSafeInteger(limit)||limit<1||limit>20)throw Error('Invalid semantic query');
+ private async searchInternal(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit:number,hybrid:boolean,options:SemanticMemorySearchOptions):Promise<SemanticMemoryHit[]>{
+  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validText(query)||!Number.isSafeInteger(limit)||limit<1||limit>20||!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='minSimilarity')||(options.minSimilarity!==undefined&&!validSimilarity(options.minSimilarity)))throw Error('Invalid semantic query');const minSimilarity=options.minSimilarity;
   await this.memory.assertAccess(safeActor,safeScope,'list');const queryVector=normalize(await this.embed(query),this.dimensions);
   const matches:SemanticMemoryHit[]=[];let after:string|undefined,pages=0;
   do{
@@ -40,7 +42,7 @@ export class AgentSemanticMemory {
     if(entry.format!=='semantic-v1'||entry.modelId!==this.modelId||!validText(entry.text))continue;
     let vector:number[];try{vector=normalize(entry.vector,this.dimensions);}catch{continue;}
     const score=Math.max(-1,Math.min(1,vector.reduce((sum,value,index)=>sum+value*queryVector[index],0)));
-    matches.push({id:row.id,revision:row.revision,text:entry.text,score,provenance:row.provenance,expiresAt:row.expiresAt});
+    if(minSimilarity===undefined||score>=minSimilarity)matches.push({id:row.id,revision:row.revision,text:entry.text,score,provenance:row.provenance,expiresAt:row.expiresAt});
    }
    after=page.nextAfter;
   }while(after);
