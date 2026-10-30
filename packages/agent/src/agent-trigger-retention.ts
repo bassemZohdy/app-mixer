@@ -1,0 +1,32 @@
+import {DatabaseSync} from 'node:sqlite';
+import type {AgentRunScope} from './durable-runs.js';
+
+type Actor={tenantId:string;principalId:string};
+type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'redact'|'read',runId:string)=>boolean|Promise<boolean>};
+const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+
+/** Explicit host-authorized payload redaction for terminal local agent runs. */
+export class SqliteAgentTriggerRetention {
+ private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];
+ constructor(path:string,options:Options){
+  if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function')throw Error('Invalid trigger retention');
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.db=new DatabaseSync(path);
+  try{this.db.exec('PRAGMA busy_timeout=5000');for(const name of ['agent_runs','agent_trigger_inbox','agent_trigger_redactions'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Trigger inbox unavailable');}catch(error){this.db.close();throw error;}
+ }
+ close():void{this.db.close();}
+ private actor(actor:Actor,runId:string):Actor{if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId)||!id(runId))throw Error('Invalid trigger retention request');return {tenantId:actor.tenantId,principalId:actor.principalId};}
+ async redact(actor:Actor,runId:string,now=Date.now()):Promise<boolean>{
+  const who=this.actor(actor,runId);if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid trigger retention request');
+  if(await this.authorize({...who},'redact',runId)!==true)throw Error('Trigger retention access denied');
+  const {tenantId,agentId}=this.scope;this.db.exec('BEGIN IMMEDIATE');try{
+   const row=this.db.prepare('SELECT r.status,d.run_id AS redacted FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id=?').get(tenantId,agentId,runId);
+   if(!row)throw Error('Trigger not found');if(row.redacted!==null){this.db.exec('COMMIT');return false;}if(!['succeeded','failed','cancelled'].includes(String(row.status)))throw Error('Trigger run is not terminal');
+   this.db.prepare("UPDATE agent_trigger_inbox SET payload='null' WHERE tenant_id=? AND agent_id=? AND run_id=?").run(tenantId,agentId,runId);
+   this.db.prepare('INSERT INTO agent_trigger_redactions VALUES (?,?,?,?,?)').run(tenantId,agentId,runId,who.principalId,now);this.db.exec('COMMIT');return true;
+  }catch(error){this.db.exec('ROLLBACK');throw error;}
+ }
+ async getRedaction(actor:Actor,runId:string):Promise<{actorId:string;redactedAt:number}|undefined>{
+  const who=this.actor(actor,runId);if(await this.authorize({...who},'read',runId)!==true)throw Error('Trigger retention access denied');const row=this.db.prepare('SELECT actor_id,redacted_at FROM agent_trigger_redactions WHERE tenant_id=? AND agent_id=? AND run_id=?').get(this.scope.tenantId,this.scope.agentId,runId);return row?{actorId:String(row.actor_id),redactedAt:Number(row.redacted_at)}:undefined;
+ }
+}
+export type {Actor as AgentTriggerRetentionActor,Options as AgentTriggerRetentionOptions};
