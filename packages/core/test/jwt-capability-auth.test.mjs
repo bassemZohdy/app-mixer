@@ -5,7 +5,7 @@ import {once} from 'node:events';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {SignJWT} from 'jose';
+import {SignJWT,jwtVerify} from 'jose';
 import {CapabilityRegistry,createCapabilityServer,createJwtCapabilityAuthenticator,SqliteJwtRevocations} from '../dist/index.js';
 const issuer='https://identity.example.test/',audience='https://api.example.test',time=1700000000000;
 const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048}),other=generateKeyPairSync('rsa',{modulusLength:2048}),jwk={...publicKey.export({format:'jwk'}),kid:'one',alg:'RS256',use:'sig'};
@@ -50,4 +50,12 @@ test('revocation during asynchronous identity mapping and status errors fail clo
 
 test('concurrent revocations cannot shorten retention and pruning is issuer scoped',()=>{
  const dir=mkdtempSync(join(tmpdir(),'jwt-revoke-multi-')),path=join(dir,'db.sqlite');let a,b;try{let now=time;a=new SqliteJwtRevocations(path,{issuer,clock:()=>now});b=new SqliteJwtRevocations(path,{issuer,clock:()=>now});a.revoke('one',time+3000);b.revoke('one',time+1000);b.revoke('two',time+2000);now=time+2000;assert.equal(a.prune(now,1),1);assert.equal(a.isTokenActive({iss:issuer,jti:'one'}),false);assert.equal(b.isTokenActive({iss:issuer,jti:'two'}),true);now=time+3000;assert.equal(b.prune(now,1),1);assert.equal(a.isTokenActive({iss:issuer,jti:'one'}),true);}finally{a?.close();b?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('verified token revocation retains the ID through expiry, tolerance and clock skew',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'jwt-revoke-horizon-')),path=join(dir,'db.sqlite');let store,other;try{let now=time;const claims=(await jwtVerify(await token(),publicKey,{issuer,audience,algorithms:['RS256'],currentDate:new Date(time)})).payload;store=new SqliteJwtRevocations(path,{issuer,clock:()=>now});other=new SqliteJwtRevocations(path,{issuer,clock:()=>now});const horizon=store.revokeVerifiedToken(claims,{maxClockToleranceSeconds:60,maxClockSkewSeconds:10});assert.equal(horizon,time+371000);assert.equal(other.isTokenActive(claims),false);assert.equal(other.revokeVerifiedToken(claims,{maxClockToleranceSeconds:1,maxClockSkewSeconds:0}),horizon);now=horizon-1;assert.equal(store.prune(now),0);assert.equal(other.isTokenActive(claims),false);now=horizon;assert.equal(other.prune(now),1);assert.equal(store.isTokenActive(claims),true);}finally{store?.close();other?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('verified revocation rejects malformed claims and unsafe retention settings',()=>{
+ const store=new SqliteJwtRevocations(':memory:',{issuer,clock:()=>time});try{const claims={iss:issuer,jti:'id',iat:time/1000,exp:time/1000+300},options={maxClockToleranceSeconds:60,maxClockSkewSeconds:10};for(const bad of [{...claims,iss:'https://other.test/'},{...claims,jti:''},{...claims,iat:undefined},{...claims,exp:claims.iat},{...claims,exp:1.5},{...claims,exp:Number.MAX_SAFE_INTEGER}])assert.throws(()=>store.revokeVerifiedToken(bad,options),/Invalid verified JWT revocation/);for(const bad of [{},{maxClockToleranceSeconds:-1,maxClockSkewSeconds:0},{maxClockToleranceSeconds:61,maxClockSkewSeconds:0},{maxClockToleranceSeconds:0,maxClockSkewSeconds:86401}])assert.throws(()=>store.revokeVerifiedToken(claims,bad),/Invalid verified JWT revocation/);assert.equal(store.isTokenActive(claims),true);}finally{store.close();}
 });
