@@ -3,7 +3,7 @@ import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 
-type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string};
+type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string;excludeDates?:string[]};
 type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
 export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revision:number;generation:number;nextAt:number;config:ScheduleConfig};
 export type AgentScheduleCursor={nextAt:number;scheduleId:string};
@@ -27,19 +27,23 @@ function cron(expression:string){
 function checkConfig(config:ScheduleConfig):ScheduleConfig{
  if(!config||typeof config!=='object'||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
  if(config.rule.kind==='interval'){if(Object.keys(config.rule).length!==2||!integer(config.rule.intervalMs)||config.rule.intervalMs<1000||config.rule.intervalMs>30*86400000)throw Error('Invalid schedule');return structuredClone(config);}
- if(config.rule.kind==='cron'){if(Object.keys(config.rule).some(key=>!['kind','expression','timeZone'].includes(key)))throw Error('Invalid schedule');cron(config.rule.expression);if(config.rule.timeZone!==undefined)checkZone(config.rule.timeZone);return structuredClone(config);}
+ if(config.rule.kind==='cron'){if(Object.keys(config.rule).some(key=>!['kind','expression','timeZone','excludeDates'].includes(key)))throw Error('Invalid schedule');cron(config.rule.expression);if(config.rule.timeZone!==undefined)checkZone(config.rule.timeZone);if(config.rule.excludeDates!==undefined)checkExcludedDates(config.rule.excludeDates);return structuredClone(config);}
  throw Error('Invalid schedule');
 }
 function checkZone(zone:unknown):asserts zone is string{
  if(typeof zone!=='string'||zone.length>128||!/^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)*$/.test(zone))throw Error('Invalid schedule time zone');
  try{new Intl.DateTimeFormat('en-US',{timeZone:zone}).format(0);}catch{throw Error('Invalid schedule time zone');}
 }
-function nextZoned(expression:string,zone:string,after:number):number{
+function checkExcludedDates(value:unknown):asserts value is string[]{
+ if(!Array.isArray(value)||value.length>366||new Set(value).size!==value.length)throw Error('Invalid excluded dates');
+ for(const date of value){if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw Error('Invalid excluded dates');try{if(Temporal.PlainDate.from(date).toString()!==date)throw Error();}catch{throw Error('Invalid excluded dates');}}
+}
+function nextZoned(expression:string,zone:string,after:number,excluded:Set<string>):number{
  const c=cron(expression),start=Temporal.Instant.fromEpochMilliseconds(after).toZonedDateTimeISO(zone).toPlainDate().subtract({days:2}),hours=[...c.hours].sort((a,b)=>a-b),minutes=[...c.minutes].sort((a,b)=>a-b);let best:number|undefined;
  for(let offset=0;offset<366*9+4;offset++){
   const date=start.add({days:offset}),lower=date.toPlainDateTime().toZonedDateTime('UTC').epochMilliseconds-86400000;
   if(best!==undefined&&lower>best)return best;if(lower+3*86400000<=after)continue;
-  const dom=c.days.has(date.day),dow=c.weekdays.has(date.dayOfWeek%7),dayMatch=c.dayAny?dow:c.weekdayAny?dom:dom||dow;if(!c.months.has(date.month)||!dayMatch)continue;
+  const dom=c.days.has(date.day),dow=c.weekdays.has(date.dayOfWeek%7),dayMatch=c.dayAny?dow:c.weekdayAny?dom:dom||dow;if(!c.months.has(date.month)||!dayMatch||excluded.has(date.toString()))continue;
   for(const hour of hours)for(const minute of minutes){
    const parts={timeZone:zone,year:date.year,month:date.month,day:date.day,hour,minute};
    const early=Temporal.ZonedDateTime.from(parts,{disambiguation:'earlier'}),late=Temporal.ZonedDateTime.from(parts,{disambiguation:'later'});
@@ -51,13 +55,13 @@ function nextZoned(expression:string,zone:string,after:number):number{
 }
 function next(rule:ScheduleRule,after:number):number{
  if(rule.kind==='interval'){const value=after+rule.intervalMs;if(!Number.isSafeInteger(value))throw Error('Invalid schedule time');return value;}
- if(rule.timeZone!==undefined)return nextZoned(rule.expression,rule.timeZone,after);
+ const excluded=new Set(rule.excludeDates??[]);if(rule.timeZone!==undefined)return nextZoned(rule.expression,rule.timeZone,after,excluded);
  const c=cron(rule.expression),start=Math.floor(after/60000)*60000+60000,date=new Date(start);if(!Number.isFinite(date.getTime()))throw Error('Invalid schedule time');
  const midnight=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate());
  for(let day=0;day<366*9;day++){
   const base=midnight+day*86400000,d=new Date(base);if(!Number.isFinite(d.getTime()))break;
   const dom=c.days.has(d.getUTCDate()),dow=c.weekdays.has(d.getUTCDay()),dayMatch=c.dayAny?dow:c.weekdayAny?dom:dom||dow;
-  if(!c.months.has(d.getUTCMonth()+1)||!dayMatch)continue;
+  if(!c.months.has(d.getUTCMonth()+1)||!dayMatch||excluded.has(d.toISOString().slice(0,10)))continue;
   for(const hour of [...c.hours].sort((a,b)=>a-b))for(const minute of [...c.minutes].sort((a,b)=>a-b)){const candidate=base+hour*3600000+minute*60000;if(candidate>=start&&Number.isSafeInteger(candidate))return candidate;}
  }
  throw Error('Cron has no occurrence within nine years');

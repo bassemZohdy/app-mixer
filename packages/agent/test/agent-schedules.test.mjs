@@ -103,3 +103,19 @@ test('zoned cron handles non-hour offsets, leap days and coalescing',()=>{
 test('zoned cron skips a whole missing local calendar day',()=>{
  const s=setup();try{const scheduled=s.schedules.save(scope,'apia',{...config,rule:{kind:'cron',expression:'0 12 * * *',timeZone:'Pacific/Apia'}},0,Date.parse('2011-12-29T23:00:00Z'));assert.equal(scheduled.nextAt,Date.parse('2011-12-30T22:00:00Z'));}finally{close(s);}
 });
+
+
+test('cron exclusion dates skip holidays in the schedule time zone and persist atomically',async()=>{
+ const s=setup();let history;try{const now=Date.parse('2026-12-23T00:00:00Z'),rule={kind:'cron',expression:'0 9 * * *',timeZone:'Asia/Tokyo',excludeDates:['2026-12-24','2026-12-25']},scheduled=s.schedules.save(scope,'holiday',{...config,rule},0,now,'admin');rule.excludeDates.push('2026-12-26');assert.deepEqual(s.schedules.get(scope,'holiday').config.rule.excludeDates,['2026-12-24','2026-12-25']);assert.equal(scheduled.nextAt,Date.parse('2026-12-23T00:00:00Z')+86400000*3);const fire=s.schedules.fire(scope,'holiday',scheduled.revision,policy,scheduled.nextAt,'worker');assert.equal(s.triggers.get(scope,fire.runId).payload.scheduledAt,scheduled.nextAt);assert.equal(s.schedules.get(scope,'holiday').nextAt,Date.parse('2026-12-27T00:00:00Z'));history=new SqliteAgentScheduleHistory(s.path,{scope,authorize:()=>true});const events=(await history.list({tenantId:'tenant',principalId:'reviewer'})).items;assert.deepEqual(events[0].config.rule.excludeDates,['2026-12-24','2026-12-25']);const previous=s.schedules.get(scope,'holiday'),updated=s.schedules.save(scope,'holiday',{...config,rule:{...previous.config.rule,excludeDates:['2026-12-27']}},previous.revision,scheduled.nextAt,'admin');assert.equal(updated.generation,2);assert.equal(updated.nextAt,Date.parse('2026-12-28T00:00:00Z'));assert.equal(s.runs.get(scope,fire.runId).status,'queued');
+ }finally{history?.close();close(s);}
+});
+
+test('cron exclusions cover repeated local times, UTC dates and coalescing',()=>{
+ const s=setup();try{const start=Date.parse('2026-11-01T04:00:00Z'),rule={kind:'cron',expression:'30 1 * * *',timeZone:'America/New_York',excludeDates:['2026-11-01']},skip=s.schedules.save(scope,'fall-skip',{...config,rule},0,start);assert.equal(skip.nextAt,Date.parse('2026-11-02T06:30:00Z'));const utc=s.schedules.save(scope,'utc-skip',{...config,rule:{kind:'cron',expression:'0 0 * * *',excludeDates:['2026-11-02']}},0,start);assert.equal(utc.nextAt,Date.parse('2026-11-03T00:00:00Z'));const merged=s.schedules.save(scope,'merged-skip',{...config,misfire:'coalesce',rule:{kind:'cron',expression:'0 0 * * *',excludeDates:['2026-11-04']}},0,start),now=Date.parse('2026-11-03T12:00:00Z');s.schedules.fire(scope,'merged-skip',merged.revision,policy,now);assert.equal(s.schedules.get(scope,'merged-skip').nextAt,Date.parse('2026-11-05T00:00:00Z'));
+ }finally{close(s);}
+});
+
+test('cron exclusions reject invalid calendars and no occurrence within the bounded horizon',()=>{
+ const s=setup();try{const base={kind:'cron',expression:'0 0 * * *'};for(const excludeDates of [null,'2026-01-01',['2026-02-30'],['2026-1-01'],['2026-01-01','2026-01-01'],Array(367).fill('2026-01-01')])assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{...base,excludeDates}},0,0),/excluded dates/);assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'interval',intervalMs:1000,excludeDates:[]}},0,0),/Invalid schedule/);const years=Array.from({length:10},(_,i)=>`${2027+i}-01-01`);assert.throws(()=>s.schedules.save(scope,'none',{...config,rule:{kind:'cron',expression:'0 0 1 1 *',excludeDates:years}},0,Date.parse('2026-01-02T00:00:00Z')),/nine years/);assert.equal(s.schedules.get(scope,'none'),undefined);
+ }finally{close(s);}
+});
