@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenance } from './index.js';
 import { isValidExtensionReferences, isValidExtensionOperations } from './index.js';
 import {createPromotionPackage,validEnvironment,type PromotionPackage} from './promotion.js';
-import type {PromotionSignatureEvidence,VerifiedPromotion} from './signed-promotion.js';
+import type {PromotionSignatureEvidence,VerifiedPromotion,SignedPromotionPackage} from './signed-promotion.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
@@ -96,10 +96,12 @@ export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition
 /** Trusted host-owned browser module source. It must not contain secrets. */
 export type DevelopmentPreviewOptions = {extensionModule?: string};
 export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>PromotionPackage;verifyWithEvidence?:never}|{verify?:never;verifyWithEvidence:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>VerifiedPromotion};
-export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy): Server {
+export type PromotionExportSigner = (pkg:PromotionPackage,targetEnvironment:string,expectedVersion:number)=>SignedPromotionPackage|Promise<SignedPromotionPackage>;
+export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy, exportSigner?:PromotionExportSigner): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
   if(promotionPolicy!==undefined&&(!promotionPolicy||(typeof promotionPolicy.verify==='function')===(typeof promotionPolicy.verifyWithEvidence==='function')))throw Error('Invalid promotion policy');
+  if(exportSigner!==undefined&&typeof exportSigner!=='function')throw Error('Invalid promotion export signer');
   const verifyPromotion=promotionPolicy?.verify,verifyWithEvidence=promotionPolicy?.verifyWithEvidence;
   const extensionModule=preview?.extensionModule ?? 'export const installedExtensions = [];';
   return server(async (req, res) => {
@@ -167,6 +169,15 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if(!record(input)||!exact(input,['sourceEnvironment','version'])||!validEnvironment(input.sourceEnvironment)||!revision(input.version)||input.version<1)throw new RequestError(400,'Invalid promotion request');
       const publication=repository.getPublished(input.version);if(!publication)throw Error('Publication not found');
       respond(res,200,createPromotionPackage(input.sourceEnvironment,publication));return;
+    }
+    if (req.method === 'POST' && req.url === '/promotion/export-signed') {
+      if(!exportSigner)throw new RequestError(501,'Signed export unavailable');
+      const input=await body(req);
+      if(!record(input)||!exact(input,['sourceEnvironment','version','targetEnvironment','expectedVersion'])||!validEnvironment(input.sourceEnvironment)||!revision(input.version)||input.version<1||!validEnvironment(input.targetEnvironment)||input.sourceEnvironment===input.targetEnvironment||!revision(input.expectedVersion)||input.expectedVersion>=Number.MAX_SAFE_INTEGER)throw new RequestError(400,'Invalid promotion request');
+      const publication=repository.getPublished(input.version);if(!publication)throw Error('Publication not found');
+      const pkg=createPromotionPackage(input.sourceEnvironment,publication),signed=await exportSigner(structuredClone(pkg),input.targetEnvironment,input.expectedVersion);
+      if(!signed||signed.formatVersion!==2||signed.expectedVersion!==input.expectedVersion||signed.targetEnvironment!==input.targetEnvironment||typeof signed.keyId!=='string'||typeof signed.signature!=='string'||createPromotionPackage(input.sourceEnvironment,{version:input.version,definition:signed.package?.definition}).digest!==pkg.digest||signed.package?.digest!==pkg.digest||signed.package?.sourceEnvironment!==input.sourceEnvironment||signed.package?.sourceVersion!==input.version)throw Error('Invalid signed export');
+      respond(res,200,signed);return;
     }
     if (req.method === 'POST' && req.url === '/promotion/import') {
       const input=await body(req);
