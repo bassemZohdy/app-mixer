@@ -38,6 +38,8 @@ jobs:
           PY
           mkdir -p "$RUNNER_TEMP/adapter_device_test/integration_test"
           cp adapters/flutter/integration_test/renderer_device_test.dart "$RUNNER_TEMP/adapter_device_test/integration_test/"
+          mkdir -p "$RUNNER_TEMP/adapter_device_test/test"
+          cp adapters/flutter/test/signed_plan_fixture.dart "$RUNNER_TEMP/adapter_device_test/test/"
           cd "$RUNNER_TEMP/adapter_device_test"
           flutter pub get
       - name: Enable KVM

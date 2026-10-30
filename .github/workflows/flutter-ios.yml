@@ -41,6 +41,8 @@ jobs:
           PY
           mkdir -p "$RUNNER_TEMP/adapter_device_test/integration_test"
           cp adapters/flutter/integration_test/renderer_device_test.dart "$RUNNER_TEMP/adapter_device_test/integration_test/"
+          mkdir -p "$RUNNER_TEMP/adapter_device_test/test"
+          cp adapters/flutter/test/signed_plan_fixture.dart "$RUNNER_TEMP/adapter_device_test/test/"
           mkdir -p "$RUNNER_TEMP/adapter_device_test/test_driver"
           printf "import 'package:integration_test/integration_test_driver.dart';\nFuture<void> main() => integrationDriver();\n" > "$RUNNER_TEMP/adapter_device_test/test_driver/integration_test.dart"
           cd "$RUNNER_TEMP/adapter_device_test"
