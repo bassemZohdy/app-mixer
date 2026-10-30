@@ -7,9 +7,11 @@ const subscribe = receive => {
   receive({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
   receive({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{name:'Ada'}}});
   receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
-    {id:'root',component:'Column',children:['title','field','button']},
+    {id:'root',component:'Column',children:['title','field','mirror','echo','button']},
     {id:'title',component:'Text',text:'Device heading',variant:'h1'},
     {id:'field',component:'TextField',label:'Name',value:{path:'/name'}},
+    {id:'mirror',component:'TextField',label:'Name copy',value:{path:'/name'}},
+    {id:'echo',component:'Text',text:{path:'/name'}},
     {id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/name'}}}}},
     {id:'label',component:'Text',text:'Save'}
   ]}});
