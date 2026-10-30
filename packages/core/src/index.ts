@@ -108,6 +108,8 @@ export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
+export { PostgresRemoteRollout } from './postgres-remote-rollout.js';
+export type { PostgresRemoteRolloutOptions, PostgresRemoteRolloutState } from './postgres-remote-rollout.js';
 export { RemoteRolloutPoller } from './remote-rollout-poller.js';
 export type { RemoteRolloutPollerOptions, RemoteRolloutResult } from './remote-rollout-poller.js';
 export { createControlPlane, createDataPlane, createDataPlaneHttps, createProposalPlane, createDevelopmentPlanes } from './planes.js';
