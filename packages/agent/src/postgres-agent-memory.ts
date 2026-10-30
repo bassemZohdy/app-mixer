@@ -6,7 +6,7 @@ type Options={enabled:true;maxTtlMs:number;maxEntries:number;authorize:(actor:Ac
 const scopeWhere='tenant_id=$1 AND agent_id=$2 AND owner_kind=$3 AND owner_id=$4 AND memory_kind=$5';
 const scopedPredicate=(scope:Scope):string=>`tenant_id='${scope.tenantId}' AND agent_id='${scope.agentId}' AND owner_kind='${scope.owner.kind}' AND owner_id='${scope.owner.id}'`;
 const sameScope=(a:Scope,b:Scope):boolean=>a.tenantId===b.tenantId&&a.agentId===b.agentId&&a.owner.kind===b.owner.kind&&a.owner.id===b.owner.id&&a.kind===b.kind;
-const vectorExpression=(dimensions:number,scope?:Scope):string=>{const cast=`((value::jsonb->'vector')::text::public.vector(${dimensions}))`;return scope?`(CASE WHEN ${scopedPredicate(scope)} THEN ${cast} ELSE NULL END)`:cast;};
+const vectorExpression=(dimensions:number,scope?:Scope):string=>{const cast=`((value::jsonb->'vector')::text::public.vector(${dimensions}))`;return scope?`((CASE WHEN ${scopedPredicate(scope)} THEN ${cast} ELSE NULL END)::public.vector(${dimensions}))`:cast;};
 
 /** Shared PostgreSQL memory. The host must provide a real transaction pinned to one connection. */
 export class PostgresAgentMemory {
