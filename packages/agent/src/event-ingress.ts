@@ -12,7 +12,7 @@ type Options={
  authenticate?: (request:IncomingMessage)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authenticateRaw?: (request:IncomingMessage,body:Buffer)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
- mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>EventRequest;
+ mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity,request:IncomingMessage)=>EventRequest;
  challengeAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>string|undefined;
  traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
  tracing?:{tracer:Tracer;propagateToRun?:boolean};
@@ -49,7 +49,7 @@ export function createAgentEventIngress(options:Options):Server {
   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
   if(challengeAuthenticatedBody){try{const challenge=challengeAuthenticatedBody(Buffer.from(raw!),{...source});if(challenge!==undefined){if(typeof challenge!=='string'||!/^[\x21-\x7e]{1,512}$/.test(challenge))throw Error('Invalid challenge');reply(res,200,{challenge});return;}}catch{reply(res,400,{error:'Invalid event'});return;}}
-  let event:EventRequest;try{event=mapAuthenticatedBody?validateEvent(structuredClone(mapAuthenticatedBody(Buffer.from(raw!),{...source}))):parse(raw!);}catch{reply(res,400,{error:'Invalid event'});return;}
+  let event:EventRequest;try{event=mapAuthenticatedBody?validateEvent(structuredClone(mapAuthenticatedBody(Buffer.from(raw!),{...source},req))):parse(raw!);}catch{reply(res,400,{error:'Invalid event'});return;}
   try{
    const definition=definitions.get(source.tenantId,event.agentId);
    if(!definition||!definition.manifest.lifecycle.enabled||definition.manifest.tenantId!==source.tenantId||definition.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}

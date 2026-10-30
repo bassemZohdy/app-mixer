@@ -145,6 +145,8 @@ export type {AgentRunEvent,AgentRunHistoryActor,AgentRunHistoryAccess,AgentRunHi
 export {createSignedWebhookAuthenticator} from './signed-webhook.js';
 export type {SignedWebhookSource,SignedWebhookOptions} from './signed-webhook.js';
 
+export {createGitlabWebhookAdapter} from './gitlab-webhook.js';
+export type {GitlabWebhookOptions} from './gitlab-webhook.js';
 export {createGithubWebhookAdapter} from './github-webhook.js';
 export {createStripeWebhookAdapter} from './stripe-webhook.js';
 export {createSlackWebhookAdapter} from './slack-webhook.js';
