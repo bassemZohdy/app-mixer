@@ -201,4 +201,7 @@ export {PostgresPublicationReleaseRegistry} from './postgres-publication-release
 export type {PublicationReleaseScope,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
 
 export {PostgresExtensionApprovals} from './postgres-extension-approvals.js';
-export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionApprovalEvent} from './postgres-extension-approvals.js';
+export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionApprovalEvent,ExtensionApprovalState} from './postgres-extension-approvals.js';
+
+export {registerExtensionApprovalDecision,registerExtensionApprovalStatus,registerExtensionApprovalHistory} from './extension-approval-capabilities.js';
+export type {ExtensionApprovalDecisionCapabilityOptions,ExtensionApprovalReadCapabilityOptions} from './extension-approval-capabilities.js';
