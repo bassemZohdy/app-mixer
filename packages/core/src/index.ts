@@ -131,7 +131,7 @@ export { SqliteDataProvider } from './data-provider.js';
 export type { DataProvider, DataRecord, DataRecordPage, DataScope, DataMigration, MigrationPreview } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
-export type { StagedOperation, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier } from './staged-operations.js';
+export type { StagedOperation, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord } from './staged-operations.js';
 
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
