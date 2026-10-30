@@ -36,6 +36,7 @@ spec:
           env:
             - {name: APP_MIXER_PUBLICATION_PATH, value: /publication/publication.json}
             - {name: APP_MIXER_PUBLICATION_MODE, value: unsigned}
+            - {name: APP_MIXER_ACCESS_MODE, value: public}
             - {name: DATA_DRAIN_DELAY_MS, value: "5000"}
           readinessProbe:
             httpGet: {path: /health/ready, port: http}

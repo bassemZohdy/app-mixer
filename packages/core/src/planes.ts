@@ -216,10 +216,11 @@ export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)
 export type DataPlaneRequestObservation={route:'application'|'version'|'live'|'ready'|'other';outcome:'completed'|'aborted';statusClass:'2xx'|'3xx'|'4xx'|'5xx'|'other'|'none';durationMs:number};
 export type DataPlaneTracingOptions=HttpServerTracingOptions;
 export type DataPlaneServer=Server & {beginDrain:()=>void};
+export type DataPlanePublicationAuthorization=(request:IncomingMessage,version:number|undefined)=>boolean|Promise<boolean>;
 export type ControlPlaneTracingOptions=DataPlaneTracingOptions;
 /** Data plane exposes only immutable publications. It does not depend on the control plane. */
-export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions}): DataPlaneServer {
-  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');
+export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization}): DataPlaneServer {
+  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');const authorizePublication=options?.authorizePublication;if(authorizePublication!==undefined&&typeof authorizePublication!=='function')throw Error('Invalid publication authorization');
   const tracing=options?.tracing;if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid data plane tracing configuration');
   const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined,checkTimer:ReturnType<typeof setTimeout>|undefined,draining=false,finishDrain:()=>void;
   const drainSignal=new Promise<boolean>(resolve=>{finishDrain=()=>resolve(false);});
@@ -250,6 +251,7 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     const versionText = req.url === '/application' ? undefined : req.url!.split('/').at(-1);
     const version = versionText === undefined ? undefined : Number(versionText);
     if (version !== undefined && !Number.isSafeInteger(version)) throw new RequestError(400, 'Invalid version');
+    if(authorizePublication){let allowed:boolean;try{allowed=await authorizePublication(req,version)===true;}catch{respond(res,503,{error:'Authorization unavailable'});return;}if(!allowed){respond(res,403,{error:'Forbidden'});return;}}
     const published = repository.getPublished(version);
     if (!published) { respond(res, 404, {error:'Publication not found'}); return; }
     const tag='"'+createHash('sha256').update(JSON.stringify(published)).digest('hex')+'"';
