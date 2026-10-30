@@ -16,7 +16,7 @@ changed('wrong issuer',(_,c)=>env(c,'APP_MIXER_JWT_ISSUER').value='https://other
 changed('duplicate security variable',(_,c)=>c.env.push({name:'APP_MIXER_ACCESS_MODE',value:'public'}));
 changed('unapproved image',(_,c)=>c.image='registry.example/app-mixer:latest');
 changed('overridden entrypoint',(_,c)=>c.command=['sh']);
-changed('privileged container',(_,c)=>c.securityContext.privileged=true);
+changed('privileged container',(_,c)=>{c.securityContext.privileged=true;c.securityContext.allowPrivilegeEscalation=true;});
 changed('container user override',(_,c)=>c.securityContext.runAsUser=0);
 changed('host networking',o=>o.spec.template.spec.hostNetwork=true);
 changed('extra sidecar',o=>o.spec.template.spec.containers.push({name:'sidecar',image:'example:latest'}));
