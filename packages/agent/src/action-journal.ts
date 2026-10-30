@@ -7,6 +7,8 @@ export type AgentAction={actionId:string;operationId:string;idempotencyKey:strin
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;clock?:()=>number};
 export type ActionVerificationRequest={scope:AgentRunScope;runId:string;action:AgentAction;input:unknown;authority?:string};
 export type ActionVerification={outcome:'unknown'|'not_applied'|'failed'}|{outcome:'applied';result:unknown};
+export type ActionReconciliationEvidence={principalId:string;reference:string};
+export type ActionReconciliationEvent=ActionReconciliationEvidence & {id:number;actionId:string;outcome:'applied'|'not_applied'|'failed';method:'manual'|'verifier';recordedAt:number};
 export type AgentActionPage={actions:AgentAction[];next?:string};
 export type ActionVerificationPass={results:({actionId:string;outcome:ActionVerification['outcome']}|{actionId:string;error:unknown})[];next?:string};
 const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
@@ -35,7 +37,12 @@ export class SqliteAgentActionJournal {
     attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,
     PRIMARY KEY(tenant_id,agent_id,run_id,action_id)
    );
-   CREATE TABLE IF NOT EXISTS agent_action_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));`);}catch(error){this.db.close();throw error;}
+   CREATE TABLE IF NOT EXISTS agent_action_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
+   CREATE TABLE IF NOT EXISTS agent_action_reconciliations (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL,method TEXT NOT NULL,recorded_at INTEGER NOT NULL);
+   CREATE INDEX IF NOT EXISTS agent_action_reconciliations_scope ON agent_action_reconciliations(tenant_id,agent_id,run_id,id);
+   CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_replace BEFORE INSERT ON agent_action_reconciliations WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_action_reconciliations WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;
+   CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_update BEFORE UPDATE ON agent_action_reconciliations BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;
+   CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_delete BEFORE DELETE ON agent_action_reconciliations BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;`);}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
  isBoundTo(scope:AgentRunScope,runId:string):boolean{return !!scope&&this.scope.tenantId===scope.tenantId&&this.scope.agentId===scope.agentId&&this.runId===runId;}
@@ -86,17 +93,28 @@ export class SqliteAgentActionJournal {
   if(!valid(actionId))throw Error('Invalid action');this.transaction(()=>{this.requireUncertainRun();const row=this.row(actionId);if(!row||row.status!=='dispatching')throw Error('Invalid action state');this.db.prepare("UPDATE agent_action_journal SET status='uncertain' WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(...this.args(),actionId);},false);
  }
  /** Host must verify the external outcome before reconciling an uncertain action. */
- reconcile(actionId:string,outcome:'applied'|'not_applied'|'failed',result?:unknown):void{
+ reconcile(actionId:string,outcome:'applied'|'not_applied'|'failed',result?:unknown):void{this.reconcileDecision(actionId,outcome,result);}
+ /** A host-authorized manual decision with an atomic actor-attributed record. */
+ reconcileWithEvidence(actionId:string,outcome:'applied'|'not_applied'|'failed',result:unknown,evidence:ActionReconciliationEvidence):void{this.reconcileDecision(actionId,outcome,result,this.checkEvidence(evidence));}
+ private reconcileDecision(actionId:string,outcome:'applied'|'not_applied'|'failed',result?:unknown,evidence?:ActionReconciliationEvidence):void{
   if(!valid(actionId)||!['applied','not_applied','failed'].includes(outcome)||(outcome!=='applied'&&result!==undefined))throw Error('Invalid reconciliation');
   const serialized=outcome==='applied'?actionJSON(result):null;
   this.transaction(()=>{this.requireUncertainRun();const row=this.row(actionId);if(!row||row.status!=='uncertain')throw Error('Invalid action state');
    if(outcome==='not_applied'&&Number(row.attempts)>=Number(row.max_attempts))throw Error('Action attempts exhausted');
    this.db.prepare('UPDATE agent_action_journal SET status=?,result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(outcome==='applied'?'succeeded':outcome==='not_applied'?'ready':'failed',serialized,...this.args(),actionId);
+   if(evidence)this.recordReconciliation(actionId,outcome,'manual',evidence);
   },false);
  }
+ /** Host must authorize access to the whole run and protect evidence references. */
+ listReconciliations(options:{after?:number;limit?:number}={}):ActionReconciliationEvent[]{
+  const after=options?.after??0,limit=options?.limit??100;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid action reconciliation listing');
+  return this.db.prepare('SELECT id,action_id,principal_id,reference,outcome,method,recorded_at FROM agent_action_reconciliations WHERE tenant_id=? AND agent_id=? AND run_id=? AND id>? ORDER BY id LIMIT ?').all(...this.args(),after,limit).map(row=>({id:Number(row.id),actionId:String(row.action_id),principalId:String(row.principal_id),reference:String(row.reference),outcome:row.outcome as ActionReconciliationEvent['outcome'],method:row.method as ActionReconciliationEvent['method'],recordedAt:Number(row.recorded_at)}));
+ }
+ private checkEvidence(evidence:ActionReconciliationEvidence):ActionReconciliationEvidence{if(!evidence||!valid(evidence.principalId)||!valid(evidence.reference))throw Error('Invalid action reconciliation evidence');return {principalId:evidence.principalId,reference:evidence.reference};}
+ private recordReconciliation(actionId:string,outcome:'applied'|'not_applied'|'failed',method:'manual'|'verifier',evidence:ActionReconciliationEvidence):void{const now=this.clock();if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid clock');this.db.prepare('INSERT INTO agent_action_reconciliations (tenant_id,agent_id,run_id,action_id,principal_id,reference,outcome,method,recorded_at) VALUES (?,?,?,?,?,?,?,?,?)').run(...this.args(),actionId,evidence.principalId,evidence.reference,outcome,method,now);}
  /** Verify externally without replaying; the host authorizes the verifier and stops the old worker. */
- async reconcileWith(actionId:string,verify:(request:ActionVerificationRequest)=>Promise<ActionVerification>):Promise<ActionVerification['outcome']>{
-  if(!valid(actionId)||typeof verify!=='function')throw Error('Invalid action verification');
+ async reconcileWith(actionId:string,verify:(request:ActionVerificationRequest)=>Promise<ActionVerification>,evidence?:ActionReconciliationEvidence):Promise<ActionVerification['outcome']>{
+  if(!valid(actionId)||typeof verify!=='function')throw Error('Invalid action verification');const safeEvidence=evidence===undefined?undefined:this.checkEvidence(evidence);
   const snapshot=this.transaction(()=>{this.requireUncertainRun();const run=this.db.prepare('SELECT revision FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args()),row=this.row(actionId);if(!run||!row||row.status!=='uncertain')throw Error('Invalid action state');const authority=this.db.prepare('SELECT authority FROM agent_action_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);return {revision:Number(run.revision),action:this.metadata(row),input:String(row.input_json),authority:authority?.authority as string|undefined};},false);
   const request:ActionVerificationRequest={scope:{...this.scope},runId:this.runId,action:{...snapshot.action},input:JSON.parse(snapshot.input),...(snapshot.authority===undefined?{}:{authority:snapshot.authority})};
   const decision:unknown=await verify(request);if(!decision||typeof decision!=='object'||Array.isArray(decision))throw Error('Invalid action verification');const d=decision as Record<string,unknown>,outcome=d.outcome;
@@ -104,7 +122,7 @@ export class SqliteAgentActionJournal {
   const serialized=outcome==='applied'?actionJSON(d.result):null;
   return this.transaction(()=>{this.requireUncertainRun();const run=this.db.prepare('SELECT revision FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args()),row=this.row(actionId);if(!run||Number(run.revision)!==snapshot.revision||!row||row.status!=='uncertain'||Number(row.attempts)!==snapshot.action.attempts||row.idempotency_key!==snapshot.action.idempotencyKey||row.input_json!==snapshot.input)throw Error('Action verification stale');
    if(outcome==='not_applied'&&Number(row.attempts)>=Number(row.max_attempts))throw Error('Action attempts exhausted');
-   if(outcome!=='unknown')this.db.prepare('UPDATE agent_action_journal SET status=?,result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(outcome==='applied'?'succeeded':outcome==='not_applied'?'ready':'failed',serialized,...this.args(),actionId);
+   if(outcome!=='unknown'){this.db.prepare('UPDATE agent_action_journal SET status=?,result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(outcome==='applied'?'succeeded':outcome==='not_applied'?'ready':'failed',serialized,...this.args(),actionId);if(safeEvidence)this.recordReconciliation(actionId,outcome as 'applied'|'not_applied'|'failed','verifier',safeEvidence);}
    return outcome as ActionVerification['outcome'];
   },false);
  }

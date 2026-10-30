@@ -97,7 +97,7 @@ export type {DurableAgentWorkerOptions,DurableAgentWorkerOutcome} from './durabl
 export {SqliteAgentCheckpointer} from './sqlite-checkpointer.js';
 export type {AgentCheckpointerOptions} from './sqlite-checkpointer.js';
 export {SqliteAgentActionJournal} from './action-journal.js';
-export type {AgentAction,AgentActionJournalOptions,AgentActionStatus,ActionVerification,ActionVerificationRequest,AgentActionPage,ActionVerificationPass} from './action-journal.js';
+export type {AgentAction,AgentActionJournalOptions,AgentActionStatus,ActionVerification,ActionVerificationRequest,AgentActionPage,ActionVerificationPass,ActionReconciliationEvidence,ActionReconciliationEvent} from './action-journal.js';
 export {SqliteAgentTriggers} from './agent-triggers.js';
 export type {TriggerRecord,AgentTriggerInput,AgentTriggerEnqueueOptions} from './agent-triggers.js';
 export {createAgentEventIngress} from './event-ingress.js';
