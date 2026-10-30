@@ -199,3 +199,6 @@ export type {ReleasePublication,SignedPublicationRelease,PublicationReleaseKey} 
 
 export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
 export type {PublicationReleaseScope,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
+
+export {PostgresExtensionApprovals} from './postgres-extension-approvals.js';
+export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionApprovalEvent} from './postgres-extension-approvals.js';
