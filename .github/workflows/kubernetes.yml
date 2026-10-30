@@ -19,6 +19,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Build release signer
+        run: npm ci && npm run build
       - name: Install verified kind
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
@@ -34,7 +40,12 @@ jobs:
         run: |
           set -eu
           kubectl create namespace app-mixer-test
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/data-plane
+          node -e 'const {generateKeyPairSync}=require("node:crypto"),fs=require("node:fs"),k=generateKeyPairSync("ed25519");fs.writeFileSync(process.env.RUNNER_TEMP+"/private.pem",k.privateKey.export({type:"pkcs8",format:"pem"}));fs.writeFileSync(process.env.RUNNER_TEMP+"/keys.json",JSON.stringify([{keyId:"ci",publicKey:k.publicKey.export({type:"spki",format:"pem"})}]))'
+          kubectl create configmap -n app-mixer-test app-mixer-release-keys --from-file=keys.json="$RUNNER_TEMP/keys.json"
+          cp deploy/kubernetes/data-plane/publication.json "$RUNNER_TEMP/unsigned.json"
+          node deploy/kubernetes/sign-publication.mjs "$RUNNER_TEMP/unsigned.json" "$RUNNER_TEMP/signed.json" "$RUNNER_TEMP/private.pem" ci production
+          cp "$RUNNER_TEMP/signed.json" deploy/kubernetes/data-plane/publication.json
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-example
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           kubectl wait -n app-mixer-test --for=condition=Ready pods -l app.kubernetes.io/component=data-plane --timeout=90s
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13002:3002 >"$RUNNER_TEMP/forward.log" 2>&1 &
@@ -42,8 +53,16 @@ jobs:
           trap 'kill "$FORWARD_PID" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:13002/health/ready && break || sleep 1; done
           curl -fsS http://127.0.0.1:13002/application | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{if(JSON.parse(s).version!==1)process.exit(1)})'
-          printf '%s\n' '{"version":2,"definition":{"id":"demo","schemaVersion":1,"revision":1,"pages":[]}}' > deploy/kubernetes/data-plane/publication.json
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/data-plane
+          node -e 'const fs=require("node:fs"),p="deploy/kubernetes/data-plane/publication.json",x=JSON.parse(fs.readFileSync(p));x.publication.version=99;fs.writeFileSync(p,JSON.stringify(x))'
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-example
+          FOUND=0
+          for i in $(seq 1 45); do if kubectl logs -n app-mixer-test -l app.kubernetes.io/component=data-plane --all-containers --prefix --max-log-requests=10 2>&1 | grep -q 'Invalid signed publication'; then FOUND=1; break; fi; sleep 1; done
+          [ "$FOUND" = 1 ]
+          [ "$(kubectl get deployment -n app-mixer-test app-mixer-data-plane -o jsonpath='{.status.availableReplicas}')" = 2 ]
+          printf '%s\n' '{"version":2,"definition":{"id":"demo","schemaVersion":1,"revision":1,"pages":[]}}' > "$RUNNER_TEMP/unsigned2.json"
+          node deploy/kubernetes/sign-publication.mjs "$RUNNER_TEMP/unsigned2.json" "$RUNNER_TEMP/signed2.json" "$RUNNER_TEMP/private.pem" ci production
+          cp "$RUNNER_TEMP/signed2.json" deploy/kubernetes/data-plane/publication.json
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-example
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           kill "$FORWARD_PID" 2>/dev/null || true
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13003:3002 >"$RUNNER_TEMP/forward2.log" 2>&1 &

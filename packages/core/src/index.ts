@@ -181,3 +181,6 @@ export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteCont
 export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
 export {createMetricsServer} from './metrics-server.js';
 export type {MetricsServerOptions} from './metrics-server.js';
+
+export {signPublicationRelease,verifyPublicationRelease} from './signed-publication.js';
+export type {ReleasePublication,SignedPublicationRelease,PublicationReleaseKey} from './signed-publication.js';
