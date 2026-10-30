@@ -55,3 +55,20 @@ The generated local capability proxy uses one host-configured actor and is a dev
 Generated apps include `offline-shell.mjs`. Trusted host code can call `enableOfflineShell(revision)` only after the user or host opts in; no service worker is registered by default. A revision is a host-chosen 1–64 character identifier containing letters, digits, dots, underscores or hyphens. The worker caches a fixed allowlist of the generated shell and static JavaScript, then serves those files from that revision's cache. Change the revision whenever any shell asset or trusted extension module changes; normal service-worker lifecycle rules can leave an older version active until existing clients close. `disableOfflineShell()` unregisters this shell worker when it owns the root registration and deletes this app's shell caches. Enabling it uses the origin's root service-worker scope, so a host must coordinate with any existing worker.
 
 Only use this feature when the generated HTML and static modules are safe to retain on the device and contain no secrets or user-specific data. The worker does not cache `/api/application`, `/api/publication`, capability calls, chat, request bodies or arbitrary URLs. It does not cache published pages or business data by itself. A host can separately enable the encrypted published-definition integration described in [published cache](published-cache.md), and must provide authorization and key lifecycle. Browser storage eviction, first installation and private browsing behavior remain platform-dependent.
+
+## Cross-session form request identity
+
+A trusted host may opt a generated form into a persistent request identity store:
+
+```js
+import {createPersistentOfflineRequestKeys, mountGeneratedOfflineForm} from './offline-runtime.mjs';
+const identities = await createPersistentOfflineRequestKeys({
+  databaseName: 'my-app-form-identities', scope: {tenantId, applicationId, principalId}
+});
+const form = mountGeneratedOfflineForm(root, runtime, {storageKey: 'order-form', identityStore: identities});
+// When the user locks or signs out: form.dispose(); identities.close(); await runtime.close();
+```
+
+Use a dedicated IndexedDB database name, distinct from the queue and publication databases. The identity scope must exactly match the authenticated runtime scope, and each independent logical form needs a distinct stable `storageKey`. A saved request key survives tab closure and browser restart; identical operation and JSON input in the same slot reuse it, including after an enqueue committed but its response was lost. IndexedDB transactions coordinate concurrent tabs that submit the same unchanged form. Changed serialized input receives a new key, and the explicit New operation button clears the slot so the next submission is a separate intent. Explicit history recovery can also restore a selected request into the slot. Payload property order affects matching.
+
+The identity database stores only a hashed scope/slot identifier, random request key, random salt and salted digest of the operation and JSON; the payload itself remains in the encrypted queue. These hashes are not encryption and guessable inputs may be inferred. The host must protect browser access, authorize the user and retain the queue key; this feature does not provide cross-device deduplication or protect against same-origin code, storage loss or database rollback. Stop other forms and in-flight submissions using the same slot before selecting New operation or restoring history: an already-started submission cannot be undone, and distinct concurrent input changes can intentionally create separate identities. Clearing browser data loses the mapping. Identical data may represent a separate intended business operation, so use New operation when appropriate. Downstream services must still honor idempotency keys and authenticate each request.
