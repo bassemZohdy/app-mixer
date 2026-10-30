@@ -3,9 +3,21 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
+import 'signed_plan_fixture.dart';
 
 Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
 void main() {
+  test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
+    final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};
+    final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:components)];
+    final keys={'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey))};
+    Future<FlutterComponentRegistry> verify(Object? input, {String tenant='tenant',String environment='production',String application='demo',int revision=0,int now=200,Map<String,List<int>>? trusted}) => FlutterComponentRegistry.fromSignedPlan(input,installed,tenantId:tenant,environment:environment,applicationId:application,revision:revision,trustedKeys:trusted??keys,clock:()=>now);
+    final pending=verify(signedPlanFixture);components.clear();final registry=await pending;final store=FlutterSurfaceStore(registry);
+    store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'chart'}]}));expect(store.snapshot().single?.kind,'chart');components['chart']=widget;
+    final signature=signedPlanFixture['signature'] as String, badSignature=(signature.startsWith('A')?'B':'A')+signature.substring(1);
+    for(final bad in [<String,dynamic>{...signedPlanFixture,'signature':badSignature},<String,dynamic>{...signedPlanFixture,'payload':'A'},<String,dynamic>{...signedPlanFixture,'keyId':'unknown'},<String,dynamic>{...signedPlanFixture,'extra':true}]) {await expectLater(verify(bad),throwsFormatException);}
+    await expectLater(verify(signedPlanFixture,tenant:'other'),throwsFormatException);await expectLater(verify(signedPlanFixture,environment:'staging'),throwsFormatException);await expectLater(verify(signedPlanFixture,application:'other'),throwsFormatException);await expectLater(verify(signedPlanFixture,revision:1),throwsFormatException);await expectLater(verify(signedPlanFixture,now:10000),throwsFormatException);await expectLater(verify(signedPlanFixture,now:99),throwsFormatException);await expectLater(verify(signedPlanFixture,trusted:{'test-key':List.filled(32,0)}),throwsFormatException);
+  });
   test('resolves a control-plane plan only against exact installed owners', () {
     final plan=jsonDecode(File('test/fixtures/extension-plan.json').readAsStringSync()) as Map<String,dynamic>;
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true);

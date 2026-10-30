@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 
 const appMixerCatalog = 'https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json';
@@ -131,6 +133,41 @@ class FlutterComponentRegistry {
       registry.register(name,component.builder,component.validate);
     }
     return registry;
+  }
+  /// Verify a short-lived signed plan against host-provisioned Ed25519 public keys.
+  static Future<FlutterComponentRegistry> fromSignedPlan(Object? input, List<FlutterInstalledExtension> installed,
+      {required String tenantId, required String environment, required String applicationId, required int revision,
+       required Map<String, List<int>> trustedKeys, required int Function() clock}) async {
+    final envelope=_object(_copy(input));
+    bool validId(String value) => RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$').hasMatch(value);
+    if (!_only(envelope,['version','keyId','payload','signature']) || envelope.length!=4 || envelope['version'] is! int || envelope['version']!=1 ||
+        envelope['keyId'] is! String || !validId(envelope['keyId'] as String) || envelope['payload'] is! String ||
+        envelope['signature'] is! String || !validId(tenantId) || !RegExp(r'^[a-z][a-z0-9-]{0,63}$').hasMatch(environment)) {
+      throw FormatException('Invalid signed Flutter plan');
+    }
+    final keyId=envelope['keyId'] as String, payload=envelope['payload'] as String, encodedSignature=envelope['signature'] as String;
+    if (payload.isEmpty || payload.length>1000000 || !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(payload) ||
+        !RegExp(r'^[A-Za-z0-9_-]{86}$').hasMatch(encodedSignature) || !trustedKeys.containsKey(keyId)) throw FormatException('Invalid signed Flutter plan');
+    if(installed.length>256 || revision<0 || revision>9007199254740991)throw FormatException('Invalid signed Flutter plan');
+    final safeInstalled=installed.map((entry)=>FlutterInstalledExtension(id:entry.id,version:entry.version,scope:entry.scope,components:Map.of(entry.components))).toList();
+    final publicKey=List<int>.of(trustedKeys[keyId]!);
+    if (publicKey.length!=32 || publicKey.any((value)=>value<0 || value>255)) throw FormatException('Invalid signed Flutter plan');
+    List<int> decode(String value) {
+      try {final bytes=base64Url.decode(base64Url.normalize(value));if(base64Url.encode(bytes).replaceAll('=','')!=value)throw FormatException('Invalid encoding');return bytes;}
+      catch (_) {throw FormatException('Invalid signed Flutter plan');}
+    }
+    final bytes=decode(payload), signature=decode(encodedSignature);
+    if(signature.length!=64)throw FormatException('Invalid signed Flutter plan');
+    final verified=await Ed25519().verify(utf8.encode('app-mixer-flutter-plan-v1.$keyId.$payload'),
+      signature:Signature(signature,publicKey:SimplePublicKey(publicKey,type:KeyPairType.ed25519)));
+    if(!verified)throw FormatException('Invalid signed Flutter plan');
+    final Map<String,dynamic> body;
+    try {body=_object(jsonDecode(utf8.decode(bytes,allowMalformed:false)));} catch (_) {throw FormatException('Invalid signed Flutter plan');}
+    final issued=body['issuedAt'], expires=body['expiresAt'], now=clock();
+    if (!_only(body,['tenantId','environment','issuedAt','expiresAt','plan']) || body.length!=5 || body['tenantId']!=tenantId || body['environment']!=environment ||
+        issued is! int || expires is! int || issued<0 || expires<=issued || expires-issued>86400000 || expires>9007199254740991 ||
+        now<issued || now>=expires || now>9007199254740991) throw FormatException('Invalid signed Flutter plan');
+    return FlutterComponentRegistry.fromPlan(body['plan'],safeInstalled,applicationId:applicationId,revision:revision);
   }
   final Map<String, _FlutterExtension> _entries = {};
   void register(String name, FlutterExtensionBuilder builder, FlutterExtensionValidator validate) {

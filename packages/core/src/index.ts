@@ -206,5 +206,8 @@ export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionA
 export {registerExtensionApprovalDecision,registerExtensionApprovalStatus,registerExtensionApprovalHistory} from './extension-approval-capabilities.js';
 export type {ExtensionApprovalDecisionCapabilityOptions,ExtensionApprovalReadCapabilityOptions} from './extension-approval-capabilities.js';
 
+export {signFlutterExtensionPlan} from './signed-flutter-plan.js';
+export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signed-flutter-plan.js';
+
 export {registerDataMigrationPreview,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
 export type {DataMigrationReadCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
