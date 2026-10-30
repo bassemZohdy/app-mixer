@@ -163,6 +163,8 @@ export {createJwtCapabilityAuthenticator} from './jwt-capability-auth.js';
 export type {JwtCapabilityActor,JwtCapabilityAuthOptions} from './jwt-capability-auth.js';
 
 export {SqliteJwtRevocations} from './jwt-revocations.js';
+export {PostgresJwtRevocations} from './postgres-jwt-revocations.js';
+export type {PostgresJwtRevocationsOptions,PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
 
 export {JwtJwksManager} from './jwt-jwks-manager.js';
 export type {JwtJwksManagerOptions} from './jwt-jwks-manager.js';

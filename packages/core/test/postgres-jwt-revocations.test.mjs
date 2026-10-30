@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {generateKeyPairSync,randomUUID} from 'node:crypto';
+import {SignJWT} from 'jose';
+import pg from 'pg';
+import {PostgresJwtRevocations,createJwtCapabilityAuthenticator} from '../dist/index.js';
+
+const issuer='https://identity.example.test/',time=1700000000000;
+test('PostgreSQL revocation validates inputs and propagates database failures',async()=>{
+ let calls=0;const store=new PostgresJwtRevocations({issuer,clock:()=>time,query:async()=>{calls++;throw Error('database unavailable')}});assert.equal(await store.isTokenActive({iss:'https://other.test/',jti:'one'}),false);await assert.rejects(store.revoke('bad',time),/Invalid JWT revocation/);await assert.rejects(store.prune(time+1),/Invalid/);assert.equal(calls,0);await assert.rejects(store.isTokenActive({iss:issuer,jti:'one'}),/database unavailable/);assert.throws(()=>new PostgresJwtRevocations({issuer:'http://identity.test',query:async()=>({rows:[],rowCount:0})}),/configuration/);
+ const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048}),jwk={...publicKey.export({format:'jwk'}),kid:'key',alg:'RS256',use:'sig'},signed=await new SignJWT({iss:issuer,aud:'api',sub:'user',client_id:'client',jti:'one',iat:time/1000,exp:time/1000+300}).setProtectedHeader({alg:'RS256',kid:'key',typ:'at+jwt'}).sign(privateKey),auth=createJwtCapabilityAuthenticator({issuer,audience:'api',jwks:{keys:[jwk]},maxTokenAgeSeconds:600,clock:()=>time,isTokenActive:claims=>store.isTokenActive(claims),resolveActor:()=>({tenantId:'tenant',principalId:'user'})});try{assert.equal(await auth({rawHeaders:['Authorization','Bearer '+signed]}),undefined);}finally{auth.close();}
+});
+
+test('shared PostgreSQL revocations coordinate authenticators, updates and pruning',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const url=process.env.APP_MIXER_TEST_POSTGRES_URL,schema='app_mixer_test_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let locked,auth;
+ try{
+  await admin.query(`CREATE SCHEMA "${schema}"`);let now=time;const first=new PostgresJwtRevocations({issuer,clock:()=>now,query:(sql,args)=>a.query(sql,args)}),second=new PostgresJwtRevocations({issuer,clock:()=>now,query:(sql,args)=>b.query(sql,args)}),other=new PostgresJwtRevocations({issuer:'https://other.test/',clock:()=>now,query:(sql,args)=>b.query(sql,args)});await first.initialize();
+  const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048}),jwk={...publicKey.export({format:'jwk'}),kid:'key',alg:'RS256',use:'sig'},claims={iss:issuer,aud:'api',sub:'user',client_id:'client',jti:'shared-token',iat:time/1000,exp:time/1000+300},signed=await new SignJWT(claims).setProtectedHeader({alg:'RS256',kid:'key',typ:'at+jwt'}).sign(privateKey);auth=createJwtCapabilityAuthenticator({issuer,audience:'api',jwks:{keys:[jwk]},maxTokenAgeSeconds:600,clock:()=>now,isTokenActive:value=>second.isTokenActive(value),resolveActor:()=>({tenantId:'tenant',principalId:'user'})});const req={rawHeaders:['Authorization','Bearer '+signed]};assert.ok(await auth(req));
+  await Promise.all([first.revoke('shared-token',time+5000),second.revoke('shared-token',time+3000)]);assert.equal(await auth(req),undefined);assert.equal(await other.isTokenActive({...claims,iss:'https://other.test/'}),true);const stored=await a.query('SELECT token_hash,retain_until FROM app_mixer_jwt_revocations WHERE issuer=$1',[issuer]);assert.notEqual(stored.rows[0].token_hash,'shared-token');assert.equal(Number(stored.rows[0].retain_until),time+5000);
+  now=time+5000;locked=await a.connect();await locked.query('BEGIN');await locked.query('UPDATE app_mixer_jwt_revocations SET retain_until=$1 WHERE issuer=$2',[time+20000,issuer]);assert.equal(await second.prune(now),0);await locked.query('COMMIT');locked.release();locked=undefined;assert.equal(await second.prune(now),0);assert.equal(await second.isTokenActive(claims),false);now=time+20000;assert.equal(await second.prune(now,1),1);assert.equal(await second.isTokenActive(claims),true);
+  assert.equal(await first.revokeVerifiedToken(claims,{maxClockToleranceSeconds:60,maxClockSkewSeconds:10}),time+371000);assert.equal(await second.isTokenActive(claims),false);await b.end();assert.equal(await auth(req),undefined);
+ }finally{auth?.close();if(locked){await locked.query('ROLLBACK');locked.release();}await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+});
