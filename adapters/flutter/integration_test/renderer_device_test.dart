@@ -1,3 +1,4 @@
+import 'dart:ui' show SemanticsFlag;
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('renders, edits and sends an action on a mobile device', (tester) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {
       receive = callback;
@@ -29,12 +32,23 @@ void main() {
     ]}});
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada'), findsOneWidget);
+    final heading = tester.getSemantics(find.text('Ada')).getSemanticsData();
+    expect(heading.hasFlag(SemanticsFlag.isHeader), isTrue);expect(heading.label, 'Ada');
+    final field = tester.getSemantics(find.byType(TextField)).getSemanticsData();
+    expect(field.hasFlag(SemanticsFlag.isTextField), isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
+    final enabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
+    expect(enabled.hasFlag(SemanticsFlag.isButton), isTrue);expect(enabled.hasFlag(SemanticsFlag.isEnabled), isTrue);expect(enabled.label, 'Save');
     await tester.enterText(find.byType(TextField), 'Grace');
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Grace'), findsOneWidget);
     await tester.tap(find.byType(TextButton));
     await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
+    expect(tester.getSemantics(find.byType(TextField)).getSemanticsData().value, 'Grace');
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
+    await tester.pumpAndSettle();
+    final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
+    expect(disabled.hasFlag(SemanticsFlag.isButton), isTrue);expect(disabled.hasFlag(SemanticsFlag.hasEnabledState), isTrue);expect(disabled.hasFlag(SemanticsFlag.isEnabled), isFalse);expect(disabled.label, 'Save');
     expect(errors, isEmpty);
     expect(tester.takeException(), isNull);
   });
