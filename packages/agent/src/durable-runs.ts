@@ -60,6 +60,10 @@ export class SqliteAgentRuns {
    this.db.exec('COMMIT');return run;
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }
+ private hasUnresolvedTokenUsage(scope:RunScope,runId:string):boolean {
+  const table=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_token_calls'").get();
+  return !!table&&!!this.db.prepare("SELECT 1 FROM agent_token_calls WHERE tenant_id=? AND agent_id=? AND run_id=? AND status='reserved' LIMIT 1").get(scope.tenantId,scope.agentId,runId);
+ }
  claim(scope:RunScope,runId:string,revision:number,workerId:string,leaseMs:number,now=Date.now(),maxConcurrentRuns=1,maxRunsPerDay?:number):DurableAgentRun {
   if(!id(workerId)||!number(leaseMs)||leaseMs<1||leaseMs>3600000||!number(now)||now>Number.MAX_SAFE_INTEGER-leaseMs||!number(maxConcurrentRuns)||maxConcurrentRuns<1||maxConcurrentRuns>100||(maxRunsPerDay!==undefined&&(!number(maxRunsPerDay)||maxRunsPerDay<1||maxRunsPerDay>1000000)))throw Error('Invalid lease');
   return this.transition(scope,runId,revision,run=>{if(run.status!=='queued'||run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be claimed');const active=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('running','pause_requested','cancel_requested')").get(scope.tenantId,scope.agentId);if(Number(active?.n)>=maxConcurrentRuns)throw Error('Agent concurrency limit');const start=this.db.prepare('SELECT started_at FROM agent_run_starts WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);if(!start){const day=Math.floor(now/86400000)*86400000;if(maxRunsPerDay!==undefined){const count=this.db.prepare('SELECT COUNT(*) AS n FROM agent_run_starts WHERE tenant_id=? AND agent_id=? AND started_at>=? AND started_at<=?').get(scope.tenantId,scope.agentId,day,Math.min(day+86399999,Number.MAX_SAFE_INTEGER));if(Number(count?.n)>=maxRunsPerDay)throw Error('Agent daily run limit');}this.db.prepare('INSERT INTO agent_run_starts VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,now);}run.status='running';run.attempts++;run.leaseOwner=workerId;run.leaseToken=randomUUID();run.leaseUntil=Math.min(now+leaseMs,run.deadline);});
@@ -82,7 +86,9 @@ export class SqliteAgentRuns {
  settle(scope:RunScope,runId:string,revision:number,token:string,outcome:'succeeded'|'failed'|'stopped'|'uncertain',now=Date.now()):DurableAgentRun {
   if(!id(token)||!number(now)||!['succeeded','failed','stopped','uncertain'].includes(outcome))throw Error('Invalid run outcome');
   return this.transition(scope,runId,revision,run=>{this.checkLease(run,token,now);
-   if(outcome==='stopped'){if(run.status==='pause_requested')run.status='paused';else if(run.status==='cancel_requested')run.status='cancelled';else throw Error('Invalid run state');}
+   if(outcome==='stopped'&&!['pause_requested','cancel_requested'].includes(run.status))throw Error('Invalid run state');
+   if(this.hasUnresolvedTokenUsage(scope,runId))run.status='uncertain';
+   else if(outcome==='stopped'){if(run.status==='pause_requested')run.status='paused';else run.status='cancelled';}
    else run.status=outcome;
    run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
   });
@@ -93,7 +99,7 @@ export class SqliteAgentRuns {
   return this.transition(scope,runId,revision,run=>{this.checkLease(run,token,now);if(run.status!=='running')throw Error('Invalid run state');
    const approval=this.db.prepare('SELECT status,expires_at,definition_version FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(scope.tenantId,scope.agentId,runId,actionId);
    if(!approval||!['pending','approved'].includes(String(approval.status))||Number(approval.expires_at)<=now||Number(approval.definition_version)!==run.definitionVersion)throw Error('Approval unavailable');
-   const table=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_action_journal'").get();if(!table)throw Error('Action journal required');const action=this.db.prepare("SELECT 1 AS found FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND status IN ('dispatching','uncertain') LIMIT 1").get(scope.tenantId,scope.agentId,runId);if(action)throw Error('Action requires reconciliation');
+   const table=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_action_journal'").get();if(!table)throw Error('Action journal required');const action=this.db.prepare("SELECT 1 AS found FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND status IN ('dispatching','uncertain') LIMIT 1").get(scope.tenantId,scope.agentId,runId);if(action)throw Error('Action requires reconciliation');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');
    this.db.prepare('INSERT INTO agent_approval_waits VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,actionId);run.approvalWait={actionId};run.status='paused';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
   });
  }
@@ -103,7 +109,7 @@ export class SqliteAgentRuns {
   return this.transition(scope,runId,revision,run=>{this.checkLease(run,token,now);if(run.status!=='running')throw Error('Invalid run state');
    const grant=this.db.prepare('SELECT principal_id,revision,revoked,expires_at FROM agent_delegations WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=?').get(scope.tenantId,scope.agentId,runId,grantId);
    if(!grant||grant.revoked===1||Number(grant.revision)!==grantRevision||Number(grant.expires_at)>now)throw Error('Delegation is not expired');
-   const table=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_action_journal'").get();if(!table)throw Error('Action journal required');{const action=this.db.prepare("SELECT 1 AS found FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND status IN ('dispatching','uncertain') LIMIT 1").get(scope.tenantId,scope.agentId,runId);if(action)throw Error('Action requires reconciliation');}
+   const table=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_action_journal'").get();if(!table)throw Error('Action journal required');{const action=this.db.prepare("SELECT 1 AS found FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND status IN ('dispatching','uncertain') LIMIT 1").get(scope.tenantId,scope.agentId,runId);if(action)throw Error('Action requires reconciliation');}if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');
    this.db.prepare('INSERT INTO agent_delegation_waits VALUES (?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,runId,grantId,grantRevision,String(grant.principal_id));insertAgentNotice(this.db,scope,runId,'delegation_renewal_required',grantId,grantRevision,now);run.delegationWait={grantId,revision:grantRevision,principalId:String(grant.principal_id)};run.status='paused';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
   });
  }
@@ -112,7 +118,7 @@ export class SqliteAgentRuns {
  }
  reconcile(scope:RunScope,runId:string,revision:number,outcome:'retry'|'succeeded'|'failed'|'cancelled'|'paused',now=Date.now()):DurableAgentRun {
   if(!number(now)||!['retry','succeeded','failed','cancelled','paused'].includes(outcome))throw Error('Invalid reconciliation');
-  return this.transition(scope,runId,revision,run=>{if(run.status!=='uncertain')throw Error('Invalid run state');if(outcome==='retry'){if(run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be retried');run.status='queued';}else run.status=outcome;});
+  return this.transition(scope,runId,revision,run=>{if(run.status!=='uncertain')throw Error('Invalid run state');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(outcome==='retry'){if(run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be retried');run.status='queued';}else run.status=outcome;});
  }
  archive(scope:RunScope,runId:string,revision:number):DurableAgentRun{return this.transition(scope,runId,revision,run=>{if(!['succeeded','failed','cancelled'].includes(run.status))throw Error('Invalid run state');run.archived=true;});}
  private checkLease(run:DurableAgentRun,token:string,now:number):void{if(!['running','pause_requested','cancel_requested'].includes(run.status)||run.leaseToken!==token||run.leaseUntil===null||now>=run.leaseUntil)throw Error('Invalid or expired lease');}
