@@ -39,6 +39,11 @@ export class AgentSemanticMemory {
  async delete(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string,expectedRevision:number):Promise<void>{
   const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validId(memoryId)||!Number.isSafeInteger(expectedRevision)||expectedRevision<1)throw Error('Invalid semantic memory delete');await this.memory.delete(safeActor,safeScope,memoryId,expectedRevision);
  }
+ /** PostgreSQL indexed keyword search; scores are PostgreSQL text ranks, not cosine similarity. */
+ async searchLexical(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,maxCandidates=100):Promise<SemanticMemoryHit[]>{
+  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!(this.memory instanceof PostgresAgentMemory)||!validText(query))throw Error('Invalid indexed memory search');const candidates=await this.memory.searchSemanticText(safeActor,safeScope,query,this.modelId,limit,maxCandidates),items:SemanticMemoryHit[]=[];
+  for(const {record,score} of candidates){const value=record.value as Record<string,unknown>;if(!validText(value.text))continue;try{normalize(value.vector,this.dimensions);}catch{continue;}items.push({id:record.id,revision:record.revision,text:value.text,score,provenance:record.provenance,expiresAt:record.expiresAt});}return items;
+ }
  async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
   return this.searchInternal(actor,scope,query,limit,false,options);
  }
