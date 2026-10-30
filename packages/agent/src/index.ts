@@ -125,6 +125,8 @@ export type {AgentDelegationActor,AgentDelegationAccess,AgentDelegationRecord,Ag
 
 export {SqliteAgentNotices} from './agent-notices.js';
 export type {AgentNotice,AgentNoticeActor,AgentNoticeAccess,AgentNoticeOptions} from './agent-notices.js';
+export {SqliteAgentNoticeDelivery} from './agent-notice-delivery.js';
+export type {AgentNoticeDelivery,AgentNoticeMessage,AgentNoticeDeliveryOptions,AgentNoticeDeliveryActor,AgentNoticeDeliveryAccess} from './agent-notice-delivery.js';
 
 export {SqliteAgentTokenBudget} from './agent-token-budget.js';
 export type {AgentTokenUsage,AgentTokenBudgetOptions} from './agent-token-budget.js';
