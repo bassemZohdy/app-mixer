@@ -85,7 +85,7 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
     const run=()=>handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof Error && ['Revision conflict','Unsupported schema migration','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
+      else if (error instanceof Error && ['Revision conflict','Unsupported schema migration','Migration would lose page descriptions','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
       else if (error instanceof Error && ['Proposal not found','Publication not found'].includes(error.message)) respond(res, 404, {error:error.message});
       else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
       else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal','Invalid promotion package','Invalid page description','Invalid migration request'].includes(error.message)) respond(res, 400, {error:error.message});

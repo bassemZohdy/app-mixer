@@ -69,9 +69,12 @@ export class ApplicationStore {
  migrateDraft(expectedRevision:number,targetVersion:number):ApplicationDefinition{
   if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!Number.isSafeInteger(targetVersion))throw Error('Invalid migration request');
   if(expectedRevision!==this.draft.revision)throw Error('Revision conflict');
-  if(this.draft.schemaVersion!==1||targetVersion!==2)throw Error('Unsupported schema migration');
+  if(!((this.draft.schemaVersion===1&&targetVersion===2)||(this.draft.schemaVersion===2&&targetVersion===1)))throw Error('Unsupported schema migration');
   if(expectedRevision>=Number.MAX_SAFE_INTEGER)throw Error('Invalid migration request');
-  const candidate=copy(this.draft);candidate.schemaVersion=2;candidate.revision++;candidate.pages=candidate.pages.map(page=>({...page,description:''}));validate(candidate);this.draft=candidate;return copy(candidate);
+  const candidate=copy(this.draft);candidate.revision++;
+  if(targetVersion===2){candidate.schemaVersion=2;candidate.pages=candidate.pages.map(page=>({...page,description:''}));}
+  else{if(candidate.pages.some(page=>page.description!==''))throw Error('Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:unused,...page})=>page);}
+  validate(candidate);this.draft=candidate;return copy(candidate);
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  promote(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){
