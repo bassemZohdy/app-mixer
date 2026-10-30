@@ -16,6 +16,14 @@ test('semantic search ranks authorized, unexpired matching-model memories with p
  }finally{s.memory.close();}
 });
 
+test('hybrid search promotes exact normalized words without exposing unauthorized memories',async()=>{
+ const s=setup();try{const semantic=new AgentSemanticMemory(s.memory,{modelId:'hybrid',dimensions:2,embed:async text=>text.includes('ZX42')&&!text.startsWith('query')?[0,1]:[1,0]});await semantic.put(admin,scope,'generic','general notes',options);await semantic.put(admin,scope,'target','Invoice ZX42 ＣＡＦＥ',options);await semantic.put(admin,scope,'private','Invoice ZX42 private',options);const actor={tenantId:'tenant',principalId:'service'},query='query ZX42 cafe';assert.equal((await semantic.search(actor,scope,query))[0].id,'generic');const hits=await semantic.searchHybrid(actor,scope,query);assert.deepEqual(hits.map(hit=>hit.id),['target','generic']);assert.ok(hits[0].score>hits[1].score);assert.ok(hits.every(hit=>hit.score>=0&&hit.score<=1));assert.deepEqual((await semantic.searchHybrid(actor,scope,'!!!')).map(hit=>hit.id),['generic','target']);s.now=500;assert.deepEqual(await semantic.searchHybrid(actor,scope,query),[]);}finally{s.memory.close();}
+});
+
+test('hybrid capability is host-selected and retains authorization and schema boundaries',async()=>{
+ const s=setup();try{await s.semantic.put(admin,scope,'apple','apple notes',options);await s.semantic.put(admin,scope,'private','apple secret',options);const registry=new CapabilityRegistry(()=>{}),config={memory:s.semantic,scope,operationId:'hybrid_search',path:'/memory/hybrid',limit:3,mode:'hybrid',authorize:c=>c.principalId==='service'};registerSemanticMemorySearch(registry,config);config.mode='semantic';const result=await registry.invoke('hybrid_search',{query:{text:'apple'}},{tenantId:'tenant',principalId:'service',origin:'agent'});assert.deepEqual(result.map(hit=>hit.id),['apple']);assert.ok(result[0].score>0.9);await assert.rejects(registry.invoke('hybrid_search',{query:{text:'apple',mode:'semantic'}},{tenantId:'tenant',principalId:'service',origin:'agent'}),/invalid/i);await assert.rejects(registry.invoke('hybrid_search',{query:{text:'apple'}},{tenantId:'tenant',principalId:'other',origin:'agent'}),/forbidden/i);assert.throws(()=>registerSemanticMemorySearch(registry,{...config,operationId:'bad',mode:'bogus'}),/Invalid memory capability/);}finally{s.memory.close();}
+});
+
 test('authorization is checked before sending text to the embedding provider',async()=>{
  const s=setup();try{const personal={tenantId:'tenant',principalId:'user'};await assert.rejects(s.semantic.put(personal,scope,'x','apple',options),/access denied/);await assert.rejects(s.semantic.search(personal,scope,'apple'),/access denied/);assert.equal(s.embeds(),0);await assert.rejects(s.semantic.search({...admin,tenantId:'other'},scope,'apple'),/scope/);assert.equal(s.embeds(),0);}
  finally{s.memory.close();}

@@ -4,6 +4,7 @@ type Embedder={modelId:string;dimensions:number;embed:(text:string)=>Promise<num
 export type SemanticMemoryHit={id:string;revision:number;text:string;score:number;provenance:AgentMemoryProvenance;expiresAt:number};
 const validId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const validText=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=2000;
+const terms=(text:string):Set<string>=>new Set((text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu)??[]).slice(0,256));
 function normalize(vector:unknown,dimensions:number):number[]{
  if(!Array.isArray(vector)||vector.length!==dimensions||vector.some(x=>typeof x!=='number'||!Number.isFinite(x)||Math.abs(x)>1000000))throw Error('Invalid embedding');
  const norm=Math.hypot(...vector);if(!Number.isFinite(norm)||norm===0)throw Error('Invalid embedding');return vector.map(x=>x/norm);
@@ -23,6 +24,13 @@ export class AgentSemanticMemory {
   await this.memory.put(safeActor,safeScope,memoryId,{format:'semantic-v1',modelId:this.modelId,text,vector},safeOptions);
  }
  async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5):Promise<SemanticMemoryHit[]>{
+  return this.searchInternal(actor,scope,query,limit,false);
+ }
+ /** Fuse semantic rank with exact normalized word matches; never expands the authorized scope. */
+ async searchHybrid(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5):Promise<SemanticMemoryHit[]>{
+  return this.searchInternal(actor,scope,query,limit,true);
+ }
+ private async searchInternal(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit:number,hybrid:boolean):Promise<SemanticMemoryHit[]>{
   const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validText(query)||!Number.isSafeInteger(limit)||limit<1||limit>20)throw Error('Invalid semantic query');
   await this.memory.assertAccess(safeActor,safeScope,'list');const queryVector=normalize(await this.embed(query),this.dimensions);
   const matches:SemanticMemoryHit[]=[];let after:string|undefined,pages=0;
@@ -36,7 +44,13 @@ export class AgentSemanticMemory {
    }
    after=page.nextAfter;
   }while(after);
-  matches.sort((a,b)=>b.score-a.score||(a.id<b.id?-1:a.id>b.id?1:0));const result:SemanticMemoryHit[]=[];
+  const order=(a:SemanticMemoryHit,b:SemanticMemoryHit)=>b.score-a.score||(a.id<b.id?-1:a.id>b.id?1:0);
+  matches.sort(order);
+  if(hybrid){
+   const words=terms(query),lexical=matches.map(hit=>{const found=terms(hit.text);let count=0;for(const word of words)if(found.has(word))count++;return {id:hit.id,score:words.size?count/words.size:0};}).filter(hit=>hit.score>0).sort((a,b)=>b.score-a.score||(a.id<b.id?-1:a.id>b.id?1:0));
+   const ranks=new Map(lexical.map((hit,index)=>[hit.id,index+1]));matches.forEach((hit,index)=>{const rank=ranks.get(hit.id);hit.score=(61/(61+index)+(rank===undefined?0:61/(60+rank)))/2;});matches.sort(order);
+  }
+  const result:SemanticMemoryHit[]=[];
   for(const hit of matches){if(result.length===limit)break;const current=await this.memory.get(safeActor,safeScope,hit.id);if(current&&current.revision===hit.revision)result.push(hit);}
   return result;
  }
