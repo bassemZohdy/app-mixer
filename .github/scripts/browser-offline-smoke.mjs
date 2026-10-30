@@ -54,7 +54,19 @@ try {
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');
  db.close();a.close();b.close();document.body.dataset.result='pass';
 }catch(error){document.body.dataset.result='fail';document.body.append(String(error));}
-await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:document.body.dataset.result+':'+document.body.textContent});
+if(document.body.dataset.result==='pass')location.href='/reload-test';else await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:document.body.dataset.result+':'+document.body.textContent});
+</script></body>`;
+const reloadFixture=`<!doctype html><body><main id="offline"></main><script type="module">
+import {createGeneratedOfflineRuntime,mountGeneratedOfflineForm} from '/offline-runtime.mjs';
+try{
+ const request=indexedDB.open('reload-key',1);request.onupgradeneeded=()=>request.result.createObjectStore('keys');const db=await new Promise((resolve,reject)=>{request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+ const read=()=>new Promise((resolve,reject)=>{const req=db.transaction('keys').objectStore('keys').get('key');req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});let key=await read();
+ if(!key){key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);await new Promise((resolve,reject)=>{const tx=db.transaction('keys','readwrite');tx.objectStore('keys').put(key,'key');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}
+ const scope={tenantId:'t',applicationId:'a',principalId:'p'},runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'reload-queue',scope,key,operations:[{id:'save',label:'Save'}],intervalMs:100,maxPerPass:2,maxAttempts:2,isOnline:()=>false,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>({})});
+ const root=document.getElementById('offline');mountGeneratedOfflineForm(root,runtime);root.querySelector('textarea').value=JSON.stringify({name:'reload-test'});root.querySelector('form').requestSubmit();for(let i=0;i<100&&(!root.textContent.includes('Operation pending')||root.querySelector('button').disabled);i++)await new Promise(resolve=>setTimeout(resolve,20));
+ if(!root.textContent.includes('Operation pending')||(await runtime.list()).length!==1)throw Error('Reload deduplication failed');await runtime.close();db.close();
+ if(!sessionStorage.getItem('reload-phase')){sessionStorage.setItem('reload-phase','second');location.reload();}else await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:'pass:reload deduplicated'});
+}catch(error){await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:'fail:'+String(error)});}
 </script></body>`;
 let resolveResult,rejectResult;
 const browserResult=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;});
@@ -62,6 +74,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/result'&&req.method==='POST'){
   const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
  }
+ if(req.url==='/reload-test'){res.writeHead(200,{'content-type':'text/html'});res.end(reloadFixture);return;}
  if(req.url==='/offline-publications.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(publicationScript);return;}
  if(req.url==='/offline.js'||req.url==='/offline-worker.js'||req.url==='/offline-ui.js'||req.url==='/offline-runtime.mjs'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:req.url==='/offline-worker.js'?workerScript:req.url==='/offline-ui.js'?uiScript:runtimeScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
 });
