@@ -52,6 +52,27 @@ jobs:
           kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/environment.yaml
           kubectl wait -n "$ns" --for=condition=Ready pod/agent-test-manager --timeout=120s
           kubectl exec -n "$ns" agent-test-manager -- node "$script" recover
+      - name: Verify shared memory after terminating worker pods
+        run: |
+          set -eu
+          ns=agent-recovery-test
+          script=deploy/kubernetes/test-support/agent-recovery/postgres-memory.mjs
+          kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/postgres.yaml
+          kubectl wait -n "$ns" --for=condition=Ready pod/agent-memory-postgres --timeout=180s
+          kubectl exec -n "$ns" agent-test-manager -- node "$script" setup
+          for phase in before after; do
+            kubectl run -n "$ns" "memory-worker-$phase" --image=app-mixer-agent-recovery:test --image-pull-policy=Never --restart=Never --command -- node "$script" "$phase"
+            kubectl wait -n "$ns" --for=condition=Ready "pod/memory-worker-$phase" --timeout=120s
+            marker="MEMORY_$(echo "$phase" | tr '[:lower:]' '[:upper:]')_COMMIT"
+            observed=false
+            for i in $(seq 1 60); do
+              if kubectl logs -n "$ns" "memory-worker-$phase" | grep -Fq "$marker"; then observed=true; break; fi
+              sleep 1
+            done
+            [ "$observed" = true ]
+            kubectl delete -n "$ns" "pod/memory-worker-$phase" --grace-period=0 --force --wait=true --timeout=90s
+            kubectl exec -n "$ns" agent-test-manager -- node "$script" "verify-$phase"
+          done
       - name: Diagnostics on failure
         if: failure()
         run: |
@@ -59,3 +80,4 @@ jobs:
           kubectl describe pods -n agent-recovery-test || true
           kubectl logs -n agent-recovery-test agent-test-worker || true
           kubectl logs -n agent-recovery-test agent-test-provider || true
+          kubectl logs -n agent-recovery-test agent-memory-postgres || true
