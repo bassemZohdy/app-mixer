@@ -3,7 +3,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 
 type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string};
-type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule};
+type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
 export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revision:number;generation:number;nextAt:number;config:ScheduleConfig};
 export type AgentScheduleCursor={nextAt:number;scheduleId:string};
 export type AgentSchedulePage={items:AgentSchedule[];next?:AgentScheduleCursor};
@@ -24,7 +24,7 @@ function cron(expression:string){
  return {minutes:field(parts[0],0,59),hours:field(parts[1],0,23),days:field(parts[2],1,31),months:field(parts[3],1,12),weekdays:field(parts[4],0,6),dayAny:parts[2]==='*',weekdayAny:parts[4]==='*'};
 }
 function checkConfig(config:ScheduleConfig):ScheduleConfig{
- if(!config||typeof config!=='object'||Object.keys(config).some(k=>!['enabled','principalId','rule'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
+ if(!config||typeof config!=='object'||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
  if(config.rule.kind==='interval'){if(Object.keys(config.rule).length!==2||!integer(config.rule.intervalMs)||config.rule.intervalMs<1000||config.rule.intervalMs>30*86400000)throw Error('Invalid schedule');return structuredClone(config);}
  if(config.rule.kind==='cron'){if(Object.keys(config.rule).length!==2)throw Error('Invalid schedule');cron(config.rule.expression);return structuredClone(config);}
  throw Error('Invalid schedule');
@@ -83,7 +83,7 @@ export class SqliteAgentSchedules {
   this.db.exec('BEGIN IMMEDIATE');try{
    const schedule=this.get(scope,scheduleId);if(!schedule||schedule.revision!==expectedRevision)throw Error('Schedule revision conflict');if(!schedule.config.enabled||schedule.nextAt>now)throw Error('Schedule not due');
    const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);if(Number(count?.n)>=policy.maxPending)throw Error('Trigger backlog full');
-   const scheduledAt=schedule.nextAt,nextAt=next(schedule.config.rule,scheduledAt),runId=randomUUID(),sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${schedule.generation}:t${scheduledAt}`,payload=JSON.stringify({scheduleId,scheduledAt}),hash=createHash('sha256').update(payload).digest('hex');
+   const scheduledAt=schedule.nextAt,coalesce=schedule.config.misfire==='coalesce',rule=schedule.config.rule;let nextAt=coalesce&&rule.kind==='interval'?now+(rule.intervalMs-((now-scheduledAt)%rule.intervalMs)):next(rule,coalesce?now:scheduledAt);if(!Number.isSafeInteger(nextAt))throw Error('Invalid schedule time');const runId=randomUUID(),sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${schedule.generation}:t${scheduledAt}`,payload=JSON.stringify({scheduleId,scheduledAt,...(coalesce?{coalescedThrough:now}:{})}),hash=createHash('sha256').update(payload).digest('hex');
    this.db.prepare("INSERT INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,policy.definitionVersion,policy.maxAttempts,now+policy.runTimeoutMs);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,sourceId,eventId,schedule.config.principalId,'schedule.tick',payload,hash,runId);
    this.db.prepare('UPDATE agent_schedules SET revision=?,next_at=? WHERE tenant_id=? AND agent_id=? AND schedule_id=?').run(schedule.revision+1,nextAt,scope.tenantId,scope.agentId,scheduleId);
