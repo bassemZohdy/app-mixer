@@ -12,6 +12,7 @@ changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value=
 changed('public access',(_,c)=>env(c,'APP_MIXER_ACCESS_MODE').value='public');
 changed('plaintext transport',(_,c)=>env(c,'APP_MIXER_TRANSPORT').value='http');
 changed('disabled revocation',(_,c)=>env(c,'APP_MIXER_REVOCATION_MODE').value='disabled');
+changed('disabled release floor',(_,c)=>env(c,'APP_MIXER_RELEASE_FLOOR_MODE').value='disabled');
 changed('wrong issuer',(_,c)=>env(c,'APP_MIXER_JWT_ISSUER').value='https://other.example/');
 changed('duplicate security variable',(_,c)=>c.env.push({name:'APP_MIXER_ACCESS_MODE',value:'public'}));
 changed('unapproved image',(_,c)=>c.image='registry.example/app-mixer:latest');

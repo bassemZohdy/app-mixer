@@ -1,30 +1,30 @@
 import {readFile,stat} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
 import pg from 'pg';
-import {createDataPlane,createDataPlaneHttps,createJwtCapabilityAuthenticator,PostgresJwtRevocations,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import {createDataPlane,createDataPlaneHttps,createJwtCapabilityAuthenticator,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
 
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
 if(!path)throw Error('APP_MIXER_PUBLICATION_PATH is required');
 if((await stat(path)).size>1024*1024+4096)throw Error('Publication too large');
-const input=JSON.parse(await readFile(path,'utf8')),mode=process.env.APP_MIXER_PUBLICATION_MODE??'signed';let publication;
+const input=JSON.parse(await readFile(path,'utf8')),mode=process.env.APP_MIXER_PUBLICATION_MODE??'signed';let publication,releaseEnvironment;
 if(mode==='signed'){
  const keyPath=process.env.APP_MIXER_RELEASE_KEYS_PATH,environment=process.env.APP_MIXER_RELEASE_ENV,applicationId=process.env.APP_MIXER_APPLICATION_ID;
  if(!keyPath||!environment||!applicationId||(await stat(keyPath)).size>32768)throw Error('Invalid release verification configuration');
  const raw=JSON.parse(await readFile(keyPath,'utf8'));if(!Array.isArray(raw)||raw.length<1||raw.length>20)throw Error('Invalid release verification configuration');
  const keys=raw.map(entry=>{if(!entry||typeof entry!=='object'||Array.isArray(entry)||Object.keys(entry).sort().join(',')!=='keyId,publicKey'||typeof entry.publicKey!=='string'||entry.publicKey.length>4096||!/^-----BEGIN PUBLIC KEY-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END PUBLIC KEY-----\s*$/.test(entry.publicKey))throw Error('Invalid release verification configuration');return {keyId:entry.keyId,publicKey:createPublicKey(entry.publicKey)};});
- publication=verifyPublicationRelease(input,environment,applicationId,keys);
+ publication=verifyPublicationRelease(input,environment,applicationId,keys);releaseEnvironment=environment;
 }else if(mode==='unsigned'){
  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='definition,version'||!Number.isSafeInteger(input.version)||input.version<1)throw Error('Invalid publication');validate(input.definition);publication=input;
 }else throw Error('Invalid publication mode');
 const snapshot=structuredClone(publication),repository={getPublished(version){return version===undefined||version===snapshot.version?structuredClone(snapshot):undefined;}};
 const portText=process.env.DATA_PORT??'3002',delayText=process.env.DATA_DRAIN_DELAY_MS??'5000';
 if(!/^[1-9][0-9]{0,4}$/.test(portText)||Number(portText)>65535||!/^(0|[1-9][0-9]{0,4})$/.test(delayText)||Number(delayText)>30000)throw Error('Invalid Data Plane configuration');
-const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,revocationPool;
+const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,revocationPool,releaseTenant;
 if(accessMode==='jwt'){
  const keyPath=process.env.APP_MIXER_JWKS_PATH,issuer=process.env.APP_MIXER_JWT_ISSUER,audience=process.env.APP_MIXER_JWT_AUDIENCE,tenant=process.env.APP_MIXER_TENANT_ID,requiredScope=process.env.APP_MIXER_JWT_SCOPE??'app-mixer:publication.read',maxAge=process.env.APP_MIXER_JWT_MAX_AGE_SECONDS??'600';
  if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400||(await stat(keyPath)).size>131072)throw Error('Invalid publication access configuration');
- const jwks=JSON.parse(await readFile(keyPath,'utf8')),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
+ releaseTenant=tenant;const jwks=JSON.parse(await readFile(keyPath,'utf8')),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
  if(revocationMode==='postgres'){
   const dsnPath=process.env.APP_MIXER_REVOCATION_DSN_PATH,caPath=process.env.APP_MIXER_REVOCATION_CA_PATH;
   if(!dsnPath||!caPath||(await stat(dsnPath)).size>8192||(await stat(caPath)).size>65536)throw Error('Invalid revocation configuration');
@@ -36,7 +36,13 @@ if(accessMode==='jwt'){
  }else if(revocationMode!=='disabled')throw Error('Invalid revocation configuration');
  authenticate=createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),...(isTokenActive?{isTokenActive}:{}),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(requiredScope)?{tenantId:tenant,principalId:claims.sub}:undefined});
 }else if(accessMode!=='public')throw Error('Invalid publication access configuration');
-const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return true;}catch{return false;}}}:{})},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)}:{})};let server;
+const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled';let releaseAllowed;
+if(floorMode==='postgres'){
+ if(!revocationPool||!authenticate||!releaseEnvironment||!releaseTenant||! /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(releaseTenant))throw Error('Invalid publication release floor configuration');
+ const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args)}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
+ releaseAllowed=()=>registry.isAllowed(releaseScope,snapshot.version,digest);
+}else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
+const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return releaseAllowed?await releaseAllowed():true;}catch{return false;}}}:{})},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)&&(!releaseAllowed||await releaseAllowed())}:{})};let server;
 if(transport==='tls'){
  const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
  if(!certPath||!keyPath||(caPath!==undefined&&!caPath)||(await stat(certPath)).size>65536||(await stat(keyPath)).size>65536||(caPath&&(await stat(caPath)).size>65536))throw Error('Invalid data plane transport configuration');

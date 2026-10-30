@@ -51,6 +51,10 @@ jobs:
             kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c 'CREATE TABLE app_mixer_jwt_revocations (issuer TEXT NOT NULL, token_hash TEXT NOT NULL, retain_until BIGINT NOT NULL, PRIMARY KEY (issuer,token_hash))'
             HASH=$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update("revoked-token").digest("hex"))')
             kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c "INSERT INTO app_mixer_jwt_revocations VALUES ('https://issuer.example/','$HASH',4102444800000)"
+            kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c 'CREATE TABLE app_mixer_release_authorizations (tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, version BIGINT NOT NULL, definition_digest TEXT NOT NULL, PRIMARY KEY (tenant_id,application_id,environment,version)); CREATE TABLE app_mixer_release_floors (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,minimum_version BIGINT NOT NULL,PRIMARY KEY (tenant_id,application_id,environment))'
+            DIGEST1=$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(JSON.stringify({id:"demo",schemaVersion:1,revision:0,pages:[]})).digest("hex"))')
+            DIGEST2=$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(JSON.stringify({id:"demo",schemaVersion:1,revision:1,pages:[]})).digest("hex"))')
+            kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c "INSERT INTO app_mixer_release_authorizations VALUES ('demo-tenant','demo','production',1,'$DIGEST1'),('demo-tenant','demo','production',2,'$DIGEST2'); INSERT INTO app_mixer_release_floors VALUES ('demo-tenant','demo','production',1)"
           }
           provision_db
           kubectl create secret tls -n app-mixer-test app-mixer-data-plane-tls --cert=packages/core/test/fixtures/capability-tls/server-cert.pem --key=packages/core/test/fixtures/capability-tls/server-key.pem
@@ -61,7 +65,7 @@ jobs:
           cp deploy/kubernetes/data-plane/publication.json "$RUNNER_TEMP/unsigned.json"
           node deploy/kubernetes/sign-publication.mjs "$RUNNER_TEMP/unsigned.json" "$RUNNER_TEMP/signed.json" "$RUNNER_TEMP/private.pem" ci production
           cp "$RUNNER_TEMP/signed.json" deploy/kubernetes/data-plane/publication.json
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-example
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-example
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           kubectl wait -n app-mixer-test --for=condition=Ready pods -l app.kubernetes.io/component=data-plane --timeout=90s
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13002:3002 >"$RUNNER_TEMP/forward.log" 2>&1 &
@@ -83,7 +87,7 @@ jobs:
           for i in $(seq 1 45); do curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS https://127.0.0.1:13002/health/ready && break || sleep 1; done
           curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13002/application >/dev/null
           node -e 'const fs=require("node:fs"),p="deploy/kubernetes/data-plane/publication.json",x=JSON.parse(fs.readFileSync(p));x.publication.version=99;fs.writeFileSync(p,JSON.stringify(x))'
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-example
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-example
           FOUND=0
           for i in $(seq 1 45); do if kubectl logs -n app-mixer-test -l app.kubernetes.io/component=data-plane --all-containers --prefix --max-log-requests=10 2>&1 | grep -q 'Invalid signed publication'; then FOUND=1; break; fi; sleep 1; done
           [ "$FOUND" = 1 ]
@@ -91,13 +95,21 @@ jobs:
           printf '%s\n' '{"version":2,"definition":{"id":"demo","schemaVersion":1,"revision":1,"pages":[]}}' > "$RUNNER_TEMP/unsigned2.json"
           node deploy/kubernetes/sign-publication.mjs "$RUNNER_TEMP/unsigned2.json" "$RUNNER_TEMP/signed2.json" "$RUNNER_TEMP/private.pem" ci production
           cp "$RUNNER_TEMP/signed2.json" deploy/kubernetes/data-plane/publication.json
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-example
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-example
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           kill "$FORWARD_PID" 2>/dev/null || true
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13003:3002 >"$RUNNER_TEMP/forward2.log" 2>&1 &
           FORWARD_PID=$!
           for i in $(seq 1 30); do curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS https://127.0.0.1:13003/health/ready && break || sleep 1; done
           curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13003/application | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{if(JSON.parse(s).version!==2)process.exit(1)})'
+          kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c "UPDATE app_mixer_release_floors SET minimum_version=2 WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'"
+          cp "$RUNNER_TEMP/signed.json" deploy/kubernetes/data-plane/publication.json
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-example
+          if kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=15s; then echo 'Old signed release was accepted'; exit 1; fi
+          [ "$(kubectl get deployment -n app-mixer-test app-mixer-data-plane -o jsonpath='{.status.availableReplicas}')" = 2 ]
+          cp "$RUNNER_TEMP/signed2.json" deploy/kubernetes/data-plane/publication.json
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-example
+          kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           POD=$(kubectl get pods -n app-mixer-test -l app.kubernetes.io/component=data-plane -o json | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const p=JSON.parse(s).items.find(x=>!x.metadata.deletionTimestamp&&x.status.phase==="Running");if(!p)process.exit(1);console.log(p.metadata.name)})')
           kubectl delete pod -n app-mixer-test "$POD" --wait=true
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s

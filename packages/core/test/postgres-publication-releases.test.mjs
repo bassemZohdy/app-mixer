@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import pg from 'pg';
+import {PostgresPublicationReleaseRegistry} from '../dist/index.js';
+const scope={tenantId:'tenant',applicationId:'demo',environment:'production'},aDigest='a'.repeat(64),bDigest='b'.repeat(64);
+test('release registry rejects malformed input and fails closed on store errors',async()=>{
+ let calls=0;const store=new PostgresPublicationReleaseRegistry({query:async()=>{calls++;throw Error('database unavailable')}});await assert.rejects(store.register(scope,0,aDigest),/Invalid/);await assert.rejects(store.isAllowed(scope,1,'bad'),/Invalid/);await assert.rejects(store.advanceFloor({...scope,tenantId:''},1),/scope/);assert.equal(calls,0);await assert.rejects(store.isAllowed(scope,1,aDigest),/database unavailable/);const invalid=new PostgresPublicationReleaseRegistry({query:async()=>({rows:[{allowed:2}],rowCount:1})});await assert.rejects(invalid.isAllowed(scope,1,aDigest),/Invalid publication release result/);
+});
+test('PostgreSQL release floors isolate scopes, reject equivocation and advance monotonically',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const url=process.env.APP_MIXER_TEST_POSTGRES_URL,schema='app_mixer_release_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);const first=new PostgresPublicationReleaseRegistry({query:(sql,args)=>a.query(sql,args)}),second=new PostgresPublicationReleaseRegistry({query:(sql,args)=>b.query(sql,args)});await first.initialize();await first.register(scope,1,aDigest);assert.equal(await second.isAllowed(scope,1,aDigest),false);await assert.rejects(second.advanceFloor(scope,2),/floor/);await first.advanceFloor(scope,1);assert.equal(await second.isAllowed(scope,1,aDigest),true);await assert.rejects(second.register(scope,1,bDigest),/conflict/);await second.register(scope,2,bDigest);assert.equal(await first.isAllowed(scope,2,bDigest),true);assert.equal(await first.isAllowed(scope,2,aDigest),false);assert.equal(await second.isAllowed({...scope,tenantId:'other'},1,aDigest),false);assert.equal(await second.isAllowed({...scope,environment:'staging'},1,aDigest),false);await Promise.all([first.advanceFloor(scope,2),second.advanceFloor(scope,1)]);assert.equal(await first.isAllowed(scope,1,aDigest),false);assert.equal(await first.isAllowed(scope,2,bDigest),true);assert.equal(await second.advanceFloor(scope,1),2);await b.end();await assert.rejects(second.isAllowed(scope,2,bDigest));
+ }finally{await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+});

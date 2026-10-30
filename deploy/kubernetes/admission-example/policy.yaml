@@ -26,13 +26,14 @@ spec:
         (!has(object.spec.template.spec.initContainers) || object.spec.template.spec.initContainers.size() == 0)
     - message: Signed release, JWT, TLS and revocation settings must match the trusted policy.
       expression: >-
-        has(params.data) && has(variables.c.env) && variables.c.env.size() == 17 &&
+        has(params.data) && has(variables.c.env) && variables.c.env.size() == 18 &&
         variables.c.env.all(e, has(e.value) && !has(e.valueFrom)) &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_PUBLICATION_PATH' && e.value == '/publication/publication.json') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_PUBLICATION_MODE' && e.value == 'signed') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_ACCESS_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_ACCESS_MODE' && e.value == 'jwt') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_TRANSPORT').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_TRANSPORT' && e.value == 'tls') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_REVOCATION_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_REVOCATION_MODE' && e.value == 'postgres') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_RELEASE_FLOOR_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_RELEASE_FLOOR_MODE' && e.value == 'postgres') &&
         variables.c.env.filter(e, e.name == 'DATA_DRAIN_DELAY_MS').size() == 1 && variables.c.env.exists(e, e.name == 'DATA_DRAIN_DELAY_MS' && e.value == '5000') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_RELEASE_KEYS_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_RELEASE_KEYS_PATH' && e.value == '/trust/keys.json') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_JWKS_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_JWKS_PATH' && e.value == '/jwt-trust/jwks.json') &&
