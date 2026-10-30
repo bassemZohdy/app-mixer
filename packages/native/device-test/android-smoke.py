@@ -19,9 +19,11 @@ def tree():
 
 def wait_for(predicate, description, seconds=90):
     deadline = time.monotonic() + seconds
+    last_tree = None
     while time.monotonic() < deadline:
         try:
             root = tree()
+            last_tree = root
             nodes = list(root.iter('node'))
             if any('FAIL' in node.get('text', '') for node in nodes):
                 raise AssertionError('React Native fixture reported a failure')
@@ -31,7 +33,8 @@ def wait_for(predicate, description, seconds=90):
         except (ValueError, ET.ParseError, subprocess.SubprocessError):
             pass
         time.sleep(1)
-    raise AssertionError('Timed out waiting for ' + description)
+    details = ET.tostring(last_tree, encoding='unicode') if last_tree is not None else 'No hierarchy available'
+    raise AssertionError('Timed out waiting for ' + description + '\n' + details)
 
 
 def find(nodes, **attributes):
