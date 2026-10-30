@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../data-plane
+patches:
+  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/value
+        value: signed
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_RELEASE_ENV, value: production}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_APPLICATION_ID, value: demo}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_RELEASE_KEYS_PATH, value: /trust/keys.json}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: release-trust, mountPath: /trust, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: release-trust, configMap: {name: app-mixer-release-keys}}
