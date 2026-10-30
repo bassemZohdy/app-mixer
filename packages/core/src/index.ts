@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {checkPromotionPackage} from './promotion.js';
+import {checkPromotionPackage,validEnvironment} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
 type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
@@ -50,6 +50,7 @@ export class ApplicationStore {
  constructor(initial:ApplicationDefinition, private readonly publicationGuard?:PublicationGuard){validate(initial);if(publicationGuard!==undefined && typeof publicationGuard!=="function")throw Error("Invalid publication guard");this.draft=copy(initial);}
  getDraft(){return copy(this.draft);}
  getPublished(version?:number){if(version!==undefined&&(!Number.isSafeInteger(version)||version<1))throw Error("Invalid version");const p=version===undefined?this.published.at(-1):this.published.find(x=>x.version===version);return p?copy(p):undefined;}
+ getPromotionFloor(sourceEnvironment:string,targetEnvironment:string):number{if(!validEnvironment(sourceEnvironment)||!validEnvironment(targetEnvironment)||sourceEnvironment===targetEnvironment)throw Error('Invalid promotion environment');let floor=0;for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===sourceEnvironment&&previous.targetEnvironment===targetEnvironment)floor=Math.max(floor,previous.sourceVersion);return floor;}
  getPublicationProvenance(version:number):PublicationProvenance|undefined{if(!Number.isSafeInteger(version)||version<1)throw Error('Invalid version');if(!this.published.some(p=>p.version===version))return undefined;return copy(this.provenance.get(version)??{version,kind:'unknown'});}
  apply(baseRevision:number,patches:Patch[]):ApplicationDefinition{
   if(baseRevision!==this.draft.revision)throw Error("Revision conflict");
@@ -103,6 +104,7 @@ export { createPromotionPackage } from './promotion.js';
 export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
+export { SqliteRemoteRollout } from './remote-rollout.js';
 export { createControlPlane, createDataPlane, createProposalPlane, createDevelopmentPlanes } from './planes.js';
 export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneRequestObservation } from './planes.js';
 
