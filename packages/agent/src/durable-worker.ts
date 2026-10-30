@@ -1,5 +1,6 @@
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {SqliteAgentRuns,type AgentRunScope,type DurableAgentRun} from './durable-runs.js';
+import {context,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
 
 type Outcome='succeeded'|'failed'|'stopped'|'uncertain'|{status:'delegation_expired';grantId:string;revision:number}|{status:'approval_required';actionId:string};
 type WorkerOptions={
@@ -9,16 +10,24 @@ type WorkerOptions={
  authorizeStart:(run:DurableAgentRun,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
  execute:(run:DurableAgentRun,context:{signal:AbortSignal;assertLease:()=>void})=>Promise<Outcome>;
  clock?:()=>number;
+ tracing?:{tracer:Tracer};
 };
 /** Execute one explicitly selected run. The host supplies policy, execution and outcome classification. */
 export class DurableAgentWorker {
- private readonly clock:()=>number;
+ private readonly clock:()=>number;private readonly tracer:Tracer|undefined;
  constructor(private readonly options:WorkerOptions){
-  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid agent worker');
-  this.clock=options.clock??Date.now;
+  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function')))throw Error('Invalid agent worker');
+  this.clock=options.clock??Date.now;this.tracer=options.tracing?.tracer;
  }
  usesRegistry(runs:SqliteAgentRuns):boolean{return this.options.runs===runs;}
  async runOnce(scope:AgentRunScope,runId:string):Promise<DurableAgentRun>{
+  if(!this.tracer)return this.executeOnce(scope,runId);let span;try{span=this.tracer.startSpan('agent.run',{kind:SpanKind.INTERNAL},context.active());}catch{return this.executeOnce(scope,runId);}
+  let pending:Promise<DurableAgentRun>|undefined;try{
+   try{context.with(trace.setSpan(context.active(),span),()=>{pending=this.executeOnce(scope,runId);});}catch{if(!pending)pending=this.executeOnce(scope,runId);}
+   const result=await pending!;try{const status=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'].includes(result.status)?result.status:'other';span.setAttribute('app_mixer.agent.run.status',status);if(status==='failed'||status==='uncertain'||status==='other')span.setStatus({code:SpanStatusCode.ERROR});}catch{}return result;
+  }catch(error){try{span.setAttribute('error.type','agent_run_failed');span.setStatus({code:SpanStatusCode.ERROR});}catch{}throw error;}finally{try{span.end();}catch{}}
+ }
+ private async executeOnce(scope:AgentRunScope,runId:string):Promise<DurableAgentRun>{
   scope={tenantId:scope.tenantId,agentId:scope.agentId};const {runs,definitions,workerId,leaseMs,pollMs,authorizeStart,execute}=this.options;
   let run=runs.get(scope,runId);if(!run||run.archived||run.status!=='queued')throw Error('Run unavailable');
   const definition=definitions.get(scope.tenantId,scope.agentId);
