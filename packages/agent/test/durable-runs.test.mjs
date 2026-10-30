@@ -11,7 +11,7 @@ test('durable runs support cooperative pause, resume, cancel and archive',()=>{
   let run=store.create(scope,'one',config,10);assert.equal(run.status,'queued');assert.throws(()=>store.create(scope,'one',config,10),/already exists/);
   run=store.claim(scope,'one',run.revision,'worker',100,20);const token=run.leaseToken;assert.equal(run.attempts,1);
   run=store.request(scope,'one',run.revision,'pause');assert.equal(run.status,'pause_requested');assert.throws(()=>store.renew(scope,'one',run.revision,token,100,21),/cannot be renewed/);
-  run=store.settle(scope,'one',run.revision,token,'stopped',21);assert.equal(run.status,'paused');run=store.request(scope,'one',run.revision,'resume');run=store.claim(scope,'one',run.revision,'worker',100,22);
+  run=store.settle(scope,'one',run.revision,token,'stopped',21);assert.equal(run.status,'paused');run=store.request(scope,'one',run.revision,'resume',21);run=store.claim(scope,'one',run.revision,'worker',100,22);
   run=store.request(scope,'one',run.revision,'cancel');assert.equal(run.status,'cancel_requested');run=store.settle(scope,'one',run.revision,run.leaseToken,'stopped',23);assert.equal(run.status,'cancelled');run=store.archive(scope,'one',run.revision);assert.equal(run.archived,true);assert.equal(store.list(scope).length,0);assert.equal(store.list(scope,{includeArchived:true})[0].runId,'one');assert.throws(()=>store.request(scope,'one',run.revision,'resume'),/archived/);
  }finally{store.close();}
 });

@@ -158,3 +158,6 @@ export type {GithubWebhookOptions} from './github-webhook.js';
 
 export {DurableAgentDispatcher} from './durable-dispatcher.js';
 export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';
+
+export {AgentRunExpiryWorker} from './agent-run-expiry.js';
+export type {AgentRunExpiryWorkerOptions} from './agent-run-expiry.js';
