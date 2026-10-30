@@ -265,7 +265,7 @@ class FlutterSurfaceStore {
       final c = components[id]; if (c == null) return null;
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
-      final nextStretchDepth=stretchDepth+((c['component']=='Column'||c['component']=='Row')&&c['align']=='stretch'?1:0);
+      final nextStretchDepth=stretchDepth+((c['component']=='Column'||c['component']=='Row')&&(c['align']==null||c['align']=='stretch')?1:0);
       if(nextStretchDepth>4) throw FormatException('Too many nested stretch layouts');
       final ids = c['component'] == 'Card' || c['component'] == 'Button' ? [c['child'] as String] : c['component'] == 'Column' || c['component'] == 'Row' ? List<String>.from(c['children'] as List) : <String>[];
       final rawText=c['component']=='Text' ? c['text'] : null; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
@@ -351,9 +351,9 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     },child:children.isEmpty ? const SizedBox.shrink() : children.first);
     if (node.kind == 'Card') return Card(child:children.isEmpty ? const SizedBox.shrink() : children.first);
     final main = {'start':MainAxisAlignment.start,'center':MainAxisAlignment.center,'end':MainAxisAlignment.end,'spaceBetween':MainAxisAlignment.spaceBetween,'spaceAround':MainAxisAlignment.spaceAround,'spaceEvenly':MainAxisAlignment.spaceEvenly}[node.justify] ?? MainAxisAlignment.start;
-    final cross = {'start':CrossAxisAlignment.start,'center':CrossAxisAlignment.center,'end':CrossAxisAlignment.end,'stretch':CrossAxisAlignment.stretch}[node.align] ?? CrossAxisAlignment.center;
+    final cross = {'start':CrossAxisAlignment.start,'center':CrossAxisAlignment.center,'end':CrossAxisAlignment.end,'stretch':CrossAxisAlignment.stretch}[node.align] ?? CrossAxisAlignment.stretch;
     final layout = node.kind == 'Row' ? Row(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children) : Column(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children);
-    if(node.align!='stretch') return layout;
+    if(cross!=CrossAxisAlignment.stretch) return layout;
     return node.kind=='Row' ? IntrinsicHeight(child:layout) : IntrinsicWidth(child:layout);
   }
 }
