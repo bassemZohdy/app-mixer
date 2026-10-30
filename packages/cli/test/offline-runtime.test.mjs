@@ -52,6 +52,19 @@ test('generated offline runtime rejects disabled or malformed setup',async()=>{
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
+test('offline history recovers encrypted operations after reopening and clears on identity loss or close',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-'));let dom,runtime;
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);let actor={...scope};const config={enabled:true,databaseName:'history',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
+  runtime=await createGeneratedOfflineRuntime(config);await runtime.enqueue('items.update','first',{value:'<img src=x onerror=alert(1)>'});await runtime.close();runtime=await createGeneratedOfflineRuntime(config);dom=new JSDOM('<!doctype html><main id="history"></main>');const root=dom.window.document.getElementById('history'),panel=runtime.mountHistory(root);await panel.refresh();assert.match(root.textContent,/items.update — pending/);assert.match(root.textContent,/<img src=x onerror=alert\(1\)>/);assert.equal(root.querySelector('img'),null);assert.equal(root.querySelectorAll('button').length,0);
+  actor={...scope,principalId:'other'};await panel.refresh();assert.match(root.textContent,/Unable to load/);assert.doesNotMatch(root.textContent,/img src/);actor={...scope};await panel.refresh();assert.match(root.textContent,/items.update/);await runtime.close();assert.equal(root.textContent,'');
+ }finally{if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('offline history ignores stale asynchronous refreshes and disposal',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-race-'));let dom;try{const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let resolve;const panel=mountGeneratedOfflineHistory(root,{list:()=>new Promise(r=>{resolve=r;})}),pending=panel.refresh();panel.dispose();resolve([{operationId:'private',status:'pending',id:'id',payload:{secret:'secret'}}]);await pending;assert.equal(root.textContent,'');}finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('offline form retains request identity across remounts and creates new identities for changes',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-form-'));let dom;
  try{
