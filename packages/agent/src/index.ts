@@ -111,7 +111,7 @@ export type {AgentScheduleEvent,AgentScheduleHistoryOptions,AgentScheduleHistory
 export {AgentScheduleWorker} from './schedule-worker.js';
 export type {AgentScheduleWorkerOptions} from './schedule-worker.js';
 export {SqliteAgentMemory} from './agent-memory.js';
-export type {AgentMemoryRecord,AgentMemoryScope,AgentMemoryActor,AgentMemoryProvenance,AgentMemoryAction,AgentMemoryOptions} from './agent-memory.js';
+export type {AgentMemoryRecord,AgentMemoryAuditEvent,AgentMemoryScope,AgentMemoryActor,AgentMemoryProvenance,AgentMemoryAction,AgentMemoryOptions} from './agent-memory.js';
 export {AgentSemanticMemory} from './semantic-memory.js';
 export type {AgentMemoryEmbedder,SemanticMemoryHit} from './semantic-memory.js';
 export {evaluateAgentMemoryRetrieval} from './memory-retrieval-evaluation.js';

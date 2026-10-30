@@ -1,10 +1,18 @@
 # Local agent memory
 
+## Optional mutation audit
+
+Set `audit: true` when constructing `SqliteAgentMemory` to append an actor-attributed event in the same SQLite transaction as each successful write, delete, or nonempty expiration purge. If the audit insert fails, the memory change rolls back. Events contain the scoped actor ID, action, memory ID and resulting revision for individual changes, or a count for a purge, and the host clock time. They do not contain memory values or provenance. Failed and denied operations, reads, empty purges and older changes are not recorded.
+
+Call `auditHistory(actor, scope, {after?, limit?})` for a bounded page. The host authorization callback must permit `audit` for the scope and again for each event's memory ID; purge events use an undefined ID. Filtered pages may be empty while still returning `nextAfter`. Audit records are immutable through SQLite triggers, but a database administrator can alter the database or schema; this is not independent or tamper-proof storage. IDs and actors can themselves be sensitive. The history grows indefinitely, and host-managed storage protection, retention, clock accuracy, denied-access audit and external monitoring remain necessary.
+
+Auditing is opt-in per store instance. Upgrade all writers and enable it consistently before relying on complete coverage: old or non-auditing instances can change memories without recording an event. Enablement does not backfill earlier changes. The host must authenticate actors and set permissions deliberately; audit access is separate from memory-read access and can expose identifiers even when values are inaccessible.
+
 `SqliteAgentMemory` is an explicitly enabled, host-authorized SQLite store. Each memory is scoped by tenant, agent, owner kind and ID, and memory kind (`session`, `semantic`, `episodic` or `procedural`). A user association does not grant access to organization memory. The host supplies an `authorize(actor, scope, action, memoryId)` callback and must derive the actor from authenticated context, enforce tenant and owner policy, and validate writes. Reads, writes, deletes, listing and expiration cleanup are separately authorized. Listing also checks read authorization for each returned record; paginated listing can be used to export authorized records.
 
 Each bounded JSON value carries an explicit `run`, `human` or `system` provenance reference, an expiration time, and an optimistic revision. The host configures maximum retention (up to 365 days) and a live-entry limit per scope. Expired records are not returned. `purgeExpired` clears expired values and provenance after separate host authorization. Delete also clears the value and provenance; both retain a revision tombstone to reject stale writes, and a recreated ID receives a higher revision. History is bounded to ten times the configured live-entry limit per scope; after reaching it, new IDs are rejected until the host performs a separately designed maintenance process.
 
-The database and backups are not encrypted, and SQLite pages, journals or backups may retain deleted data. Clearing a value is not cryptographic erasure. The host must secure storage, control backup retention, authorize all callers, validate provenance and choose a consistent clock and policy across instances. This store provides structured records for all four kinds. Production identity, actor-level audit and distributed adapters remain open.
+The database and backups are not encrypted, and SQLite pages, journals or backups may retain deleted data. Clearing a value is not cryptographic erasure. The host must secure storage, control backup retention, authorize all callers, validate provenance and choose a consistent clock and policy across instances. This store provides structured records for all four kinds. Production identity, comprehensive audit coverage and distributed adapters remain open.
 
 ## Semantic retrieval
 

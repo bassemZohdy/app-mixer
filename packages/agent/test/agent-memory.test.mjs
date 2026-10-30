@@ -3,10 +3,24 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {SqliteAgentMemory} from '../dist/index.js';
 const actor={tenantId:'tenant',principalId:'admin'},scope={tenantId:'tenant',agentId:'agent',owner:{kind:'organization',id:'org'},kind:'episodic'},provenance={kind:'run',id:'run-1'};
 const write=(expiresAt,expectedRevision=null)=>({expiresAt,expectedRevision,provenance});
 const settings=(overrides={})=>({enabled:true,maxTtlMs:1000,maxEntries:5,authorize:()=>true,clock:()=>100,...overrides});
+
+test('memory audit records authorized changes atomically without values and survives reopening',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'memory-audit-')),path=join(dir,'memory.sqlite');let now=100,db,store=new SqliteAgentMemory(path,settings({audit:true,clock:()=>now}));
+ try{await store.put(actor,scope,'one',{secret:'sensitive'},write(200));await store.put(actor,scope,'two',{secret:'hidden'},write(300));await store.delete(actor,scope,'two',1);now=200;assert.equal(await store.purgeExpired(actor,scope),1);assert.equal(await store.purgeExpired(actor,scope),0);const history=await store.auditHistory(actor,scope,{limit:2});assert.deepEqual(history.items.map(x=>x.action),['write','write']);assert.ok(history.nextAfter);const rest=await store.auditHistory(actor,scope,{after:history.nextAfter});assert.deepEqual(rest.items.map(x=>x.action),['delete','purge']);assert.deepEqual(rest.items.map(x=>x.count),[1,1]);assert.equal(rest.items[0].revision,2);assert.equal(rest.items[1].memoryId,null);assert.equal(history.items[0].actorId,'admin');assert.equal(JSON.stringify([...history.items,...rest.items]).includes('sensitive'),false);assert.deepEqual((await store.auditHistory(actor,{...scope,agentId:'other'})).items,[]);
+  await store.put(actor,scope,'live','keep',write(500));await store.put(actor,scope,'expiring','keep',write(250));now=250;db=new DatabaseSync(path);assert.throws(()=>db.exec('UPDATE agent_memory_audit SET actor_id=\'forged\''),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_memory_audit'),/immutable/);db.exec("CREATE TRIGGER fail_memory_audit BEFORE INSERT ON agent_memory_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");await assert.rejects(store.put(actor,scope,'three',{x:1},write(500)),/audit unavailable/);assert.equal(await store.get(actor,scope,'three'),undefined);await assert.rejects(store.delete(actor,scope,'live',1),/audit unavailable/);assert.equal((await store.get(actor,scope,'live')).value,'keep');await assert.rejects(store.purgeExpired(actor,scope),/audit unavailable/);assert.equal(db.prepare("SELECT deleted FROM agent_memories WHERE memory_id='expiring'").get().deleted,0);db.exec('DROP TRIGGER fail_memory_audit');store.close();store=new SqliteAgentMemory(path,settings({audit:true,clock:()=>now}));assert.equal((await store.auditHistory(actor,scope)).items.length,6);
+ }finally{db?.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('memory audit requires scope and per-record authorization and advances filtered pages',async()=>{
+ const policy=(who,_scope,action,memoryId)=>who.principalId==='admin'||(who.principalId==='reviewer'&&action==='audit'&&memoryId!=='hidden');const store=new SqliteAgentMemory(':memory:',settings({audit:true,authorize:policy}));
+ try{await store.put(actor,scope,'hidden','secret',write(500));await store.put(actor,scope,'visible','public',write(500));const reviewer={tenantId:'tenant',principalId:'reviewer'},first=await store.auditHistory(reviewer,scope,{limit:1});assert.deepEqual(first.items,[]);assert.ok(first.nextAfter);const second=await store.auditHistory(reviewer,scope,{after:first.nextAfter,limit:1});assert.equal(second.items[0].memoryId,'visible');await assert.rejects(store.auditHistory({tenantId:'tenant',principalId:'denied'},scope),/access denied/);await assert.rejects(store.auditHistory({...reviewer,tenantId:'other'},scope),/scope/);}
+ finally{store.close();}
+});
 
 test('memory is scoped and authorization prevents a personal agent reading organization data',async()=>{
  const access=(who,s,action)=>who.principalId==='admin'||(who.principalId==='user'&&s.owner.kind==='user'&&s.owner.id==='user');const store=new SqliteAgentMemory(':memory:',settings({authorize:access}));
