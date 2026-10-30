@@ -48,7 +48,9 @@ try {
  for(let i=0;i<100&&(await runtime.list()).length===0;i++)await new Promise(done=>setTimeout(done,20));
  if((await runtime.list()).length!==1||generatedCalls!==0)throw Error('Offline enqueue failed');online=true;
  for(let i=0;i<100&&!(await runtime.list()).some(item=>item.status==='succeeded');i++)await new Promise(done=>setTimeout(done,20));
- if(generatedCalls!==1||!(await runtime.list()).some(item=>item.status==='succeeded'))throw Error('Generated offline sync failed');form.dispose();await runtime.close();formRoot.remove();
+ if(generatedCalls!==1||!(await runtime.list()).some(item=>item.status==='succeeded'))throw Error('Generated offline sync failed');form.dispose();online=false;
+ const sharedPair={requestKey:crypto.randomUUID(),idempotencyKey:crypto.randomUUID()},shared={getOrCreate:async()=>sharedPair,reset:async()=>{},restore:async()=>{}},sharedForm=mountGeneratedOfflineForm(formRoot,runtime,{sharedIdentityStore:shared});formRoot.querySelector('textarea').value=JSON.stringify({name:'shared'});formRoot.querySelector('form').requestSubmit();
+ for(let i=0;i<100&&!(await runtime.list()).some(item=>item.requestKey===sharedPair.requestKey);i++)await new Promise(done=>setTimeout(done,20));const sharedItem=(await runtime.list()).find(item=>item.requestKey===sharedPair.requestKey);if(!sharedItem||sharedItem.idempotencyKey!==sharedPair.idempotencyKey||sharedItem.status!=='pending')throw Error('Shared form enqueue failed');sharedForm.dispose();await runtime.close();formRoot.remove();
  const open=indexedDB.open('smoke',3);const db=await new Promise((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
  const tx=db.transaction('offline','readonly'),get=tx.objectStore('offline').getAll(),rows=await new Promise((resolve,reject)=>{get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);});
  if(JSON.stringify(rows).includes('private-value'))throw Error('Plaintext persisted');

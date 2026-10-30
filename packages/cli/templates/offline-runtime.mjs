@@ -110,18 +110,21 @@ export async function createPersistentOfflineRequestKeys({databaseName,scope,ind
 
 // Explicit user action creates a durable intent. Hosts must not allowlist staged submission.
 export function mountGeneratedOfflineForm(root,runtime,options={}){
-  if(!root?.ownerDocument||typeof runtime?.enqueue!=='function'||typeof runtime.operations!=='function'||!options||typeof options!=='object'||(options.storageKey!==undefined&&(typeof options.storageKey!=='string'||!options.storageKey.trim()||options.storageKey.length>200))||(options.identityStore!==undefined&&(!options.identityStore||typeof options.identityStore.getOrCreate!=='function'||typeof options.identityStore.reset!=='function'||typeof options.identityStore.restore!=='function')))throw Error('Invalid offline form');
+  const identityValid=store=>!!store&&typeof store.getOrCreate==='function'&&typeof store.reset==='function'&&typeof store.restore==='function';
+  if(!root?.ownerDocument||typeof runtime?.enqueue!=='function'||typeof runtime.operations!=='function'||!options||typeof options!=='object'||(options.storageKey!==undefined&&(typeof options.storageKey!=='string'||!options.storageKey.trim()||options.storageKey.length>200))||(options.identityStore!==undefined&&!identityValid(options.identityStore))||(options.sharedIdentityStore!==undefined&&!identityValid(options.sharedIdentityStore))||(options.identityStore!==undefined&&options.sharedIdentityStore!==undefined))throw Error('Invalid offline form');
+  const identityStore=options.identityStore,sharedIdentityStore=options.sharedIdentityStore,uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   const doc=root.ownerDocument,form=doc.createElement('form'),label=doc.createElement('label'),select=doc.createElement('select'),dataLabel=doc.createElement('label'),data=doc.createElement('textarea'),button=doc.createElement('button'),reset=doc.createElement('button'),status=doc.createElement('p');
   label.textContent='Operation';for(const operation of runtime.operations()){const option=doc.createElement('option');option.value=operation.id;option.textContent=operation.label;select.appendChild(option);}label.appendChild(select);
   dataLabel.textContent='Operation data (JSON object)';data.value='{}';dataLabel.appendChild(data);button.type='submit';button.textContent='Queue operation';reset.type='button';reset.textContent='New operation';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   form.append(label,dataLabel,button,reset,status);root.replaceChildren(form);let busy=false,disposed=false;const storageKey='app-mixer-offline-form-v1:'+(options.storageKey??(root.id||'default'));
-  reset.addEventListener('click',()=>{if(busy)return;busy=true;button.disabled=true;reset.disabled=true;void (async()=>{try{if(options.identityStore)await options.identityStore.reset(storageKey);else doc.defaultView.sessionStorage.removeItem(storageKey);if(!disposed)status.textContent='Ready to queue a new operation.';}catch{if(!disposed)status.textContent='Unable to create a new request ID. Your data is retained.';}finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;}}})();});
+  reset.addEventListener('click',()=>{if(busy||disposed)return;busy=true;button.disabled=true;reset.disabled=true;void (async()=>{try{if(sharedIdentityStore)await sharedIdentityStore.reset(storageKey);else if(identityStore)await identityStore.reset(storageKey);else doc.defaultView.sessionStorage.removeItem(storageKey);if(!disposed)status.textContent='Ready to queue a new operation.';}catch{if(!disposed)status.textContent='Unable to create a new request ID. Your data is retained.';}finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;}}})();});
   form.addEventListener('submit',event=>{event.preventDefault();void (async()=>{
-    if(busy)return;let payload;try{payload=JSON.parse(data.value);if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid');}catch{status.textContent='Enter a valid JSON object.';return;}
+    if(busy||disposed)return;let payload;try{payload=JSON.parse(data.value);if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid');}catch{status.textContent='Enter a valid JSON object.';return;}
     const operation=select.value;busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
     try{
-      let requestKey;
-      if(options.identityStore)requestKey=await options.identityStore.getOrCreate(storageKey,operation,payload);
+      let requestKey,keyOptions;
+      if(sharedIdentityStore){const pair=await sharedIdentityStore.getOrCreate(storageKey,operation,structuredClone(payload));if(!pair||typeof pair!=='object'||Array.isArray(pair)||Object.keys(pair).sort().join(',')!=='idempotencyKey,requestKey'||typeof pair.requestKey!=='string'||typeof pair.idempotencyKey!=='string'||!uuid.test(pair.requestKey)||!uuid.test(pair.idempotencyKey))throw Error('Invalid shared request identity');requestKey=pair.requestKey;keyOptions={idempotencyKey:pair.idempotencyKey};}
+      else if(identityStore)requestKey=await identityStore.getOrCreate(storageKey,operation,payload);
       else {
       const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
       const raw=storage.getItem(storageKey);let saved=raw===null?undefined:JSON.parse(raw);if(saved!==undefined&&(!saved||typeof saved!=='object'||Array.isArray(saved)||Object.keys(saved).sort().join(',')!=='digest,key,salt,version'||saved.version!==1||typeof saved.key!=='string'||!/^[0-9a-f-]{36}$/.test(saved.key)||typeof saved.salt!=='string'||!/^[0-9a-f-]{36}$/.test(saved.salt)||typeof saved.digest!=='string'||!/^[0-9a-f]{64}$/.test(saved.digest)))throw Error('Invalid stored request ID');
@@ -129,10 +132,10 @@ export function mountGeneratedOfflineForm(root,runtime,options={}){
       if(!saved||saved.digest!==await digest(saved.salt)){const salt=crypt.randomUUID();saved={version:1,key:crypt.randomUUID(),salt,digest:await digest(salt)};storage.setItem(storageKey,JSON.stringify(saved));}
         requestKey=saved.key;
       }
-      const item=await runtime.enqueue(operation,requestKey,payload);status.textContent='Operation '+item.status+'.';
+      if(disposed)throw Error('Offline form disposed');const item=await runtime.enqueue(operation,requestKey,payload,keyOptions);if(!disposed)status.textContent='Operation '+item.status+'.';
     }
-    catch{status.textContent='Unable to queue operation. Your data is retained.';}
-    finally{busy=false;button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}
+    catch{if(!disposed)status.textContent='Unable to queue operation. Your data is retained.';}
+    finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}}
   })();});
   return {
     async recover(id){
@@ -142,7 +145,7 @@ export function mountGeneratedOfflineForm(root,runtime,options={}){
         const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
         const item=(await runtime.list()).find(value=>value.id===id);if(disposed||!item||![...select.options].some(option=>option.value===item.operationId)||typeof item.requestKey!=='string'||!/^[0-9a-f-]{36}$/.test(item.requestKey))throw Error('Cannot recover offline request');
         const payload=JSON.stringify(item.payload,null,2),salt=crypt.randomUUID(),digest=Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([salt,item.operationId,item.payload])))),byte=>byte.toString(16).padStart(2,'0')).join('');
-        const latest=(await runtime.list()).find(value=>value.id===id);if(disposed||!latest||latest.version!==item.version)throw Error('Cannot recover offline request');if(options.identityStore)await options.identityStore.restore(storageKey,item.operationId,item.payload,item.requestKey);else storage.setItem(storageKey,JSON.stringify({version:1,key:item.requestKey,salt,digest}));if(disposed)throw Error('Cannot recover offline request');select.value=item.operationId;data.value=payload;status.textContent='Previous request loaded. Review before submitting.';
+        const latest=(await runtime.list()).find(value=>value.id===id);if(disposed||!latest||latest.version!==item.version)throw Error('Cannot recover offline request');if(sharedIdentityStore){if(!uuid.test(item.requestKey)||!uuid.test(item.idempotencyKey))throw Error('Cannot recover shared request');await sharedIdentityStore.restore(storageKey,item.operationId,structuredClone(item.payload),{requestKey:item.requestKey,idempotencyKey:item.idempotencyKey});}else if(identityStore)await identityStore.restore(storageKey,item.operationId,item.payload,item.requestKey);else storage.setItem(storageKey,JSON.stringify({version:1,key:item.requestKey,salt,digest}));if(disposed)throw Error('Cannot recover offline request');select.value=item.operationId;data.value=payload;status.textContent='Previous request loaded. Review before submitting.';
       }finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}}
     },
     dispose(){disposed=true;root.replaceChildren();}
