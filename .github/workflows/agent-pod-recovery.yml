@@ -78,6 +78,50 @@ jobs:
             kubectl delete -n "$ns" "pod/memory-worker-$phase" --grace-period=0 --force --wait=true --timeout=90s
             kubectl exec -n "$ns" agent-test-manager -- node "$script" "verify-$phase"
           done
+      - name: Verify HTTPS notice recovery after deleting sender and receiver pods
+        run: |
+          set -eu
+          ns=agent-recovery-test
+          script=deploy/kubernetes/test-support/agent-recovery/notice-pod.mjs
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$RUNNER_TEMP/notice-key.pem" -out "$RUNNER_TEMP/notice-cert.pem" \
+            -subj '/CN=notice-receiver.agent-recovery-test.svc' \
+            -addext 'subjectAltName=DNS:notice-receiver.agent-recovery-test.svc' \
+            -addext 'basicConstraints=critical,CA:TRUE' \
+            -addext 'keyUsage=critical,digitalSignature,keyCertSign' >/dev/null 2>&1
+          kubectl create secret generic notice-test-tls -n "$ns" \
+            --from-file=key.pem="$RUNNER_TEMP/notice-key.pem" --from-file=cert.pem="$RUNNER_TEMP/notice-cert.pem"
+          for phase in before after; do
+            kubectl exec -n "$ns" agent-test-manager -- node "$script" setup "$phase"
+            sed -e "s/PHASE/$phase/g" -e 's/MODE/hold/g' deploy/kubernetes/test-support/agent-recovery/notice-receiver.yaml | kubectl apply -n "$ns" -f -
+            kubectl wait -n "$ns" --for=condition=Ready pod/notice-receiver --timeout=120s
+            ready=false
+            for i in $(seq 1 60); do
+              if kubectl exec -n "$ns" notice-receiver -- node "$script" probe "$phase"; then ready=true; break; fi
+              sleep 1
+            done
+            [ "$ready" = true ]
+            sed "s/PHASE/$phase/g" deploy/kubernetes/test-support/agent-recovery/notice-sender.yaml | kubectl apply -n "$ns" -f -
+            kubectl wait -n "$ns" --for=condition=Ready pod/notice-sender --timeout=120s
+            marker="NOTICE_$(echo "$phase" | tr '[:lower:]' '[:upper:]')_COMMIT"
+            observed=false
+            for i in $(seq 1 60); do
+              if kubectl logs -n "$ns" notice-receiver | grep -Fq "$marker"; then observed=true; break; fi
+              sleep 1
+            done
+            [ "$observed" = true ]
+            kubectl delete -n "$ns" pod/notice-sender pod/notice-receiver --grace-period=5 --wait=true --timeout=90s
+            sed -e "s/PHASE/$phase/g" -e 's/MODE/verify/g' deploy/kubernetes/test-support/agent-recovery/notice-receiver.yaml | kubectl apply -n "$ns" -f -
+            kubectl wait -n "$ns" --for=condition=Ready pod/notice-receiver --timeout=120s
+            ready=false
+            for i in $(seq 1 60); do
+              if kubectl exec -n "$ns" notice-receiver -- node "$script" probe "$phase"; then ready=true; break; fi
+              sleep 1
+            done
+            [ "$ready" = true ]
+            kubectl exec -n "$ns" notice-receiver -- node "$script" verify "$phase"
+            kubectl delete -n "$ns" pod/notice-receiver --grace-period=5 --wait=true --timeout=90s
+          done
       - name: Diagnostics on failure
         if: failure()
         run: |
@@ -86,3 +130,5 @@ jobs:
           kubectl logs -n agent-recovery-test agent-test-worker || true
           kubectl logs -n agent-recovery-test agent-test-provider || true
           kubectl logs -n agent-recovery-test agent-memory-postgres || true
+          kubectl logs -n agent-recovery-test notice-sender || true
+          kubectl logs -n agent-recovery-test notice-receiver || true

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: notice-sender
+spec:
+  restartPolicy: Never
+  containers:
+    - name: sender
+      image: app-mixer-agent-recovery:test
+      imagePullPolicy: Never
+      args: [node, deploy/kubernetes/test-support/agent-recovery/notice-pod.mjs, send, PHASE]
+      env: [{name: NODE_EXTRA_CA_CERTS, value: /certs/cert.pem}]
+      volumeMounts: [{name: state, mountPath: /data}, {name: tls, mountPath: /certs, readOnly: true}]
+  volumes:
+    - name: state
+      persistentVolumeClaim: {claimName: agent-recovery-test}
+    - name: tls
+      secret: {secretName: notice-test-tls}
