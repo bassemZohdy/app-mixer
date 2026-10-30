@@ -110,10 +110,12 @@ export { SqliteApplicationStore } from './sqlite.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
 export { PostgresRemoteRollout } from './postgres-remote-rollout.js';
 export type { PostgresRemoteRolloutOptions, PostgresRemoteRolloutState } from './postgres-remote-rollout.js';
+export { PostgresPromotionTarget } from './postgres-promotion-target.js';
+export type { PostgresPromotionTargetOptions } from './postgres-promotion-target.js';
 export { RemoteRolloutPoller } from './remote-rollout-poller.js';
 export type { RemoteRolloutPollerOptions, RemoteRolloutResult } from './remote-rollout-poller.js';
 export { createControlPlane, createDataPlane, createDataPlaneHttps, createProposalPlane, createDevelopmentPlanes } from './planes.js';
-export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
+export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationRepository, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
@@ -191,7 +193,7 @@ export {PostgresAuthenticationFailureAudit} from './postgres-auth-failure-audit.
 export type {AuthenticationFailureEvent,StoredAuthenticationFailure,PostgresAuthenticationFailureAuditOptions} from './postgres-auth-failure-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportUncertainError} from './remote-control-connector.js';
-export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
+export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
 export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
 export {createMetricsServer} from './metrics-server.js';
 export type {MetricsServerOptions} from './metrics-server.js';

@@ -33,8 +33,8 @@ export class PostgresRemoteRollout {
   if(this.active)throw Error('Remote rollout already active');this.active=true;const token=randomUUID();let claimed=false,importing=false;
   try{
    const result=await this.query("UPDATE app_mixer_remote_rollouts SET phase='running',token=$2,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS NULL RETURNING id",[this.key,token]);if(!Array.isArray(result.rows)||result.rows.length!==1)throw Error('Remote rollout requires recovery');claimed=true;
-   const discovered=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository as Connector['rolloutRepository'] & {getPromotionFloor:(source:string,target:string)=>number};
-   const floor=repo.getPromotionFloor(c.sourceEnvironment,c.targetEnvironment),target=repo.getPublished()?.version??0;
+   const discovered=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;
+   const floor=await repo.getPromotionFloor!(c.sourceEnvironment,c.targetEnvironment),target=(await repo.getPublished!())?.version??0;
    if(!version(floor,0)||!version(target,0)||target>=Number.MAX_SAFE_INTEGER)throw Error('Invalid local rollout state');
    if(discovered.sourceVersion<floor)throw Error('Remote source version is behind local history');
    if(discovered.sourceVersion===floor){await this.release(token);claimed=false;return {status:'unchanged',sourceVersion:floor,targetVersion:target};}
