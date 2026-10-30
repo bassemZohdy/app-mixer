@@ -1,12 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {once} from 'node:events';
 import pg from 'pg';
 import {AIMessage} from '@langchain/core/messages';
-import {PostgresAgentDefinitions,createConfiguredAgentRun} from '../dist/index.js';
+import {PostgresAgentDefinitions,createConfiguredAgentRun,SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,AgentScheduleWorker,createAgentEventIngress} from '../dist/index.js';
 
 const actor={tenantId:'tenant',principalId:'admin'},manifest=(tenantId='tenant',agentId='agent')=>({manifestVersion:1,tenantId,agentId,name:'Operations',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:2,maxTokensPerRun:100,maxRunsPerDay:10}});
 const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+
+test('PostgreSQL definitions drive event and schedule activation',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const schema='agent_activation_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),dir=mkdtempSync(join(tmpdir(),'agent-activation-')),path=join(dir,'runs.sqlite'),scope={tenantId:'tenant',agentId:'agent'};let runs,triggers,schedules,server;
+ try{
+  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);
+  runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);schedules=new SqliteAgentSchedules(path);
+  server=createAgentEventIngress({triggers,definitions:definitions.view(actor),maxPending:5,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,clock:()=>1000});server.listen(0,'127.0.0.1');await once(server,'listening');
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'message',payload:{}})});assert.equal(response.status,202);
+  schedules.save(scope,'timer',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,0);const worker=new AgentScheduleWorker({schedules,scope,definitions:definitions.view(actor),authorize:()=>true,maxPending:5,maxPerPass:2,pollMs:100,onError:error=>{throw error},clock:()=>1000});assert.equal(await worker.runOnce(),1);assert.deepEqual(runs.list(scope).map(run=>run.definitionVersion),[1,1]);
+ }finally{if(server?.listening)await new Promise(resolve=>server.close(resolve));schedules?.close();triggers?.close();runs?.close();rmSync(dir,{recursive:true,force:true});await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});
 
 test('PostgreSQL definitions reject invalid configuration and denied operations before querying',async()=>{assert.throws(()=>new PostgresAgentDefinitions({}),/configuration/);const store=new PostgresAgentDefinitions({enabled:true,query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')},authorize:()=>false});await assert.rejects(store.get(actor,'agent'),/access denied/);await assert.rejects(store.save(actor,manifest(),0),/access denied/);await assert.rejects(store.list(actor),/access denied/);await assert.rejects(store.history(actor,'agent'),/access denied/);assert.throws(()=>store.view({tenantId:'',principalId:'admin'}),/actor/);assert.throws(()=>store.view(actor).get('other','agent'),/scope mismatch/);});
 

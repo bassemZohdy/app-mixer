@@ -2,7 +2,7 @@ import {SqliteAgentSchedules,type AgentSchedule,type AgentScheduleCursor} from '
 import {type AgentRunScope} from './durable-runs.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 
-type Options={schedules:SqliteAgentSchedules;scope:AgentRunScope;definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined};authorize:(schedule:AgentSchedule,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;maxPending:number;maxPerPass:number;pollMs:number;onError:(error:unknown)=>void;clock?:()=>number;auditActorId?:string};
+type Options={schedules:SqliteAgentSchedules;scope:AgentRunScope;definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};authorize:(schedule:AgentSchedule,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;maxPending:number;maxPerPass:number;pollMs:number;onError:(error:unknown)=>void;clock?:()=>number;auditActorId?:string};
 /** Host-driven polling for one agent; starts only when explicitly enabled. */
 export class AgentScheduleWorker {
  private readonly scope:AgentRunScope;private readonly clock:()=>number;private readonly auditActorId:string|undefined;private active=false;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;private cursor?:AgentScheduleCursor;
@@ -16,10 +16,11 @@ export class AgentScheduleWorker {
   for(const schedule of page.items){
    if(!keepGoing())return fired;
    try{
-    const definition=definitions.get(this.scope.tenantId,this.scope.agentId);
-    if(!definition||!definition.manifest.lifecycle.enabled||definition.manifest.tenantId!==this.scope.tenantId||definition.manifest.agentId!==this.scope.agentId)continue;
+    const selected=await definitions.get(this.scope.tenantId,this.scope.agentId);
+    if(!keepGoing()||!selected||!selected.manifest.lifecycle.enabled||selected.manifest.tenantId!==this.scope.tenantId||selected.manifest.agentId!==this.scope.agentId)continue;
+    const definition=structuredClone(selected);
     if(await authorize(structuredClone(schedule),structuredClone(definition))!==true||!keepGoing())continue;
-    const latest=definitions.get(this.scope.tenantId,this.scope.agentId);if(!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled)continue;
+    const latest=await definitions.get(this.scope.tenantId,this.scope.agentId);if(!keepGoing()||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled||latest.manifest.tenantId!==this.scope.tenantId||latest.manifest.agentId!==this.scope.agentId)continue;
     schedules.fire(this.scope,schedule.scheduleId,schedule.revision,{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,runTimeoutMs:definition.manifest.lifecycle.runTimeoutMs,maxPending},this.clock(),this.auditActorId);fired++;
    }catch(error){if(!(error instanceof Error&&error.message==='Schedule revision conflict'))this.options.onError(error);}
    finally{if(keepGoing())this.cursor={nextAt:schedule.nextAt,scheduleId:schedule.scheduleId};}
