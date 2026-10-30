@@ -38,6 +38,7 @@ spec:
             - {name: APP_MIXER_PUBLICATION_MODE, value: unsigned}
             - {name: APP_MIXER_ACCESS_MODE, value: public}
             - {name: APP_MIXER_TRANSPORT, value: http}
+            - {name: APP_MIXER_REVOCATION_MODE, value: disabled}
             - {name: DATA_DRAIN_DELAY_MS, value: "5000"}
           readinessProbe:
             httpGet: {path: /health/ready, port: http}

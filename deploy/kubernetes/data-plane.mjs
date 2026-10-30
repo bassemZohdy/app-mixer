@@ -1,6 +1,7 @@
 import {readFile,stat} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
-import {createDataPlane,createDataPlaneHttps,createJwtCapabilityAuthenticator,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import pg from 'pg';
+import {createDataPlane,createDataPlaneHttps,createJwtCapabilityAuthenticator,PostgresJwtRevocations,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
 
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
@@ -19,20 +20,29 @@ if(mode==='signed'){
 const snapshot=structuredClone(publication),repository={getPublished(version){return version===undefined||version===snapshot.version?structuredClone(snapshot):undefined;}};
 const portText=process.env.DATA_PORT??'3002',delayText=process.env.DATA_DRAIN_DELAY_MS??'5000';
 if(!/^[1-9][0-9]{0,4}$/.test(portText)||Number(portText)>65535||!/^(0|[1-9][0-9]{0,4})$/.test(delayText)||Number(delayText)>30000)throw Error('Invalid Data Plane configuration');
-const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate;
+const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,revocationPool;
 if(accessMode==='jwt'){
  const keyPath=process.env.APP_MIXER_JWKS_PATH,issuer=process.env.APP_MIXER_JWT_ISSUER,audience=process.env.APP_MIXER_JWT_AUDIENCE,tenant=process.env.APP_MIXER_TENANT_ID,requiredScope=process.env.APP_MIXER_JWT_SCOPE??'app-mixer:publication.read',maxAge=process.env.APP_MIXER_JWT_MAX_AGE_SECONDS??'600';
  if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400||(await stat(keyPath)).size>131072)throw Error('Invalid publication access configuration');
- const jwks=JSON.parse(await readFile(keyPath,'utf8'));
- authenticate=createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(requiredScope)?{tenantId:tenant,principalId:claims.sub}:undefined});
+ const jwks=JSON.parse(await readFile(keyPath,'utf8')),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
+ if(revocationMode==='postgres'){
+  const dsnPath=process.env.APP_MIXER_REVOCATION_DSN_PATH,caPath=process.env.APP_MIXER_REVOCATION_CA_PATH;
+  if(!dsnPath||!caPath||(await stat(dsnPath)).size>8192||(await stat(caPath)).size>65536)throw Error('Invalid revocation configuration');
+  const dsn=(await readFile(dsnPath,'utf8')).trim(),ca=await readFile(caPath,'utf8');let url;try{url=new URL(dsn);}catch{throw Error('Invalid revocation configuration');}
+  if(!['postgres:','postgresql:'].includes(url.protocol)||!url.hostname||!url.username||!url.password||!/^\/[^/]+$/.test(url.pathname)||url.search||url.hash||!ca.trim())throw Error('Invalid revocation configuration');
+  revocationPool=new pg.Pool({connectionString:dsn,ssl:{ca,rejectUnauthorized:true},max:5,connectionTimeoutMillis:2000,idleTimeoutMillis:10000,query_timeout:2000,statement_timeout:1500,application_name:'app-mixer-data-plane'});
+  revocationPool.on('error',()=>{});
+  const revocations=new PostgresJwtRevocations({issuer,query:(sql,args)=>revocationPool.query(sql,args)});isTokenActive=claims=>revocations.isTokenActive(claims);
+ }else if(revocationMode!=='disabled')throw Error('Invalid revocation configuration');
+ authenticate=createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),...(isTokenActive?{isTokenActive}:{}),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(requiredScope)?{tenantId:tenant,principalId:claims.sub}:undefined});
 }else if(accessMode!=='public')throw Error('Invalid publication access configuration');
-const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:1000},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)}:{})};let server;
+const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return true;}catch{return false;}}}:{})},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)}:{})};let server;
 if(transport==='tls'){
  const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
  if(!certPath||!keyPath||(caPath!==undefined&&!caPath)||(await stat(certPath)).size>65536||(await stat(keyPath)).size>65536||(caPath&&(await stat(caPath)).size>65536))throw Error('Invalid data plane transport configuration');
  server=createDataPlaneHttps(repository,{cert:await readFile(certPath),key:await readFile(keyPath),...(caPath?{clientCa:await readFile(caPath)}:{})},planeOptions);
 }else if(transport==='http')server=createDataPlane(repository,planeOptions);else throw Error('Invalid data plane transport configuration');server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.on('close',()=>authenticate?.close());
+server.on('close',()=>{authenticate?.close();if(revocationPool)void revocationPool.end().catch(()=>{});});
 server.listen(Number(portText),'0.0.0.0');
 server.once('listening',()=>console.log('Data Plane ready'));
 let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;server.beginDrain();setTimeout(()=>server.close(),Number(delayText));});
