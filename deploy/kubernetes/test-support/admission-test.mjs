@@ -8,6 +8,10 @@ const apply=object=>{writeFileSync(path,JSON.stringify(object));return spawnSync
 let valid;for(let i=0;i<30;i++){valid=apply(original);if(valid.status===0)break;await delay(1000);}if(valid.status!==0)throw Error('Expected approved deployment to pass: '+valid.stderr);
 const changed=(name,mutate)=>{const object=structuredClone(original),c=object.spec.template.spec.containers[0];mutate(object,c);const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error(`${name} was not denied by the security policy: ${result.stderr}`);};
 const env=(c,name)=>c.env.find(e=>e.name===name);
+// Policy and binding propagation is asynchronous; wait for an unsafe update to
+// be denied before asserting individual rejection cases.
+const unsigned=structuredClone(original);env(unsigned.spec.template.spec.containers[0],'APP_MIXER_PUBLICATION_MODE').value='unsigned';
+let enforced;for(let i=0;i<30;i++){enforced=apply(unsigned);if(enforced.status!==0&&enforced.stderr.includes('app-mixer-data-plane-security'))break;await delay(1000);}if(enforced.status===0||!enforced.stderr.includes('app-mixer-data-plane-security'))throw Error('Admission policy did not become active: '+enforced.stderr);
 changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value='unsigned');
 changed('public access',(_,c)=>env(c,'APP_MIXER_ACCESS_MODE').value='public');
 changed('plaintext transport',(_,c)=>env(c,'APP_MIXER_TRANSPORT').value='http');
