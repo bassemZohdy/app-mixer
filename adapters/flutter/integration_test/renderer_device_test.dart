@@ -1,4 +1,3 @@
-import 'dart:ui' show SemanticsFlag;
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,11 +32,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada'), findsOneWidget);
     final heading = tester.getSemantics(find.text('Ada')).getSemanticsData();
-    expect(heading.hasFlag(SemanticsFlag.isHeader), isTrue);expect(heading.label, 'Ada');
+    expect(heading.flagsCollection.isHeader, isTrue);expect(heading.label, 'Ada');
     final field = tester.getSemantics(find.byType(TextField)).getSemanticsData();
-    expect(field.hasFlag(SemanticsFlag.isTextField), isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
+    expect(field.flagsCollection.isTextField, isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
     final enabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
-    expect(enabled.hasFlag(SemanticsFlag.isButton), isTrue);expect(enabled.hasFlag(SemanticsFlag.isEnabled), isTrue);expect(enabled.label, 'Save');
+    expect(enabled.flagsCollection.isButton, isTrue);expect(enabled.flagsCollection.isEnabled, isTrue);expect(enabled.label, 'Save');
     await tester.enterText(find.byType(TextField), 'Grace');
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Grace'), findsOneWidget);
@@ -48,7 +47,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
     await tester.pumpAndSettle();
     final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
-    expect(disabled.hasFlag(SemanticsFlag.isButton), isTrue);expect(disabled.hasFlag(SemanticsFlag.hasEnabledState), isTrue);expect(disabled.hasFlag(SemanticsFlag.isEnabled), isFalse);expect(disabled.label, 'Save');
+    expect(disabled.flagsCollection.isButton, isTrue);expect(disabled.flagsCollection.hasEnabledState, isTrue);expect(disabled.flagsCollection.isEnabled, isFalse);expect(disabled.label, 'Save');
     expect(errors, isEmpty);
     expect(tester.takeException(), isNull);
   });

@@ -1,4 +1,3 @@
-import 'dart:ui' show SemanticsFlag;
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,9 +19,9 @@ void main() {
       {'id':'label','component':'Text','text':'Save'}
     ]}});
     await tester.pump();expect(find.byWidgetPredicate((w)=>w is Text && w.data=='Ada'),findsOneWidget);
-    final heading=tester.getSemantics(find.text('Ada')).getSemanticsData();expect(heading.hasFlag(SemanticsFlag.isHeader),isTrue);expect(heading.label,'Ada');
-    final field=tester.getSemantics(find.byType(TextField)).getSemanticsData();expect(field.hasFlag(SemanticsFlag.isTextField),isTrue);expect(field.label,'Name');expect(field.value,'Ada');
-    final button=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(button.hasFlag(SemanticsFlag.isButton),isTrue);expect(button.hasFlag(SemanticsFlag.isEnabled),isTrue);expect(button.label,'Save');
+    final heading=tester.getSemantics(find.text('Ada')).getSemanticsData();expect(heading.flagsCollection.isHeader,isTrue);expect(heading.label,'Ada');
+    final field=tester.getSemantics(find.byType(TextField)).getSemanticsData();expect(field.flagsCollection.isTextField,isTrue);expect(field.label,'Name');expect(field.value,'Ada');
+    final button=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(button.flagsCollection.isButton,isTrue);expect(button.flagsCollection.isEnabled,isTrue);expect(button.label,'Save');
     await tester.enterText(find.byType(TextField),'Grace');await tester.pump();expect(find.byWidgetPredicate((w)=>w is Text && w.data=='Grace'),findsOneWidget);
     await tester.tap(find.byType(TextButton));await tester.pump();
     expect((actions.single['action'] as Map)['context'],{'name':'Grace'});expect(errors,isEmpty);
