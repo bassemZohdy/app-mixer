@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
+import {createServer as createHttpsServer,type Server as HttpsServer,type ServerOptions as HttpsOptions} from 'node:https';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenance } from './index.js';
@@ -80,8 +81,8 @@ function authorized(req: IncomingMessage, token: string): boolean {
   const expected = Buffer.from(`Bearer ${token}`);
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
-function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void): Server {
-  return createServer((req, res) => {
+function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void):RequestListener {
+  return (req, res) => {
     const run=()=>handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
@@ -92,8 +93,9 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
       else respond(res, 500, {error:'Internal server error'});
     });
     if(dispatch)dispatch(req,res,run);else run();
-  });
+  };
 }
+function server(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void):Server{return createServer(listener(handler,dispatch));}
 /** Local-development control plane. Bind to loopback and protect its token. */
 export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition) => Promise<{id:string}>;
 /** Trusted host-owned browser module source. It must not contain secrets. */
@@ -216,10 +218,12 @@ export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)
 export type DataPlaneRequestObservation={route:'application'|'version'|'live'|'ready'|'other';outcome:'completed'|'aborted';statusClass:'2xx'|'3xx'|'4xx'|'5xx'|'other'|'none';durationMs:number};
 export type DataPlaneTracingOptions=HttpServerTracingOptions;
 export type DataPlaneServer=Server & {beginDrain:()=>void};
+export type DataPlaneHttpsServer=HttpsServer & {beginDrain:()=>void};
+export type DataPlaneTlsOptions={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
 export type DataPlanePublicationAuthorization=(request:IncomingMessage,version:number|undefined)=>boolean|Promise<boolean>;
 export type ControlPlaneTracingOptions=DataPlaneTracingOptions;
-/** Data plane exposes only immutable publications. It does not depend on the control plane. */
-export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization}): DataPlaneServer {
+export type DataPlaneOptions={health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization};
+function createDataPlaneInternal(repository:Pick<DefinitionRepository,'getPublished'>,options?:DataPlaneOptions,tls?:HttpsOptions):DataPlaneServer|DataPlaneHttpsServer {
   const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');const authorizePublication=options?.authorizePublication;if(authorizePublication!==undefined&&typeof authorizePublication!=='function')throw Error('Invalid publication authorization');
   const tracing=options?.tracing;if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid data plane tracing configuration');
   const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined,checkTimer:ReturnType<typeof setTimeout>|undefined,draining=false,finishDrain:()=>void;
@@ -234,7 +238,8 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     void task.finally(()=>{clearTimeout(timer);if(checkTimer===timer)checkTimer=undefined;if(controller===current)controller=undefined;if(pending===result)pending=undefined;});
     return result;
   };
-  const instance=server(async (req, res) => {
+  const factory=(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void)=>tls?createHttpsServer(tls,listener(handler,dispatch)):server(handler,dispatch);
+  const instance=factory(async (req, res) => {
     if(observe){
       const started=performance.now(),route:DataPlaneRequestObservation['route']=req.method!=='GET'?'other':req.url==='/application'?'application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'version':health&&req.url==='/health/live'?'live':health&&req.url==='/health/ready'?'ready':'other';let recorded=false;
       const record=(outcome:DataPlaneRequestObservation['outcome'])=>{if(recorded)return;recorded=true;const code=res.statusCode,statusClass:DataPlaneRequestObservation['statusClass']=outcome==='aborted'?'none':code>=200&&code<300?'2xx':code>=300&&code<400?'3xx':code>=400&&code<500?'4xx':code>=500&&code<600?'5xx':'other';try{const result:unknown=observe({route,outcome,statusClass,durationMs:Math.max(0,performance.now()-started)});if(result instanceof Promise)void result.catch(()=>{});}catch{}};
@@ -261,6 +266,14 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     respond(res, 200, published);
   },tracing?traceHttp({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},req=>{const method=req.method==='GET'?'GET':'_OTHER',path=method!=='GET'?undefined:req.url==='/application'?'/application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'/application/versions/{version}':health&&req.url==='/health/live'?'/health/live':health&&req.url==='/health/ready'?'/health/ready':undefined;return {method,path};}):undefined);
   instance.on('close',beginDrain);return Object.assign(instance,{beginDrain});
+}
+/** Data plane exposes only immutable publications. It does not depend on the control plane. */
+export function createDataPlane(repository:Pick<DefinitionRepository,'getPublished'>,options?:DataPlaneOptions):DataPlaneServer{return createDataPlaneInternal(repository,options) as DataPlaneServer;}
+/** Direct TLS transport; client certificates are mandatory when clientCa is supplied. */
+export function createDataPlaneHttps(repository:Pick<DefinitionRepository,'getPublished'>,tls:DataPlaneTlsOptions,options?:DataPlaneOptions):DataPlaneHttpsServer{
+ const pem=(value:unknown):value is string|Buffer=>(typeof value==='string'&&value.trim().length>0)||(Buffer.isBuffer(value)&&value.length>0);
+ if(!tls||typeof tls!=='object'||Array.isArray(tls)||Object.keys(tls).some(key=>!['cert','key','clientCa'].includes(key))||!pem(tls.cert)||!pem(tls.key)||(tls.clientCa!==undefined&&!pem(tls.clientCa)))throw Error('Invalid data plane TLS configuration');
+ return createDataPlaneInternal(repository,options,{cert:tls.cert,key:tls.key,minVersion:'TLSv1.2',...(tls.clientCa!==undefined?{ca:tls.clientCa,requestCert:true,rejectUnauthorized:true}:{})}) as DataPlaneHttpsServer;
 }
 
 /** Proposal-only endpoint for an agent; it cannot apply, approve or publish. */

@@ -1,6 +1,6 @@
 import {readFile,stat} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
-import {createDataPlane,createJwtCapabilityAuthenticator,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import {createDataPlane,createDataPlaneHttps,createJwtCapabilityAuthenticator,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
 
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
@@ -26,7 +26,12 @@ if(accessMode==='jwt'){
  const jwks=JSON.parse(await readFile(keyPath,'utf8'));
  authenticate=createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(requiredScope)?{tenantId:tenant,principalId:claims.sub}:undefined});
 }else if(accessMode!=='public')throw Error('Invalid publication access configuration');
-const server=createDataPlane(repository,{health:{timeoutMs:1000},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)}:{})});server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
+const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:1000},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)}:{})};let server;
+if(transport==='tls'){
+ const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
+ if(!certPath||!keyPath||(caPath!==undefined&&!caPath)||(await stat(certPath)).size>65536||(await stat(keyPath)).size>65536||(caPath&&(await stat(caPath)).size>65536))throw Error('Invalid data plane transport configuration');
+ server=createDataPlaneHttps(repository,{cert:await readFile(certPath),key:await readFile(keyPath),...(caPath?{clientCa:await readFile(caPath)}:{})},planeOptions);
+}else if(transport==='http')server=createDataPlane(repository,planeOptions);else throw Error('Invalid data plane transport configuration');server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
 server.on('close',()=>authenticate?.close());
 server.listen(Number(portText),'0.0.0.0');
 server.once('listening',()=>console.log('Data Plane ready'));

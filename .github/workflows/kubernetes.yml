@@ -40,6 +40,7 @@ jobs:
         run: |
           set -eu
           kubectl create namespace app-mixer-test
+          kubectl create secret tls -n app-mixer-test app-mixer-data-plane-tls --cert=packages/core/test/fixtures/capability-tls/server-cert.pem --key=packages/core/test/fixtures/capability-tls/server-key.pem
           node -e 'const {generateKeyPairSync}=require("node:crypto"),fs=require("node:fs"),k=generateKeyPairSync("ed25519");fs.writeFileSync(process.env.RUNNER_TEMP+"/private.pem",k.privateKey.export({type:"pkcs8",format:"pem"}));fs.writeFileSync(process.env.RUNNER_TEMP+"/keys.json",JSON.stringify([{keyId:"ci",publicKey:k.publicKey.export({type:"spki",format:"pem"})}]))'
           kubectl create configmap -n app-mixer-test app-mixer-release-keys --from-file=keys.json="$RUNNER_TEMP/keys.json"
           node --input-type=module -e 'import {generateKeyPairSync} from "node:crypto";import {writeFileSync} from "node:fs";import {SignJWT} from "jose";const k=generateKeyPairSync("rsa",{modulusLength:2048}),now=Math.floor(Date.now()/1000),base={iss:"https://issuer.example/",aud:"app-mixer-data-plane",sub:"ci-user",client_id:"ci-client",jti:"ci-token",iat:now,exp:now+600,tenant_id:"demo-tenant",scope:"app-mixer:publication.read"},make=async extra=>new SignJWT({...base,...extra}).setProtectedHeader({alg:"RS256",typ:"at+jwt",kid:"ci"}).sign(k.privateKey);writeFileSync(process.env.RUNNER_TEMP+"/jwks.json",JSON.stringify({keys:[{...k.publicKey.export({format:"jwk"}),kid:"ci",alg:"RS256",use:"sig"}]}));writeFileSync(process.env.RUNNER_TEMP+"/token",await make({}));writeFileSync(process.env.RUNNER_TEMP+"/wrong-tenant-token",await make({tenant_id:"other"}));'
@@ -47,18 +48,19 @@ jobs:
           cp deploy/kubernetes/data-plane/publication.json "$RUNNER_TEMP/unsigned.json"
           node deploy/kubernetes/sign-publication.mjs "$RUNNER_TEMP/unsigned.json" "$RUNNER_TEMP/signed.json" "$RUNNER_TEMP/private.pem" ci production
           cp "$RUNNER_TEMP/signed.json" deploy/kubernetes/data-plane/publication.json
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-example
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-example
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           kubectl wait -n app-mixer-test --for=condition=Ready pods -l app.kubernetes.io/component=data-plane --timeout=90s
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13002:3002 >"$RUNNER_TEMP/forward.log" 2>&1 &
           FORWARD_PID=$!
           trap 'kill "$FORWARD_PID" 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:13002/health/ready && break || sleep 1; done
-          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13002/application)" = 403 ]
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$RUNNER_TEMP/wrong-tenant-token")" http://127.0.0.1:13002/application)" = 403 ]
-          curl -fsS -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" http://127.0.0.1:13002/application | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{if(JSON.parse(s).version!==1)process.exit(1)})'
+          for i in $(seq 1 30); do curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS https://127.0.0.1:13002/health/ready && break || sleep 1; done
+          if curl -fsS --cacert packages/core/test/fixtures/capability-tls/rogue-cert.pem https://127.0.0.1:13002/health/live; then exit 1; fi
+          [ "$(curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -s -o /dev/null -w '%{http_code}' https://127.0.0.1:13002/application)" = 403 ]
+          [ "$(curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$RUNNER_TEMP/wrong-tenant-token")" https://127.0.0.1:13002/application)" = 403 ]
+          curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13002/application | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{if(JSON.parse(s).version!==1)process.exit(1)})'
           node -e 'const fs=require("node:fs"),p="deploy/kubernetes/data-plane/publication.json",x=JSON.parse(fs.readFileSync(p));x.publication.version=99;fs.writeFileSync(p,JSON.stringify(x))'
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-example
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-example
           FOUND=0
           for i in $(seq 1 45); do if kubectl logs -n app-mixer-test -l app.kubernetes.io/component=data-plane --all-containers --prefix --max-log-requests=10 2>&1 | grep -q 'Invalid signed publication'; then FOUND=1; break; fi; sleep 1; done
           [ "$FOUND" = 1 ]
@@ -66,13 +68,13 @@ jobs:
           printf '%s\n' '{"version":2,"definition":{"id":"demo","schemaVersion":1,"revision":1,"pages":[]}}' > "$RUNNER_TEMP/unsigned2.json"
           node deploy/kubernetes/sign-publication.mjs "$RUNNER_TEMP/unsigned2.json" "$RUNNER_TEMP/signed2.json" "$RUNNER_TEMP/private.pem" ci production
           cp "$RUNNER_TEMP/signed2.json" deploy/kubernetes/data-plane/publication.json
-          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-example
+          kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-example
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
           kill "$FORWARD_PID" 2>/dev/null || true
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13003:3002 >"$RUNNER_TEMP/forward2.log" 2>&1 &
           FORWARD_PID=$!
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:13003/health/ready && break || sleep 1; done
-          curl -fsS -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" http://127.0.0.1:13003/application | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{if(JSON.parse(s).version!==2)process.exit(1)})'
+          for i in $(seq 1 30); do curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS https://127.0.0.1:13003/health/ready && break || sleep 1; done
+          curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -fsS -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13003/application | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{if(JSON.parse(s).version!==2)process.exit(1)})'
           POD=$(kubectl get pods -n app-mixer-test -l app.kubernetes.io/component=data-plane -o json | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const p=JSON.parse(s).items.find(x=>!x.metadata.deletionTimestamp&&x.status.phase==="Running");if(!p)process.exit(1);console.log(p.metadata.name)})')
           kubectl delete pod -n app-mixer-test "$POD" --wait=true
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s

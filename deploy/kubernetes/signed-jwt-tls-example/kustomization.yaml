@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../signed-jwt-example
+patches:
+  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/3/value
+        value: tls
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_TLS_CERT_PATH, value: /tls/tls.crt}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_TLS_KEY_PATH, value: /tls/tls.key}
+      - op: add
+        path: /spec/template/spec/containers/0/readinessProbe/httpGet/scheme
+        value: HTTPS
+      - op: add
+        path: /spec/template/spec/containers/0/livenessProbe/httpGet/scheme
+        value: HTTPS
+      - op: add
+        path: /spec/template/spec/containers/0/startupProbe/httpGet/scheme
+        value: HTTPS
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: tls, mountPath: /tls, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: tls, secret: {secretName: app-mixer-data-plane-tls}}
