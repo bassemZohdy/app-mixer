@@ -14,14 +14,18 @@ type Options={
  authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
  mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity,request:IncomingMessage)=>EventRequest;
  challengeAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>string|undefined;
+ contentType?:'application/x-www-form-urlencoded';
+ acknowledgement?:'twiml';
  traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
  tracing?:{tracer:Tracer;propagateToRun?:boolean};
  maxPending:number;clock?:()=>number;
 };
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const reply=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));};
-async function readBytes(req:IncomingMessage):Promise<Buffer>{
- if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??''))throw Error('CONTENT_TYPE');
+async function readBytes(req:IncomingMessage,contentType?:Options['contentType']):Promise<Buffer>{
+ if(req.rawHeaders.filter((_,i)=>i%2===0&&req.rawHeaders[i].toLowerCase()==='content-type').length!==1)throw Error('CONTENT_TYPE');
+ const expected=contentType==='application/x-www-form-urlencoded'?/^application\/x-www-form-urlencoded(?:\s*;|$)/i:/^application\/json(?:\s*;|$)/i;
+ if(!expected.test(req.headers['content-type']??''))throw Error('CONTENT_TYPE');
  const parts:Buffer[]=[];let size=0;for await(const chunk of req){const part=Buffer.from(chunk);size+=part.length;if(size>256*1024)throw Error('TOO_LARGE');parts.push(part);}
  return Buffer.concat(parts);
 }
@@ -35,8 +39,9 @@ function validateEvent(value:unknown):EventRequest {
 }
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
+ if((options?.contentType!==undefined||options?.acknowledgement!==undefined)&&(options.contentType!=='application/x-www-form-urlencoded'||options.acknowledgement!=='twiml'||typeof options.authenticateRaw!=='function'||typeof options.mapAuthenticatedBody!=='function'||options.challengeAuthenticatedBody!==undefined))throw Error('Invalid event ingress');
  if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing}=options,clock=options.clock??Date.now;
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
@@ -44,7 +49,7 @@ export function createAgentEventIngress(options:Options):Server {
    if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
    source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
   }
-  if(authenticateRaw||source){try{raw=await readBytes(req);}catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}}
+  if(authenticateRaw||source){try{raw=await readBytes(req,contentType);}catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}}
   if(authenticateRaw&&raw){try{source=await authenticateRaw(req,Buffer.from(raw));}catch{}}
   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
@@ -60,7 +65,7 @@ export function createAgentEventIngress(options:Options):Server {
    const now=clock(),deadline=now+definition.manifest.lifecycle.runTimeoutMs;if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(deadline))throw Error('Invalid clock');
    let span:Span|undefined;try{if(tracing){const parsed=parseAgentTraceParent(parent),context=parsed?trace.setSpanContext(ROOT_CONTEXT,parsed):ROOT_CONTEXT;span=tracing.tracer.startSpan('agent.event.enqueue',{kind:SpanKind.PRODUCER},context);if(tracing.propagateToRun){const sc=span.spanContext(),candidate=`00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2,'0')}`;if(parseAgentTraceParent(candidate))parent=candidate;}}}catch{}
    let result:{runId:string;duplicate:boolean};try{result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);try{span?.setAttribute('app_mixer.agent.event.outcome',result.duplicate?'duplicate':'accepted');}catch{}}catch(error){try{span?.setStatus({code:SpanStatusCode.ERROR});span?.setAttribute('error.type','agent_event_enqueue_failed');}catch{}throw error;}finally{try{span?.end();}catch{}}
-   reply(res,result.duplicate?200:202,result);
+   if(acknowledgement==='twiml'){res.writeHead(200,{'content-type':'text/xml; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');}else reply(res,result.duplicate?200:202,result);
   }catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='Trigger identity conflict'?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:message==='Trigger identity conflict'?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
  });
 }
