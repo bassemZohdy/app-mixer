@@ -13,6 +13,11 @@ function setup(){
  return {definitions,registry,audit,options,identities,count:()=>count};
 }
 
+test('configured agents support asynchronous definition stores and reject changes during lookup',async()=>{
+ const s=setup();try{s.options.definitions={get:async(tenant,agent)=>s.definitions.get(tenant,agent)};const run=await createConfiguredAgentRun(s.options);assert.equal((await collect(run.run(input))).at(-1).type,'RUN_FINISHED');assert.equal(s.count(),1);}finally{s.definitions.close();}
+ const t=setup();try{let reads=0,started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);t.options.definitions={get:async(tenant,agent)=>{if(++reads===2){started();await gate;}return t.definitions.get(tenant,agent);}};const pending=createConfiguredAgentRun(t.options);await ready;t.definitions.save('t',{...base,lifecycle:{...base.lifecycle,enabled:false}},1);release();await assert.rejects(pending,/definition changed/);assert.equal(t.count(),0);}finally{t.definitions.close();}
+});
+
 test('configured organization agent uses only its service principal and authorized capability',async()=>{
  const s=setup();try{const run=await createConfiguredAgentRun(s.options),events=await collect(run.run(input));assert.equal(events.at(-1).type,'RUN_FINISHED');assert.equal(s.count(),1);assert.equal(s.identities.length,3);assert.ok(s.identities.every(x=>x.servicePrincipalId==='svc'&&!('userAssociation' in x)));assert.deepEqual(s.audit.map(x=>x.principalId),['svc','svc']);await assert.rejects(collect(run.run(input)),/already used/);}finally{s.definitions.close();}
 });
