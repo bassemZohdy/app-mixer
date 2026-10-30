@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
 import {createHmac} from 'node:crypto';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentDefinitions,DurableAgentWorker,createAgentEventIngress,createSignedWebhookAuthenticator,createGithubWebhookAdapter,createStripeWebhookAdapter,createSlackWebhookAdapter,createShopifyWebhookAdapter} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentTriggerRetention,SqliteAgentDefinitions,DurableAgentWorker,createAgentEventIngress,createSignedWebhookAuthenticator,createGithubWebhookAdapter,createStripeWebhookAdapter,createSlackWebhookAdapter,createShopifyWebhookAdapter} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},event={sourceId:'source',principalId:'sender',eventId:'evt',eventType:'order.created',payload:{order:'one'}};
 const manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
 const settings={definitionVersion:1,maxAttempts:2,deadline:10000,maxPending:2};
@@ -21,6 +21,15 @@ test('event deduplication, tenant isolation and bounded backlog survive restart'
   second.enqueue(scope,{...event,eventId:'evt2'},settings,2);assert.throws(()=>second.enqueue(scope,{...event,eventId:'evt3'},settings,2),/backlog full/);assert.equal(second.enqueue(scope,event,settings,2).duplicate,true);
   const other=second.enqueue({...scope,tenantId:'other'},event,settings,2);assert.notEqual(other.runId,first.runId);
  }finally{second?.close();close(s);}
+});
+
+test('authorized redaction removes terminal payload while preserving scoped deduplication',async()=>{
+ const s=setup(),actor={tenantId:'tenant',principalId:'admin'},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:who=>who.principalId==='admin'});let reopened,db;
+ try{const first=s.triggers.enqueue(scope,event,settings,1),other=s.triggers.enqueue({...scope,tenantId:'other'},event,settings,1);await assert.rejects(retention.redact(actor,first.runId,10),/not terminal/);await assert.rejects(retention.redact({...actor,principalId:'denied'},first.runId,10),/access denied/);await assert.rejects(retention.redact({...actor,tenantId:'other'},first.runId,10),/Invalid/);assert.deepEqual(s.triggers.get(scope,first.runId).payload,event.payload);
+  const run=s.runs.get(scope,first.runId);s.runs.request(scope,first.runId,run.revision,'cancel',2);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_redaction BEFORE INSERT ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'redaction failed'); END");await assert.rejects(retention.redact(actor,first.runId,10),/redaction failed/);assert.deepEqual(s.triggers.get(scope,first.runId).payload,event.payload);assert.equal(await retention.getRedaction(actor,first.runId),undefined);db.exec('DROP TRIGGER reject_redaction');
+  assert.equal(await retention.redact(actor,first.runId,10),true);assert.equal(await retention.redact(actor,first.runId,11),false);assert.deepEqual(await retention.getRedaction(actor,first.runId),{actorId:'admin',redactedAt:10});await assert.rejects(retention.getRedaction({...actor,principalId:'denied'},first.runId),/access denied/);assert.throws(()=>db.exec('UPDATE agent_trigger_redactions SET actor_id=\'other\''),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_trigger_redactions'),/immutable/);assert.equal(s.triggers.get(scope,first.runId).payload,null);assert.equal(s.triggers.get(scope,first.runId).payloadRedacted,true);assert.deepEqual(s.triggers.get({...scope,tenantId:'other'},other.runId).payload,event.payload);const nullRun=s.triggers.enqueue(scope,{...event,eventId:'null-event',payload:null},settings,3);assert.equal(s.triggers.get(scope,nullRun.runId).payload,null);assert.equal(s.triggers.get(scope,nullRun.runId).payloadRedacted,undefined);
+  reopened=new SqliteAgentTriggers(s.path);assert.deepEqual(reopened.enqueue(scope,event,settings,3),{runId:first.runId,duplicate:true});assert.throws(()=>reopened.enqueue(scope,{...event,payload:{order:'two'}},settings,3),/identity conflict/);assert.throws(()=>reopened.enqueue(scope,{...event,principalId:'other'},settings,3),/identity conflict/);assert.equal(reopened.get(scope,first.runId).payloadRedacted,true);
+ }finally{db?.close();reopened?.close();retention.close();close(s);}
 });
 
 test('inbox failure rolls back the queued run atomically',()=>{

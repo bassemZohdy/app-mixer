@@ -100,6 +100,8 @@ export {SqliteAgentActionJournal} from './action-journal.js';
 export type {AgentAction,AgentActionJournalOptions,AgentActionStatus,ActionVerification,ActionVerificationRequest,AgentActionPage,ActionVerificationPass,ActionReconciliationEvidence,ActionReconciliationEvent} from './action-journal.js';
 export {SqliteAgentTriggers} from './agent-triggers.js';
 export type {TriggerRecord,AgentTriggerInput,AgentTriggerEnqueueOptions} from './agent-triggers.js';
+export {SqliteAgentTriggerRetention} from './agent-trigger-retention.js';
+export type {AgentTriggerRetentionActor,AgentTriggerRetentionOptions} from './agent-trigger-retention.js';
 export {createAgentEventIngress} from './event-ingress.js';
 export type {AgentEventIngressOptions,AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
 export {SqliteAgentSchedules} from './agent-schedules.js';
