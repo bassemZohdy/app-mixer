@@ -177,3 +177,6 @@ export type {AgentRunExpiryEvidence} from './durable-runs.js';
 
 export {registerSemanticMemoryRead} from './semantic-memory-read-capability.js';
 export type {SemanticMemoryReadOptions,SemanticMemoryReadInput} from './semantic-memory-read-capability.js';
+
+export {PostgresAgentMemory} from './postgres-agent-memory.js';
+export type {PostgresAgentMemoryOptions,PostgresAgentMemoryQuery} from './postgres-agent-memory.js';

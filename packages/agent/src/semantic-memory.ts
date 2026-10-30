@@ -1,3 +1,4 @@
+import {PostgresAgentMemory} from './postgres-agent-memory.js';
 import {SqliteAgentMemory,type AgentMemoryScope,type AgentMemoryActor,type AgentMemoryProvenance} from './agent-memory.js';
 
 type Embedder={modelId:string;dimensions:number;embed:(text:string)=>Promise<number[]>};
@@ -16,8 +17,8 @@ function semanticScope(scope:AgentMemoryScope):AgentMemoryScope{if(!scope||scope
 /** Exact cosine search over authorized records using a host-selected embedding model. */
 export class AgentSemanticMemory {
  private readonly modelId:string;private readonly dimensions:number;private readonly embed:Embedder['embed'];
- constructor(private readonly memory:SqliteAgentMemory,embedding:Embedder){
-  if(!(memory instanceof SqliteAgentMemory)||!embedding||!validId(embedding.modelId)||!Number.isSafeInteger(embedding.dimensions)||embedding.dimensions<1||embedding.dimensions>2048||typeof embedding.embed!=='function')throw Error('Invalid embedding configuration');
+ constructor(private readonly memory:SqliteAgentMemory|PostgresAgentMemory,embedding:Embedder){
+  if(!(memory instanceof SqliteAgentMemory||memory instanceof PostgresAgentMemory)||!embedding||!validId(embedding.modelId)||!Number.isSafeInteger(embedding.dimensions)||embedding.dimensions<1||embedding.dimensions>2048||typeof embedding.embed!=='function')throw Error('Invalid embedding configuration');
   this.modelId=embedding.modelId;this.dimensions=embedding.dimensions;this.embed=embedding.embed;
  }
  async put(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string,text:string,options:{expectedRevision:number|null;expiresAt:number;provenance:AgentMemoryProvenance}):Promise<{id:string;revision:number;expiresAt:number}>{
