@@ -8,6 +8,20 @@ import '../test/signed_plan_fixture.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('root row fills bounded width on a mobile device', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Center(child:SizedBox(width:280,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+    receive({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});
+    receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[
+      {'id':'root','component':'Row','align':'start','justify':'spaceBetween','children':['left','right']},
+      {'id':'left','component':'Text','text':'Left'}, {'id':'right','component':'Text','text':'Right'}
+    ]}});
+    await tester.pumpAndSettle();final row=tester.getRect(find.ancestor(of:find.text('Left'),matching:find.byType(Row)).first);
+    expect(row.width,280);expect(tester.getRect(find.text('Left')).left,closeTo(row.left,0.01));expect(tester.getRect(find.text('Right')).right,closeTo(row.right,0.01));expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+
   testWidgets('verifies a signed extension plan and renders its approved widget on a mobile device', (tester) async {
     final component=FlutterExtensionComponent((context,props)=>const Text('Signed chart'),(value)=>true);
     final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:{'chart':component,'extra':component})];

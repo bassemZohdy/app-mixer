@@ -388,6 +388,30 @@ void main() {
     expect(tester.getSize(find.text('Small')).height,tester.getSize(find.text('Tall')).height);
     expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
+  testWidgets('root layouts fill bounded width and apply horizontal alignment', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Center(child:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Row','align':'start','justify':'spaceBetween','children':['left','right']},
+      {'id':'left','component':'Text','text':'Left'},
+      {'id':'right','component':'Text','text':'Right'}
+    ]}));
+    await tester.pump();
+    final row=find.ancestor(of:find.text('Left'),matching:find.byType(Row)).first;
+    final rowRect=tester.getRect(row),leftRect=tester.getRect(find.text('Left')),rightRect=tester.getRect(find.text('Right'));
+    expect(rowRect.width,300);expect(leftRect.left,rowRect.left);expect(rightRect.right,rowRect.right);
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['left','right']}
+    ]}));
+    await tester.pump();expect(tester.getSize(find.text('Left')).width,300);expect(tester.getSize(find.text('Right')).width,300);
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','align':'start','children':['left','right']}
+    ]}));
+    await tester.pump();expect(tester.getSize(find.text('Left')).width,lessThan(300));expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   test('rejects excessive nested stretch atomically', () {
     final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
     store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));

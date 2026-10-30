@@ -352,7 +352,12 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
   @override
   Widget build(BuildContext context) {
     final store=_store, generation=_generation;
-    return Column(children: store.views().map((surface)=>surface.root==null ? const SizedBox.shrink() : _widget(surface.root!,surface,store,generation,'root')).toList());
+    return Column(children: store.views().map((surface){
+      final root=surface.root;
+      if(root==null) return const SizedBox.shrink();
+      final rendered=_widget(root,surface,store,generation,'root');
+      return ['Column','Row','Card'].contains(root.kind) ? SizedBox(width:double.infinity,child:rendered) : rendered;
+    }).toList());
   }
   bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path) {

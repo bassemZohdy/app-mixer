@@ -5,6 +5,19 @@ import '../signed_plan_fixture.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('root row uses its bounded width on the web', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Center(child:SizedBox(width:280,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+    receive({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});
+    receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[
+      {'id':'root','component':'Row','align':'start','justify':'spaceBetween','children':['left','right']},
+      {'id':'left','component':'Text','text':'Left'}, {'id':'right','component':'Text','text':'Right'}
+    ]}});
+    await tester.pump();final row=tester.getRect(find.ancestor(of:find.text('Left'),matching:find.byType(Row)).first);
+    expect(row.width,280);expect(tester.getRect(find.text('Left')).left,closeTo(row.left,0.01));expect(tester.getRect(find.text('Right')).right,closeTo(row.right,0.01));expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   test('verifies the signed plan in a browser', () async {
     final component=FlutterExtensionComponent((context,props)=>const Text('Chart'),(value)=>true),installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:{'chart':component})];
     final registry=await FlutterComponentRegistry.fromSignedPlan(signedPlanFixture,installed,tenantId:'tenant',environment:'production',applicationId:'demo',revision:0,trustedKeys:{'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey))},clock:()=>200);
