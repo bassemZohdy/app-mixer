@@ -1,8 +1,9 @@
 import {DatabaseSync} from 'node:sqlite';
+import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 
-type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string};
+type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string};
 type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
 export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revision:number;generation:number;nextAt:number;config:ScheduleConfig};
 export type AgentScheduleCursor={nextAt:number;scheduleId:string};
@@ -26,11 +27,31 @@ function cron(expression:string){
 function checkConfig(config:ScheduleConfig):ScheduleConfig{
  if(!config||typeof config!=='object'||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
  if(config.rule.kind==='interval'){if(Object.keys(config.rule).length!==2||!integer(config.rule.intervalMs)||config.rule.intervalMs<1000||config.rule.intervalMs>30*86400000)throw Error('Invalid schedule');return structuredClone(config);}
- if(config.rule.kind==='cron'){if(Object.keys(config.rule).length!==2)throw Error('Invalid schedule');cron(config.rule.expression);return structuredClone(config);}
+ if(config.rule.kind==='cron'){if(Object.keys(config.rule).some(key=>!['kind','expression','timeZone'].includes(key)))throw Error('Invalid schedule');cron(config.rule.expression);if(config.rule.timeZone!==undefined)checkZone(config.rule.timeZone);return structuredClone(config);}
  throw Error('Invalid schedule');
+}
+function checkZone(zone:unknown):asserts zone is string{
+ if(typeof zone!=='string'||zone.length>128||!/^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)*$/.test(zone))throw Error('Invalid schedule time zone');
+ try{new Intl.DateTimeFormat('en-US',{timeZone:zone}).format(0);}catch{throw Error('Invalid schedule time zone');}
+}
+function nextZoned(expression:string,zone:string,after:number):number{
+ const c=cron(expression),start=Temporal.Instant.fromEpochMilliseconds(after).toZonedDateTimeISO(zone).toPlainDate().subtract({days:2}),hours=[...c.hours].sort((a,b)=>a-b),minutes=[...c.minutes].sort((a,b)=>a-b);let best:number|undefined;
+ for(let offset=0;offset<366*9+4;offset++){
+  const date=start.add({days:offset}),lower=date.toPlainDateTime().toZonedDateTime('UTC').epochMilliseconds-86400000;
+  if(best!==undefined&&lower>best)return best;if(lower+3*86400000<=after)continue;
+  const dom=c.days.has(date.day),dow=c.weekdays.has(date.dayOfWeek%7),dayMatch=c.dayAny?dow:c.weekdayAny?dom:dom||dow;if(!c.months.has(date.month)||!dayMatch)continue;
+  for(const hour of hours)for(const minute of minutes){
+   const parts={timeZone:zone,year:date.year,month:date.month,day:date.day,hour,minute};
+   const early=Temporal.ZonedDateTime.from(parts,{disambiguation:'earlier'}),late=Temporal.ZonedDateTime.from(parts,{disambiguation:'later'});
+   for(const candidate of [early,late]){if(candidate.year!==date.year||candidate.month!==date.month||candidate.day!==date.day||candidate.hour!==hour||candidate.minute!==minute)continue;const instant=candidate.epochMilliseconds;if(instant>after&&Number.isSafeInteger(instant)&&(best===undefined||instant<best))best=instant;}
+   if(best!==undefined&&early.epochMilliseconds>best)break;
+  }
+ }
+ if(best!==undefined)return best;throw Error('Cron has no occurrence within nine years');
 }
 function next(rule:ScheduleRule,after:number):number{
  if(rule.kind==='interval'){const value=after+rule.intervalMs;if(!Number.isSafeInteger(value))throw Error('Invalid schedule time');return value;}
+ if(rule.timeZone!==undefined)return nextZoned(rule.expression,rule.timeZone,after);
  const c=cron(rule.expression),start=Math.floor(after/60000)*60000+60000,date=new Date(start);if(!Number.isFinite(date.getTime()))throw Error('Invalid schedule time');
  const midnight=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate());
  for(let day=0;day<366*9;day++){
