@@ -1,4 +1,5 @@
 import {ensureAgentRunHistory} from './agent-run-history.js';
+import {ensureAgentTraceSchema,insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
@@ -24,7 +25,7 @@ export class SqliteAgentRuns {
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);}catch(error){this.db.close();throw error;}}
+  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  get(scope:RunScope,runId:string):DurableAgentRun|undefined {
   scopeKey(scope,runId);const row=this.db.prepare('SELECT * FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
@@ -43,8 +44,10 @@ export class SqliteAgentRuns {
   scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid queued run query');
   const limit=options.limit??50,rows=this.db.prepare("SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status='queued' AND archived=0 AND run_id>? ORDER BY run_id LIMIT ?").all(scope.tenantId,scope.agentId,options.after??'',limit+1),runIds=rows.slice(0,limit).map(row=>String(row.run_id));return {runIds,...(rows.length>limit?{next:runIds[runIds.length-1]!}:{})};
  }
- create(scope:RunScope,runId:string,config:{definitionVersion:number;maxAttempts:number;deadline:number},now=Date.now()):DurableAgentRun {
-  scopeKey(scope,runId);if(!config||!number(config.definitionVersion)||config.definitionVersion<1||!number(config.maxAttempts)||config.maxAttempts<1||config.maxAttempts>100||!number(config.deadline)||!number(now)||config.deadline<=now)throw Error('Invalid run configuration');
+ getTraceParent(scope:RunScope,runId:string):string|undefined{scopeKey(scope,runId);const row=this.db.prepare('SELECT trace_parent FROM agent_run_trace_context WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);if(!row)return undefined;if(!parseAgentTraceParent(row.trace_parent))throw Error('Invalid agent trace context');return String(row.trace_parent);}
+ create(scope:RunScope,runId:string,config:{definitionVersion:number;maxAttempts:number;deadline:number;traceParent?:string},now=Date.now()):DurableAgentRun {
+  scopeKey(scope,runId);if(!config||!number(config.definitionVersion)||config.definitionVersion<1||!number(config.maxAttempts)||config.maxAttempts<1||config.maxAttempts>100||!number(config.deadline)||!number(now)||config.deadline<=now||(config.traceParent!==undefined&&!parseAgentTraceParent(config.traceParent)))throw Error('Invalid run configuration');
+  if(config.traceParent!==undefined){this.db.exec('BEGIN IMMEDIATE');try{const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);if(result.changes!==1)throw Error('Run already exists');insertAgentTraceParent(this.db,scope,runId,config.traceParent);const run=this.get(scope,runId)!;this.db.exec('COMMIT');return run;}catch(error){this.db.exec('ROLLBACK');throw error;}}
   const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);
   if(result.changes!==1)throw Error('Run already exists');return this.get(scope,runId)!;
  }
