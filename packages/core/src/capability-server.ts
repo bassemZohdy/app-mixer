@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { CapabilityRegistry } from './capabilities.js';
+import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 
 type Actor = {tenantId:string; principalId:string};
 type Authenticate = (request:IncomingMessage) => Actor | undefined | Promise<Actor | undefined>;
 type AuditFailure = (event:{reason:'unauthenticated';remoteAddress?:string}) => void | Promise<void>;
+export type CapabilityServerTracingOptions=HttpServerTracingOptions;
 function reply(res:ServerResponse,status:number,value:unknown):void {
   res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
   res.end(JSON.stringify(value));
@@ -15,10 +17,12 @@ async function body(req:IncomingMessage):Promise<unknown> {
   try{return JSON.parse(Buffer.concat(parts).toString('utf8')) as unknown;}catch{throw Error('INVALID_JSON');}
 }
 /** Host-authenticated local endpoint; the authentication callback is trusted server code. */
-export function createCapabilityServer(registry:CapabilityRegistry, authenticate:Authenticate, auditFailure:AuditFailure):Server {
+export function createCapabilityServer(registry:CapabilityRegistry, authenticate:Authenticate, auditFailure:AuditFailure, tracing?:CapabilityServerTracingOptions):Server {
   if(typeof authenticate!=='function'||typeof auditFailure!=='function') throw Error('Authentication and failure audit are required');
+  if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid capability tracing configuration');
+  const dispatch=tracing?traceHttp({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},req=>({method:req.method==='POST'?'POST':'_OTHER',...(req.method==='POST'&&/^\/capabilities\/[^/]+\/invoke$/.test(req.url??'')?{path:'/capabilities/{operationId}/invoke'}:{})})):undefined;
   return createServer((req,res)=>{
-    (async()=>{
+    const run=()=>{void (async()=>{
       let actor:Actor|undefined;
       try{actor=await authenticate(req);}catch{actor=undefined;}
       if(!actor){
@@ -42,6 +46,7 @@ export function createCapabilityServer(registry:CapabilityRegistry, authenticate
         const status=message==='Data schema guard unavailable'?503:message==='Capability not found'?404:message==='Capability forbidden'?403:message==='Invalid capability input'?400:['Data revision conflict','Data schema version conflict','Staging request conflict','Operation not staged'].includes(message)?409:500;
         reply(res,status,{error:status===500?'Capability invocation failed':message});
       }
-    })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,{error:'Internal server error'});else if(!res.destroyed)res.destroy();});
+    })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,{error:'Internal server error'});else if(!res.destroyed)res.destroy();});};
+    if(dispatch)dispatch(req,res,run);else run();
   });
 }

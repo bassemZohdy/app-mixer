@@ -113,6 +113,7 @@ export type { Proposal } from './proposals.js';
 export { importOpenAPI, CapabilityRegistry } from './capabilities.js';
 export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';
 export { createCapabilityServer } from './capability-server.js';
+export type { CapabilityServerTracingOptions } from './capability-server.js';
 export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
