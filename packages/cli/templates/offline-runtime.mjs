@@ -45,13 +45,37 @@ export async function createGeneratedOfflineRuntime(config){
       const guarded={async refresh(){if(closed||!await current())throw Error('Offline operation not allowed');await panel.refresh();if(closed||!await current()){panel.dispose();throw Error('Offline operation not allowed');}},dispose(){panel.dispose();panels.delete(guarded);}};
       panels.add(guarded);return guarded;
     },
+    mountHistory(root){
+      ensureOpen();const panel=mountGeneratedOfflineHistory(root,runtime);
+      const guarded={refresh:()=>panel.refresh(),dispose(){panel.dispose();panels.delete(guarded);}};
+      panels.add(guarded);return guarded;
+    },
     start(){ensureOpen();worker.start();},
     async stop(){await worker.stop();},
-    close(){if(closePromise)return closePromise;closed=true;closePromise=(async()=>{await worker.stop();for(const panel of panels)panel.dispose();queue.close();})();return closePromise;},
+    close(){if(closePromise)return closePromise;closed=true;for(const panel of panels)panel.dispose();closePromise=(async()=>{await worker.stop();queue.close();})();return closePromise;},
     async list(){ensureOpen();if(!await current())throw Error('Offline operation not allowed');const result=await queue.list();if(closed||!await current())throw Error('Offline operation not allowed');return result;},
     operations(){return [...operations].map(([id,label])=>({id,label}));}
   };
   return runtime;
+}
+
+// Read-only recovery view; host identity and authorization are checked by runtime.list().
+export function mountGeneratedOfflineHistory(root,runtime){
+  if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function')throw Error('Invalid offline history');
+  const doc=root.ownerDocument;let generation=0,disposed=false;
+  const node=(tag,text)=>{const result=doc.createElement(tag);if(text!==undefined)result.textContent=text;return result;};
+  return {
+    async refresh(){
+      if(disposed)return;const current=++generation,heading=node('h2','Offline operation history'),status=node('p','Loading operations…'),list=node('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');root.replaceChildren(heading,status,list);
+      try{
+        const items=await runtime.list();if(disposed||current!==generation)return;
+        if(!items.length){status.textContent='No offline operations.';return;}
+        status.textContent='Review saved operations before creating another request.';
+        for(const item of items){const section=node('section'),details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id),details);list.appendChild(section);}
+      }catch{if(!disposed&&current===generation)status.textContent='Unable to load offline operations.';}
+    },
+    dispose(){disposed=true;generation++;root.replaceChildren();}
+  };
 }
 
 // Explicit user action creates a durable intent. Hosts must not allowlist staged submission.
