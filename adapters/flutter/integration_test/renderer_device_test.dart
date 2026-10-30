@@ -1,10 +1,40 @@
+import 'dart:convert';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import '../test/signed_plan_fixture.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('verifies a signed extension plan and renders its approved widget on a mobile device', (tester) async {
+    final component=FlutterExtensionComponent((context,props)=>const Text('Signed chart'),(value)=>true);
+    final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:{'chart':component,'extra':component})];
+    final keys={'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey))};
+    Future<FlutterComponentRegistry> verify(Object? value,{String tenant='tenant',int now=200}) => FlutterComponentRegistry.fromSignedPlan(value,installed,tenantId:tenant,environment:'production',applicationId:'demo',revision:0,trustedKeys:keys,clock:()=>now);
+    final registry=await tester.runAsync(() async {
+      final valid=await verify(signedPlanFixture);
+      final signature=signedPlanFixture['signature'] as String;
+      final bad=(signature.startsWith('A')?'B':'A')+signature.substring(1);
+      await expectLater(verify({...signedPlanFixture,'signature':bad}),throwsFormatException);
+      await expectLater(verify(signedPlanFixture,tenant:'other'),throwsFormatException);
+      await expectLater(verify(signedPlanFixture,now:10000),throwsFormatException);
+      return valid;
+    });
+    expect(registry,isNotNull);
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add,extensions:registry))));
+    receive({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});
+    receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[{'id':'root','component':'chart'}]}});
+    await tester.pumpAndSettle();
+    expect(find.text('Signed chart'),findsOneWidget);
+    receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[{'id':'root','component':'extra'}]}});
+    await tester.pumpAndSettle();
+    expect(errors,hasLength(1));expect(find.text('Signed chart'),findsOneWidget);
+  });
 
   testWidgets('renders, edits and sends an action on a mobile device', (tester) async {
     final semantics = tester.ensureSemantics();
