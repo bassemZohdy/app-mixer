@@ -1,9 +1,10 @@
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID,createHash} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
+import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 
 type EventInput={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown};
-type EnqueueOptions={definitionVersion:number;maxAttempts:number;deadline:number;maxPending:number};
+type EnqueueOptions={definitionVersion:number;maxAttempts:number;deadline:number;maxPending:number;traceParent?:string};
 export type TriggerRecord={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown;runId:string};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 function canonical(value:unknown):string {
@@ -34,7 +35,7 @@ export class SqliteAgentTriggers {
   return {sourceId:String(row.source_id),principalId:String(row.principal_id),eventId:String(row.event_id),eventType:String(row.event_type),payload:JSON.parse(String(row.payload)),runId:String(row.run_id)};
  }
  enqueue(scope:AgentRunScope,event:EventInput,options:EnqueueOptions,now=Date.now()):{runId:string;duplicate:boolean}{
-  if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!event||!id(event.sourceId)||!id(event.principalId)||!id(event.eventId)||!id(event.eventType)||!options||!Number.isSafeInteger(options.definitionVersion)||options.definitionVersion<1||!Number.isSafeInteger(options.maxAttempts)||options.maxAttempts<1||options.maxAttempts>100||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||!Number.isSafeInteger(options.deadline)||!Number.isSafeInteger(now)||now<0||options.deadline<=now)throw Error('Invalid trigger');
+  if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!event||!id(event.sourceId)||!id(event.principalId)||!id(event.eventId)||!id(event.eventType)||!options||!Number.isSafeInteger(options.definitionVersion)||options.definitionVersion<1||!Number.isSafeInteger(options.maxAttempts)||options.maxAttempts<1||options.maxAttempts>100||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||!Number.isSafeInteger(options.deadline)||!Number.isSafeInteger(now)||now<0||options.deadline<=now||(options.traceParent!==undefined&&!parseAgentTraceParent(options.traceParent)))throw Error('Invalid trigger');
   const payload=canonical(event.payload),hash=createHash('sha256').update(payload).digest('hex');this.db.exec('BEGIN IMMEDIATE');
   try{
    const existing=this.db.prepare('SELECT principal_id,event_type,payload,payload_hash,run_id FROM agent_trigger_inbox WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,event.sourceId,event.eventId);
@@ -42,6 +43,7 @@ export class SqliteAgentTriggers {
    const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);
    if(Number(count?.n)>=options.maxPending)throw Error('Trigger backlog full');
    const runId=randomUUID();this.db.prepare("INSERT INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,options.definitionVersion,options.maxAttempts,options.deadline);
+   insertAgentTraceParent(this.db,scope,runId,options.traceParent);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,event.sourceId,event.eventId,event.principalId,event.eventType,payload,hash,runId);
    this.db.exec('COMMIT');return {runId,duplicate:false};
   }catch(error){this.db.exec('ROLLBACK');throw error;}

@@ -1,6 +1,7 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
 import {SqliteAgentTriggers} from './agent-triggers.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
+import {parseAgentTraceParent} from './agent-trace-context.js';
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
@@ -11,6 +12,7 @@ type Options={
  authenticateRaw?: (request:IncomingMessage,body:Buffer)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
  mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>EventRequest;
+ traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
  maxPending:number;clock?:()=>number;
 };
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
@@ -30,8 +32,8 @@ function validateEvent(value:unknown):EventRequest {
 }
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
- if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function')))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody}=options,clock=options.clock??Date.now;
+ if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function')))throw Error('Invalid event ingress');
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,traceParent}=options,clock=options.clock??Date.now;
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
@@ -48,10 +50,11 @@ export function createAgentEventIngress(options:Options):Server {
    const definition=definitions.get(source.tenantId,event.agentId);
    if(!definition||!definition.manifest.lifecycle.enabled||definition.manifest.tenantId!==source.tenantId||definition.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
    let allowed=false;try{allowed=await authorize({...source},structuredClone(event),structuredClone(definition))===true;}catch{}
+   let parent:string|undefined;if(allowed&&traceParent)try{const candidate=await traceParent(req,{...source},structuredClone(event));if(parseAgentTraceParent(candidate))parent=candidate;}catch{}
    const latest=definitions.get(source.tenantId,event.agentId);
    if(!allowed||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled){reply(res,403,{error:'Forbidden'});return;}
    const now=clock(),deadline=now+definition.manifest.lifecycle.runTimeoutMs;if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(deadline))throw Error('Invalid clock');
-   const result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending},now);
+   const result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);
    reply(res,result.duplicate?200:202,result);
   }catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='Trigger identity conflict'?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:message==='Trigger identity conflict'?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
  });
