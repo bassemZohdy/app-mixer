@@ -2,6 +2,7 @@ import {createServer,type IncomingMessage,type Server,type ServerResponse} from 
 import {SqliteAgentTriggers} from './agent-triggers.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
+import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '@opentelemetry/api';
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
@@ -14,6 +15,7 @@ type Options={
  mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>EventRequest;
  challengeAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>string|undefined;
  traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
+ tracing?:{tracer:Tracer;propagateToRun?:boolean};
  maxPending:number;clock?:()=>number;
 };
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
@@ -33,8 +35,8 @@ function validateEvent(value:unknown):EventRequest {
 }
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
- if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function')))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent}=options,clock=options.clock??Date.now;
+ if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing}=options,clock=options.clock??Date.now;
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
@@ -56,7 +58,8 @@ export function createAgentEventIngress(options:Options):Server {
    const latest=definitions.get(source.tenantId,event.agentId);
    if(!allowed||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled){reply(res,403,{error:'Forbidden'});return;}
    const now=clock(),deadline=now+definition.manifest.lifecycle.runTimeoutMs;if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(deadline))throw Error('Invalid clock');
-   const result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);
+   let span:Span|undefined;try{if(tracing){const parsed=parseAgentTraceParent(parent),context=parsed?trace.setSpanContext(ROOT_CONTEXT,parsed):ROOT_CONTEXT;span=tracing.tracer.startSpan('agent.event.enqueue',{kind:SpanKind.PRODUCER},context);if(tracing.propagateToRun){const sc=span.spanContext(),candidate=`00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2,'0')}`;if(parseAgentTraceParent(candidate))parent=candidate;}}}catch{}
+   let result:{runId:string;duplicate:boolean};try{result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);try{span?.setAttribute('app_mixer.agent.event.outcome',result.duplicate?'duplicate':'accepted');}catch{}}catch(error){try{span?.setStatus({code:SpanStatusCode.ERROR});span?.setAttribute('error.type','agent_event_enqueue_failed');}catch{}throw error;}finally{try{span?.end();}catch{}}
    reply(res,result.duplicate?200:202,result);
   }catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='Trigger identity conflict'?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:message==='Trigger identity conflict'?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
  });
