@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import { validateRunInput, type LangGraphAGUIAdapter, type RunInput } from './index.js';
+import {traceAgent,type AgentTransportTracingOptions} from './transport-tracing.js';
 
 function reply(res: ServerResponse, status: number, error: string): void {
   res.writeHead(status, {'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
@@ -42,9 +43,12 @@ function parseInput(raw: unknown): RunInput {
   return input;
 }
 /** Local-development AG-UI SSE endpoint. Bind to loopback; production auth is not implemented. */
-export function createAGUIServer(agent: LangGraphAGUIAdapter, token: string): Server {
+export function createAGUIServer(agent: LangGraphAGUIAdapter, token: string, tracing?:AgentTransportTracingOptions): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Token must contain at least 32 characters');
-  return createServer(async (req,res) => {
+  if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid agent tracing configuration');
+  const dispatch=tracing?traceAgent({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent}):undefined;
+  return createServer((req,res) => {
+   const run=()=>{void (async()=>{
     if (!isAuthorized(req,token)) { reply(res,401,'Unauthorized'); return; }
     if(req.method !== 'POST' || req.url !== '/agent') { reply(res,404,'Not found'); return; }
     let input:RunInput;
@@ -63,5 +67,7 @@ export function createAGUIServer(agent: LangGraphAGUIAdapter, token: string): Se
       }
       if(!res.destroyed) res.end();
     } catch { if(!res.destroyed) res.destroy(); }
+   })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,'Internal server error');else if(!res.destroyed)res.destroy();});};
+   if(dispatch)dispatch(req,res,run);else run();
   });
 }

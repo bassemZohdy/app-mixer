@@ -54,7 +54,7 @@ import {readFile} from 'node:fs/promises';
 import {once} from 'node:events';
 import {createPublicationTracing} from './publication-tracing.mjs';
 const flag=name=>{const value=process.env[name]??'false';if(value!=='true'&&value!=='false')throw Error('Invalid '+name);return value==='true';};
-const tracingEnabled=flag('WORKSPACE_TRACING_ENABLED'),capabilityPropagation=flag('WORKSPACE_TRACING_PROPAGATE_CAPABILITIES');if(capabilityPropagation&&!tracingEnabled)throw Error('Invalid workspace tracing configuration');
+const tracingEnabled=flag('WORKSPACE_TRACING_ENABLED'),capabilityPropagation=flag('WORKSPACE_TRACING_PROPAGATE_CAPABILITIES'),agentPropagation=flag('WORKSPACE_TRACING_PROPAGATE_AGENT');if((capabilityPropagation||agentPropagation)&&!tracingEnabled)throw Error('Invalid workspace tracing configuration');
 const tracing=await createPublicationTracing({enabled:tracingEnabled,trustIncoming:flag('WORKSPACE_TRACING_TRUST_INCOMING'),propagate:flag('WORKSPACE_TRACING_PROPAGATE')});
 const port=Number(process.env.PORT||3000);
 const publicationSchemaVersion=/^[12]$/.test(process.env.PUBLICATION_SCHEMA_VERSION||'1')?Number(process.env.PUBLICATION_SCHEMA_VERSION||'1'):null;
@@ -110,6 +110,7 @@ createServer(async(req,res)=>{
   }
   if(req.method==='GET' && req.url==='/api/chat/status'){json(res,200,{enabled:!!agentURL});return;}
   if(req.method==='POST' && req.url==='/api/chat'){
+    return tracing.handle(req,res,'POST','/api/chat',async()=>{
     if(req.headers.origin!=='http://'+host){json(res,403,{error:'Invalid origin'});return;}
     if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'Expected JSON'});return;}
     if(!agentURL){json(res,503,{error:'Agent is not configured'});return;}
@@ -118,13 +119,13 @@ createServer(async(req,res)=>{
     const controller=new AbortController();
     res.once('close',()=>{if(!res.writableEnded)controller.abort();});
     try{
-      const upstream=await fetch(agentURL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+process.env.AGENT_TOKEN},body,signal:controller.signal});
-      if(!upstream.ok || !upstream.body || !/^text\/event-stream/i.test(upstream.headers.get('content-type')||'')){if(!res.destroyed)json(res,502,{error:'Agent unavailable'});return;}
+      await tracing.upstream('POST','/agent',async(traceHeaders,report)=>{const upstream=await fetch(agentURL,{method:'POST',headers:{...traceHeaders,'Content-Type':'application/json','Authorization':'Bearer '+process.env.AGENT_TOKEN},body,signal:controller.signal});report(upstream.status);
+      if(!upstream.ok || !upstream.body || !/^text\/event-stream/i.test(upstream.headers.get('content-type')||''))throw Error('Invalid agent response');
       res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
       for await(const chunk of upstream.body){if(res.destroyed)break;if(!res.write(chunk))await once(res,'drain',{signal:controller.signal});}
-      if(!res.destroyed)res.end();
+      if(controller.signal.aborted)throw Error('Client disconnected');if(!res.destroyed)res.end();},agentPropagation);
     }catch{if(!res.destroyed){if(!res.headersSent)json(res,502,{error:'Agent unavailable'});else res.destroy();}}
-    return;
+    });
   }
   const shellWorkerRequest=req.method==='GET'&&/^\/offline-shell-sw\.js\?revision=[a-zA-Z0-9._-]{1,64}$/.test(req.url||'');
   const path=shellWorkerRequest?'offline-shell-sw.js':req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':req.method==='GET'&&req.url==='/data-editor.mjs'?'data-editor.mjs':req.method==='GET'&&req.url==='/staged-editor.mjs'?'staged-editor.mjs':req.method==='GET'&&['/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs','/offline-shell-sw.js','/offline-publications.js','/offline-publication-runtime.mjs','/offline-publication-host.mjs'].includes(req.url)?req.url.slice(1):null;
@@ -220,7 +221,7 @@ export function prepareWorkspace(app){
  const offlineShell=shellTemplate.replace('__APP_ID__',JSON.stringify(name)),offlineShellWorker=shellWorkerTemplate.replace('__APP_ID__',JSON.stringify(name));
  const offlineURL=new URL(import.meta.resolve('@app-mixer/web/offline'));
  const [offlineSource,offlineWorker,offlineUI]=await Promise.all([readFile(offlineURL),readFile(new URL('./offline-worker.js',offlineURL)),readFile(new URL('./offline-ui.js',offlineURL))]);
- await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
+ await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nWORKSPACE_TRACING_PROPAGATE_AGENT=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
