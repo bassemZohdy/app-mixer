@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
-import {PostgresAgentMemory,AgentSemanticMemory} from '../dist/index.js';
+import {PostgresAgentMemory,AgentSemanticMemory,AgentMemoryRetentionWorker} from '../dist/index.js';
 const actor={tenantId:'tenant',principalId:'service'},scope={tenantId:'tenant',agentId:'agent',owner:{kind:'organization',id:'org'},kind:'semantic'},provenance={kind:'run',id:'run'};
 const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
 
@@ -17,7 +17,7 @@ test('PostgreSQL memory coordinates isolated scopes, revisions, quota, expiry an
   const quota=await Promise.allSettled([first.put(actor,scope,'second','x',opts),second.put(actor,scope,'third','y',opts)]);assert.equal(quota.filter(x=>x.status==='fulfilled').length,1);assert.match(quota.find(x=>x.status==='rejected').reason.message,/quota/);const winner=quota.find(x=>x.status==='fulfilled').value.id;
   await first.delete(actor,scope,winner,1);assert.equal((await second.put(actor,scope,winner,'new',opts)).revision,3);await assert.rejects(first.delete(actor,scope,winner,1),/revision conflict/);assert.equal((await second.list(actor,scope,{limit:1})).nextAfter,'same');assert.equal((await first.list(actor,{...scope,agentId:'other'})).items.length,0);
   const otherScope={...scope,owner:{kind:'user',id:'user'}},semantic=new AgentSemanticMemory(first,{modelId:'model',dimensions:2,embed:async text=>text.includes('apple')?[1,0]:[0,1]});await semantic.put(actor,otherScope,'note','apple',opts);assert.equal((await semantic.get(actor,otherScope,'note')).revision,1);assert.equal((await semantic.search(actor,otherScope,'apple'))[0].id,'note');await second.put(actor,otherScope,'private','private',opts);assert.deepEqual((await second.list(actor,otherScope)).items.map(x=>x.id),['note']);
-  allowed=false;await assert.rejects(semantic.get(actor,otherScope,'note'),/access denied/);allowed=true;now=500;assert.equal(await second.get(actor,otherScope,'note'),undefined);assert.equal(await first.purgeExpired(actor,otherScope),2);now=501;assert.equal((await second.put(actor,otherScope,'note','again',{...opts,expiresAt:900})).revision,3);
+  allowed=false;await assert.rejects(semantic.get(actor,otherScope,'note'),/access denied/);allowed=true;now=500;assert.equal(await second.get(actor,otherScope,'note'),undefined);const errors=[],worker=memory=>new AgentMemoryRetentionWorker({memory,actor,scopes:[otherScope],authorize:()=>true,maxScopesPerPass:1,pollMs:100,onError:error=>errors.push(error)});const purges=await Promise.all([worker(first).runOnce(),worker(second).runOnce()]);assert.equal(purges.reduce((a,b)=>a+b,0),2);assert.deepEqual(errors,[]);now=501;assert.equal((await second.put(actor,otherScope,'note','again',{...opts,expiresAt:900})).revision,3);
  }finally{await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
 });
 

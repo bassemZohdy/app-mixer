@@ -180,3 +180,6 @@ export type {SemanticMemoryReadOptions,SemanticMemoryReadInput} from './semantic
 
 export {PostgresAgentMemory} from './postgres-agent-memory.js';
 export type {PostgresAgentMemoryOptions,PostgresAgentMemoryQuery} from './postgres-agent-memory.js';
+
+export {AgentMemoryRetentionWorker} from './agent-memory-retention.js';
+export type {AgentMemoryRetentionWorkerOptions} from './agent-memory-retention.js';
