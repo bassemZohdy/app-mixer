@@ -164,6 +164,10 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (!record(input) || !exact(input, ['expectedRevision']) || !revision(input.expectedRevision)) throw new RequestError(400, 'Invalid publish request');
       respond(res, 201, repository.publish(input.expectedRevision)); return;
     }
+    if (req.method === 'GET' && req.url === '/publications/latest') {
+      const publication=repository.getPublished();if(!publication)throw Error('Publication not found');
+      respond(res,200,{applicationId:publication.definition.id,version:publication.version});return;
+    }
     if (req.method === 'POST' && req.url === '/promotion/export') {
       const input=await body(req);
       if(!record(input)||!exact(input,['sourceEnvironment','version'])||!validEnvironment(input.sourceEnvironment)||!revision(input.version)||input.version<1)throw new RequestError(400,'Invalid promotion request');

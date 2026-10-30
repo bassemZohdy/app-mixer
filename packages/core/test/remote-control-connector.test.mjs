@@ -62,3 +62,18 @@ test('signed mode rejects package tampering and replay at another target version
  const remote=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(document));}),url=await listen(remote),connector=createRemoteControlConnector(config(url,target,{verifyWithEvidence:verify.verifyWithEvidence}));
  try{document.package.definition.pages[0].title='Tampered';await assert.rejects(connector.importPublication(request),/export failed/);assert.equal(target.getPublished(),undefined);document=structuredClone(signed);await assert.rejects(connector.importPublication({...request,expectedVersion:1}),/export failed/);assert.equal(target.getPublished(),undefined);}finally{await close(remote);}
 });
+
+test('authorized discovery returns the latest exact application without importing it',async()=>{
+ const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);source.publish(0);const remote=createControlPlane(source,token),url=await listen(remote),events=[];
+ try{const actor={tenantId:'t',principalId:'admin'},discovery={authorize:details=>{assert.equal(details.actor.principalId,'admin');details.actor.principalId='mutated';return true;},audit:event=>events.push(event)};const connector=createRemoteControlConnector(config(url,target,{discovery}));assert.deepEqual(await connector.discoverLatest(actor),{applicationId:'demo',sourceVersion:2});assert.equal(actor.principalId,'admin');assert.deepEqual(events.map(e=>e.phase),['attempt','completed']);assert.equal(events[1].details.actor.principalId,'admin');assert.equal(events[1].details.sourceVersion,2);assert.equal(target.getPublished(),undefined);assert.equal((await connector.importPublication({...request,sourceVersion:2})).version,1);}finally{await close(remote);}
+});
+
+test('discovery requires authorization and rejects mismatched or malformed responses',async()=>{
+ let calls=0,body=JSON.stringify({applicationId:'other',version:1});const remote=createServer((_req,res)=>{calls++;res.writeHead(200,{'content-type':'application/json'});res.end(body);}),url=await listen(remote),target=new ApplicationStore(definition),actor={tenantId:'t',principalId:'user'};
+ try{await assert.rejects(createRemoteControlConnector(config(url,target)).discoverLatest(actor),/discovery/);const events=[],deny=createRemoteControlConnector(config(url,target,{discovery:{authorize:()=>false,audit:e=>events.push(e.phase)}}));await assert.rejects(deny.discoverLatest(actor),/denied/);assert.equal(calls,0);assert.deepEqual(events,['attempt','denied']);const allow=createRemoteControlConnector(config(url,target,{discovery:{authorize:()=>true,audit:()=>{}}}));for(const value of [{applicationId:'other',version:1},{applicationId:'demo',version:0},{applicationId:'demo',version:1,extra:true}]){body=JSON.stringify(value);await assert.rejects(allow.discoverLatest(actor),/discovery failed/);}assert.equal(target.getPublished(),undefined);}finally{await close(remote);}
+});
+
+test('discovery rechecks permission before returning a remotely observed version',async()=>{
+ const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);const remote=createControlPlane(source,token),url=await listen(remote),events=[];let checks=0;
+ try{const connector=createRemoteControlConnector(config(url,target,{discovery:{authorize:()=>++checks===1,audit:e=>events.push(e.phase)}}));await assert.rejects(connector.discoverLatest({tenantId:'t',principalId:'u'}),/denied/);assert.equal(checks,2);assert.deepEqual(events,['attempt','denied']);}finally{await close(remote);}
+});

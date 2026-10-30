@@ -158,4 +158,4 @@ export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discov
 export {SqliteCapabilityAudit} from './capability-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportUncertainError} from './remote-control-connector.js';
-export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent} from './remote-control-connector.js';
+export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
