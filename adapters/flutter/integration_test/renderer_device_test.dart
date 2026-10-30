@@ -45,6 +45,7 @@ void main() {
     await tester.tap(find.byType(TextButton));
     await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
+    expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, 'Grace', reason: 'Submitted field must retain the edited value');
     expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace', reason: 'Edited value must remain accessible after submit');
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
     await tester.pumpAndSettle();
