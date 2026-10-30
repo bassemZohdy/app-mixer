@@ -167,3 +167,6 @@ export type {AgentActionRecoveryWorkerOptions} from './action-recovery-worker.js
 
 export {registerSemanticMemoryWrite} from './semantic-memory-write-capability.js';
 export type {SemanticMemoryWriteOptions,SemanticMemoryWriteInput,SemanticMemoryWriteMetadata} from './semantic-memory-write-capability.js';
+
+export {registerSemanticMemoryDelete} from './semantic-memory-delete-capability.js';
+export type {SemanticMemoryDeleteOptions,SemanticMemoryDeleteInput} from './semantic-memory-delete-capability.js';
