@@ -4,10 +4,11 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {randomBytes} from 'node:crypto';
 
 const project=`appmixerci${randomBytes(4).toString('hex')}`;
-const env={...process.env,CONTROL_TOKEN:randomBytes(32).toString('hex'),AGENT_TOKEN:randomBytes(32).toString('hex')};
+const env={...process.env,CONTROL_TOKEN:randomBytes(32).toString('hex'),AGENT_TOKEN:randomBytes(32).toString('hex'),DATA_METRICS_TOKEN:randomBytes(32).toString('hex')};
 const compose=(...args)=>execFileSync('docker',['compose','-p',project,...args],{env,stdio:'inherit',timeout:180000});
 const api='http://127.0.0.1:3000';
 const control='http://127.0.0.1:3001';
+const checkObservability=()=>compose('exec','-T','data','node','-e',`(async()=>{const assert=require('node:assert/strict');assert.equal((await fetch('http://127.0.0.1:3002/health/ready')).status,200);assert.equal((await fetch('http://127.0.0.1:3004/metrics')).status,401);const r=await fetch('http://127.0.0.1:3004/metrics',{headers:{authorization:'Bearer '+process.env.DATA_METRICS_TOKEN}});assert.equal(r.status,200);assert.match(await r.text(),/app_mixer_data_plane_requests_total/);})().catch(e=>{console.error(e);process.exitCode=1})`);
 async function waitFor(url,headers={}){
   for(let i=0;i<60;i++){
     try{const response=await fetch(url,{headers,signal:AbortSignal.timeout(1000)});if(response.ok)return response;}catch{}
@@ -32,9 +33,11 @@ try{
     await delay(1000);
   }
   assert.equal(response.status,200);assert.match(await response.text(),/RUN_FINISHED/);
-  compose('stop','agent');
+  checkObservability();
+  compose('stop','agent','control');
   response=await fetch(`${api}/api/chat`,{method:'POST',headers:{origin:api,'content-type':'application/json'},body});assert.equal(response.status,502);
   assert.equal((await (await fetch(`${api}/api/publication`)).json()).definition.pages[0].title,'Compose published');
+  checkObservability();
   compose('restart','data');
   assert.equal((await (await waitFor(`${api}/api/publication`)).json()).definition.pages[0].title,'Compose published');
 }finally{
