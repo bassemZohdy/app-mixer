@@ -44,10 +44,20 @@ export class AgentSemanticMemory {
   const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!(this.memory instanceof PostgresAgentMemory)||!validText(query))throw Error('Invalid indexed memory search');const candidates=await this.memory.searchSemanticText(safeActor,safeScope,query,this.modelId,limit,maxCandidates),items:SemanticMemoryHit[]=[];
   for(const {record,score} of candidates){const value=record.value as Record<string,unknown>;if(!validText(value.text))continue;try{normalize(value.vector,this.dimensions);}catch{continue;}items.push({id:record.id,revision:record.revision,text:value.text,score,provenance:record.provenance,expiresAt:record.expiresAt});}return items;
  }
+ private async prepareIndexed(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit:number,maxCandidates:number):Promise<{actor:AgentMemoryActor;scope:AgentMemoryScope;vector:number[]}>{
+  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!(this.memory instanceof PostgresAgentMemory)||!this.memory.supportsVectorIndex(this.modelId,this.dimensions,safeScope)||!validText(query)||!Number.isSafeInteger(limit)||limit<1||limit>20||!Number.isSafeInteger(maxCandidates)||maxCandidates<limit||maxCandidates>1000)throw Error('Invalid indexed memory search');await this.memory.assertAccess(safeActor,safeScope,'list');return {actor:safeActor,scope:safeScope,vector:normalize(await this.embed(query),this.dimensions)};
+ }
+ private async indexedWithVector(actor:AgentMemoryActor,scope:AgentMemoryScope,vector:number[],limit:number,maxCandidates:number):Promise<SemanticMemoryHit[]>{
+  if(!(this.memory instanceof PostgresAgentMemory))throw Error('Invalid indexed memory search');const candidates=await this.memory.searchSemanticVector(actor,scope,vector,this.modelId,limit,maxCandidates),items:SemanticMemoryHit[]=[];
+  for(const {record,score} of candidates){const value=record.value as Record<string,unknown>;if(!validText(value.text))continue;try{normalize(value.vector,this.dimensions);}catch{continue;}items.push({id:record.id,revision:record.revision,text:value.text,score,provenance:record.provenance,expiresAt:record.expiresAt});}return items;
+ }
  /** Approximate PostgreSQL vector search with bounded candidates and record authorization. */
  async searchIndexed(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,maxCandidates=100):Promise<SemanticMemoryHit[]>{
-  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!(this.memory instanceof PostgresAgentMemory)||!this.memory.supportsVectorIndex(this.modelId,this.dimensions,safeScope)||!validText(query)||!Number.isSafeInteger(limit)||limit<1||limit>20||!Number.isSafeInteger(maxCandidates)||maxCandidates<limit||maxCandidates>1000)throw Error('Invalid indexed memory search');await this.memory.assertAccess(safeActor,safeScope,'list');const vector=normalize(await this.embed(query),this.dimensions),candidates=await this.memory.searchSemanticVector(safeActor,safeScope,vector,this.modelId,limit,maxCandidates),items:SemanticMemoryHit[]=[];
-  for(const {record,score} of candidates){const value=record.value as Record<string,unknown>;if(!validText(value.text))continue;try{normalize(value.vector,this.dimensions);}catch{continue;}items.push({id:record.id,revision:record.revision,text:value.text,score,provenance:record.provenance,expiresAt:record.expiresAt});}return items;
+  const prepared=await this.prepareIndexed(actor,scope,query,limit,maxCandidates);return this.indexedWithVector(prepared.actor,prepared.scope,prepared.vector,limit,maxCandidates);
+ }
+ /** Evaluate approximate and exact retrieval with one shared query embedding. */
+ async compareIndexed(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,maxCandidates=100):Promise<{indexed:SemanticMemoryHit[];exact:SemanticMemoryHit[]}>{
+  const prepared=await this.prepareIndexed(actor,scope,query,limit,maxCandidates),indexed=await this.indexedWithVector(prepared.actor,prepared.scope,prepared.vector,limit,maxCandidates),exact=await this.searchInternal(prepared.actor,prepared.scope,query,limit,false,{},prepared.vector);return {indexed,exact};
  }
  async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
   return this.searchInternal(actor,scope,query,limit,false,options);
@@ -56,9 +66,9 @@ export class AgentSemanticMemory {
  async searchHybrid(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
   return this.searchInternal(actor,scope,query,limit,true,options);
  }
- private async searchInternal(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit:number,hybrid:boolean,options:SemanticMemorySearchOptions):Promise<SemanticMemoryHit[]>{
+ private async searchInternal(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit:number,hybrid:boolean,options:SemanticMemorySearchOptions,preparedVector?:number[]):Promise<SemanticMemoryHit[]>{
   const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validText(query)||!Number.isSafeInteger(limit)||limit<1||limit>20||!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='minSimilarity')||(options.minSimilarity!==undefined&&!validSimilarity(options.minSimilarity)))throw Error('Invalid semantic query');const minSimilarity=options.minSimilarity;
-  await this.memory.assertAccess(safeActor,safeScope,'list');const queryVector=normalize(await this.embed(query),this.dimensions);
+  await this.memory.assertAccess(safeActor,safeScope,'list');const queryVector=preparedVector??normalize(await this.embed(query),this.dimensions);
   const matches:SemanticMemoryHit[]=[];let after:string|undefined,pages=0;
   do{
    if(++pages>11)throw Error('Semantic memory scan limit exceeded');const page=await this.memory.list(safeActor,safeScope,{after,limit:100});
