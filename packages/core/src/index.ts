@@ -173,6 +173,8 @@ export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discov
 export {SqliteCapabilityAudit} from './capability-audit.js';
 export {PostgresCapabilityAudit} from './postgres-capability-audit.js';
 export type {PostgresCapabilityAuditOptions} from './postgres-capability-audit.js';
+export {PostgresAuthenticationFailureAudit} from './postgres-auth-failure-audit.js';
+export type {AuthenticationFailureEvent,StoredAuthenticationFailure,PostgresAuthenticationFailureAuditOptions} from './postgres-auth-failure-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportUncertainError} from './remote-control-connector.js';
 export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
