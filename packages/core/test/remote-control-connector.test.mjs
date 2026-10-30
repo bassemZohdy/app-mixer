@@ -33,3 +33,15 @@ test('bad source, redirects, configuration and uncertain local writes fail close
  const source=new ApplicationStore(definition);source.publish(0);const remote=createControlPlane(source,token),base=await listen(remote),events=[];
  try{const connector=createRemoteControlConnector(config(base,target,{audit:event=>{events.push(event.phase);if(event.phase==='completed')throw Error('audit unavailable');}}));await assert.rejects(connector.importPublication(request),RemoteControlImportUncertainError);assert.equal(target.getPublished().version,1);assert.equal(events.at(-1),'uncertain');}finally{await close(remote);}
 });
+
+test('rejects wrong publication identity and oversized responses without changing local state',async()=>{
+ const source=new ApplicationStore({...definition,id:'other'}),target=new ApplicationStore(definition);source.publish(0);const remote=createControlPlane(source,token),url=await listen(remote);
+ try{await assert.rejects(createRemoteControlConnector(config(url,target)).importPublication(request),/export failed/);assert.equal(target.getPublished(),undefined);}finally{await close(remote);}
+ const large=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(' '.repeat(2*1024*1024+1));}),base=await listen(large);
+ try{await assert.rejects(createRemoteControlConnector(config(base,target)).importPublication(request),/export failed/);assert.equal(target.getPublished(),undefined);}finally{await close(large);}
+});
+
+test('stale target versions and denied publication guards never overwrite local data',async()=>{
+ const source=new ApplicationStore(definition),target=new ApplicationStore(definition,()=>false);source.publish(0);const remote=createControlPlane(source,token),url=await listen(remote);
+ try{const connector=createRemoteControlConnector(config(url,target));await assert.rejects(connector.importPublication(request),RemoteControlImportUncertainError);assert.equal(target.getPublished(),undefined);const other=new ApplicationStore(definition);other.publish(0);await assert.rejects(createRemoteControlConnector(config(url,other)).importPublication(request),RemoteControlImportUncertainError);assert.equal(other.getPublished().version,1);}finally{await close(remote);}
+});
