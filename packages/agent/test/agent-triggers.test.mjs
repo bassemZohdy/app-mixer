@@ -6,12 +6,34 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
 import {createHmac} from 'node:crypto';
+import twilio from 'twilio';
+import {createTwilioMessageWebhookAdapter} from '../dist/index.js';
 import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentTriggerRetention,SqliteAgentDefinitions,DurableAgentWorker,createAgentEventIngress,createSignedWebhookAuthenticator,createGithubWebhookAdapter,createStripeWebhookAdapter,createSlackWebhookAdapter,createShopifyWebhookAdapter,createGitlabWebhookAdapter} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},event={sourceId:'source',principalId:'sender',eventId:'evt',eventType:'order.created',payload:{order:'one'}};
 const manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
 const settings={definitionVersion:1,maxAttempts:2,deadline:10000,maxPending:2};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'app-mixer-events-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path);return {dir,path,runs,triggers};}
 function close(s){s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
+
+test('Twilio incoming messages verify all form fields, authorize and acknowledge durable retries',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);
+ const accountSid='AC'+'a'.repeat(32),authToken='1'.repeat(32),prior='2'.repeat(32),publicUrl='https://example.test/events?channel=sms',identity={tenantId:'tenant',principalId:'sender',sourceId:'twilio'},adapter=createTwilioMessageWebhookAdapter({identity,agentId:'agent',accountSid,url:publicUrl,authToken,previousAuthTokens:[prior]});
+ let allowed=true;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,...adapter,authorize:(_identity,event)=>allowed&&event.payload.To==='+15550000000'});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
+ try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,params={AccountSid:accountSid,MessageSid:'SM'+'b'.repeat(32),From:'+15551111111',To:'+15550000000',Body:'hello + world',FutureField:'new'},body=new URLSearchParams(params).toString(),signature=(values=params,key=authToken,url=publicUrl)=>twilio.getExpectedTwilioSignature(key,url,values),post=(data=body,sig=signature(),type='application/x-www-form-urlencoded')=>fetch(endpoint,{method:'POST',headers:{'content-type':type,'x-twilio-signature':sig},body:data});
+  assert.equal((await post(body,'AAAAAAAAAAAAAAAAAAAAAAAAAAA=')).status,401);assert.equal((await post(body,signature(params,authToken,'https://wrong.test/events'))).status,401);assert.equal((await post(body.replace('FutureField=new','FutureField=changed'))).status,401);assert.equal((await post(body,signature(),'application/json')).status,415);
+  allowed=false;assert.equal((await post()).status,403);allowed=true;let response=await post(body,signature(params,prior));assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/^text\/xml/);assert.match(await response.text(),/<Response><\/Response>/);response=await post();assert.equal(response.status,200);assert.equal(s.runs.list(scope).length,1);
+  const changed={...params,Body:'different'};assert.equal((await post(new URLSearchParams(changed).toString(),signature(changed))).status,409);const other={...params,MessageSid:'MM'+'c'.repeat(32)};assert.equal((await post(new URLSearchParams(other).toString(),signature(other))).status,429);
+  assert.equal((await post(body+'&Body=duplicate',signature())).status,401);assert.equal((await post(body+'&bad=%FF',signature())).status,401);const invalid={...params,AccountSid:'AC'+'d'.repeat(32)};assert.equal((await post(new URLSearchParams(invalid).toString(),signature(invalid))).status,400);
+  assert.equal(adapter.authenticateRaw({rawHeaders:['X-Twilio-Signature',signature(),'x-twilio-signature',signature()]},Buffer.from(body)),undefined);
+  const req={rawHeaders:['X-Twilio-Signature',signature()]};assert.deepEqual(adapter.authenticateRaw(req,Buffer.from(body)),identity);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(body+'x'),identity,req),/Invalid/);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(body),identity,req),/Invalid/);
+ }finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
+});
+
+test('Twilio configuration requires a fixed account, endpoint and protected form ingress',()=>{
+ const base={identity:{tenantId:'tenant',principalId:'sender',sourceId:'twilio'},agentId:'agent',accountSid:'AC'+'a'.repeat(32),url:'https://example.test/events',authToken:'1'.repeat(32)};
+ for(const bad of [{...base,url:'http://example.test/events'},{...base,url:'https://example.test/events#fragment'},{...base,authToken:'short'},{...base,accountSid:'bad'},{...base,previousAuthTokens:[base.authToken]}])assert.throws(()=>createTwilioMessageWebhookAdapter(bad),/configuration/);
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');try{assert.throws(()=>createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:()=>base.identity,authorize:()=>true,contentType:'application/x-www-form-urlencoded',acknowledgement:'twiml'}),/Invalid event ingress/);}finally{definitions.close();close(s);}
+});
 
 test('event deduplication, tenant isolation and bounded backlog survive restart',()=>{
  const s=setup();let second;try{

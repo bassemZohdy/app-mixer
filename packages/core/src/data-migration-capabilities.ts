@@ -1,0 +1,30 @@
+import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
+import {SqliteDataProvider,checkKey,type DataScope,type DataMigration,type DataRollback} from './data-provider.js';
+
+type Actor={tenantId:string;principalId:string};
+type Plan={kind:'forward';fromVersion:number;toVersion:number;transform:DataMigration['transform'];validate:DataMigration['validate']}|{kind:'rollback';fromVersion:number;targetVersion:number;transform:DataRollback['transform'];validate:DataRollback['validate']};
+type Base={provider:SqliteDataProvider;scope:DataScope;collection:string;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
+type ApplyOptions=Base&{plan:Plan;authorizeApply:(actor:Actor,input:{digest:string;reference:string})=>boolean|Promise<boolean>;clock?:()=>number};
+type Page={after?:number;limit?:number};
+const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+const query=(input:unknown):Record<string,unknown>|undefined=>object(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&object(input.query)?input.query:undefined;
+const applyInput=(input:unknown):{digest:string;reference:string}|undefined=>{const value=query(input);if(!value||Object.keys(value).length!==2||!Object.hasOwn(value,'digest')||!Object.hasOwn(value,'reference')||typeof value.digest!=='string'||!/^[a-f0-9]{64}$/.test(value.digest)||typeof value.reference!=='string'||!value.reference.trim()||value.reference.length>512||/[\u0000-\u001f\u007f]/.test(value.reference))return;return {digest:value.digest,reference:value.reference};};
+const page=(input:unknown):Page|undefined=>{const value=query(input);if(!value||Object.keys(value).some(key=>!['after','limit'].includes(key))||(value.after!==undefined&&(!Number.isSafeInteger(value.after)||Number(value.after)<0))||(value.limit!==undefined&&(!Number.isSafeInteger(value.limit)||Number(value.limit)<1||Number(value.limit)>100)))return;return {...(value.after===undefined?{}:{after:Number(value.after)}),...(value.limit===undefined?{}:{limit:Number(value.limit)})};};
+function snapshot(registry:CapabilityRegistry,options:Base,method:'GET'|'POST'){
+ if(!(registry instanceof CapabilityRegistry)||!options||!(options.provider instanceof SqliteDataProvider)||!options.candidate||typeof options.candidate.method!=='string'||options.candidate.method.toUpperCase()!==method||typeof options.authorize!=='function')throw Error('Invalid migration capability');checkKey(options.scope,options.collection,'validation');return {provider:options.provider,scope:{tenantId:options.scope.tenantId,applicationId:options.scope.applicationId},collection:options.collection,candidate:structuredClone(options.candidate),authorize:options.authorize};
+}
+/** A scoped preview never exposes record values or migration code. */
+export function registerDataMigrationPreview(registry:CapabilityRegistry,options:Base):void{
+ const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>c.authorize({...actor}),execute:()=>c.provider.previewMigration(c.scope,c.collection)});
+}
+/** Execute only a trusted, fixed migration plan, with actor-attributed transactional evidence. */
+export function registerDataMigrationApply(registry:CapabilityRegistry,options:ApplyOptions):void{
+ const c=snapshot(registry,options,'POST'),plan=options.plan;if(!plan||!['forward','rollback'].includes(plan.kind)||!Number.isSafeInteger(plan.fromVersion)||plan.fromVersion<0||plan.fromVersion>=Number.MAX_SAFE_INTEGER||typeof plan.transform!=='function'||typeof plan.validate!=='function'||(plan.kind==='forward'&&(!Number.isSafeInteger(plan.toVersion)||plan.toVersion!==plan.fromVersion+1))||(plan.kind==='rollback'&&(!Number.isSafeInteger(plan.targetVersion)||plan.fromVersion<1||plan.targetVersion<0||plan.targetVersion>=plan.fromVersion))||typeof options.authorizeApply!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid migration capability');
+ const fixed={...plan},authorizeApply=options.authorizeApply,clock=options.clock??Date.now;
+ registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>!!applyInput(input),authorizeInput:async(actor,input)=>{const safe=applyInput(input);return !!safe&&await c.authorize({...actor})===true&&await authorizeApply({...actor},{...safe})===true&&await c.authorize({...actor})===true;},execute:(input,actor)=>{const safe=applyInput(input),now=clock();if(!safe||!Number.isSafeInteger(now)||now<0)throw Error('Invalid migration evidence');const evidence={principalId:actor.principalId,reference:safe.reference,observedAt:now};return fixed.kind==='forward'?c.provider.migrateCollection(c.scope,c.collection,{fromVersion:fixed.fromVersion,toVersion:fixed.toVersion,digest:safe.digest,transform:fixed.transform,validate:fixed.validate,evidence}):c.provider.rollbackCollection(c.scope,c.collection,{fromVersion:fixed.fromVersion,targetVersion:fixed.targetVersion,digest:safe.digest,transform:fixed.transform,validate:fixed.validate,evidence});}});
+}
+/** Scoped audit reads still require host authorization. */
+export function registerDataMigrationAudit(registry:CapabilityRegistry,options:Base):void{
+ const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>!!page(input),authorizeInput:actor=>c.authorize({...actor}),execute:input=>{const safe=page(input);if(!safe)throw Error('Invalid migration audit');return c.provider.migrationAudit(c.scope,c.collection,safe);}});
+}
+export type {Base as DataMigrationReadCapabilityOptions,ApplyOptions as DataMigrationApplyCapabilityOptions,Plan as DataMigrationPlan};

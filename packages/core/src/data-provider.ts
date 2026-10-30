@@ -5,7 +5,11 @@ export type DataScope = {tenantId:string; applicationId:string};
 export type DataRecord = {id:string; revision:number; value:Record<string,unknown>};
 export type DataRecordPage = {items:DataRecord[];nextAfter?:string};
 export type MigrationPreview={schemaVersion:number;count:number;digest:string};
-export type DataMigration={fromVersion:number;toVersion:number;digest:string;transform:(value:Record<string,unknown>,id:string)=>Record<string,unknown>;validate:(value:Record<string,unknown>,id:string)=>boolean};
+export type DataMigrationEvidence={principalId:string;reference:string;observedAt:number};
+export type DataMigration={fromVersion:number;toVersion:number;digest:string;transform:(value:Record<string,unknown>,id:string)=>Record<string,unknown>;validate:(value:Record<string,unknown>,id:string)=>boolean;evidence?:DataMigrationEvidence};
+export type DataRollback={fromVersion:number;targetVersion:number;digest:string;transform:DataMigration['transform'];validate:DataMigration['validate'];evidence?:DataMigrationEvidence};
+export type DataMigrationAuditEvent={fromVersion:number;toVersion:number;targetVersion:number|null;digest:string;recordCount:number;principalId:string;reference:string;observedAt:number};
+export type DataRollbackEvent={fromVersion:number;toVersion:number;targetVersion:number;digest:string;recordCount:number};
 export interface DataProvider {
   readonly supportsSchemaRead?:boolean;
   get(scope:DataScope, collection:string, id:string,expectedSchemaVersion?:number):DataRecord|undefined;
@@ -66,6 +70,27 @@ export class SqliteDataProvider implements DataProvider {
         to_version INTEGER NOT NULL, snapshot_digest TEXT NOT NULL, record_count INTEGER NOT NULL,
         PRIMARY KEY(tenant_id,application_id,collection_id,to_version)
       );
+      CREATE TABLE IF NOT EXISTS business_schema_rollbacks (
+        tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, collection_id TEXT NOT NULL, from_version INTEGER NOT NULL,
+        to_version INTEGER NOT NULL, target_version INTEGER NOT NULL, snapshot_digest TEXT NOT NULL, record_count INTEGER NOT NULL,
+        PRIMARY KEY(tenant_id,application_id,collection_id,to_version)
+      );
+      CREATE TABLE IF NOT EXISTS business_schema_migration_audit (
+        tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, collection_id TEXT NOT NULL, from_version INTEGER NOT NULL,
+        to_version INTEGER NOT NULL, target_version INTEGER, snapshot_digest TEXT NOT NULL, record_count INTEGER NOT NULL,
+        actor_id TEXT NOT NULL, evidence TEXT NOT NULL, observed_at INTEGER NOT NULL,
+        PRIMARY KEY(tenant_id,application_id,collection_id,to_version)
+      );
+      CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_replace BEFORE INSERT ON business_schema_migration_audit
+        WHEN EXISTS (SELECT 1 FROM business_schema_migration_audit WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND collection_id=NEW.collection_id AND to_version=NEW.to_version)
+        BEGIN SELECT RAISE(ABORT, 'Migration audit is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_update BEFORE UPDATE ON business_schema_migration_audit BEGIN SELECT RAISE(ABORT, 'Migration audit is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_delete BEFORE DELETE ON business_schema_migration_audit BEGIN SELECT RAISE(ABORT, 'Migration audit is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS business_rollbacks_no_replace BEFORE INSERT ON business_schema_rollbacks
+        WHEN EXISTS (SELECT 1 FROM business_schema_rollbacks WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND collection_id=NEW.collection_id AND to_version=NEW.to_version)
+        BEGIN SELECT RAISE(ABORT, 'Rollback history is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS business_rollbacks_no_update BEFORE UPDATE ON business_schema_rollbacks BEGIN SELECT RAISE(ABORT, 'Rollback history is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS business_rollbacks_no_delete BEFORE DELETE ON business_schema_rollbacks BEGIN SELECT RAISE(ABORT, 'Rollback history is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS business_migrations_no_replace BEFORE INSERT ON business_schema_migrations
         WHEN EXISTS (SELECT 1 FROM business_schema_migrations WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND collection_id=NEW.collection_id AND to_version=NEW.to_version)
         BEGIN SELECT RAISE(ABORT, 'Migration history is immutable'); END;
@@ -98,20 +123,39 @@ export class SqliteDataProvider implements DataProvider {
     checkKey(scope,collection,'validation');this.db.exec('BEGIN');
     try {const {preview}=this.snapshot(scope,collection);this.db.exec('COMMIT');return preview;}catch(error){this.db.exec('ROLLBACK');throw error;}
   }
-  migrateCollection(scope:DataScope,collection:string,migration:DataMigration):MigrationPreview {
+  /** Restore a previous schema shape in a new monotonic generation. */
+  rollbackCollection(scope:DataScope,collection:string,rollback:DataRollback):MigrationPreview {
+    if(!rollback||!Number.isSafeInteger(rollback.fromVersion)||rollback.fromVersion<1||rollback.fromVersion>=Number.MAX_SAFE_INTEGER||!Number.isSafeInteger(rollback.targetVersion)||rollback.targetVersion<0||rollback.targetVersion>=rollback.fromVersion)throw Error('Invalid data rollback');
+    const {fromVersion,targetVersion,digest,transform,validate,evidence}=rollback;return this.applyMigration(scope,collection,{fromVersion,toVersion:fromVersion+1,digest,transform,validate,evidence},targetVersion);
+  }
+  rollbackHistory(scope:DataScope,collection:string,options:{after?:number;limit?:number}={}):{items:DataRollbackEvent[];nextAfter?:number}{
+    checkKey(scope,collection,'validation');const after=options?.after??0,limit=options?.limit??50;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid rollback history');
+    const rows=this.db.prepare('SELECT from_version,to_version,target_version,snapshot_digest,record_count FROM business_schema_rollbacks WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?').all(scope.tenantId,scope.applicationId,collection,after,limit+1),items=rows.slice(0,limit).map(row=>({fromVersion:Number(row.from_version),toVersion:Number(row.to_version),targetVersion:Number(row.target_version),digest:String(row.snapshot_digest),recordCount:Number(row.record_count)}));return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.toVersion}:{})};
+  }
+  /** Bounded actor-attributed history; the caller must separately authorize access. */
+  migrationAudit(scope:DataScope,collection:string,options:{after?:number;limit?:number}={}):{items:DataMigrationAuditEvent[];nextAfter?:number}{
+    checkKey(scope,collection,'validation');const after=options?.after??0,limit=options?.limit??50;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid migration audit');
+    const rows=this.db.prepare('SELECT from_version,to_version,target_version,snapshot_digest,record_count,actor_id,evidence,observed_at FROM business_schema_migration_audit WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?').all(scope.tenantId,scope.applicationId,collection,after,limit+1),items=rows.slice(0,limit).map(row=>({fromVersion:Number(row.from_version),toVersion:Number(row.to_version),targetVersion:row.target_version===null?null:Number(row.target_version),digest:String(row.snapshot_digest),recordCount:Number(row.record_count),principalId:String(row.actor_id),reference:String(row.evidence),observedAt:Number(row.observed_at)}));return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.toVersion}:{})};
+  }
+  migrateCollection(scope:DataScope,collection:string,migration:DataMigration):MigrationPreview {return this.applyMigration(scope,collection,migration);}
+  private applyMigration(scope:DataScope,collection:string,migration:DataMigration,rollbackTarget?:number):MigrationPreview {
     checkKey(scope,collection,'validation');
     if(!migration||!Number.isSafeInteger(migration.fromVersion)||migration.fromVersion<0||!Number.isSafeInteger(migration.toVersion)||migration.toVersion!==migration.fromVersion+1||typeof migration.digest!=='string'||!/^[a-f0-9]{64}$/.test(migration.digest)||typeof migration.transform!=='function'||typeof migration.validate!=='function')throw Error('Invalid data migration');
-    scope={tenantId:scope.tenantId,applicationId:scope.applicationId};
+    const evidence=migration.evidence;if(evidence!==undefined&&(!evidence||typeof evidence!=='object'||Array.isArray(evidence)||Object.keys(evidence).length!==3||!['principalId','reference','observedAt'].every(key=>Object.hasOwn(evidence,key))||!identifier(evidence.principalId)||typeof evidence.reference!=='string'||!evidence.reference.trim()||evidence.reference.length>512||/[\u0000-\u001f\u007f]/.test(evidence.reference)||!Number.isSafeInteger(evidence.observedAt)||evidence.observedAt<0))throw Error('Invalid migration evidence');
+    const safeEvidence=evidence===undefined?undefined:{principalId:evidence.principalId,reference:evidence.reference,observedAt:evidence.observedAt};scope={tenantId:scope.tenantId,applicationId:scope.applicationId};
     const {fromVersion,toVersion,digest,transform,validate}=migration;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const {preview,rows}=this.snapshot(scope,collection);
       if(preview.schemaVersion!==fromVersion||preview.digest!==digest)throw Error('Migration snapshot conflict');
+      if(rollbackTarget!==undefined&&rollbackTarget!==0&&!this.db.prepare('SELECT 1 FROM business_schema_migrations WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version=?').get(scope.tenantId,scope.applicationId,collection,rollbackTarget))throw Error('Rollback target not found');
       const transformed=rows.map(row=>{const candidate:unknown=transform(dataCopy(row.value),row.id);if(candidate instanceof Promise)candidate.catch(()=>{});const value=dataCopy(candidate);const valid:unknown=validate(dataCopy(value),row.id);if(valid instanceof Promise)valid.catch(()=>{});if(valid!==true)throw Error('Migration validation failed');return {...row,value};});
       const update=this.db.prepare('UPDATE business_records SET revision=?,value=? WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND revision=? AND deleted=0');
       for(const row of transformed){const result=update.run(row.revision+1,JSON.stringify(row.value),scope.tenantId,scope.applicationId,collection,row.id,row.revision);if(result.changes!==1)throw Error('Migration snapshot conflict');}
       this.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?) ON CONFLICT(tenant_id,application_id,collection_id) DO UPDATE SET version=excluded.version').run(scope.tenantId,scope.applicationId,collection,toVersion);
       this.db.prepare('INSERT INTO business_schema_migrations VALUES (?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,preview.digest,preview.count);
+      if(rollbackTarget!==undefined)this.db.prepare('INSERT INTO business_schema_rollbacks VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,rollbackTarget,preview.digest,preview.count);
+      if(safeEvidence)this.db.prepare('INSERT INTO business_schema_migration_audit VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,rollbackTarget??null,preview.digest,preview.count,safeEvidence.principalId,safeEvidence.reference,safeEvidence.observedAt);
       const result=this.snapshot(scope,collection).preview;this.db.exec('COMMIT');return result;
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }

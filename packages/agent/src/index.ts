@@ -150,6 +150,8 @@ export type {GitlabWebhookOptions} from './gitlab-webhook.js';
 export {createGithubWebhookAdapter} from './github-webhook.js';
 export {createStripeWebhookAdapter} from './stripe-webhook.js';
 export {createSlackWebhookAdapter} from './slack-webhook.js';
+export {createTwilioMessageWebhookAdapter} from './twilio-webhook.js';
+export type {TwilioMessageWebhookOptions} from './twilio-webhook.js';
 export {createShopifyWebhookAdapter} from './shopify-webhook.js';
 export type {ShopifyWebhookOptions} from './shopify-webhook.js';
 export type {SlackWebhookOptions} from './slack-webhook.js';
