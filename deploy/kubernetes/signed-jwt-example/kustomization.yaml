@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../signed-example
+patches:
+  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: jwt
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_JWKS_PATH, value: /jwt-trust/jwks.json}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_JWT_ISSUER, value: "https://issuer.example/"}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_JWT_AUDIENCE, value: app-mixer-data-plane}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_TENANT_ID, value: demo-tenant}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: jwt-trust, mountPath: /jwt-trust, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: jwt-trust, configMap: {name: app-mixer-jwt-keys}}

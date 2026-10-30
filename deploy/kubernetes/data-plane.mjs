@@ -1,6 +1,6 @@
 import {readFile,stat} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
-import {createDataPlane,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import {createDataPlane,createJwtCapabilityAuthenticator,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
 
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
@@ -19,7 +19,15 @@ if(mode==='signed'){
 const snapshot=structuredClone(publication),repository={getPublished(version){return version===undefined||version===snapshot.version?structuredClone(snapshot):undefined;}};
 const portText=process.env.DATA_PORT??'3002',delayText=process.env.DATA_DRAIN_DELAY_MS??'5000';
 if(!/^[1-9][0-9]{0,4}$/.test(portText)||Number(portText)>65535||!/^(0|[1-9][0-9]{0,4})$/.test(delayText)||Number(delayText)>30000)throw Error('Invalid Data Plane configuration');
-const server=createDataPlane(repository,{health:{timeoutMs:1000}});server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
+const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate;
+if(accessMode==='jwt'){
+ const keyPath=process.env.APP_MIXER_JWKS_PATH,issuer=process.env.APP_MIXER_JWT_ISSUER,audience=process.env.APP_MIXER_JWT_AUDIENCE,tenant=process.env.APP_MIXER_TENANT_ID,requiredScope=process.env.APP_MIXER_JWT_SCOPE??'app-mixer:publication.read',maxAge=process.env.APP_MIXER_JWT_MAX_AGE_SECONDS??'600';
+ if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400||(await stat(keyPath)).size>131072)throw Error('Invalid publication access configuration');
+ const jwks=JSON.parse(await readFile(keyPath,'utf8'));
+ authenticate=createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(requiredScope)?{tenantId:tenant,principalId:claims.sub}:undefined});
+}else if(accessMode!=='public')throw Error('Invalid publication access configuration');
+const server=createDataPlane(repository,{health:{timeoutMs:1000},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)}:{})});server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
+server.on('close',()=>authenticate?.close());
 server.listen(Number(portText),'0.0.0.0');
 server.once('listening',()=>console.log('Data Plane ready'));
 let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;server.beginDrain();setTimeout(()=>server.close(),Number(delayText));});
