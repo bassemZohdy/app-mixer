@@ -25,6 +25,10 @@ export class AgentSemanticMemory {
   const vector=normalize(await this.embed(text),this.dimensions);
   const stored=await this.memory.put(safeActor,safeScope,memoryId,{format:'semantic-v1',modelId:this.modelId,text,vector},safeOptions);return {id:stored.id,revision:stored.revision,expiresAt:stored.expiresAt};
  }
+ /** Remove one versioned semantic memory through the store's delete policy. */
+ async delete(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string,expectedRevision:number):Promise<void>{
+  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validId(memoryId)||!Number.isSafeInteger(expectedRevision)||expectedRevision<1)throw Error('Invalid semantic memory delete');await this.memory.delete(safeActor,safeScope,memoryId,expectedRevision);
+ }
  async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
   return this.searchInternal(actor,scope,query,limit,false,options);
  }
