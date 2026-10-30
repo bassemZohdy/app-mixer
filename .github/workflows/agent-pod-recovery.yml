@@ -110,7 +110,8 @@ jobs:
               sleep 1
             done
             [ "$observed" = true ]
-            kubectl delete -n "$ns" pod/notice-sender pod/notice-receiver --grace-period=5 --wait=true --timeout=90s
+            kubectl delete -n "$ns" pod/notice-sender --grace-period=5 --wait=true --timeout=90s
+            kubectl delete -n "$ns" pod/notice-receiver --grace-period=5 --wait=true --timeout=90s
             sed -e "s/PHASE/$phase/g" -e 's/MODE/verify/g' deploy/kubernetes/test-support/agent-recovery/notice-receiver.yaml | kubectl apply -n "$ns" -f -
             kubectl wait -n "$ns" --for=condition=Ready pod/notice-receiver --timeout=120s
             ready=false
