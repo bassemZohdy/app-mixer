@@ -104,6 +104,8 @@ export {createAgentEventIngress} from './event-ingress.js';
 export type {AgentEventIngressOptions,AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
 export {SqliteAgentSchedules} from './agent-schedules.js';
 export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFireOptions,AgentScheduleCursor,AgentSchedulePage} from './agent-schedules.js';
+export {SqliteAgentScheduleHistory} from './agent-schedule-history.js';
+export type {AgentScheduleEvent,AgentScheduleHistoryOptions,AgentScheduleHistoryActor} from './agent-schedule-history.js';
 export {AgentScheduleWorker} from './schedule-worker.js';
 export type {AgentScheduleWorkerOptions} from './schedule-worker.js';
 export {SqliteAgentMemory} from './agent-memory.js';

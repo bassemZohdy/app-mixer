@@ -46,7 +46,11 @@ export class SqliteAgentSchedules {
  private readonly db:DatabaseSync;
  constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000;
   CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));
-  CREATE INDEX IF NOT EXISTS agent_schedules_due ON agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id);`);
+  CREATE INDEX IF NOT EXISTS agent_schedules_due ON agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id);
+  CREATE TABLE IF NOT EXISTS agent_schedule_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at INTEGER,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,schedule_id,revision));
+  CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_replace BEFORE INSERT ON agent_schedule_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_schedule_events WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_schedule_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND schedule_id=NEW.schedule_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_update BEFORE UPDATE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_delete BEFORE DELETE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;`);
   for(const table of ['agent_runs','agent_trigger_inbox'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Trigger registry unavailable');
  }catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
@@ -63,10 +67,10 @@ export class SqliteAgentSchedules {
   const rows=after===undefined?this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit+1):this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? AND (next_at>? OR (next_at=? AND schedule_id>?)) ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,after.nextAt,after.nextAt,after.scheduleId,limit+1);
   const items=rows.slice(0,limit).map(row=>this.parse(row)),last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{nextAt:last.nextAt,scheduleId:last.scheduleId}}:{})};
  }
- save(scope:AgentRunScope,scheduleId:string,config:ScheduleConfig,expectedRevision:number,now=Date.now()):AgentSchedule{
-  this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now))throw Error('Invalid schedule');const safe=checkConfig(config),nextAt=next(safe.rule,now);
+ save(scope:AgentRunScope,scheduleId:string,config:ScheduleConfig,expectedRevision:number,now=Date.now(),actorId?:string):AgentSchedule{
+  this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId)))throw Error('Invalid schedule');const safe=checkConfig(config),nextAt=next(safe.rule,now);
   this.db.exec('BEGIN IMMEDIATE');try{const old=this.get(scope,scheduleId);if((old?.revision??0)!==expectedRevision)throw Error('Schedule revision conflict');const revision=expectedRevision+1,generation=(old?.generation??0)+1;if(!Number.isSafeInteger(generation))throw Error('Invalid schedule');
-   this.db.prepare('INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config').run(scope.tenantId,scope.agentId,scheduleId,revision,generation,nextAt,safe.enabled?1:0,JSON.stringify(safe));this.db.exec('COMMIT');return this.get(scope,scheduleId)!;
+   this.db.prepare('INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config').run(scope.tenantId,scope.agentId,scheduleId,revision,generation,nextAt,safe.enabled?1:0,JSON.stringify(safe));this.db.prepare('INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?)').run(scope.tenantId,scope.agentId,scheduleId,old?'updated':'created',revision,generation,nextAt,JSON.stringify(safe),actorId??null,now);this.db.exec('COMMIT');return this.get(scope,scheduleId)!;
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }
  getOccurrence(scope:AgentRunScope,scheduleId:string,generation:number,scheduledAt:number):string|undefined {
@@ -74,8 +78,8 @@ export class SqliteAgentSchedules {
   const sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${generation}:t${scheduledAt}`;
   const row=this.db.prepare('SELECT run_id FROM agent_trigger_inbox WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId);return row?String(row.run_id):undefined;
  }
- fire(scope:AgentRunScope,scheduleId:string,expectedRevision:number,policy:FireOptions,now=Date.now()):{runId:string;scheduledAt:number}{
-  this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||!policy||!integer(policy.definitionVersion)||policy.definitionVersion<1||!integer(policy.maxAttempts)||policy.maxAttempts<1||policy.maxAttempts>100||!integer(policy.runTimeoutMs)||policy.runTimeoutMs<1000||policy.runTimeoutMs>86400000||!integer(policy.maxPending)||policy.maxPending<1||policy.maxPending>10000||!Number.isSafeInteger(now+policy.runTimeoutMs))throw Error('Invalid schedule fire');
+ fire(scope:AgentRunScope,scheduleId:string,expectedRevision:number,policy:FireOptions,now=Date.now(),actorId?:string):{runId:string;scheduledAt:number}{
+  this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId))||!policy||!integer(policy.definitionVersion)||policy.definitionVersion<1||!integer(policy.maxAttempts)||policy.maxAttempts<1||policy.maxAttempts>100||!integer(policy.runTimeoutMs)||policy.runTimeoutMs<1000||policy.runTimeoutMs>86400000||!integer(policy.maxPending)||policy.maxPending<1||policy.maxPending>10000||!Number.isSafeInteger(now+policy.runTimeoutMs))throw Error('Invalid schedule fire');
   this.db.exec('BEGIN IMMEDIATE');try{
    const schedule=this.get(scope,scheduleId);if(!schedule||schedule.revision!==expectedRevision)throw Error('Schedule revision conflict');if(!schedule.config.enabled||schedule.nextAt>now)throw Error('Schedule not due');
    const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);if(Number(count?.n)>=policy.maxPending)throw Error('Trigger backlog full');
@@ -83,6 +87,7 @@ export class SqliteAgentSchedules {
    this.db.prepare("INSERT INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,policy.definitionVersion,policy.maxAttempts,now+policy.runTimeoutMs);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,sourceId,eventId,schedule.config.principalId,'schedule.tick',payload,hash,runId);
    this.db.prepare('UPDATE agent_schedules SET revision=?,next_at=? WHERE tenant_id=? AND agent_id=? AND schedule_id=?').run(schedule.revision+1,nextAt,scope.tenantId,scope.agentId,scheduleId);
+   this.db.prepare("INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,'fired',?,?,?,?,?,?,?,?)").run(scope.tenantId,scope.agentId,scheduleId,schedule.revision+1,schedule.generation,nextAt,JSON.stringify(schedule.config),actorId??null,runId,scheduledAt,now);
    this.db.exec('COMMIT');return {runId,scheduledAt};
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }
