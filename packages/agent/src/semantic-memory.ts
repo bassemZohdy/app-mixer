@@ -19,11 +19,11 @@ export class AgentSemanticMemory {
   if(!(memory instanceof SqliteAgentMemory)||!embedding||!validId(embedding.modelId)||!Number.isSafeInteger(embedding.dimensions)||embedding.dimensions<1||embedding.dimensions>2048||typeof embedding.embed!=='function')throw Error('Invalid embedding configuration');
   this.modelId=embedding.modelId;this.dimensions=embedding.dimensions;this.embed=embedding.embed;
  }
- async put(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string,text:string,options:{expectedRevision:number|null;expiresAt:number;provenance:AgentMemoryProvenance}):Promise<void>{
+ async put(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string,text:string,options:{expectedRevision:number|null;expiresAt:number;provenance:AgentMemoryProvenance}):Promise<{id:string;revision:number;expiresAt:number}>{
   const safeActor=structuredClone(actor),safeScope=semanticScope(scope),safeOptions=structuredClone(options);if(!validId(memoryId)||!validText(text)||!safeOptions||(safeOptions.expectedRevision!==null&&(!Number.isSafeInteger(safeOptions.expectedRevision)||safeOptions.expectedRevision<1))||!Number.isSafeInteger(safeOptions.expiresAt)||!safeOptions.provenance||!['run','human','system'].includes(safeOptions.provenance.kind)||!validId(safeOptions.provenance.id))throw Error('Invalid semantic memory');
   await this.memory.assertAccess(safeActor,safeScope,'write',memoryId);
   const vector=normalize(await this.embed(text),this.dimensions);
-  await this.memory.put(safeActor,safeScope,memoryId,{format:'semantic-v1',modelId:this.modelId,text,vector},safeOptions);
+  const stored=await this.memory.put(safeActor,safeScope,memoryId,{format:'semantic-v1',modelId:this.modelId,text,vector},safeOptions);return {id:stored.id,revision:stored.revision,expiresAt:stored.expiresAt};
  }
  async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
   return this.searchInternal(actor,scope,query,limit,false,options);
