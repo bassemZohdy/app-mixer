@@ -209,9 +209,10 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
   });
 }
 export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)=>boolean|Promise<boolean>};
+export type DataPlaneRequestObservation={route:'application'|'version'|'live'|'ready'|'other';outcome:'completed'|'aborted';statusClass:'2xx'|'3xx'|'4xx'|'5xx'|'other'|'none';durationMs:number};
 /** Data plane exposes only immutable publications. It does not depend on the control plane. */
-export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions}): Server {
-  const health=options?.health;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');
+export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void}): Server {
+  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');
   const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined;
   const readinessCheck=():Promise<boolean>=>{
     if(!check)return Promise.resolve(true);if(pending)return pending;
@@ -223,6 +224,11 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     return result;
   };
   const instance=server(async (req, res) => {
+    if(observe){
+      const started=performance.now(),route:DataPlaneRequestObservation['route']=req.method!=='GET'?'other':req.url==='/application'?'application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'version':health&&req.url==='/health/live'?'live':health&&req.url==='/health/ready'?'ready':'other';let recorded=false;
+      const record=(outcome:DataPlaneRequestObservation['outcome'])=>{if(recorded)return;recorded=true;const code=res.statusCode,statusClass:DataPlaneRequestObservation['statusClass']=outcome==='aborted'?'none':code>=200&&code<300?'2xx':code>=300&&code<400?'3xx':code>=400&&code<500?'4xx':code>=500&&code<600?'5xx':'other';try{const result:unknown=observe({route,outcome,statusClass,durationMs:Math.max(0,performance.now()-started)});if(result instanceof Promise)void result.catch(()=>{});}catch{}};
+      res.once('finish',()=>record('completed'));res.once('close',()=>record('aborted'));
+    }
     if(health&&req.method==='GET'&&req.url==='/health/live'){respond(res,200,{status:'live'});return;}
     if(health&&req.method==='GET'&&req.url==='/health/ready'){
       let ready=false;try{ready=!!repository.getPublished()&&await readinessCheck()&&!!repository.getPublished();}catch{}

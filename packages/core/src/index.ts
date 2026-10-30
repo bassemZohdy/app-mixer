@@ -99,7 +99,7 @@ export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
 export { createControlPlane, createDataPlane, createProposalPlane, createDevelopmentPlanes } from './planes.js';
-export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions } from './planes.js';
+export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneRequestObservation } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
