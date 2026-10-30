@@ -20,7 +20,7 @@ void main() {
     ]}});
     await tester.pump();expect(find.byWidgetPredicate((w)=>w is Text && w.data=='Ada'),findsOneWidget);
     final heading=tester.getSemantics(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada')).getSemanticsData();expect(heading.flagsCollection.isHeader,isTrue);expect(heading.label,'Ada');
-    final field=tester.getSemantics(find.byType(TextField)).getSemanticsData();expect(field.flagsCollection.isTextField,isTrue);expect(field.label,'Name');expect(field.value,'Ada');
+    final field=tester.getSemantics(find.byType(EditableText)).getSemanticsData();expect(field.flagsCollection.isTextField,isTrue);expect(field.label,'Name');expect(field.value,'Ada');
     final button=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(button.flagsCollection.isButton,isTrue);expect(button.flagsCollection.isEnabled,isTrue);expect(button.label,'Save');
     await tester.enterText(find.byType(TextField),'Grace');await tester.pump();expect(find.byWidgetPredicate((w)=>w is Text && w.data=='Grace'),findsOneWidget);
     await tester.tap(find.byType(TextButton));await tester.pump();

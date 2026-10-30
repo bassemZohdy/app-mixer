@@ -33,7 +33,7 @@ void main() {
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada'), findsOneWidget);
     final heading = tester.getSemantics(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada')).getSemanticsData();
     expect(heading.flagsCollection.isHeader, isTrue);expect(heading.label, 'Ada');
-    final field = tester.getSemantics(find.byType(TextField)).getSemanticsData();
+    final field = tester.getSemantics(find.byType(EditableText)).getSemanticsData();
     expect(field.flagsCollection.isTextField, isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
     final enabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
     expect(enabled.flagsCollection.isButton, isTrue);expect(enabled.flagsCollection.isEnabled, isTrue);expect(enabled.label, 'Save');
@@ -43,7 +43,7 @@ void main() {
     await tester.tap(find.byType(TextButton));
     await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
-    expect(tester.getSemantics(find.byType(TextField)).getSemanticsData().value, 'Grace');
+    expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace');
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
     await tester.pumpAndSettle();
     final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
