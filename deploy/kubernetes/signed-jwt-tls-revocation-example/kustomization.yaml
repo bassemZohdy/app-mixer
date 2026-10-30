@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../signed-jwt-tls-example
+  - egress.yaml
+patches:
+  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/4/value
+        value: postgres
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
+        value: 4
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_REVOCATION_DSN_PATH, value: /revocation/dsn}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_REVOCATION_CA_PATH, value: /revocation-ca/ca.pem}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: revocation-connection, mountPath: /revocation, readOnly: true}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: revocation-ca, mountPath: /revocation-ca, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: revocation-connection, secret: {secretName: app-mixer-revocation-connection}}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: revocation-ca, configMap: {name: app-mixer-revocation-ca}}
