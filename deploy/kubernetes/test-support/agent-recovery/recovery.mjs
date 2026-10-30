@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {SqliteAgentRuns,SqliteAgentActionJournal} from '../../../../packages/agent/dist/index.js';
+
+// Test-only clocks make lease expiry deterministic; this is not a worker deployment.
+const command=process.argv[2],path=process.env.TEST_DB??'/data/runs.sqlite',base=process.env.TEST_PROVIDER??'http://agent-test-provider:3000',scope={tenantId:'tenant',agentId:'agent'},other={tenantId:'other',agentId:'agent'};
+if(command==='provider'){
+ const effects=new Map();let calls=0;
+ createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(req.method==='GET'&&url.pathname==='/stats'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({calls,effects:effects.size}));return;}if(req.method==='GET'&&url.pathname==='/lookup'){const result=effects.get(url.searchParams.get('key'));res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(result?{found:true,result}:{found:false}));return;}if(req.method!=='POST'||url.pathname!=='/apply'){res.writeHead(404);res.end();return;}const parts=[];for await(const chunk of req)parts.push(chunk);const {key,input}=JSON.parse(Buffer.concat(parts));calls++;if(!effects.has(key))effects.set(key,{receipt:'effect-1',input});console.log('provider committed');/* Deliberately never send a response. */}).listen(3000,'0.0.0.0');
+}else if(command==='idle'){
+ setInterval(()=>{},60000);
+}else if(command==='setup'){
+ const runs=new SqliteAgentRuns(path);try{runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:10000},0);let isolated=runs.create(other,'run',{definitionVersion:1,maxAttempts:3,deadline:10000},0);isolated=runs.claim(other,'run',isolated.revision,'other-worker',100,10);const journal=new SqliteAgentActionJournal(path,{scope:other,runId:'run',leaseToken:isolated.leaseToken,clock:()=>10});try{await journal.invoke('call','operation',{value:'other'},2,async()=>({tenant:'other'}));}finally{journal.close();}}finally{runs.close();}
+}else if(command==='worker'){
+ const runs=new SqliteAgentRuns(path),queued=runs.get(scope,'run'),run=runs.claim(scope,'run',queued.revision,'pod-worker',100,10),journal=new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>10});
+ await journal.invoke('call','operation',{value:'one'},2,async(input,key)=>{console.log('dispatching');const response=await fetch(base+'/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key,input})});return response.json();});
+ throw Error('Provider response was unexpectedly received');
+}else if(command==='probe'){
+ const stats=await (await fetch(base+'/stats')).json();assert.deepEqual(stats,{calls:1,effects:1});
+}else if(command==='recover'){
+ const runs=new SqliteAgentRuns(path);let journal,retryJournal;try{let run=runs.get(scope,'run');assert.equal(run.status,'running');const oldToken=run.leaseToken;assert.throws(()=>runs.recoverExpired(scope,'run',run.revision,109),/active/);run=runs.recoverExpired(scope,'run',run.revision,110);journal=new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:oldToken,clock:()=>110});const action=journal.get('call');assert.equal(action.status,'dispatching');await assert.rejects(journal.invoke('call','operation',{value:'one'},2,async()=>({})),/lease unavailable/);assert.throws(()=>runs.reconcile(scope,'run',run.revision,'retry',111),/Action requires reconciliation/);const foreign=new SqliteAgentActionJournal(path,{scope:other,runId:'run',leaseToken:'retired-token',clock:()=>110});try{assert.equal(foreign.get('call').status,'succeeded');assert.notEqual(foreign.get('call').idempotencyKey,action.idempotencyKey);}finally{foreign.close();}
+  journal.markUncertain('call');assert.equal(await journal.reconcileWith('call',async request=>{assert.equal(request.action.idempotencyKey,action.idempotencyKey);const result=await (await fetch(base+'/lookup?key='+encodeURIComponent(request.action.idempotencyKey))).json();return result.found?{outcome:'applied',result:result.result}:{outcome:'not_applied'};}),'applied');run=runs.reconcile(scope,'run',run.revision,'retry',111);run=runs.claim(scope,'run',run.revision,'recovery-worker',100,112);retryJournal=new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>113});const value=await retryJournal.invoke('call','operation',{value:'one'},2,async()=>{throw Error('Reconciled action must not dispatch again');});assert.deepEqual(value,{receipt:'effect-1',input:{value:'one'}});assert.deepEqual(await (await fetch(base+'/stats')).json(),{calls:1,effects:1});assert.equal(retryJournal.get('call').attempts,1);console.log('Pod recovery preserved the action and did not dispatch twice.');
+ }finally{retryJournal?.close();journal?.close();runs.close();}
+}else throw Error('Unknown test command');
