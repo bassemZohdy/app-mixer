@@ -7,6 +7,10 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('renders, edits and sends an action on a mobile device', (tester) async {
+    final semantics = tester.ensureSemantics();
+    // enterText injects editing updates; do not let a real IME race those updates.
+    tester.testTextInput.register();
+    try {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {
       receive = callback;
@@ -29,13 +33,28 @@ void main() {
     ]}});
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada'), findsOneWidget);
+    final heading = tester.getSemantics(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada')).getSemanticsData();
+    expect(heading.flagsCollection.isHeader, isTrue);expect(heading.label, 'Ada');
+    final field = tester.getSemantics(find.byType(EditableText)).getSemanticsData();
+    expect(field.flagsCollection.isTextField, isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
+    final enabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
+    expect(enabled.flagsCollection.isButton, isTrue);expect(enabled.flagsCollection.isEnabled, isTrue);expect(enabled.label, 'Save');
     await tester.enterText(find.byType(TextField), 'Grace');
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Grace'), findsOneWidget);
+    expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, 'Grace');
+    expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace', reason: 'Edited value must be available to assistive technology before submit');
     await tester.tap(find.byType(TextButton));
     await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
+    expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, 'Grace', reason: 'Submitted field must retain the edited value');
+    expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace', reason: 'Edited value must remain accessible after submit');
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
+    await tester.pumpAndSettle();
+    final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
+    expect(disabled.flagsCollection.isButton, isTrue);expect(disabled.flagsCollection.hasEnabledState, isTrue);expect(disabled.flagsCollection.isEnabled, isFalse);expect(disabled.label, 'Save');
     expect(errors, isEmpty);
     expect(tester.takeException(), isNull);
+    } finally {tester.testTextInput.unregister();semantics.dispose();}
   });
 }
