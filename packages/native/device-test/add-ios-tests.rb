@@ -9,6 +9,7 @@ ui.add_dependency(app)
 group = project.main_group.new_group('MixerDeviceUITests', 'MixerDeviceUITests')
 ui.source_build_phase.add_file_reference(group.new_file('MixerDeviceUITests.swift'))
 ui.build_configurations.each do |config|
+  config.build_settings['PRODUCT_NAME'] = '$(TARGET_NAME)'
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.appmixer.MixerDeviceUITests'
   config.build_settings['GENERATE_INFOPLIST_FILE'] = 'YES'
   config.build_settings['SWIFT_VERSION'] = '5.0'
