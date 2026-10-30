@@ -1,0 +1,46 @@
+name: React Native Android integration
+on:
+  pull_request:
+    paths:
+      - 'packages/native/**'
+      - '.github/workflows/react-native-android.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build adapter and generate host
+        run: |
+          npm ci
+          npm run build --workspace @app-mixer/native
+          npx --yes @react-native-community/cli@20.0.2 init MixerDevice --version 0.83.1 --skip-install --skip-git-init --directory "$RUNNER_TEMP/MixerDevice"
+          cp packages/native/device-test/App.js "$RUNNER_TEMP/MixerDevice/App.js"
+          cp packages/native/dist/index.js "$RUNNER_TEMP/MixerDevice/app-mixer.js"
+          cd "$RUNNER_TEMP/MixerDevice"
+          npm install --no-audit --no-fund
+      - name: Build self-contained test APK
+        working-directory: ${{ runner.temp }}/MixerDevice/android
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: cd "$RUNNER_TEMP/MixerDevice" && python3 "$GITHUB_WORKSPACE/packages/native/device-test/android-smoke.py"
