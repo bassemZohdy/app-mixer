@@ -10,6 +10,16 @@ import {ApplicationStore,SqliteApplicationStore,createPromotionPackage,createCon
 const initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',route:'/',title:'Source',components:[]}]};
 const packageFor=store=>createPromotionPackage('development',store.getPublished(1));
 
+test('signer identity is signed, bound to trusted key policy and persisted with promotion evidence',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'signer-identity-')),path=join(dir,'app.sqlite'),source=new ApplicationStore(initial);source.publish(0);const pkg=packageFor(source),{privateKey,publicKey}=generateKeyPairSync('ed25519'),keys=[{sourceEnvironment:'development',keyId:'key',publicKey,signerPrincipal:'release-service'}],verify=createSignedPromotionVerifier(keys,'production',{requireSignerIdentity:true}),signed=signPromotionPackage(pkg,'production','key',privateKey,0,'release-service');let target;
+ try{
+  assert.equal(signed.formatVersion,3);const verified=verify.verifyWithEvidence(signed,'production','demo',0);assert.equal(verified.evidence.signerPrincipal,'release-service');
+  for(const bad of [{...signed,signerPrincipal:'other'},signPromotionPackage(pkg,'production','key',privateKey,0,'other'),signPromotionPackage(pkg,'production','key',privateKey,0),{...signed,expectedVersion:1}])assert.throws(()=>verify(bad,'production','demo',0),/Invalid signed/);
+  assert.throws(()=>createSignedPromotionVerifier([{sourceEnvironment:'development',keyId:'key',publicKey}],'production',{requireSignerIdentity:true}),/configuration/);assert.throws(()=>signPromotionPackage(pkg,'production','key',privateKey,undefined,'release-service'),/configuration/);
+  target=new SqliteApplicationStore(path,initial);assert.throws(()=>target.promoteVerified(pkg,0,'production',{...verified.evidence,signerPrincipal:'other'}),/Invalid promotion evidence/);target.promoteVerified(pkg,0,'production',verified.evidence);target.close();target=new SqliteApplicationStore(path,initial);assert.equal(target.getPublicationProvenance(1).signature.signerPrincipal,'release-service');
+ }finally{target?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('promotion validates the package, target, compatibility and optimistic concurrency',()=>{
  for(const make of [guard=>new ApplicationStore(initial,guard),guard=>new SqliteApplicationStore(':memory:',initial,guard)]){
   const source=make(undefined);source.publish(0);const pkg=packageFor(source);let allowed=true;const target=make(()=>{if(!allowed)throw Error('Extension compatibility failed');return true;});
