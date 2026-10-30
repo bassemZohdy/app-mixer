@@ -3,11 +3,30 @@ import assert from 'node:assert/strict';
 import {AIMessage} from '@langchain/core/messages';
 import {CapabilityRegistry} from '../../core/dist/index.js';
 import {SqliteAgentRuns,SqliteAgentDefinitions,DurableAgentWorker,createConfiguredAgentRun} from '../dist/index.js';
+import {context,trace,ROOT_CONTEXT,SpanStatusCode} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {TracerProvider,SimpleSpanProcessor,InMemorySpanExporter} from '@opentelemetry/sdk-trace';
 const scope={tenantId:'t',agentId:'agent'};
 const manifest={manifestVersion:1,tenantId:'t',agentId:'agent',name:'Operations',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:10000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:1000,maxRunsPerDay:10}};
 const input={threadId:'thread',runId:'one',messages:[{role:'user',content:'Find it'}]};
 function setup(){const runs=new SqliteAgentRuns(':memory:'),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('t',manifest,0);runs.create(scope,'one',{definitionVersion:1,maxAttempts:3,deadline:Date.now()+10000});return {runs,definitions};}
 const options=s=>({...s,workerId:'worker',leaseMs:600,pollMs:25,authorizeStart:()=>true});
+
+test('durable worker creates an active, sanitized span and records the settled state',async()=>{
+ const s=setup(),manager=new AsyncLocalStorageContextManager().enable();context.setGlobalContextManager(manager);const exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('test'),parent=tracer.startSpan('parent');let nested;
+ try{const worker=new DurableAgentWorker({...options(s),tracing:{tracer},execute:async()=>{await Promise.resolve();nested=tracer.startSpan('child',undefined,context.active());nested.end();return 'succeeded';}});const result=await context.with(trace.setSpan(ROOT_CONTEXT,parent),()=>worker.runOnce(scope,'one'));assert.equal(result.status,'succeeded');parent.end();const spans=exporter.getFinishedSpans(),run=spans.find(span=>span.name==='agent.run'),child=spans.find(span=>span.name==='child');assert.ok(run);assert.equal(run.parentSpanContext.spanId,parent.spanContext().spanId);assert.equal(child.parentSpanContext.spanId,run.spanContext().spanId);assert.equal(run.attributes['app_mixer.agent.run.status'],'succeeded');const data=JSON.stringify(spans.map(span=>({name:span.name,attributes:span.attributes})));for(const value of ['worker','one','service','Find it',result.leaseToken].filter(Boolean))assert.equal(data.includes(value),false);
+ }finally{await provider.shutdown();context.disable();manager.disable();s.runs.close();s.definitions.close();}
+});
+
+test('durable worker traces uncertainty and denials without exception details',async()=>{
+ const s=setup(),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('test');
+ try{const denied=new DurableAgentWorker({...options(s),tracing:{tracer},authorizeStart:()=>false,execute:async()=> 'succeeded'});await assert.rejects(denied.runOnce(scope,'one'),/forbidden/);let span=exporter.getFinishedSpans().at(-1);assert.equal(span.status.code,SpanStatusCode.ERROR);assert.equal(span.attributes['error.type'],'agent_run_failed');assert.equal(span.events.length,0);const worker=new DurableAgentWorker({...options(s),tracing:{tracer},execute:async()=>{throw Error('private provider detail');}});assert.equal((await worker.runOnce(scope,'one')).status,'uncertain');span=exporter.getFinishedSpans().at(-1);assert.equal(span.status.code,SpanStatusCode.ERROR);assert.equal(span.attributes['app_mixer.agent.run.status'],'uncertain');assert.equal(JSON.stringify(span.attributes).includes('private'),false);
+ }finally{await provider.shutdown();s.runs.close();s.definitions.close();}
+});
+
+test('tracer failures do not prevent durable agent execution',async()=>{
+ const s=setup();try{const worker=new DurableAgentWorker({...options(s),tracing:{tracer:{startSpan(){throw Error('telemetry unavailable');}}},execute:async()=> 'succeeded'});assert.equal((await worker.runOnce(scope,'one')).status,'succeeded');}finally{s.runs.close();s.definitions.close();}
+});
 
 test('worker executes a configured agent under the service principal and records completion',async()=>{
  const s=setup();try{const audit=[],registry=new CapabilityRegistry(e=>audit.push(e));let calls=0;
