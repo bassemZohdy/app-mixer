@@ -12,6 +12,7 @@ type Options={
  authenticateRaw?: (request:IncomingMessage,body:Buffer)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
  mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>EventRequest;
+ challengeAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>string|undefined;
  traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
  maxPending:number;clock?:()=>number;
 };
@@ -32,8 +33,8 @@ function validateEvent(value:unknown):EventRequest {
 }
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
- if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function')))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,traceParent}=options,clock=options.clock??Date.now;
+ if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function')))throw Error('Invalid event ingress');
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent}=options,clock=options.clock??Date.now;
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
@@ -45,6 +46,7 @@ export function createAgentEventIngress(options:Options):Server {
   if(authenticateRaw&&raw){try{source=await authenticateRaw(req,Buffer.from(raw));}catch{}}
   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
+  if(challengeAuthenticatedBody){try{const challenge=challengeAuthenticatedBody(Buffer.from(raw!),{...source});if(challenge!==undefined){if(typeof challenge!=='string'||!/^[\x21-\x7e]{1,512}$/.test(challenge))throw Error('Invalid challenge');reply(res,200,{challenge});return;}}catch{reply(res,400,{error:'Invalid event'});return;}}
   let event:EventRequest;try{event=mapAuthenticatedBody?validateEvent(structuredClone(mapAuthenticatedBody(Buffer.from(raw!),{...source}))):parse(raw!);}catch{reply(res,400,{error:'Invalid event'});return;}
   try{
    const definition=definitions.get(source.tenantId,event.agentId);
