@@ -8,7 +8,7 @@ Text supports literal values and absolute JSON pointer bindings. Text variants u
 
 The Flutter workflow runs only for pull requests changing the Flutter package or its workflow. It downloads the pinned Flutter SDK and verifies its published SHA-256, then runs `flutter analyze`, widget tests, and an interaction test on headless Chrome. Shared layout, binding, action-context and invalid-message fixtures are also checked against the web and React Native implementations. On a machine with Flutter 3.35.5 installed, run `flutter pub get`, `flutter analyze`, and `flutter test` from `adapters/flutter`.
 
-The separate Android and iOS integration workflows generate temporary Flutter host applications, attach this package, and run `integration_test/renderer_device_test.dart` on an Android emulator and iOS simulator. The test checks a bound text field and action context on each mobile runtime; it is not a substitute for broader cross-platform parity checks.
+The separate Android and iOS integration workflows generate temporary Flutter host applications, attach this package, and run `integration_test/renderer_device_test.dart` on an Android emulator and iOS simulator. The test checks a bound text field and action context on each mobile runtime, together with heading, field and button semantics, the field's accessible value, and the button's disabled state. The web test also checks heading, field and button semantics. These checks do not replace testing with screen readers or broader cross-platform parity checks.
 
 ## Trusted extension components
 
