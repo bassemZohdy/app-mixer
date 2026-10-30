@@ -131,7 +131,7 @@ export {SqliteAgentNotices} from './agent-notices.js';
 export type {AgentNotice,AgentNoticeActor,AgentNoticeAccess,AgentNoticeOptions} from './agent-notices.js';
 export {SqliteAgentNoticeDelivery} from './agent-notice-delivery.js';
 export {AgentNoticeDeliveryWorker} from './notice-delivery-worker.js';
-export {createAgentNoticeHttpsTransport} from './notice-https-transport.js';
+export {createAgentNoticeHttpsTransport,createAgentNoticeHttpsVerifier} from './notice-https-transport.js';
 export type {AgentNoticeHttpsTransportOptions,AgentNoticeHttpsDestination} from './notice-https-transport.js';
 export {SqliteAgentNoticeReceiver,createAgentNoticeReceiverServer} from './notice-https-receiver.js';
 export type {ReceivedAgentNotice,AgentNoticeReceiverOptions,AgentNoticeReceiverActor,AgentNoticeReceiverAccess,AgentNoticeReceiverServerOptions} from './notice-https-receiver.js';
