@@ -160,3 +160,5 @@ export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportUncertainError} from './remote-control-connector.js';
 export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
 export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
+export {createMetricsServer} from './metrics-server.js';
+export type {MetricsServerOptions} from './metrics-server.js';
