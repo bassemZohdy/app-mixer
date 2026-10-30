@@ -68,7 +68,6 @@ jobs:
           kubectl apply -n app-mixer-test -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-example
           kubectl set env -n app-mixer-test deployment/app-mixer-data-plane APP_MIXER_METRICS_PORT=39092
           kubectl rollout status -n app-mixer-test deployment/app-mixer-data-plane --timeout=180s
-          kubectl wait -n app-mixer-test --for=condition=Ready pods -l app.kubernetes.io/component=data-plane --timeout=90s
           kubectl port-forward -n app-mixer-test service/app-mixer-data-plane 13002:3002 >"$RUNNER_TEMP/forward.log" 2>&1 &
           FORWARD_PID=$!
           trap 'kill "$FORWARD_PID" 2>/dev/null || true' EXIT
