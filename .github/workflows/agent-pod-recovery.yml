@@ -59,7 +59,12 @@ jobs:
           script=deploy/kubernetes/test-support/agent-recovery/postgres-memory.mjs
           kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/postgres.yaml
           kubectl wait -n "$ns" --for=condition=Ready pod/agent-memory-postgres --timeout=180s
-          kubectl exec -n "$ns" agent-test-manager -- node "$script" setup
+          ready=false
+          for i in $(seq 1 60); do
+            if kubectl exec -n "$ns" agent-test-manager -- node "$script" setup; then ready=true; break; fi
+            sleep 1
+          done
+          [ "$ready" = true ]
           for phase in before after; do
             kubectl run -n "$ns" "memory-worker-$phase" --image=app-mixer-agent-recovery:test --image-pull-policy=Never --restart=Never --command -- node "$script" "$phase"
             kubectl wait -n "$ns" --for=condition=Ready "pod/memory-worker-$phase" --timeout=120s
