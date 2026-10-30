@@ -45,8 +45,8 @@ export async function createGeneratedOfflineRuntime(config){
       const guarded={async refresh(){if(closed||!await current())throw Error('Offline operation not allowed');await panel.refresh();if(closed||!await current()){panel.dispose();throw Error('Offline operation not allowed');}},dispose(){panel.dispose();panels.delete(guarded);}};
       panels.add(guarded);return guarded;
     },
-    mountHistory(root){
-      ensureOpen();const panel=mountGeneratedOfflineHistory(root,runtime);
+    mountHistory(root,options){
+      ensureOpen();const panel=mountGeneratedOfflineHistory(root,runtime,options);
       const guarded={refresh:()=>panel.refresh(),dispose(){panel.dispose();panels.delete(guarded);}};
       panels.add(guarded);return guarded;
     },
@@ -60,8 +60,8 @@ export async function createGeneratedOfflineRuntime(config){
 }
 
 // Read-only recovery view; host identity and authorization are checked by runtime.list().
-export function mountGeneratedOfflineHistory(root,runtime){
-  if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function')throw Error('Invalid offline history');
+export function mountGeneratedOfflineHistory(root,runtime,options={}){
+  if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function'||!options||typeof options!=='object'||(options.onRecover!==undefined&&typeof options.onRecover!=='function'))throw Error('Invalid offline history');
   const doc=root.ownerDocument;let generation=0,disposed=false;
   const node=(tag,text)=>{const result=doc.createElement(tag);if(text!==undefined)result.textContent=text;return result;};
   return {
@@ -71,7 +71,7 @@ export function mountGeneratedOfflineHistory(root,runtime){
         const items=await runtime.list();if(disposed||current!==generation)return;
         if(!items.length){status.textContent='No offline operations.';return;}
         status.textContent='Review saved operations before creating another request.';
-        for(const item of items){const section=node('section'),details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id),details);list.appendChild(section);}
+        for(const item of items){const section=node('section'),details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id),details);if(options.onRecover){const recover=node('button','Use request in form');recover.type='button';recover.addEventListener('click',()=>{recover.disabled=true;void (async()=>{try{await options.onRecover(item.id);if(!disposed&&current===generation)status.textContent='Request loaded into the form. Review it before submitting.';}catch{if(!disposed&&current===generation)status.textContent='Unable to load the request into the form.';}finally{if(!disposed&&current===generation)recover.disabled=false;}})();});section.appendChild(recover);}list.appendChild(section);}
       }catch{if(!disposed&&current===generation)status.textContent='Unable to load offline operations.';}
     },
     dispose(){disposed=true;generation++;root.replaceChildren();}
@@ -84,7 +84,7 @@ export function mountGeneratedOfflineForm(root,runtime,options={}){
   const doc=root.ownerDocument,form=doc.createElement('form'),label=doc.createElement('label'),select=doc.createElement('select'),dataLabel=doc.createElement('label'),data=doc.createElement('textarea'),button=doc.createElement('button'),reset=doc.createElement('button'),status=doc.createElement('p');
   label.textContent='Operation';for(const operation of runtime.operations()){const option=doc.createElement('option');option.value=operation.id;option.textContent=operation.label;select.appendChild(option);}label.appendChild(select);
   dataLabel.textContent='Operation data (JSON object)';data.value='{}';dataLabel.appendChild(data);button.type='submit';button.textContent='Queue operation';reset.type='button';reset.textContent='New operation';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-  form.append(label,dataLabel,button,reset,status);root.replaceChildren(form);let busy=false;const storageKey='app-mixer-offline-form-v1:'+(options.storageKey??(root.id||'default'));
+  form.append(label,dataLabel,button,reset,status);root.replaceChildren(form);let busy=false,disposed=false;const storageKey='app-mixer-offline-form-v1:'+(options.storageKey??(root.id||'default'));
   reset.addEventListener('click',()=>{if(busy)return;try{doc.defaultView.sessionStorage.removeItem(storageKey);status.textContent='Ready to queue a new operation.';}catch{status.textContent='Unable to create a new request ID. Your data is retained.';}});
   form.addEventListener('submit',event=>{event.preventDefault();void (async()=>{
     if(busy)return;let payload;try{payload=JSON.parse(data.value);if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid');}catch{status.textContent='Enter a valid JSON object.';return;}
@@ -99,5 +99,17 @@ export function mountGeneratedOfflineForm(root,runtime,options={}){
     catch{status.textContent='Unable to queue operation. Your data is retained.';}
     finally{busy=false;button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}
   })();});
-  return {dispose(){root.replaceChildren();}};
+  return {
+    async recover(id){
+      if(disposed||busy||typeof runtime.list!=='function'||typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id))throw Error('Cannot recover offline request');
+      busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
+      try{
+        const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
+        const item=(await runtime.list()).find(value=>value.id===id);if(disposed||!item||![...select.options].some(option=>option.value===item.operationId)||typeof item.requestKey!=='string'||!/^[0-9a-f-]{36}$/.test(item.requestKey))throw Error('Cannot recover offline request');
+        const payload=JSON.stringify(item.payload,null,2),salt=crypt.randomUUID(),digest=Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([salt,item.operationId,item.payload])))),byte=>byte.toString(16).padStart(2,'0')).join('');
+        const latest=(await runtime.list()).find(value=>value.id===id);if(disposed||!latest||latest.version!==item.version)throw Error('Cannot recover offline request');storage.setItem(storageKey,JSON.stringify({version:1,key:item.requestKey,salt,digest}));select.value=item.operationId;data.value=payload;status.textContent='Previous request loaded. Review before submitting.';
+      }finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}}
+    },
+    dispose(){disposed=true;root.replaceChildren();}
+  };
 }
