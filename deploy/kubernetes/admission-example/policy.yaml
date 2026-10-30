@@ -1,0 +1,92 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-data-plane-security
+spec:
+  failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: ConfigMap}
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments]
+  matchConditions:
+    - name: data-plane-name
+      expression: "object.metadata.name == 'app-mixer-data-plane'"
+  variables:
+    - name: c
+      expression: object.spec.template.spec.containers[0]
+  validations:
+    - message: Use the approved image digest and one unmodified container.
+      expression: >-
+        has(params.data) && 'image' in params.data && params.data.image.matches('^.+@sha256:[a-f0-9]{64}$') &&
+        object.spec.template.spec.containers.size() == 1 && variables.c.name == 'data-plane' && variables.c.image == params.data.image &&
+        !has(variables.c.command) && !has(variables.c.args) && !has(variables.c.envFrom) && !has(variables.c.lifecycle) &&
+        (!has(object.spec.template.spec.initContainers) || object.spec.template.spec.initContainers.size() == 0)
+    - message: Signed release, JWT, TLS and revocation settings must match the trusted policy.
+      expression: >-
+        has(params.data) && has(variables.c.env) && variables.c.env.size() == 17 &&
+        variables.c.env.all(e, has(e.value) && !has(e.valueFrom)) &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_PUBLICATION_PATH' && e.value == '/publication/publication.json') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_PUBLICATION_MODE' && e.value == 'signed') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_ACCESS_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_ACCESS_MODE' && e.value == 'jwt') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_TRANSPORT').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_TRANSPORT' && e.value == 'tls') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_REVOCATION_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_REVOCATION_MODE' && e.value == 'postgres') &&
+        variables.c.env.filter(e, e.name == 'DATA_DRAIN_DELAY_MS').size() == 1 && variables.c.env.exists(e, e.name == 'DATA_DRAIN_DELAY_MS' && e.value == '5000') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_RELEASE_KEYS_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_RELEASE_KEYS_PATH' && e.value == '/trust/keys.json') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_JWKS_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_JWKS_PATH' && e.value == '/jwt-trust/jwks.json') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_TLS_CERT_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_TLS_CERT_PATH' && e.value == '/tls/tls.crt') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_TLS_KEY_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_TLS_KEY_PATH' && e.value == '/tls/tls.key') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_REVOCATION_DSN_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_REVOCATION_DSN_PATH' && e.value == '/revocation/dsn') &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_REVOCATION_CA_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_REVOCATION_CA_PATH' && e.value == '/revocation-ca/ca.pem') &&
+        'releaseEnvironment' in params.data && params.data.releaseEnvironment != '' && variables.c.env.filter(e, e.name == 'APP_MIXER_RELEASE_ENV').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_RELEASE_ENV' && e.value == params.data.releaseEnvironment) &&
+        'applicationId' in params.data && params.data.applicationId != '' && variables.c.env.filter(e, e.name == 'APP_MIXER_APPLICATION_ID').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_APPLICATION_ID' && e.value == params.data.applicationId) &&
+        'issuer' in params.data && params.data.issuer != '' && variables.c.env.filter(e, e.name == 'APP_MIXER_JWT_ISSUER').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_JWT_ISSUER' && e.value == params.data.issuer) &&
+        'audience' in params.data && params.data.audience != '' && variables.c.env.filter(e, e.name == 'APP_MIXER_JWT_AUDIENCE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_JWT_AUDIENCE' && e.value == params.data.audience) &&
+        'tenantId' in params.data && params.data.tenantId != '' && variables.c.env.filter(e, e.name == 'APP_MIXER_TENANT_ID').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_TENANT_ID' && e.value == params.data.tenantId)
+    - message: Use the approved read-only publication, trust and credential mounts.
+      expression: >-
+        has(variables.c.volumeMounts) && variables.c.volumeMounts.size() == 6 &&
+        variables.c.volumeMounts.exists(m, m.name == 'publication' && m.mountPath == '/publication' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
+        variables.c.volumeMounts.exists(m, m.name == 'release-trust' && m.mountPath == '/trust' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
+        variables.c.volumeMounts.exists(m, m.name == 'jwt-trust' && m.mountPath == '/jwt-trust' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
+        variables.c.volumeMounts.exists(m, m.name == 'tls' && m.mountPath == '/tls' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
+        variables.c.volumeMounts.exists(m, m.name == 'revocation-connection' && m.mountPath == '/revocation' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
+        variables.c.volumeMounts.exists(m, m.name == 'revocation-ca' && m.mountPath == '/revocation-ca' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
+        has(object.spec.template.spec.volumes) && object.spec.template.spec.volumes.size() == 6 &&
+        object.spec.template.spec.volumes.exists(v, v.name == 'publication' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name.startsWith('app-mixer-publication-')) &&
+        object.spec.template.spec.volumes.exists(v, v.name == 'release-trust' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name == 'app-mixer-release-keys') &&
+        object.spec.template.spec.volumes.exists(v, v.name == 'jwt-trust' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name == 'app-mixer-jwt-keys') &&
+        object.spec.template.spec.volumes.exists(v, v.name == 'tls' && has(v.secret) && !has(v.secret.items) && v.secret.secretName == 'app-mixer-data-plane-tls') &&
+        object.spec.template.spec.volumes.exists(v, v.name == 'revocation-connection' && has(v.secret) && !has(v.secret.items) && v.secret.secretName == 'app-mixer-revocation-connection') &&
+        object.spec.template.spec.volumes.exists(v, v.name == 'revocation-ca' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name == 'app-mixer-revocation-ca')
+    - message: Data Plane pod security and selector labels must remain enabled.
+      expression: >-
+        has(object.spec.template.metadata.labels) &&
+        'app.kubernetes.io/name' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['app.kubernetes.io/name'] == 'app-mixer' &&
+        'app.kubernetes.io/component' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['app.kubernetes.io/component'] == 'data-plane' &&
+        has(object.spec.template.spec.automountServiceAccountToken) && !object.spec.template.spec.automountServiceAccountToken &&
+        (!has(object.spec.template.spec.hostNetwork) || !object.spec.template.spec.hostNetwork) &&
+        (!has(object.spec.template.spec.hostPID) || !object.spec.template.spec.hostPID) &&
+        (!has(object.spec.template.spec.hostIPC) || !object.spec.template.spec.hostIPC) &&
+        (!has(object.spec.template.spec.hostAliases) || object.spec.template.spec.hostAliases.size() == 0) && !has(object.spec.template.spec.dnsConfig) &&
+        has(object.spec.template.spec.securityContext) && has(object.spec.template.spec.securityContext.runAsNonRoot) && object.spec.template.spec.securityContext.runAsNonRoot &&
+        has(object.spec.template.spec.securityContext.runAsUser) && object.spec.template.spec.securityContext.runAsUser == 1000 &&
+        has(object.spec.template.spec.securityContext.runAsGroup) && object.spec.template.spec.securityContext.runAsGroup == 1000 &&
+        has(object.spec.template.spec.securityContext.seccompProfile) && object.spec.template.spec.securityContext.seccompProfile.type == 'RuntimeDefault' &&
+        has(variables.c.securityContext) && has(variables.c.securityContext.allowPrivilegeEscalation) && !variables.c.securityContext.allowPrivilegeEscalation &&
+        has(variables.c.securityContext.readOnlyRootFilesystem) && variables.c.securityContext.readOnlyRootFilesystem &&
+        (!has(variables.c.securityContext.privileged) || !variables.c.securityContext.privileged) &&
+        (!has(variables.c.securityContext.runAsUser) || variables.c.securityContext.runAsUser == 1000) &&
+        (!has(variables.c.securityContext.runAsGroup) || variables.c.securityContext.runAsGroup == 1000) &&
+        (!has(variables.c.securityContext.runAsNonRoot) || variables.c.securityContext.runAsNonRoot) &&
+        (!has(variables.c.securityContext.seccompProfile) || variables.c.securityContext.seccompProfile.type == 'RuntimeDefault') &&
+        (!has(variables.c.securityContext.procMount) || variables.c.securityContext.procMount == 'Default') &&
+        has(variables.c.securityContext.capabilities) && has(variables.c.securityContext.capabilities.drop) && 'ALL' in variables.c.securityContext.capabilities.drop &&
+        (!has(variables.c.securityContext.capabilities.add) || variables.c.securityContext.capabilities.add.size() == 0)
+    - message: HTTPS health probes must target the expected paths.
+      expression: >-
+        has(variables.c.readinessProbe) && has(variables.c.readinessProbe.httpGet) && variables.c.readinessProbe.httpGet.path == '/health/ready' && variables.c.readinessProbe.httpGet.scheme == 'HTTPS' &&
+        has(variables.c.livenessProbe) && has(variables.c.livenessProbe.httpGet) && variables.c.livenessProbe.httpGet.path == '/health/live' && variables.c.livenessProbe.httpGet.scheme == 'HTTPS' &&
+        has(variables.c.startupProbe) && has(variables.c.startupProbe.httpGet) && variables.c.startupProbe.httpGet.path == '/health/live' && variables.c.startupProbe.httpGet.scheme == 'HTTPS'

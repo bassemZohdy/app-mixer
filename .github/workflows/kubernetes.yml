@@ -105,6 +105,14 @@ jobs:
           for i in $(seq 1 60); do [ "$(kubectl get deployment -n app-mixer-test app-mixer-data-plane -o jsonpath='{.status.readyReplicas}')" = 2 ] && break || sleep 1; done
           [ "$(kubectl get deployment -n app-mixer-test app-mixer-data-plane -o jsonpath='{.status.readyReplicas}')" = 2 ]
           kubectl get -n app-mixer-test deployment,service,pdb,networkpolicy
+      - name: Verify admission policy against the Kubernetes API
+        run: |
+          IMAGE="registry.example/app-mixer@sha256:$(printf 'a%.0s' {1..64})"
+          kubectl create configmap -n app-mixer-test app-mixer-security-policy --from-literal=image="$IMAGE" --from-literal=releaseEnvironment=production --from-literal=applicationId=demo --from-literal=issuer=https://issuer.example/ --from-literal=audience=app-mixer-data-plane --from-literal=tenantId=demo-tenant
+          kubectl apply -f deploy/kubernetes/admission-example/policy.yaml
+          kubectl apply -f deploy/kubernetes/admission-example/binding.yaml
+          kubectl label namespace app-mixer-test app-mixer.dev/enforce-data-plane=true
+          node deploy/kubernetes/test-support/admission-test.mjs
       - name: Diagnostics on failure
         if: failure()
         run: |
