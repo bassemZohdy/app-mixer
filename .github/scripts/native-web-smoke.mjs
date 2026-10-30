@@ -25,7 +25,8 @@ try{
    {id:'label',component:'Text',text:'Save'}
   ]}});
  });
- const input=document.querySelector('input');assert.ok(input);assert.equal(input.value,'Ada');
+ const input=document.querySelector('input');assert.ok(input);assert.equal(input.value,'Ada');assert.equal(input.getAttribute('aria-label'),'Name');
+ const button=document.querySelector('[role="button"]');assert.ok(button);assert.equal(button.textContent,'Save');assert.notEqual(button.getAttribute('aria-disabled'),'true');
  await React.act(()=>{
   Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(input,'Grace');
   input.dispatchEvent(new window.Event('input',{bubbles:true}));
@@ -33,6 +34,9 @@ try{
  assert.equal(document.querySelector('input').value,'Grace');
  await React.act(()=>document.querySelector('[role="button"]').click());
  assert.equal(actions.length,1);assert.deepEqual(actions[0].action.context,{name:'Grace'});assert.deepEqual(errors,[]);
+ await React.act(()=>root.render(React.createElement(Component,{subscribe,onError:error=>errors.push(error)})));
+ const disabled=document.querySelector('[role="button"]');assert.equal(disabled.getAttribute('aria-disabled'),'true');
+ await React.act(()=>disabled.click());assert.equal(actions.length,1);
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
   {id:'root',component:'Column',children:['heading','caption']},
   {id:'heading',component:'Text',text:'Heading',variant:'h1'},
