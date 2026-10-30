@@ -87,3 +87,19 @@ test('cron coalescing advances beyond observation time and default catches up',(
  const s=setup();try{const start=Date.parse('2026-10-29T07:00:00Z'),now=Date.parse('2026-11-02T08:00:00Z'),rule={kind:'cron',expression:'0 8 * * *'},merged=s.schedules.save(scope,'merged',{...config,rule,misfire:'coalesce'},0,start),normal=s.schedules.save(scope,'normal',{...config,rule},0,start),a=s.schedules.fire(scope,'merged',merged.revision,policy,now),b=s.schedules.fire(scope,'normal',normal.revision,policy,now);assert.equal(a.scheduledAt,Date.parse('2026-10-29T08:00:00Z'));assert.equal(s.schedules.get(scope,'merged').nextAt,Date.parse('2026-11-03T08:00:00Z'));assert.equal(s.triggers.get(scope,a.runId).payload.coalescedThrough,now);assert.equal(s.schedules.get(scope,'normal').nextAt,Date.parse('2026-10-30T08:00:00Z'));assert.equal(Object.hasOwn(s.triggers.get(scope,b.runId).payload,'coalescedThrough'),false);for(const value of ['skip',true,null,1])assert.throws(()=>s.schedules.save(scope,'bad',{...config,misfire:value},0,start),/Invalid schedule/);
  }finally{close(s);}
 });
+
+
+test('zoned cron skips nonexistent wall times and fires both repeated instants',()=>{
+ const s=setup();try{const rule={kind:'cron',expression:'30 2 * * *',timeZone:'America/New_York'},spring=s.schedules.save(scope,'spring',{...config,rule},0,Date.parse('2026-03-07T08:00:00Z'));assert.equal(spring.nextAt,Date.parse('2026-03-09T06:30:00Z'));const fall=s.schedules.save(scope,'fall',{...config,rule:{...rule,expression:'30 1 * * *'}},0,Date.parse('2026-11-01T04:00:00Z'));assert.equal(fall.nextAt,Date.parse('2026-11-01T05:30:00Z'));s.schedules.fire(scope,'fall',fall.revision,policy,fall.nextAt);let next=s.schedules.get(scope,'fall');assert.equal(next.nextAt,Date.parse('2026-11-01T06:30:00Z'));s.schedules.fire(scope,'fall',next.revision,policy,next.nextAt);next=s.schedules.get(scope,'fall');assert.equal(next.nextAt,Date.parse('2026-11-02T06:30:00Z'));const midway=s.schedules.save(scope,'midway',{...config,rule:{...rule,expression:'0 1 * * *'}},0,Date.parse('2026-11-01T05:45:00Z'));assert.equal(midway.nextAt,Date.parse('2026-11-01T06:00:00Z'));
+ }finally{close(s);}
+});
+
+test('zoned cron handles non-hour offsets, leap days and coalescing',()=>{
+ const s=setup();try{const dubai=s.schedules.save(scope,'dubai',{...config,rule:{kind:'cron',expression:'0 9 * * *',timeZone:'Asia/Kathmandu'}},0,Date.parse('2026-10-29T02:00:00Z'));assert.equal(dubai.nextAt,Date.parse('2026-10-29T03:15:00Z'));const leap=s.schedules.save(scope,'leap-zone',{...config,rule:{kind:'cron',expression:'0 0 29 2 *',timeZone:'America/New_York'}},0,Date.parse('2026-10-29T00:00:00Z'));assert.equal(leap.nextAt,Date.parse('2028-02-29T05:00:00Z'));const joined=s.schedules.save(scope,'joined',{...config,misfire:'coalesce',rule:{kind:'cron',expression:'30 1 * * *',timeZone:'America/New_York'}},0,Date.parse('2026-11-01T04:00:00Z'));const now=Date.parse('2026-11-01T06:45:00Z'),fired=s.schedules.fire(scope,'joined',joined.revision,policy,now);assert.equal(s.triggers.get(scope,fired.runId).payload.coalescedThrough,now);assert.equal(s.schedules.get(scope,'joined').nextAt,Date.parse('2026-11-02T06:30:00Z'));for(const timeZone of ['Invalid/Zone','+05:30','',null,3])assert.throws(()=>s.schedules.save(scope,'bad-zone',{...config,rule:{kind:'cron',expression:'* * * * *',timeZone}},0,0),/time zone/);
+ }finally{close(s);}
+});
+
+
+test('zoned cron skips a whole missing local calendar day',()=>{
+ const s=setup();try{const scheduled=s.schedules.save(scope,'apia',{...config,rule:{kind:'cron',expression:'0 12 * * *',timeZone:'Pacific/Apia'}},0,Date.parse('2011-12-29T23:00:00Z'));assert.equal(scheduled.nextAt,Date.parse('2011-12-30T22:00:00Z'));}finally{close(s);}
+});
