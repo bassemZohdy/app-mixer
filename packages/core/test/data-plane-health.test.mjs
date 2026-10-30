@@ -25,3 +25,9 @@ test('dependency errors are sanitized and do not break liveness',async()=>{
  const store=new ApplicationStore(initial);store.publish(0);const server=createDataPlane(store,{health:{timeoutMs:100,check:()=>{throw Error('secret dependency error');}}}),base=await start(server);
  try{const response=await fetch(base+'/health/ready');assert.equal(response.status,503);assert.deepEqual(await response.json(),{status:'unavailable'});assert.equal((await fetch(base+'/health/live')).status,200);}finally{await stop(server);}
 });
+
+
+test('draining immediately fails pending and future readiness while serving in-flight traffic',async()=>{
+ const store=new ApplicationStore(initial);store.publish(0);let release,entered,signal,calls=0;const waiting=new Promise(resolve=>release=resolve),started=new Promise(resolve=>entered=resolve),server=createDataPlane(store,{health:{timeoutMs:30000,check:async current=>{calls++;signal=current;entered();return waiting;}}}),base=await start(server);
+ try{const pending=fetch(base+'/health/ready');await started;server.beginDrain();server.beginDrain();assert.equal(signal.aborted,true);const response=await Promise.race([pending,new Promise((_,reject)=>setTimeout(()=>reject(Error('Readiness did not drain')),1000))]);assert.equal(response.status,503);assert.equal((await fetch(base+'/health/ready')).status,503);assert.equal((await fetch(base+'/health/live')).status,200);assert.equal((await fetch(base+'/application')).status,200);assert.equal(calls,1);release(true);await new Promise(resolve=>setImmediate(resolve));assert.equal((await fetch(base+'/health/ready')).status,503);}finally{release(true);await stop(server);}
+});

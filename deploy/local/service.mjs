@@ -11,10 +11,11 @@ if(role==='init'){
   const store=new SqliteApplicationStore(database,initial);
   try{if(!store.getPublished())store.publish(store.getDraft().revision);}finally{store.close();}
 }else{
-  let server,store,metricsServer;
+  let server,store,metricsServer,drainDelay=0;
   if(role==='data'){
     const token=process.env.DATA_METRICS_TOKEN;if(token!==undefined&&token!==''&&(token.length<32||token.length>4096||/[\x00-\x1f\x7f]/.test(token)))throw Error('Invalid DATA_METRICS_TOKEN');
     const health=process.env.DATA_HEALTH_ENABLED;if(health!==undefined&&!['true','false'].includes(health))throw Error('Invalid DATA_HEALTH_ENABLED');
+    const delay=process.env.DATA_DRAIN_DELAY_MS;if(delay!==undefined){if(!/^(0|[1-9][0-9]{0,4})$/.test(delay)||Number(delay)>30000||(Number(delay)>0&&health!=='true'))throw Error('Invalid DATA_DRAIN_DELAY_MS');drainDelay=Number(delay);}
     store=new SqliteApplicationStore(database,initial);
     const scope={tenantId:'local',authorizationKey:'local',applicationId:initial.id,schemaVersion:initial.schemaVersion};
     const metrics=token?new DataPlaneRequestMetrics():undefined;
@@ -32,5 +33,5 @@ if(role==='init'){
     server.listen(port('AGENT_PORT',3003),'127.0.0.1');
   }else throw Error('Unknown local service');
   server.once('listening',()=>console.log(`${role} ready`));
-  for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{const servers=[server,...(metricsServer?[metricsServer]:[])];Promise.all(servers.map(item=>new Promise(resolve=>item.close(resolve)))).then(()=>{store?.close();process.exit(0);});});
+  let shuttingDown=false;for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{if(shuttingDown)return;shuttingDown=true;if(role==='data')server.beginDrain();const close=()=>{const servers=[server,...(metricsServer?[metricsServer]:[])];Promise.all(servers.map(item=>new Promise(resolve=>item.close(resolve)))).then(()=>{store?.close();process.exit(0);});};if(drainDelay)setTimeout(close,drainDelay);else close();});
 }
