@@ -7,6 +7,8 @@ import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
 export type StagedVerificationOutcome='applied'|'not_applied'|'unknown';
+export type StagedReconciliationEvidence={principalId:string;reference:string};
+export type StagedReconciliationRecord=StagedReconciliationEvidence & {revision:number;outcome:'applied'|'not_applied';recordedAt:number};
 export type StagedOutcomeVerifier=(scope:DataScope,operation:StagedOperation)=>StagedVerificationOutcome|Promise<StagedVerificationOutcome>;
 
 /** Durable staging; the host authorizes stage/read/recovery and the capability authorizes submission. */
@@ -26,6 +28,7 @@ export class SqliteStagedOperations {
         const columns=this.db.prepare('PRAGMA table_info(staged_business_operations)').all();
         if(!columns.some(column=>column.name==='request_key'))this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN request_key TEXT');
         if(!columns.some(column=>column.name==='state_revision'))this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN state_revision INTEGER NOT NULL DEFAULT 0');
+        this.db.exec(`CREATE TABLE IF NOT EXISTS staged_reconciliation_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN ('applied','not_applied')),recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));`);
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
         this.db.exec('COMMIT');
       } catch(error){this.db.exec('ROLLBACK');throw error;}
@@ -59,15 +62,16 @@ export class SqliteStagedOperations {
   async submit(scope:DataScope,id:string,registry:CapabilityRegistry,context:InvocationContext):Promise<unknown> {
     checkKey(scope,'staged',id);
     if(!(registry instanceof CapabilityRegistry)||!context||context.tenantId!==scope.tenantId)throw Error('Invalid submission context');
-    const claim=this.db.prepare("UPDATE staged_business_operations SET status='submitting',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='staged' AND state_revision<9007199254740991").run(scope.tenantId,scope.applicationId,id);
+    const snapshotScope={tenantId:scope.tenantId,applicationId:scope.applicationId};
+    const claim=this.db.prepare("UPDATE staged_business_operations SET status='submitting',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='staged' AND state_revision<9007199254740991").run(snapshotScope.tenantId,snapshotScope.applicationId,id);
     if(claim.changes!==1)throw Error('Operation not staged');
-    const operation=this.get(scope,id)!;
+    const operation=this.get(snapshotScope,id)!;
     try {
       const result=await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);
-      this.transition(scope,id,'submitting','succeeded');return result;
+      this.transition(snapshotScope,id,'submitting','succeeded');return result;
     } catch(error) {
       // Even an error can follow an external effect or failed outcome audit; never retry automatically.
-      this.transition(scope,id,'submitting','uncertain');throw error;
+      this.transition(snapshotScope,id,'submitting','uncertain');throw error;
     }
   }
   /** Call only after confirming that the process which submitted the operation is no longer running. */
@@ -78,17 +82,37 @@ export class SqliteStagedOperations {
     this.transition(scope,id,'uncertain',outcome==='applied'?'succeeded':'staged');
   }
   /** Verify externally without dispatching, then apply only if the uncertain state is unchanged. */
-  async verifyAndReconcile(scope:DataScope,id:string,verify:StagedOutcomeVerifier):Promise<StagedVerificationOutcome> {
+  async verifyAndReconcile(scope:DataScope,id:string,verify:StagedOutcomeVerifier,evidence?:StagedReconciliationEvidence):Promise<StagedVerificationOutcome> {
     checkKey(scope,'staged',id);if(typeof verify!=='function')throw Error('Invalid staged verifier');
-    const snapshotScope={tenantId:scope.tenantId,applicationId:scope.applicationId};
+    const snapshotScope={tenantId:scope.tenantId,applicationId:scope.applicationId};const safeEvidence=evidence===undefined?undefined:this.checkEvidence(snapshotScope,evidence);
     const row=this.db.prepare('SELECT operation_id,idempotency_key,payload,status,state_revision FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND id=?').get(snapshotScope.tenantId,snapshotScope.applicationId,id);
     if(!row||row.status!=='uncertain'||!Number.isSafeInteger(row.state_revision)||Number(row.state_revision)<0)throw Error('Invalid operation state');
     const operation:StagedOperation={id,operationId:row.operation_id as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:'uncertain'};
     const outcome=await verify({...snapshotScope},operation);
     if(outcome!=='applied'&&outcome!=='not_applied'&&outcome!=='unknown')throw Error('Invalid verification outcome');
     if(outcome==='unknown')return outcome;
-    const result=this.db.prepare("UPDATE staged_business_operations SET status=?,state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='uncertain' AND state_revision=? AND state_revision<9007199254740991").run(outcome==='applied'?'succeeded':'staged',snapshotScope.tenantId,snapshotScope.applicationId,id,row.state_revision as number);
-    if(result.changes!==1)throw Error('Stale staged verification');return outcome;
+    this.finishReconciliation(snapshotScope,id,outcome,safeEvidence,row.state_revision as number);return outcome;
+  }
+  /** Host-authorized manual decision with atomic actor-attributed evidence. */
+  reconcileWithEvidence(scope:DataScope,id:string,outcome:'applied'|'not_applied',evidence:StagedReconciliationEvidence):void {
+    checkKey(scope,'staged',id);if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid reconciliation');
+    this.finishReconciliation(scope,id,outcome,this.checkEvidence(scope,evidence));
+  }
+  /** Host must authorize access to this tenant/application and protect the returned references. */
+  listReconciliationEvidence(scope:DataScope,id:string,options:{after?:number;limit?:number}={}):StagedReconciliationRecord[] {
+    checkKey(scope,'staged',id);const after=options?.after??0,limit=options?.limit??100;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid reconciliation query');
+    return this.db.prepare('SELECT revision,principal_id,reference,outcome,recorded_at FROM staged_reconciliation_evidence WHERE tenant_id=? AND application_id=? AND operation_id=? AND revision>? ORDER BY revision LIMIT ?').all(scope.tenantId,scope.applicationId,id,after,limit).map(row=>({revision:row.revision as number,principalId:row.principal_id as string,reference:row.reference as string,outcome:row.outcome as 'applied'|'not_applied',recordedAt:row.recorded_at as number}));
+  }
+  private checkEvidence(scope:DataScope,evidence:StagedReconciliationEvidence):StagedReconciliationEvidence {
+    if(!evidence||typeof evidence!=='object')throw Error('Invalid reconciliation evidence');checkKey(scope,'evidence',evidence.principalId);checkKey(scope,'evidence',evidence.reference);return {principalId:evidence.principalId,reference:evidence.reference};
+  }
+  private finishReconciliation(scope:DataScope,id:string,outcome:'applied'|'not_applied',evidence:StagedReconciliationEvidence|undefined,expectedRevision?:number):void {
+    this.db.exec('BEGIN IMMEDIATE');try {
+      const row=this.db.prepare("UPDATE staged_business_operations SET status=?,state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='uncertain' AND (? IS NULL OR state_revision=?) AND state_revision<9007199254740991 RETURNING state_revision").get(outcome==='applied'?'succeeded':'staged',scope.tenantId,scope.applicationId,id,expectedRevision??null,expectedRevision??null);
+      if(!row)throw Error(expectedRevision===undefined?'Invalid operation state':'Stale staged verification');
+      if(evidence)this.db.prepare('INSERT INTO staged_reconciliation_evidence (tenant_id,application_id,operation_id,revision,principal_id,reference,outcome,recorded_at) VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,id,row.state_revision as number,evidence.principalId,evidence.reference,outcome,Date.now());
+      this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   private transition(scope:DataScope,id:string,from:StagedStatus,to:StagedStatus):void {
     checkKey(scope,'staged',id);
