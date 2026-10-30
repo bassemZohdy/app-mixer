@@ -184,3 +184,6 @@ export type {MetricsServerOptions} from './metrics-server.js';
 
 export {signPublicationRelease,verifyPublicationRelease} from './signed-publication.js';
 export type {ReleasePublication,SignedPublicationRelease,PublicationReleaseKey} from './signed-publication.js';
+
+export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
+export type {PublicationReleaseScope,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
