@@ -3,7 +3,8 @@ import {SqliteAgentMemory,type AgentMemoryScope,type AgentMemoryActor,type Agent
 type Embedder={modelId:string;dimensions:number;embed:(text:string)=>Promise<number[]>};
 export type SemanticMemorySearchOptions={minSimilarity?:number};
 export const validSimilarity=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=-1&&value<=1;
-export type SemanticMemoryHit={id:string;revision:number;text:string;score:number;provenance:AgentMemoryProvenance;expiresAt:number};
+export type SemanticMemoryRecord={id:string;revision:number;text:string;provenance:AgentMemoryProvenance;expiresAt:number};
+export type SemanticMemoryHit=SemanticMemoryRecord&{score:number};
 const validId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const validText=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=2000;
 const terms=(text:string):Set<string>=>new Set((text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu)??[]).slice(0,256));
@@ -24,6 +25,14 @@ export class AgentSemanticMemory {
   await this.memory.assertAccess(safeActor,safeScope,'write',memoryId);
   const vector=normalize(await this.embed(text),this.dimensions);
   const stored=await this.memory.put(safeActor,safeScope,memoryId,{format:'semantic-v1',modelId:this.modelId,text,vector},safeOptions);return {id:stored.id,revision:stored.revision,expiresAt:stored.expiresAt};
+ }
+ /** Read a known authorized memory without invoking the embedding provider. */
+ async get(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string):Promise<SemanticMemoryRecord|undefined>{
+  const safeActor=structuredClone(actor),safeScope=semanticScope(scope);if(!validId(memoryId))throw Error('Invalid semantic memory ID');
+  const row=await this.memory.get(safeActor,safeScope,memoryId);if(!row||!row.value||typeof row.value!=='object'||Array.isArray(row.value))return undefined;
+  const entry=row.value as Record<string,unknown>;if(entry.format!=='semantic-v1'||entry.modelId!==this.modelId||!validText(entry.text))return undefined;
+  try{normalize(entry.vector,this.dimensions);}catch{return undefined;}
+  return {id:row.id,revision:row.revision,text:entry.text,provenance:row.provenance,expiresAt:row.expiresAt};
  }
  /** Remove one versioned semantic memory through the store's delete policy. */
  async delete(actor:AgentMemoryActor,scope:AgentMemoryScope,memoryId:string,expectedRevision:number):Promise<void>{
