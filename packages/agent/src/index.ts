@@ -110,6 +110,8 @@ export {SqliteAgentMemory} from './agent-memory.js';
 export type {AgentMemoryRecord,AgentMemoryScope,AgentMemoryActor,AgentMemoryProvenance,AgentMemoryAction,AgentMemoryOptions} from './agent-memory.js';
 export {AgentSemanticMemory} from './semantic-memory.js';
 export type {AgentMemoryEmbedder,SemanticMemoryHit} from './semantic-memory.js';
+export {evaluateAgentMemoryRetrieval} from './memory-retrieval-evaluation.js';
+export type {MemoryEvaluationCase,MemoryEvaluationResult,MemoryEvaluationReport} from './memory-retrieval-evaluation.js';
 export {registerSemanticMemorySearch} from './semantic-memory-capability.js';
 export type {SemanticMemorySearchOptions} from './semantic-memory-capability.js';
 export {SqliteAgentApprovals} from './agent-approvals.js';

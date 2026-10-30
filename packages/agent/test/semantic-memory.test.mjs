@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {AIMessage} from '@langchain/core/messages';
 import {CapabilityRegistry} from '../../core/dist/index.js';
-import {SqliteAgentMemory,AgentSemanticMemory,registerSemanticMemorySearch,SqliteAgentDefinitions,createConfiguredAgentRun} from '../dist/index.js';
+import {SqliteAgentMemory,AgentSemanticMemory,registerSemanticMemorySearch,SqliteAgentDefinitions,createConfiguredAgentRun,evaluateAgentMemoryRetrieval} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent',owner:{kind:'organization',id:'org'},kind:'semantic'},admin={tenantId:'tenant',principalId:'admin'},provenance={kind:'run',id:'run-1'};
 function setup(){let now=100,allowed=true,embeds=0;const memory=new SqliteAgentMemory(':memory:',{enabled:true,maxTtlMs:1000,maxEntries:1000,clock:()=>now,authorize:(actor,s,_action,id)=>allowed&&(actor.principalId==='admin'||(actor.principalId==='service'&&s.owner.kind==='organization'&&id!=='private'))});
  const semantic=new AgentSemanticMemory(memory,{modelId:'model-v1',dimensions:2,embed:async text=>{embeds++;return text.includes('apple')?[1,0]:text.includes('banana')?[0,1]:[0.8,0.2];}});
@@ -22,6 +22,20 @@ test('hybrid search promotes exact normalized words without exposing unauthorize
 
 test('hybrid capability is host-selected and retains authorization and schema boundaries',async()=>{
  const s=setup();try{await s.semantic.put(admin,scope,'apple','apple notes',options);await s.semantic.put(admin,scope,'private','apple secret',options);const registry=new CapabilityRegistry(()=>{}),config={memory:s.semantic,scope,operationId:'hybrid_search',path:'/memory/hybrid',limit:3,mode:'hybrid',authorize:c=>c.principalId==='service'};registerSemanticMemorySearch(registry,config);config.mode='semantic';const result=await registry.invoke('hybrid_search',{query:{text:'apple'}},{tenantId:'tenant',principalId:'service',origin:'agent'});assert.deepEqual(result.map(hit=>hit.id),['apple']);assert.ok(result[0].score>0.9);await assert.rejects(registry.invoke('hybrid_search',{query:{text:'apple',mode:'semantic'}},{tenantId:'tenant',principalId:'service',origin:'agent'}),/invalid/i);await assert.rejects(registry.invoke('hybrid_search',{query:{text:'apple'}},{tenantId:'tenant',principalId:'other',origin:'agent'}),/forbidden/i);assert.throws(()=>registerSemanticMemorySearch(registry,{...config,operationId:'bad',mode:'bogus'}),/Invalid memory capability/);}finally{s.memory.close();}
+});
+
+test('retrieval evaluation computes per-query and mean metrics against authorized results',async()=>{
+ const s=setup();try{await s.semantic.put(admin,scope,'apple','apple notes',options);await s.semantic.put(admin,scope,'banana','banana notes',options);await s.semantic.put(admin,scope,'private','apple secret',options);const report=await evaluateAgentMemoryRetrieval({memory:s.semantic,actor:{tenantId:'tenant',principalId:'service'},scope,mode:'semantic',limit:2,cases:[{id:'one',query:'apple',relevantIds:['banana','missing']},{id:'two',query:'banana',relevantIds:['banana']}]});assert.deepEqual(report.cases.map(({id,retrievedIds,recall,precision,reciprocalRank})=>({id,retrievedIds,recall,precision,reciprocalRank})),[{id:'one',retrievedIds:['apple','banana'],recall:0.5,precision:0.5,reciprocalRank:0.5},{id:'two',retrievedIds:['banana','apple'],recall:1,precision:0.5,reciprocalRank:1}]);assert.equal(report.meanRecall,0.75);assert.equal(report.meanPrecision,0.5);assert.equal(report.meanReciprocalRank,0.75);assert.equal(JSON.stringify(report).includes('apple notes'),false);const hybrid=await evaluateAgentMemoryRetrieval({memory:s.semantic,actor:admin,scope,mode:'hybrid',limit:1,cases:[{id:'one',query:'banana',relevantIds:['banana']}]});assert.equal(hybrid.meanRecall,1);assert.equal(hybrid.meanReciprocalRank,1);
+ }finally{s.memory.close();}
+});
+
+test('retrieval evaluation rejects invalid datasets and enforces access before embedding',async()=>{
+ const s=setup();try{const config={memory:s.semantic,actor:admin,scope,mode:'semantic',limit:2,cases:[{id:'one',query:'apple',relevantIds:['apple']}]};for(const invalid of [{cases:[]},{mode:'other'},{limit:0},{cases:[{id:'one',query:'x',relevantIds:['a','a']}]},{cases:[...config.cases,...config.cases]}])await assert.rejects(evaluateAgentMemoryRetrieval({...config,...invalid}),/Invalid memory evaluation/);await assert.rejects(evaluateAgentMemoryRetrieval({...config,actor:{tenantId:'tenant',principalId:'user'}}),/access denied/);assert.equal(s.embeds(),0);
+ }finally{s.memory.close();}
+});
+
+test('retrieval evaluation snapshots inputs before asynchronous embedding',async()=>{
+ const s=setup();try{await s.semantic.put(admin,scope,'apple','apple notes',options);let started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),delayed=new AgentSemanticMemory(s.memory,{modelId:'model-v1',dimensions:2,embed:async()=>{started();await gate;return [1,0]}}),config={memory:delayed,actor:{...admin},scope:structuredClone(scope),mode:'semantic',limit:1,cases:[{id:'one',query:'apple',relevantIds:['apple']}]};const pending=evaluateAgentMemoryRetrieval(config);await ready;config.cases[0].relevantIds[0]='other';config.actor.principalId='user';config.scope.tenantId='other';release();const report=await pending;assert.equal(report.meanRecall,1);assert.deepEqual(report.cases[0].retrievedIds,['apple']);}finally{s.memory.close();}
 });
 
 test('authorization is checked before sending text to the embedding provider',async()=>{
