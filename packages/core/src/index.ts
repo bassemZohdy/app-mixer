@@ -142,6 +142,8 @@ export type { StagedCapabilityOptions } from './staged-capabilities.js';
 export { SqliteOfflineQueue } from './offline-queue.js';
 export { PostgresOfflineRequestKeys } from './postgres-offline-request-keys.js';
 export type { PostgresOfflineRequestKeysOptions } from './postgres-offline-request-keys.js';
+export {registerSharedOfflineAllocation,registerSharedOfflineDispatch} from './shared-offline-capabilities.js';
+export type {SharedOfflineCapabilityOptions} from './shared-offline-capabilities.js';
 export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure } from './offline-queue.js';
 
 export { OfflineSyncWorker } from './offline-worker.js';
