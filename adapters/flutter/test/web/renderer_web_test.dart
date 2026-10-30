@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('edits a bound field and emits explicit action context', (tester) async {
-    final semantics=tester.ensureSemantics();addTearDown(semantics.dispose);
+    final semantics=tester.ensureSemantics();
+    try {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
     final actions=<Map<String,dynamic>>[], errors=<Object>[];
@@ -25,5 +26,6 @@ void main() {
     await tester.enterText(find.byType(TextField),'Grace');await tester.pump();expect(find.byWidgetPredicate((w)=>w is Text && w.data=='Grace'),findsOneWidget);
     await tester.tap(find.byType(TextButton));await tester.pump();
     expect((actions.single['action'] as Map)['context'],{'name':'Grace'});expect(errors,isEmpty);
+    } finally {semantics.dispose();}
   });
 }
