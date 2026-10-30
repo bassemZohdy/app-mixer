@@ -161,3 +161,6 @@ export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';
 
 export {AgentRunExpiryWorker} from './agent-run-expiry.js';
 export type {AgentRunExpiryWorkerOptions} from './agent-run-expiry.js';
+
+export {AgentActionRecoveryWorker} from './action-recovery-worker.js';
+export type {AgentActionRecoveryWorkerOptions} from './action-recovery-worker.js';

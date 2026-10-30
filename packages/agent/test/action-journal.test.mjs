@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AIMessage} from '@langchain/core/messages';
 import {CapabilityRegistry} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentActionJournal,SqliteAgentDefinitions,createConfiguredAgentRun} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentActionJournal,SqliteAgentDefinitions,createConfiguredAgentRun,AgentActionRecoveryWorker} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'app-mixer-actions-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path);let now=10,run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:10000},0);run=runs.claim(scope,'run',run.revision,'worker',100,now);const journal=new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>now});return {dir,path,runs,journal,get run(){return run;},set run(value){run=value;},get now(){return now;},set now(value){now=value;}};}
 function close(s){s.journal.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
@@ -116,4 +116,20 @@ test('action reconciliation decisions atomically retain scoped actor and evidenc
 test('audit insertion failure rolls back action reconciliation',async()=>{
  const s=setup();let db;try{await assert.rejects(s.journal.invoke('call','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_action_audit BEFORE INSERT ON agent_action_reconciliations BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;");const evidence={principalId:'reviewer',reference:'case'};assert.throws(()=>s.journal.reconcileWithEvidence('call','failed',undefined,evidence),/audit unavailable/);assert.equal(s.journal.get('call').status,'uncertain');await assert.rejects(s.journal.reconcileWith('call',async()=>({outcome:'applied',result:{ok:true}}),evidence),/audit unavailable/);assert.equal(s.journal.get('call').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);
  }finally{db?.close();close(s);}
+});
+
+
+test('recovery worker authorizes each action, records evidence and revisits unresolved entries',async()=>{
+ const s=setup(),errors=[],seen=[];try{for(const action of ['a','b','c'])await assert.rejects(s.journal.invoke(action,'op',{action},3,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);let deny=true;const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:2,pollMs:100,onError:(error,id)=>errors.push([error.message,id]),authorize:action=>!(deny&&action.actionId==='a'),evidence:action=>({principalId:'operator',reference:'case-'+action.actionId}),verify:async request=>{seen.push(request.action.actionId);return request.action.actionId==='b'?{outcome:'unknown'}:{outcome:'applied',result:{id:request.action.actionId}};}});assert.equal(await worker.runOnce(),0);assert.equal(s.journal.get('a').status,'uncertain');assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('c').status,'succeeded');deny=false;assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('a').status,'succeeded');assert.equal(s.journal.get('b').status,'uncertain');assert.deepEqual(s.journal.listReconciliations().map(event=>[event.actionId,event.principalId,event.reference,event.method]),[['c','operator','case-c','verifier'],['a','operator','case-a','verifier']]);assert.deepEqual(seen,['b','c','a','b']);assert.deepEqual(errors,[]);assert.equal(s.runs.get(scope,'run').status,'uncertain');
+ }finally{close(s);}
+});
+
+test('recovery worker rejects missing evidence and policy revocation before committing',async()=>{
+ const s=setup(),errors=[];try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);let calls=0,allowed=true,proof;const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,onError:error=>errors.push(error.message),authorize:()=>allowed,evidence:()=>proof,verify:async()=>{calls++;allowed=false;return {outcome:'applied',result:'result'};}});assert.equal(await worker.runOnce(),0);assert.equal(calls,0);assert.match(errors[0],/evidence/);proof={principalId:'operator',reference:'case'};assert.equal(await worker.runOnce(),0);assert.equal(calls,1);assert.match(errors[1],/forbidden/);assert.equal(s.journal.get('one').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);
+ }finally{close(s);}
+});
+
+test('stopping a recovery worker prevents a late verifier result from changing the journal',async()=>{
+ const s=setup();let entered,release;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,onError:()=>{},authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>{entered();await gate;return {outcome:'applied',result:'verified'};}});worker.start();await started;const stopping=worker.stop();release();await stopping;assert.equal(s.journal.get('one').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('one').status,'succeeded');assert.equal(s.journal.listReconciliations().length,1);
+ }finally{close(s);}
 });
