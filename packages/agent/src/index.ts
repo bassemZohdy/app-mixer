@@ -133,6 +133,8 @@ export {SqliteAgentNoticeDelivery} from './agent-notice-delivery.js';
 export {AgentNoticeDeliveryWorker} from './notice-delivery-worker.js';
 export {createAgentNoticeHttpsTransport} from './notice-https-transport.js';
 export type {AgentNoticeHttpsTransportOptions,AgentNoticeHttpsDestination} from './notice-https-transport.js';
+export {SqliteAgentNoticeReceiver,createAgentNoticeReceiverServer} from './notice-https-receiver.js';
+export type {ReceivedAgentNotice,AgentNoticeReceiverOptions,AgentNoticeReceiverActor,AgentNoticeReceiverAccess,AgentNoticeReceiverServerOptions} from './notice-https-receiver.js';
 export type {AgentNoticeDeliveryWorkerOptions} from './notice-delivery-worker.js';
 export type {AgentNoticeDelivery,AgentNoticeMessage,AgentNoticeDeliveryEvent,AgentNoticeDeliveryOptions,AgentNoticeDeliveryActor,AgentNoticeDeliveryAccess} from './agent-notice-delivery.js';
 
