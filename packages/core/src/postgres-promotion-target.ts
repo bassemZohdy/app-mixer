@@ -1,0 +1,48 @@
+import {definitionSha256,enforcePublicationGuard,type ApplicationDefinition,type PublicationGuard,type PublicationProvenance} from './index.js';
+import {checkPromotionPackage,validEnvironment,type PromotionPackage} from './promotion.js';
+import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
+import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+
+type Options={enabled:boolean;tenantId:string;applicationId:string;sourceEnvironment:string;targetEnvironment:string;query:PostgresJwtRevocationQuery;transaction:<T>(operation:(query:PostgresJwtRevocationQuery)=>Promise<T>)=>Promise<T>;authorizeSignature:(evidence:PromotionSignatureEvidence,pkg:PromotionPackage)=>boolean|Promise<boolean>;publicationGuard?:PublicationGuard};
+type Published={version:number;definition:ApplicationDefinition};
+const text=(v:unknown):v is string=>typeof v==='string'&&v.trim().length>0&&v.length<=256&&!/[\x00-\x1f\x7f]/.test(v);
+const validVersion=(v:unknown,min:number)=>Number.isSafeInteger(v)&&Number(v)>=min&&Number(v)<Number.MAX_SAFE_INTEGER;
+
+/** Shared immutable signed promotion target. The host authenticates callers and protects the database. */
+export class PostgresPromotionTarget {
+ private readonly scope:[string,string,string];private readonly source:string;private readonly query:PostgresJwtRevocationQuery;private readonly transaction:Options['transaction'];private readonly authorizeSignature:Options['authorizeSignature'];private readonly guard:PublicationGuard|undefined;
+ constructor(options:Options){
+  if(!options||options.enabled!==true||!text(options.tenantId)||!text(options.applicationId)||!validEnvironment(options.sourceEnvironment)||!validEnvironment(options.targetEnvironment)||options.sourceEnvironment===options.targetEnvironment||typeof options.query!=='function'||typeof options.transaction!=='function'||typeof options.authorizeSignature!=='function'||(options.publicationGuard!==undefined&&typeof options.publicationGuard!=='function'))throw Error('Invalid promotion target configuration');
+  this.scope=[options.tenantId,options.applicationId,options.targetEnvironment];this.source=options.sourceEnvironment;this.query=options.query;this.transaction=options.transaction;this.authorizeSignature=options.authorizeSignature;this.guard=options.publicationGuard;
+ }
+ async initialize():Promise<void>{
+  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_promotion_scopes (tenant_id TEXT NOT NULL,app_id TEXT NOT NULL,target_environment TEXT NOT NULL,PRIMARY KEY(tenant_id,app_id,target_environment))',[]);
+  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_promoted_publications (tenant_id TEXT NOT NULL,app_id TEXT NOT NULL,target_environment TEXT NOT NULL,version BIGINT NOT NULL,source_environment TEXT NOT NULL,source_version BIGINT NOT NULL,package_digest TEXT NOT NULL,definition TEXT NOT NULL,signature TEXT NOT NULL,PRIMARY KEY(tenant_id,app_id,target_environment,version))',[]);
+  await this.query("CREATE OR REPLACE FUNCTION app_mixer_promoted_publication_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Promoted publications are immutable'; END $$",[]);
+  await this.query("DO $$ BEGIN CREATE TRIGGER app_mixer_promoted_publications_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_promoted_publications FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_promoted_publication_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$",[]);
+  await this.query('INSERT INTO app_mixer_promotion_scopes (tenant_id,app_id,target_environment) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',[...this.scope]);
+ }
+ private async permit(evidence:PromotionSignatureEvidence,pkg:PromotionPackage):Promise<void>{let allowed=false;try{allowed=await this.authorizeSignature(structuredClone(evidence),structuredClone(pkg))===true;}catch{}if(!allowed)throw Error('Promotion signature not authorized');}
+ private parse(row:Record<string,unknown>):{publication:Published;provenance:PublicationProvenance}{
+  const version=Number(row.version),sourceVersion=Number(row.source_version);if(!validVersion(version,1)||!validVersion(sourceVersion,1)||row.source_environment!==this.source||typeof row.definition!=='string'||typeof row.signature!=='string'||typeof row.package_digest!=='string')throw Error('Invalid stored publication');
+  let definition:unknown,evidence:unknown;try{definition=JSON.parse(row.definition);evidence=JSON.parse(row.signature);}catch{throw Error('Invalid stored publication');}
+  const pkg=checkPromotionPackage({formatVersion:1,sourceEnvironment:this.source,sourceVersion,definition,digest:row.package_digest},this.scope[2],this.scope[1]),signature=checkPromotionEvidence(pkg,this.scope[2],evidence,version-1);if(signature.expectedVersion!==version-1)throw Error('Invalid stored publication');
+  return {publication:{version,definition:pkg.definition},provenance:{version,kind:'promotion',previousVersion:version-1,sourceEnvironment:this.source,targetEnvironment:this.scope[2],sourceVersion,packageDigest:pkg.digest,definitionSha256:definitionSha256(pkg.definition),signature}};
+ }
+ private async read(query:PostgresJwtRevocationQuery,version?:number):Promise<{publication:Published;provenance:PublicationProvenance}|undefined>{const result=await query('SELECT version,source_environment,source_version,package_digest,definition,signature FROM app_mixer_promoted_publications WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 AND ($4::bigint IS NULL OR version=$4) ORDER BY version DESC LIMIT 1',[...this.scope,version??null]);if(!Array.isArray(result.rows)||result.rows.length>1)throw Error('Invalid stored publication');return result.rows[0]?this.parse(result.rows[0]):undefined;}
+ async getPublished(version?:number):Promise<Published|undefined>{if(version!==undefined&&!validVersion(version,1))throw Error('Invalid version');return (await this.read(this.query,version))?.publication;}
+ async getPublicationProvenance(version:number):Promise<PublicationProvenance|undefined>{if(!validVersion(version,1))throw Error('Invalid version');return (await this.read(this.query,version))?.provenance;}
+ async getPromotionFloor(source:string,target:string):Promise<number>{if(source!==this.source||target!==this.scope[2])throw Error('Invalid promotion environment');const result=await this.query('SELECT COALESCE(MAX(source_version),0) AS version FROM app_mixer_promoted_publications WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 AND source_environment=$4',[...this.scope,this.source]);const value=Number(result.rows?.[0]?.version);if(!Array.isArray(result.rows)||result.rows.length!==1||!validVersion(value,0))throw Error('Invalid promotion history');return value;}
+ async promote(input:unknown,expectedVersion:number,target:string):Promise<Published>{return this.promoteAdvancing(input,expectedVersion,target);}
+ async promoteVerified(input:unknown,expectedVersion:number,target:string,evidence:PromotionSignatureEvidence):Promise<Published>{return this.promoteAdvancing(input,expectedVersion,target,evidence);}
+ async promoteAdvancing(input:unknown,expectedVersion:number,target:string,evidence?:PromotionSignatureEvidence):Promise<Published>{
+  if(!validVersion(expectedVersion,0)||target!==this.scope[2]||evidence===undefined)throw Error('Invalid promotion');const pkg=checkPromotionPackage(input,target,this.scope[1]);if(pkg.sourceEnvironment!==this.source||!validVersion(pkg.sourceVersion,1))throw Error('Invalid promotion environment');const signature=checkPromotionEvidence(pkg,target,evidence,expectedVersion);if(signature.expectedVersion!==expectedVersion)throw Error('Version-bound signature required');await this.permit(signature,pkg);
+  return this.transaction(async query=>{
+   const locked=await query('SELECT app_id FROM app_mixer_promotion_scopes WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 FOR UPDATE',[...this.scope]);if(!Array.isArray(locked.rows)||locked.rows.length!==1)throw Error('Invalid promotion scope');
+   await this.permit(signature,pkg);const current=await this.read(query),latest=current?.publication.version??0;if(latest!==expectedVersion)throw Error('Publication version conflict');
+   const floor=await query('SELECT COALESCE(MAX(source_version),0) AS version FROM app_mixer_promoted_publications WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 AND source_environment=$4',[...this.scope,this.source]);const previous=Number(floor.rows?.[0]?.version);if(!Array.isArray(floor.rows)||floor.rows.length!==1||!validVersion(previous,0))throw Error('Invalid promotion history');if(pkg.sourceVersion<=previous)throw Error('Source publication did not advance');
+   enforcePublicationGuard(this.guard,pkg.definition);const version=latest+1;if(!validVersion(version,1))throw Error('Invalid version');await query('INSERT INTO app_mixer_promoted_publications (tenant_id,app_id,target_environment,version,source_environment,source_version,package_digest,definition,signature) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[...this.scope,version,this.source,pkg.sourceVersion,pkg.digest,JSON.stringify(pkg.definition),JSON.stringify(signature)]);return {version,definition:structuredClone(pkg.definition)};
+  });
+ }
+}
+export type {Options as PostgresPromotionTargetOptions};

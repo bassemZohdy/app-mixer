@@ -21,6 +21,11 @@ test('health routes are opt-in and reject invalid options',async()=>{
  const store=new ApplicationStore(initial);assert.throws(()=>createDataPlane(store,{health:{timeoutMs:0}}),/configuration/);assert.throws(()=>createDataPlane(store,{health:{timeoutMs:100,check:'bad'}}),/configuration/);const server=createDataPlane(store),base=await start(server);try{assert.equal((await fetch(base+'/health/live')).status,404);}finally{await stop(server);}
 });
 
+test('asynchronous publication readiness is bounded and shared',async()=>{
+ const store=new ApplicationStore(initial);store.publish(0);let release,calls=0;const waiting=new Promise(resolve=>release=resolve),repository={getPublished:async()=>{calls++;await waiting;return store.getPublished();}},server=createDataPlane(repository,{health:{timeoutMs:100}}),base=await start(server);
+ try{const responses=await Promise.all([fetch(base+'/health/ready'),fetch(base+'/health/ready')]);assert.deepEqual(responses.map(response=>response.status),[503,503]);assert.equal(calls,1);assert.equal((await fetch(base+'/health/ready')).status,503);assert.equal(calls,1);release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await fetch(base+'/health/ready')).status,200);assert.equal((await fetch(base+'/application')).status,200);}finally{release();await stop(server);}
+});
+
 test('dependency errors are sanitized and do not break liveness',async()=>{
  const store=new ApplicationStore(initial);store.publish(0);const server=createDataPlane(store,{health:{timeoutMs:100,check:()=>{throw Error('secret dependency error');}}}),base=await start(server);
  try{const response=await fetch(base+'/health/ready');assert.equal(response.status,503);assert.deepEqual(await response.json(),{status:'unavailable'});assert.equal((await fetch(base+'/health/live')).status,200);}finally{await stop(server);}
