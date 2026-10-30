@@ -323,15 +323,16 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     if (extension!=null) return extension.builder(context, _object(_copy(node.extensionProps)));
     if (node.kind == 'Text') {
       final theme = Theme.of(context).textTheme;
-      final style = switch (node.variant) {
-        'h1' => theme.headlineLarge,
-        'h2' => theme.headlineMedium,
-        'h3' => theme.headlineSmall,
-        'h4' => theme.titleLarge,
-        'h5' => theme.titleMedium,
-        'caption' => theme.bodySmall,
-        _ => theme.bodyMedium,
+      final size = switch (node.variant) {
+        'h1' => 32.0,
+        'h2' => 24.0,
+        'h3' => 18.72,
+        'h4' => 16.0,
+        'h5' => 13.28,
+        'caption' => 13.33,
+        _ => 16.0,
       };
+      final style = (theme.bodyMedium ?? const TextStyle()).copyWith(fontSize: size, fontWeight: node.variant?.startsWith('h') == true ? FontWeight.bold : null);
       return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? '', style: style));
     }
     final children=<Widget>[];

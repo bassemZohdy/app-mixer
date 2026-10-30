@@ -39,12 +39,13 @@ try{
  await React.act(()=>{newReceive({version:'v0.9.1',createSurface:{surfaceId:'new',catalogId:APP_MIXER_CATALOG}});newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'New source'}]}});});
  assert.equal(document.querySelector('span').textContent,'New source');
  await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[
-  {id:'root',component:'Column',children:['one','two','three','four','five','caption','body']},
-  ...['h1','h2','h3','h4','h5','caption','body'].map((variant,i)=>({id:['one','two','three','four','five','caption','body'][i],component:'Text',text:variant,variant}))
+  {id:'root',component:'Column',children:['one','two','three','four','five','caption','body','default']},
+  ...['h1','h2','h3','h4','h5','caption','body'].map((variant,i)=>({id:['one','two','three','four','five','caption','body'][i],component:'Text',text:variant,variant})),
+  {id:'default',component:'Text',text:'default'}
  ]}}));
  const variants=[...document.querySelectorAll('span')];
- assert.deepEqual(variants.map(node=>node.style.fontSize),['32px','24px','18.72px','16px','13.28px','13.33px','']);
- assert.deepEqual(variants.map(node=>node.dataset.role??''),['header','header','header','header','header','','']);
+ assert.deepEqual(variants.map(node=>node.style.fontSize),['32px','24px','18.72px','16px','13.28px','13.33px','16px','16px']);
+ assert.deepEqual(variants.map(node=>node.dataset.role??''),['header','header','header','header','header','','','']);
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
  const root2=createRoot(document.getElementById('app'));let next;const failures=[];
  const broken=()=>()=>{throw Error('cleanup failed');},replacement=callback=>{next=callback;};
