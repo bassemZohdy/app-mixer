@@ -19,9 +19,11 @@ def tree():
 
 def wait_for(predicate, description, seconds=90):
     deadline = time.monotonic() + seconds
+    last_tree = None
     while time.monotonic() < deadline:
         try:
             root = tree()
+            last_tree = root
             nodes = list(root.iter('node'))
             if any('FAIL' in node.get('text', '') for node in nodes):
                 raise AssertionError('React Native fixture reported a failure')
@@ -31,7 +33,8 @@ def wait_for(predicate, description, seconds=90):
         except (ValueError, ET.ParseError, subprocess.SubprocessError):
             pass
         time.sleep(1)
-    raise AssertionError('Timed out waiting for ' + description)
+    details = ET.tostring(last_tree, encoding='unicode') if last_tree is not None else 'No hierarchy available'
+    raise AssertionError('Timed out waiting for ' + description + '\n' + details)
 
 
 def find(nodes, **attributes):
@@ -53,6 +56,20 @@ adb('shell', 'am', 'force-stop', 'com.mixerdevice')
 adb('shell', 'am', 'start', '-n', 'com.mixerdevice/.MainActivity')
 field = wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Ada'}), 'accessible field')
 wait_for(lambda nodes: find(nodes, text='Device heading'), 'heading')
+wait_for(lambda nodes: find(nodes, text='First item'), 'first row item')
+wait_for(lambda nodes: find(nodes, text='Second item'), 'second row item')
+update = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Update data' and n.get('clickable')=='true'), None), 'data update button')
+tap(update)
+field = wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Lin'}), 'externally updated field')
+wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name copy', 'text':'Lin'}), 'externally updated second field')
+wait_for(lambda nodes: find(nodes, **{'class':'android.widget.TextView', 'text':'Lin'}), 'externally updated text')
+reject = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Reject invalid' and n.get('clickable')=='true'), None), 'invalid update button')
+tap(reject)
+wait_for(lambda nodes: find(nodes, text='Rejected safely'), 'rejected update')
+wait_for(lambda nodes: find(nodes, text='Device heading'), 'unchanged heading after rejection')
+if find(list(tree().iter('node')), text='Wrong heading'):
+    raise AssertionError('Rejected component update partially changed the heading')
+field = wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Lin'}), 'unchanged field after rejection')
 tap(field)
 adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
 for _ in range(3):
