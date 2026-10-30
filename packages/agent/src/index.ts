@@ -85,7 +85,7 @@ export { DevelopmentAgent, createProposalClient } from './development.js';
 export type { DraftSnapshot, ProposalResult, ProposalClient } from './development.js';
 export { createCapabilityTool } from './capability-tool.js';
 export { createOpenAIToolModel, createToolCallingModel } from './tool-model.js';
-export type { ToolModel, LimitedToolModel } from './tool-model.js';
+export type { ToolModel, LimitedToolModel, CostLimitedToolModel } from './tool-model.js';
 export {SqliteAgentDefinitions,validateAgentManifest} from './persistent-definitions.js';
 export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';
 export {createConfiguredAgentRun} from './configured-runtime.js';
@@ -133,7 +133,7 @@ export {SqliteAgentNoticeDelivery} from './agent-notice-delivery.js';
 export type {AgentNoticeDelivery,AgentNoticeMessage,AgentNoticeDeliveryEvent,AgentNoticeDeliveryOptions,AgentNoticeDeliveryActor,AgentNoticeDeliveryAccess} from './agent-notice-delivery.js';
 
 export {SqliteAgentTokenBudget} from './agent-token-budget.js';
-export type {AgentTokenUsage,AgentTokenBudgetOptions} from './agent-token-budget.js';
+export type {AgentTokenUsage,AgentCostUsage,AgentTokenBudgetOptions} from './agent-token-budget.js';
 
 export {SqliteAgentRunHistory} from './agent-run-history.js';
 export {SqliteAgentRunMetrics} from './agent-run-metrics.js';

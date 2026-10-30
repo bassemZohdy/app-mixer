@@ -12,6 +12,9 @@ export interface ToolModel {
 export interface LimitedToolModel extends ToolModel {
   invokeLimited(messages:BaseMessage[], options:{signal?:AbortSignal;maxTotalTokens:number;callId:string}):Promise<{message:BaseMessage;usedTokens:number}>;
 }
+export interface CostLimitedToolModel extends ToolModel {
+  invokeLimitedCost(messages:BaseMessage[], options:{signal?:AbortSignal;maxTotalTokens:number;maxCostMicros:number;currency:string;callId:string}):Promise<{message:BaseMessage;usedTokens:number;usedCostMicros:number}>;
+}
 const State=Annotation.Root({
   messages:Annotation<BaseMessage[],BaseMessage[]>({reducer:(previous,next)=>previous.concat(next),default:()=>[]}),
   turns:Annotation<number>()

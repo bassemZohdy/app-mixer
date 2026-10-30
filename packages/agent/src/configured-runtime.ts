@@ -4,7 +4,7 @@ import {AgentApprovalRequired} from './approval-required.js';
 import {AgentDelegationExpired} from './delegation-expired.js';
 import {LangGraphAGUIAdapter,type RunInput} from './index.js';
 import {createCapabilityTool} from './capability-tool.js';
-import {createToolCallingModel,type ToolModel,type LimitedToolModel} from './tool-model.js';
+import {createToolCallingModel,type ToolModel,type LimitedToolModel,type CostLimitedToolModel} from './tool-model.js';
 import {SqliteAgentActionJournal} from './action-journal.js';
 import {SqliteAgentApprovals} from './agent-approvals.js';
 import {type BaseCheckpointSaver} from '@langchain/langgraph-checkpoint';
@@ -27,7 +27,7 @@ type Options={
  actionJournal?:{journal:SqliteAgentActionJournal;maxAttempts:number;prepareInput:(operationId:string,input:unknown,idempotencyKey:string)=>unknown};
  approval?:{store:SqliteAgentApprovals;leaseToken:string;expiresAt:number;required:(identity:AgentIdentity,operationId:string,input:unknown)=>boolean|Promise<boolean>};
  delegation?:DelegationOptions;
- tokenBudget?:{budget:SqliteAgentTokenBudget;maxTokensPerCall:number};
+ tokenBudget?:{budget:SqliteAgentTokenBudget;maxTokensPerCall:number;maxCostMicrosPerCall?:number};
  maxTurns?:number;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean};
 };
 
@@ -40,8 +40,8 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
  const grant=configuredDelegation?structuredClone(configuredDelegation.grant):undefined;
  if(grant&&(!validId(grant.tenantId)||!validId(grant.agentId)||!validId(grant.runId)||!validId(grant.principalId)||!validId(grant.grantId)||!validId(grant.permissionVersion)||!Number.isSafeInteger(grant.expiresAt)||grant.expiresAt<0||(grant.revision!==undefined&&(!Number.isSafeInteger(grant.revision)||grant.revision<1))||grant.tenantId!==tenantId||grant.agentId!==agentId))throw Error('Invalid delegation');
  const delegationAuthorize=configuredDelegation?.authorize,delegationClock=configuredDelegation?.clock??Date.now;
- if(tokenBudget&&(!(tokenBudget.budget instanceof SqliteAgentTokenBudget)||!Number.isSafeInteger(tokenBudget.maxTokensPerCall)||tokenBudget.maxTokensPerCall<1))throw Error('Invalid token budget');
- const budgetStore=tokenBudget?.budget,maxTokensPerCall=tokenBudget?.maxTokensPerCall;
+ if(tokenBudget&&(!(tokenBudget.budget instanceof SqliteAgentTokenBudget)||!Number.isSafeInteger(tokenBudget.maxTokensPerCall)||tokenBudget.maxTokensPerCall<1||(tokenBudget.budget.hasCostLimit()?(!Number.isSafeInteger(tokenBudget.maxCostMicrosPerCall)||tokenBudget.maxCostMicrosPerCall!<1||tokenBudget.maxCostMicrosPerCall!>tokenBudget.budget.costSummary().limit):tokenBudget.maxCostMicrosPerCall!==undefined)))throw Error('Invalid token budget');
+ const budgetStore=tokenBudget?.budget,maxTokensPerCall=tokenBudget?.maxTokensPerCall,maxCostMicrosPerCall=tokenBudget?.maxCostMicrosPerCall;
  if(approval&&(!actionJournal||!(approval.store instanceof SqliteAgentApprovals)||typeof approval.leaseToken!=='string'||!Number.isSafeInteger(approval.expiresAt)||typeof approval.required!=='function'))throw Error('Invalid approval policy');
  if(actionJournal&&(!(actionJournal.journal instanceof SqliteAgentActionJournal)||!Number.isSafeInteger(actionJournal.maxAttempts)||actionJournal.maxAttempts<1||actionJournal.maxAttempts>20||typeof actionJournal.prepareInput!=='function'))throw Error('Invalid action journal');
  const definition=definitions.get(tenantId,agentId);
@@ -75,7 +75,7 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
   }});
  });
  const model=await createModel(structuredClone(snapshot),[...tools]);if(!model||typeof model.invoke!=='function')throw Error('Invalid agent model');current();
- let activeModel:ToolModel=model;if(budgetStore){const limited=model as Partial<LimitedToolModel>;if(typeof limited.invokeLimited!=='function'||maxTokensPerCall!>snapshot.manifest.quotas.maxTokensPerRun)throw Error('Limited model required');activeModel={invoke:async(messages,options)=>{if(options?.signal?.aborted)throw Error('Agent run aborted');const callId=randomUUID(),reserved=maxTokensPerCall!;budgetStore.reserve(callId,reserved);if(options?.signal?.aborted){budgetStore.settle(callId,0);throw Error('Agent run aborted');}const response=await limited.invokeLimited!(messages,{signal:options?.signal,maxTotalTokens:reserved,callId});if(!response||!Number.isSafeInteger(response.usedTokens)||response.usedTokens<0)throw Error('Invalid model token usage');budgetStore.settle(callId,response.usedTokens);if(response.usedTokens>reserved)throw Error('Model token limit exceeded');return response.message;}};}
+ let activeModel:ToolModel=model;if(budgetStore){const limited=model as Partial<LimitedToolModel & CostLimitedToolModel>,cost=budgetStore.hasCostLimit(),currency=cost?budgetStore.costSummary().currency:undefined;if((cost?typeof limited.invokeLimitedCost!=='function':typeof limited.invokeLimited!=='function')||maxTokensPerCall!>snapshot.manifest.quotas.maxTokensPerRun)throw Error('Limited model required');activeModel={invoke:async(messages,options)=>{if(options?.signal?.aborted)throw Error('Agent run aborted');const callId=randomUUID(),reserved=maxTokensPerCall!;budgetStore.reserve(callId,reserved,maxCostMicrosPerCall);if(options?.signal?.aborted){budgetStore.settle(callId,0,cost?0:undefined);throw Error('Agent run aborted');}const response=cost?await limited.invokeLimitedCost!(messages,{signal:options?.signal,maxTotalTokens:reserved,maxCostMicros:maxCostMicrosPerCall!,currency:currency!,callId}):await limited.invokeLimited!(messages,{signal:options?.signal,maxTotalTokens:reserved,callId});if(!response||!Number.isSafeInteger(response.usedTokens)||response.usedTokens<0)throw Error('Invalid model token usage');const usedCost=cost?(response as {usedCostMicros?:number}).usedCostMicros:undefined;if(cost&&(!Number.isSafeInteger(usedCost)||usedCost!<0))throw Error('Invalid model cost usage');budgetStore.settle(callId,response.usedTokens,usedCost);if(response.usedTokens>reserved)throw Error('Model token limit exceeded');if(cost&&usedCost!>maxCostMicrosPerCall!)throw Error('Model cost limit exceeded');return response.message;}};}
  const adapter=new LangGraphAGUIAdapter(createToolCallingModel(activeModel,tools,{maxTurns,checkpoint}),{direct:!!checkpoint});let used=false;
  return {pendingApproval:()=>pendingActionId?{actionId:pendingActionId}:undefined,async *run(input,runOptions={}){
   if(used)throw Error('Configured agent run already used');if(grant&&grant.runId!==input.runId)throw Error('Delegation run mismatch');if(checkpoint&&checkpoint.threadId!==input.runId)throw Error('Checkpoint run mismatch');if(actionJournal&&!actionJournal.journal.isBoundTo({tenantId,agentId},input.runId))throw Error('Action journal run mismatch');if(approval&&!approval.store.isBoundTo({tenantId,agentId},input.runId))throw Error('Approval run mismatch');if(budgetStore&&!budgetStore.isBoundTo({tenantId,agentId},input.runId,snapshot.manifest.quotas.maxTokensPerRun))throw Error('Token budget run mismatch');used=true;current();
