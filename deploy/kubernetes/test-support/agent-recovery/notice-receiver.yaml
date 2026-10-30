@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: notice-receiver
+  labels: {app: notice-receiver}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: receiver
+      image: app-mixer-agent-recovery:test
+      imagePullPolicy: Never
+      args: [node, deploy/kubernetes/test-support/agent-recovery/notice-pod.mjs, receiver, PHASE, MODE]
+      env: [{name: NODE_EXTRA_CA_CERTS, value: /certs/cert.pem}]
+      readinessProbe: {tcpSocket: {port: 3001}, periodSeconds: 1}
+      volumeMounts: [{name: state, mountPath: /data}, {name: tls, mountPath: /certs, readOnly: true}]
+  volumes:
+    - name: state
+      persistentVolumeClaim: {claimName: agent-recovery-test}
+    - name: tls
+      secret: {secretName: notice-test-tls}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notice-receiver
+spec:
+  selector: {app: notice-receiver}
+  ports: [{port: 3001, targetPort: 3001}]
