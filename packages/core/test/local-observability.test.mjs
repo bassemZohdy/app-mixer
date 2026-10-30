@@ -27,3 +27,10 @@ test('local data service exposes opt-in health and authorized metrics',async()=>
   const response=await fetch(metrics,{headers:{authorization:`Bearer ${token}`}});assert.equal(response.status,200);assert.match(await response.text(),/app_mixer_data_plane_requests_total/);
  }finally{if(child.exitCode===null){child.kill();await once(child,'exit');}await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('local data service marks readiness unavailable before shutdown',{skip:process.platform==='win32',timeout:10000},async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-drain-'));await writeFile(join(dir,'application.json'),JSON.stringify({id:'demo',schemaVersion:1,revision:0,pages:[]}));const port=await freePort(),env={...process.env,APP_MIXER_MANIFEST:join(dir,'application.json'),APP_MIXER_DATABASE:join(dir,'app.sqlite'),DATA_PORT:String(port),DATA_HEALTH_ENABLED:'true',DATA_DRAIN_DELAY_MS:'1500'};
+ const init=spawnSync(process.execPath,[service,'init'],{env,encoding:'utf8'});assert.equal(init.status,0,init.stderr);const child=spawn(process.execPath,[service,'data'],{env,stdio:'ignore'}),base=`http://127.0.0.1:${port}`;
+ try{assert.equal((await ready(base+'/health/ready',child)).status,200);const exited=once(child,'exit');child.kill('SIGTERM');let response;for(let i=0;i<50;i++){response=await fetch(base+'/health/ready');if(response.status===503)break;await delay(10);}assert.equal(response.status,503);assert.equal((await fetch(base+'/health/live')).status,200);assert.equal((await fetch(base+'/application')).status,200);const [code]=await exited;assert.equal(code,0);}finally{if(child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await once(child,'exit');}await rm(dir,{recursive:true,force:true});}
+});
