@@ -1,0 +1,2 @@
+const signedPlanFixture = <String, dynamic>{'version':1,'keyId':'test-key','payload':'eyJ0ZW5hbnRJZCI6InRlbmFudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsImlzc3VlZEF0IjoxMDAsImV4cGlyZXNBdCI6MTAwMDAsInBsYW4iOnsidmVyc2lvbiI6MSwiYXBwbGljYXRpb25JZCI6ImRlbW8iLCJyZXZpc2lvbiI6MCwiY29tcG9uZW50cyI6W3siaWQiOiJleGFtcGxlLmNoYXJ0IiwidmVyc2lvbiI6IjEuMC4wIiwic2NvcGUiOiJhcHBsaWNhdGlvbiIsIm5hbWUiOiJjaGFydCJ9XX19','signature':'oPgm-o2_3gB0Jpj-n0BNKv4jrCwtN183_3NxmnGpMoIxrvNnmGiNKbYTqczrFB0o5hWG9B0srpmw9DIPfPY1BA'};
+const signedPlanPublicKey = 'jImdxedQS8sq-Uuuo_OjmRi5UuAN-FE1RDDSI5s-Xos';
