@@ -357,12 +357,34 @@ void main() {
     await tester.pump();expect(tester.takeException(),isNull);expect(find.text('Heading'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'Ada');await tester.pump();expect(tester.takeException(),isNull);expect(errors,isEmpty);
   });
+  testWidgets('default cross-axis alignment stretches column and row children', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['wide','short','row']},
+      {'id':'wide','component':'Text','text':'A much wider label'},
+      {'id':'short','component':'Text','text':'Short'},
+      {'id':'row','component':'Row','children':['tall','small']},
+      {'id':'tall','component':'Text','text':'Tall','variant':'h1'},
+      {'id':'small','component':'Text','text':'Small'}
+    ]}));
+    await tester.pump();
+    expect(tester.getSize(find.text('Short')).width,tester.getSize(find.text('A much wider label')).width);
+    expect(tester.getSize(find.text('Small')).height,tester.getSize(find.text('Tall')).height);
+    expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   test('rejects excessive nested stretch atomically', () {
     final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
     store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));
     final components=<Map<String,dynamic>>[];
     for(var i=0;i<5;i++){components.add({'id':i==0?'root':'n$i','component':'Column','align':'stretch','children':[i==4?'leaf':'n${i+1}']});}
     components.add({'id':'leaf','component':'Text','text':'deep'});
+    expect(()=>store.apply(message('updateComponents',{'surfaceId':'main','components':components})),throwsFormatException);
+    expect(store.snapshot().single?.text,'Safe');
+    for(final c in components){c.remove('align');}
     expect(()=>store.apply(message('updateComponents',{'surfaceId':'main','components':components})),throwsFormatException);
     expect(store.snapshot().single?.text,'Safe');
   });
