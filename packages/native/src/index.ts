@@ -169,7 +169,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   const textStyles:Record<string,{fontSize:number;fontWeight?:'bold'}>={
     h1:{fontSize:32,fontWeight:'bold'},h2:{fontSize:24,fontWeight:'bold'},
     h3:{fontSize:18.72,fontWeight:'bold'},h4:{fontSize:16,fontWeight:'bold'},
-    h5:{fontSize:13.28,fontWeight:'bold'},caption:{fontSize:13.33}
+    h5:{fontSize:13.28,fontWeight:'bold'},caption:{fontSize:13.33},body:{fontSize:16}
   };
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
@@ -189,7 +189,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const render=(node:NativeNode,surface:NativeSurface):any=>{
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{}),...(node.variant&&Object.hasOwn(textStyles,node.variant)?{style:textStyles[node.variant]}:{})},node.text);
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{}),style:textStyles[node.variant??'body']},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}

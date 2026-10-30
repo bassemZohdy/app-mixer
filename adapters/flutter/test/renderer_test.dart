@@ -309,19 +309,36 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add))));
     receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
     receive(message('updateComponents',{'surfaceId':'main','components':[
-      {'id':'root','component':'Column','children':['heading','body','caption']},
+      {'id':'root','component':'Column','children':['heading','h2','h3','h4','h5','body','explicitBody','caption']},
       {'id':'heading','component':'Text','text':'Heading','variant':'h1'},
+      {'id':'h2','component':'Text','text':'Heading 2','variant':'h2'},
+      {'id':'h3','component':'Text','text':'Heading 3','variant':'h3'},
+      {'id':'h4','component':'Text','text':'Heading 4','variant':'h4'},
+      {'id':'h5','component':'Text','text':'Heading 5','variant':'h5'},
       {'id':'body','component':'Text','text':'Body'},
+      {'id':'explicitBody','component':'Text','text':'Explicit body','variant':'body'},
       {'id':'caption','component':'Text','text':'Caption','variant':'caption'}
     ]}));
     await tester.pump();
     final theme=Theme.of(tester.element(find.text('Heading'))).textTheme;
-    expect(tester.widget<Text>(find.text('Heading')).style,theme.headlineLarge);
-    expect(tester.widget<Text>(find.text('Body')).style,theme.bodyMedium);
-    expect(tester.widget<Text>(find.text('Caption')).style,theme.bodySmall);
+    expect(tester.widget<Text>(find.text('Heading')).style,theme.bodyMedium!.copyWith(fontSize:32,fontWeight:FontWeight.bold));
+    expect(tester.widget<Text>(find.text('Body')).style,theme.bodyMedium!.copyWith(fontSize:16));
+    expect(tester.widget<Text>(find.text('Explicit body')).style,theme.bodyMedium!.copyWith(fontSize:16));
+    expect(tester.widget<Text>(find.text('Caption')).style,theme.bodyMedium!.copyWith(fontSize:13.33));
+    for(final entry in {'Heading 2':24.0,'Heading 3':18.72,'Heading 4':16.0,'Heading 5':13.28}.entries){final style=tester.widget<Text>(find.text(entry.key)).style;expect(style?.fontSize,entry.value);expect(style?.fontWeight,FontWeight.bold);}
     final headingSemantics=tester.widget<Semantics>(find.ancestor(of:find.text('Heading'),matching:find.byType(Semantics)).first);
     expect(headingSemantics.properties.header,isTrue);
     expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('text retains host font and color and respects text scaling', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(theme:ThemeData(textTheme:const TextTheme(bodyMedium:TextStyle(fontFamily:'serif',color:Colors.purple))),home:MediaQuery(data:const MediaQueryData(textScaler:TextScaler.linear(1.5)),child:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Accessible','variant':'h2'}]}));
+    await tester.pump();final text=tester.widget<Text>(find.text('Accessible'));expect(text.style?.fontFamily,'serif');expect(text.style?.color,Colors.purple);expect(text.style?.fontSize,24);expect(MediaQuery.textScalerOf(tester.element(find.text('Accessible'))).scale(24),36);expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
 
   testWidgets('stretch layouts render text and input in bounded and nested axes', (tester) async {
