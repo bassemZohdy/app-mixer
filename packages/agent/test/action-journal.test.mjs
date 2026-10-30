@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AIMessage} from '@langchain/core/messages';
@@ -76,7 +77,7 @@ test('unknown, failed and malformed verifier outcomes leave safe journal states'
 });
 
 test('verification failure and competing reconciliation cannot commit stale evidence',async()=>{
- const s=setup();try{await assert.rejects(s.journal.invoke('call','op',{},2,async()=>{throw Error('lost');}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);await assert.rejects(s.journal.reconcileWith('call',async()=>{throw Error('lookup failed');}),/lookup failed/);assert.equal(s.journal.get('call').status,'uncertain');let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),pending=s.journal.reconcileWith('call',async()=>{started();await gate;return {outcome:'applied',result:{receipt:'stale'}};});await ready;s.journal.reconcile('call','not_applied');resume();await assert.rejects(pending,/stale/);assert.equal(s.journal.get('call').status,'ready');}finally{close(s);}
+ const s=setup();try{await assert.rejects(s.journal.invoke('call','op',{},2,async()=>{throw Error('lost');}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);await assert.rejects(s.journal.reconcileWith('call',async()=>{throw Error('lookup failed');}),/lookup failed/);assert.equal(s.journal.get('call').status,'uncertain');let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),pending=s.journal.reconcileWith('call',async()=>{started();await gate;return {outcome:'applied',result:{receipt:'stale'}};},{principalId:'reviewer',reference:'stale-case'});await ready;s.journal.reconcile('call','not_applied');resume();await assert.rejects(pending,/stale/);assert.equal(s.journal.get('call').status,'ready');assert.deepEqual(s.journal.listReconciliations(),[]);}finally{close(s);}
 });
 
 test('verifier results cannot settle after the run changes or attempts are exhausted',async()=>{
@@ -99,4 +100,20 @@ test('bounded recovery passes verify uncertain actions individually without repl
 
 test('recovery pass reports a stale decision after competing reconciliation',async()=>{
  const s=setup();try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost');}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),pending=s.journal.reconcilePending(async()=>{started();await gate;return {outcome:'applied',result:'stale'};});await ready;s.journal.reconcile('one','not_applied');resume();const result=await pending;assert.match(result.results[0].error.message,/stale/);assert.equal(s.journal.get('one').status,'ready');}finally{close(s);}
+});
+
+
+test('action reconciliation decisions atomically retain scoped actor and evidence metadata',async()=>{
+ const s=setup();let reopened,other,db;try{
+  for(const id of ['first','second','unknown'])await assert.rejects(s.journal.invoke(id,'op',{secret:'input'},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);
+  assert.throws(()=>s.journal.reconcileWithEvidence('first','not_applied',undefined,{principalId:'',reference:'case'}),/evidence/);s.journal.reconcileWithEvidence('first','not_applied',undefined,{principalId:'operator',reference:'case-1'});
+  const evidence={principalId:'reviewer',reference:'case-2'};assert.equal(await s.journal.reconcileWith('second',async()=>{evidence.principalId='changed';return {outcome:'applied',result:{secret:'result'}};},evidence),'applied');assert.equal(await s.journal.reconcileWith('unknown',async()=>({outcome:'unknown'}),{principalId:'reviewer',reference:'case-3'}),'unknown');
+  const first=s.journal.listReconciliations({limit:1}),second=s.journal.listReconciliations({after:first[0].id,limit:1});assert.equal(first[0].actionId,'first');assert.equal(first[0].principalId,'operator');assert.equal(first[0].method,'manual');assert.equal(second[0].principalId,'reviewer');assert.equal(second[0].method,'verifier');assert.equal(second[0].outcome,'applied');assert.equal(JSON.stringify([...first,...second]).includes('secret'),false);
+  other=new SqliteAgentActionJournal(s.path,{scope:{...scope,tenantId:'other'},runId:'run',leaseToken:'token'});assert.deepEqual(other.listReconciliations(),[]);reopened=new SqliteAgentActionJournal(s.path,{scope,runId:'run',leaseToken:'token'});assert.deepEqual(reopened.listReconciliations(),[...first,...second]);db=new DatabaseSync(s.path);assert.throws(()=>db.exec('DELETE FROM agent_action_reconciliations'),/immutable/);assert.throws(()=>db.exec("UPDATE agent_action_reconciliations SET reference='other'"),/immutable/);
+ }finally{db?.close();other?.close();reopened?.close();close(s);}
+});
+
+test('audit insertion failure rolls back action reconciliation',async()=>{
+ const s=setup();let db;try{await assert.rejects(s.journal.invoke('call','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_action_audit BEFORE INSERT ON agent_action_reconciliations BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;");const evidence={principalId:'reviewer',reference:'case'};assert.throws(()=>s.journal.reconcileWithEvidence('call','failed',undefined,evidence),/audit unavailable/);assert.equal(s.journal.get('call').status,'uncertain');await assert.rejects(s.journal.reconcileWith('call',async()=>({outcome:'applied',result:{ok:true}}),evidence),/audit unavailable/);assert.equal(s.journal.get('call').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);
+ }finally{db?.close();close(s);}
 });
