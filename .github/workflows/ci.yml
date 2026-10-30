@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: PostgreSQL security storage integration tests
-        run: node --test packages/core/test/postgres-jwt-revocations.test.mjs packages/core/test/postgres-capability-audit.test.mjs packages/core/test/postgres-auth-failure-audit.test.mjs packages/core/test/postgres-publication-releases.test.mjs packages/core/test/postgres-offline-request-keys.test.mjs packages/core/test/postgres-offline-executions.test.mjs packages/core/test/postgres-offline-recovery.test.mjs packages/core/test/postgres-offline-slots.test.mjs
+        run: node --test packages/core/test/postgres-jwt-revocations.test.mjs packages/core/test/postgres-capability-audit.test.mjs packages/core/test/postgres-auth-failure-audit.test.mjs packages/core/test/postgres-publication-releases.test.mjs packages/core/test/postgres-offline-request-keys.test.mjs packages/core/test/postgres-offline-executions.test.mjs packages/core/test/postgres-offline-recovery.test.mjs packages/core/test/postgres-offline-slots.test.mjs packages/agent/test/postgres-agent-memory.test.mjs
         env:
           APP_MIXER_TEST_POSTGRES_URL: postgresql://appmixer:test-only-password@127.0.0.1:5432/appmixer_test
   test:
