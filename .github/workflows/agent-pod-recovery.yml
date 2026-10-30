@@ -1,0 +1,61 @@
+name: Agent pod recovery
+on:
+  pull_request:
+    paths:
+      - 'packages/agent/**'
+      - 'packages/core/**'
+      - 'packages/web/**'
+      - 'deploy/kubernetes/test-support/agent-recovery/**'
+      - '.github/workflows/agent-pod-recovery.yml'
+      - 'package*.json'
+      - 'tsconfig.base.json'
+      - '.dockerignore'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pod-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified kind
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  '"$RUNNER_TEMP/kind" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Create cluster and load test image
+        run: |
+          kind create cluster --name agent-recovery
+          docker build -f deploy/kubernetes/test-support/agent-recovery/Dockerfile -t app-mixer-agent-recovery:test .
+          kind load docker-image app-mixer-agent-recovery:test --name agent-recovery
+      - name: Verify recovery after deleting the worker pod
+        run: |
+          set -eu
+          ns=agent-recovery-test
+          script=deploy/kubernetes/test-support/agent-recovery/recovery.mjs
+          kubectl create namespace "$ns"
+          kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/environment.yaml
+          kubectl wait -n "$ns" --for=condition=Ready pod/agent-test-provider pod/agent-test-manager --timeout=120s
+          kubectl exec -n "$ns" agent-test-manager -- node "$script" setup
+          kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/worker.yaml
+          kubectl wait -n "$ns" --for=condition=Ready pod/agent-test-worker --timeout=120s
+          observed=false
+          for i in $(seq 1 60); do
+            if kubectl exec -n "$ns" agent-test-manager -- node "$script" probe; then observed=true; break; fi
+            sleep 1
+          done
+          [ "$observed" = true ]
+          kubectl delete -n "$ns" pod/agent-test-worker --grace-period=5 --wait=true --timeout=90s
+          kubectl delete -n "$ns" pod/agent-test-manager --grace-period=5 --wait=true --timeout=90s
+          kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/environment.yaml
+          kubectl wait -n "$ns" --for=condition=Ready pod/agent-test-manager --timeout=120s
+          kubectl exec -n "$ns" agent-test-manager -- node "$script" recover
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods,pvc -n agent-recovery-test -o wide || true
+          kubectl describe pods -n agent-recovery-test || true
+          kubectl logs -n agent-recovery-test agent-test-worker || true
+          kubectl logs -n agent-recovery-test agent-test-provider || true

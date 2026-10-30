@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-test-worker
+spec:
+  restartPolicy: Never
+  containers:
+    - name: worker
+      image: app-mixer-agent-recovery:test
+      imagePullPolicy: Never
+      args: [node, deploy/kubernetes/test-support/agent-recovery/recovery.mjs, worker]
+      volumeMounts: [{name: state, mountPath: /data}]
+  volumes:
+    - name: state
+      persistentVolumeClaim: {claimName: agent-recovery-test}
