@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { CapabilityRegistry } from './capabilities.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 
@@ -6,6 +7,7 @@ type Actor = {tenantId:string; principalId:string};
 type Authenticate = (request:IncomingMessage) => Actor | undefined | Promise<Actor | undefined>;
 type AuditFailure = (event:{reason:'unauthenticated';remoteAddress?:string}) => void | Promise<void>;
 export type CapabilityServerTracingOptions=HttpServerTracingOptions;
+export type CapabilityHttpsOptions={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
 function reply(res:ServerResponse,status:number,value:unknown):void {
   res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
   res.end(JSON.stringify(value));
@@ -16,12 +18,11 @@ async function body(req:IncomingMessage):Promise<unknown> {
   for await(const chunk of req) {const part=Buffer.from(chunk);size+=part.length;if(size>1024*1024)throw Error('TOO_LARGE');parts.push(part);}
   try{return JSON.parse(Buffer.concat(parts).toString('utf8')) as unknown;}catch{throw Error('INVALID_JSON');}
 }
-/** Host-authenticated local endpoint; the authentication callback is trusted server code. */
-export function createCapabilityServer(registry:CapabilityRegistry, authenticate:Authenticate, auditFailure:AuditFailure, tracing?:CapabilityServerTracingOptions):Server {
+function createCapabilityHandler(registry:CapabilityRegistry, authenticate:Authenticate, auditFailure:AuditFailure, tracing?:CapabilityServerTracingOptions):RequestListener {
   if(typeof authenticate!=='function'||typeof auditFailure!=='function') throw Error('Authentication and failure audit are required');
   if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid capability tracing configuration');
   const dispatch=tracing?traceHttp({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},req=>({method:req.method==='POST'?'POST':'_OTHER',...(req.method==='POST'&&/^\/capabilities\/[^/]+\/invoke$/.test(req.url??'')?{path:'/capabilities/{operationId}/invoke'}:{})})):undefined;
-  return createServer((req,res)=>{
+  return (req,res)=>{
     const run=()=>{void (async()=>{
       let actor:Actor|undefined;
       try{actor=await authenticate(req);}catch{actor=undefined;}
@@ -48,5 +49,18 @@ export function createCapabilityServer(registry:CapabilityRegistry, authenticate
       }
     })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,{error:'Internal server error'});else if(!res.destroyed)res.destroy();});};
     if(dispatch)dispatch(req,res,run);else run();
-  });
+  };
+}
+
+/** Host-authenticated HTTP endpoint for local use or a trusted TLS-terminating proxy. */
+export function createCapabilityServer(registry:CapabilityRegistry,authenticate:Authenticate,auditFailure:AuditFailure,tracing?:CapabilityServerTracingOptions):Server {
+ return createServer(createCapabilityHandler(registry,authenticate,auditFailure,tracing));
+}
+
+/** Direct TLS transport; optional client CA requires a verified client certificate. */
+export function createCapabilityHttpsServer(registry:CapabilityRegistry,authenticate:Authenticate,auditFailure:AuditFailure,tls:CapabilityHttpsOptions,tracing?:CapabilityServerTracingOptions):HttpsServer {
+ const pem=(value:unknown):value is string|Buffer=>(typeof value==='string'&&value.trim().length>0)||(Buffer.isBuffer(value)&&value.length>0);
+ if(!tls||typeof tls!=='object'||Array.isArray(tls)||Object.keys(tls).some(key=>!['cert','key','clientCa'].includes(key))||!pem(tls.cert)||!pem(tls.key)||(tls.clientCa!==undefined&&!pem(tls.clientCa)))throw Error('Invalid capability TLS configuration');
+ const handler=createCapabilityHandler(registry,authenticate,auditFailure,tracing);
+ return createHttpsServer({cert:tls.cert,key:tls.key,minVersion:'TLSv1.2',...(tls.clientCa!==undefined?{ca:tls.clientCa,requestCert:true,rejectUnauthorized:true}:{})},handler);
 }
