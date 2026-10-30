@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import {checkPromotionPackage, createPromotionPackage} from './promotion.js';
+import {checkPromotionPackage, createPromotionPackage,validEnvironment} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
 import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
 
@@ -73,6 +73,12 @@ export class SqliteApplicationStore {
   }
 
   close(): void { this.db.close(); }
+
+  getPromotionFloor(sourceEnvironment:string,targetEnvironment:string):number {
+    if(!validEnvironment(sourceEnvironment)||!validEnvironment(targetEnvironment)||sourceEnvironment===targetEnvironment)throw Error('Invalid promotion environment');
+    const row=this.db.prepare('SELECT MAX(source_version) AS version FROM application_promotions WHERE app_id=? AND source_environment=? AND target_environment=?').get(this.id,sourceEnvironment,targetEnvironment);
+    const value=row?.version===null||row?.version===undefined?0:Number(row.version);if(!Number.isSafeInteger(value)||value<0)throw Error('Invalid promotion history');return value;
+  }
 
   getDraft(): ApplicationDefinition {
     const row = this.db.prepare('SELECT definition FROM application_drafts WHERE app_id = ?').get(this.id);
