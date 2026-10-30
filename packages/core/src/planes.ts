@@ -208,9 +208,26 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
     respond(res, 404, {error:'Not found'});
   });
 }
+export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)=>boolean|Promise<boolean>};
 /** Data plane exposes only immutable publications. It does not depend on the control plane. */
-export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>): Server {
-  return server(async (req, res) => {
+export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions}): Server {
+  const health=options?.health;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');
+  const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined;
+  const readinessCheck=():Promise<boolean>=>{
+    if(!check)return Promise.resolve(true);if(pending)return pending;
+    const current=new AbortController();controller=current;let timer:ReturnType<typeof setTimeout>;
+    const task=Promise.resolve().then(()=>check(current.signal)).then(value=>value===true,()=>false);
+    const deadline=new Promise<boolean>(resolve=>{timer=setTimeout(()=>{current.abort();resolve(false);},timeout);});
+    const result=Promise.race([task,deadline]);pending=result;
+    void task.finally(()=>{clearTimeout(timer);if(controller===current)controller=undefined;if(pending===result)pending=undefined;});
+    return result;
+  };
+  const instance=server(async (req, res) => {
+    if(health&&req.method==='GET'&&req.url==='/health/live'){respond(res,200,{status:'live'});return;}
+    if(health&&req.method==='GET'&&req.url==='/health/ready'){
+      let ready=false;try{ready=!!repository.getPublished()&&await readinessCheck()&&!!repository.getPublished();}catch{}
+      respond(res,ready?200:503,{status:ready?'ready':'unavailable'});return;
+    }
     if (req.method !== 'GET' || (req.url !== '/application' && !/^\/application\/versions\/[1-9]\d*$/.test(req.url ?? ''))) {
       respond(res, 404, {error:'Not found'}); return;
     }
@@ -225,6 +242,7 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     res.setHeader('etag',tag);
     respond(res, 200, published);
   });
+  instance.on('close',()=>controller?.abort());return instance;
 }
 
 /** Proposal-only endpoint for an agent; it cannot apply, approve or publish. */
