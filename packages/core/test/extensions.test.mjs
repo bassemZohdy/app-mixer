@@ -299,6 +299,7 @@ test('extension runtime bridges require declared references and preserve capabil
  const audits=[],capabilities=new CapabilityRegistry(event=>audits.push(event.outcome));
  const candidate={operationId:'lookup',method:'GET',path:'/lookup'};
  assert.throws(()=>registerExtensionCapability(capabilities,registry,[],candidate,{authorize:()=>true,validate:()=>true}),/not available/);
+ assert.throws(()=>registerExtensionCapability(capabilities,registry,[ref],candidate,{authorize:()=>true,validate:()=>true,authorizeExtension:()=>false}),/requires a declared/);
  registerExtensionCapability(capabilities,registry,[ref],candidate,{authorize:context=>context.principalId==='allowed',validate:input=>input?.valid===true});
  const context={tenantId:'tenant',principalId:'denied',origin:'ui'};
  await assert.rejects(()=>capabilities.invoke('lookup',{valid:true},context),/forbidden/);assert.equal(calls.length,0);
