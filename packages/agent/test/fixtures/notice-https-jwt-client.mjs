@@ -1,0 +1,4 @@
+import assert from 'node:assert/strict';
+import {createAgentNoticeHttpsTransport,createAgentNoticeHttpsVerifier} from '../../dist/index.js';
+const scope={tenantId:'tenant',agentId:'agent'},tokens=JSON.parse(process.env.TEST_TOKENS),options={scope,destinations:[{id:'local',url:process.env.TEST_NOTICE_URL,getBearerToken:async()=>tokens.shift()}],timeoutMs:5000},send=createAgentNoticeHttpsTransport(options),verify=createAgentNoticeHttpsVerifier(options),message={noticeId:1,...scope,runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:0},key='123e4567-e89b-42d3-a456-426614174000';
+await send(message,'local',key);assert.equal(await verify(message,'local',key),true);await assert.rejects(send(message,'local',key),/Notice transport failed/);await assert.rejects(send(message,'local',key),/Notice transport failed/);assert.equal(tokens.length,0);
