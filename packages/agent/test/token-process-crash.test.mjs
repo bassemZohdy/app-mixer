@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fork} from 'node:child_process';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {SqliteAgentRuns,SqliteAgentTokenBudget} from '../dist/index.js';
+
+const scope={tenantId:'tenant',agentId:'agent'},other={tenantId:'other',agentId:'agent'},workerPath=fileURLToPath(new URL('./fixtures/crash-token-worker.mjs',import.meta.url));
+for(const mode of ['before','after','recorded'])test(`token reservation survives worker crash ${mode} provider usage`,{timeout:20000},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'agent-token-crash-')),path=join(dir,'runs.sqlite'),usage=new Map();let runs,budget,otherBudget,retryBudget,child,calls=0,hold=mode==='after',entered;const applied=new Promise(resolve=>entered=resolve);
+ const provider=createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(req.method==='GET'&&url.pathname==='/lookup'){const used=usage.get(url.searchParams.get('id'));res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(used===undefined?{found:false}:{found:true,usedTokens:used}));return;}if(req.method!=='POST'||url.pathname!=='/invoke'){res.writeHead(404);res.end();return;}const chunks=[];for await(const chunk of req)chunks.push(chunk);const {callId}=JSON.parse(Buffer.concat(chunks));calls++;if(!usage.has(callId))usage.set(callId,30);entered();if(hold)return;res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({usedTokens:usage.get(callId)}));});
+ try{
+  provider.listen(0,'127.0.0.1');await once(provider,'listening');const base=`http://127.0.0.1:${provider.address().port}`;runs=new SqliteAgentRuns(path);runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:10000},0);let isolated=runs.create(other,'run',{definitionVersion:1,maxAttempts:3,deadline:10000},0);isolated=runs.claim(other,'run',isolated.revision,'other-worker',100,10);otherBudget=new SqliteAgentTokenBudget(path,{scope:other,runId:'run',leaseToken:isolated.leaseToken,maxTokens:100,clock:()=>10});otherBudget.reserve('call',40);otherBudget.settle('call',7);otherBudget.close();otherBudget=undefined;runs.close();runs=undefined;
+  child=fork(workerPath,[path,base,mode],{stdio:['ignore','ignore','ignore','ipc']});let signalRecorded;const recorded=new Promise(resolve=>signalRecorded=resolve);child.on('message',msg=>{if(msg.type==='recorded')signalRecorded();});const [message]=await Promise.race([once(child,'message'),once(child,'exit').then(()=>{throw Error('worker exited before reservation');})]);assert.equal(message.type,'reserved');if(mode!=='before')await applied;if(mode==='recorded')await recorded;const exited=once(child,'exit');child.kill('SIGKILL');await exited;child=undefined;hold=false;
+  runs=new SqliteAgentRuns(path);let run=runs.get(scope,'run');assert.equal(run.status,'running');assert.throws(()=>runs.recoverExpired(scope,'run',run.revision,109),/active/);run=runs.recoverExpired(scope,'run',run.revision,110);budget=new SqliteAgentTokenBudget(path,{scope,runId:'run',leaseToken:'retired-token',maxTokens:100,clock:()=>110});assert.equal(budget.get('call').status,mode==='recorded'?'settled':'reserved');otherBudget=new SqliteAgentTokenBudget(path,{scope:other,runId:'run',leaseToken:'retired-token',maxTokens:100,clock:()=>110});assert.equal(otherBudget.get('call').used,7);
+  if(mode!=='recorded'){assert.throws(()=>runs.reconcile(scope,'run',run.revision,'retry',111),/Token usage requires reconciliation/);const observed=await (await fetch(base+'/lookup?id=call')).json();assert.equal(observed.found,mode==='after');budget.reconcile('call',observed.found?observed.usedTokens:0);}assert.deepEqual(budget.summary(),{limit:100,committed:mode==='before'?0:30,reserved:0});assert.equal(calls,mode==='before'?0:1);
+  run=runs.reconcile(scope,'run',run.revision,'retry',111);run=runs.claim(scope,'run',run.revision,'recovery-worker',100,112);retryBudget=new SqliteAgentTokenBudget(path,{scope,runId:'run',leaseToken:run.leaseToken,maxTokens:100,clock:()=>113});retryBudget.reserve('next',60);assert.equal(retryBudget.get('next').status,'reserved');assert.equal(calls,mode==='before'?0:1);
+ }finally{if(child){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}retryBudget?.close();otherBudget?.close();budget?.close();runs?.close();provider.closeAllConnections();if(provider.listening)await new Promise(resolve=>provider.close(resolve));rmSync(dir,{recursive:true,force:true});}
+});
