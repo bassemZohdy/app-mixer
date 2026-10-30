@@ -8,6 +8,8 @@ void main() {
 
   testWidgets('renders, edits and sends an action on a mobile device', (tester) async {
     final semantics = tester.ensureSemantics();
+    // enterText injects editing updates; do not let a real IME race those updates.
+    tester.testTextInput.register();
     try {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {
@@ -53,6 +55,6 @@ void main() {
     expect(disabled.flagsCollection.isButton, isTrue);expect(disabled.flagsCollection.hasEnabledState, isTrue);expect(disabled.flagsCollection.isEnabled, isFalse);expect(disabled.label, 'Save');
     expect(errors, isEmpty);
     expect(tester.takeException(), isNull);
-    } finally {semantics.dispose();}
+    } finally {tester.testTextInput.unregister();semantics.dispose();}
   });
 }
