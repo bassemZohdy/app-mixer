@@ -13,7 +13,7 @@ spec:
         - {name: POSTGRES_PASSWORD, value: test-only-password}
         - {name: POSTGRES_DB, value: appmixer_test}
       readinessProbe:
-        exec: {command: [pg_isready, -U, appmixer, -d, appmixer_test]}
+        exec: {command: [pg_isready, -h, 127.0.0.1, -U, appmixer, -d, appmixer_test]}
         periodSeconds: 2
 ---
 apiVersion: v1
