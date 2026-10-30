@@ -170,3 +170,7 @@ export type {SemanticMemoryWriteOptions,SemanticMemoryWriteInput,SemanticMemoryW
 
 export {registerSemanticMemoryDelete} from './semantic-memory-delete-capability.js';
 export type {SemanticMemoryDeleteOptions,SemanticMemoryDeleteInput} from './semantic-memory-delete-capability.js';
+
+export {SqliteAgentExpiryHistory} from './agent-expiry-history.js';
+export type {AgentRunExpiryEvent,AgentRunExpiryHistoryOptions,AgentRunExpiryHistoryActor} from './agent-expiry-history.js';
+export type {AgentRunExpiryEvidence} from './durable-runs.js';

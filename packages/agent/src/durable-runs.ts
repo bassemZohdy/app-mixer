@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 
 type RunScope={tenantId:string;agentId:string};
 type RunStatus='queued'|'running'|'pause_requested'|'cancel_requested'|'paused'|'uncertain'|'succeeded'|'failed'|'cancelled';
+export type AgentRunExpiryEvidence={principalId:string;reference:string};
 export type DurableAgentRun={tenantId:string;agentId:string;runId:string;definitionVersion:number;revision:number;status:RunStatus;attempts:number;maxAttempts:number;deadline:number;leaseOwner:string|null;leaseToken:string|null;leaseUntil:number|null;archived:boolean;delegationWait:{grantId:string;revision:number;principalId:string}|null;approvalWait:{actionId:string}|null};
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
 const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
@@ -23,6 +24,11 @@ export class SqliteAgentRuns {
   );
   CREATE INDEX IF NOT EXISTS agent_runs_queued ON agent_runs(tenant_id,agent_id,status,archived,run_id);
   CREATE INDEX IF NOT EXISTS agent_runs_expired ON agent_runs(tenant_id,agent_id,deadline,run_id) WHERE archived=0 AND status IN ('queued','paused');
+  CREATE TABLE IF NOT EXISTS agent_run_expiry_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,previous_status TEXT NOT NULL,deadline INTEGER NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision));
+  CREATE INDEX IF NOT EXISTS agent_run_expiry_audit_scope ON agent_run_expiry_audit(tenant_id,agent_id,id);
+  CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_replace BEFORE INSERT ON agent_run_expiry_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_update BEFORE UPDATE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_delete BEFORE DELETE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
@@ -124,8 +130,8 @@ export class SqliteAgentRuns {
   });
  }
  /** Fail an unleased run after its deadline, without guessing unresolved external outcomes. */
- expireDeadline(scope:RunScope,runId:string,revision:number,now=Date.now()):DurableAgentRun{
-  if(!number(now))throw Error('Invalid time');return this.transition(scope,runId,revision,run=>{if(!['queued','paused'].includes(run.status)||run.deadline>now||run.leaseToken!==null||run.leaseOwner!==null||run.leaseUntil!==null)throw Error('Run deadline not eligible');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(this.hasUnresolvedActions(scope,runId))throw Error('Action requires reconciliation');this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;run.delegationWait=null;run.status='failed';});
+ expireDeadline(scope:RunScope,runId:string,revision:number,now=Date.now(),evidence?:AgentRunExpiryEvidence):DurableAgentRun{
+  if(!number(now))throw Error('Invalid time');if(evidence!==undefined&&(!evidence||typeof evidence!=='object'||Object.keys(evidence).length!==2||!Object.hasOwn(evidence,'principalId')||!Object.hasOwn(evidence,'reference')||!id(evidence.principalId)||!id(evidence.reference)))throw Error('Invalid expiry evidence');const proof=evidence===undefined?undefined:{principalId:evidence.principalId,reference:evidence.reference};return this.transition(scope,runId,revision,run=>{if(!['queued','paused'].includes(run.status)||run.deadline>now||run.leaseToken!==null||run.leaseOwner!==null||run.leaseUntil!==null)throw Error('Run deadline not eligible');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(this.hasUnresolvedActions(scope,runId))throw Error('Action requires reconciliation');if(proof)this.db.prepare('INSERT INTO agent_run_expiry_audit (tenant_id,agent_id,run_id,revision,previous_status,deadline,actor_id,reference,observed_at) VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,runId,run.revision+1,run.status,run.deadline,proof.principalId,proof.reference,now);this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;run.delegationWait=null;run.status='failed';});
  }
  recoverExpired(scope:RunScope,runId:string,revision:number,now=Date.now()):DurableAgentRun {
   if(!number(now))throw Error('Invalid time');return this.transition(scope,runId,revision,run=>{if(!['running','pause_requested','cancel_requested'].includes(run.status)||run.leaseUntil===null||now<run.leaseUntil)throw Error('Lease is active');run.status='uncertain';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;});
