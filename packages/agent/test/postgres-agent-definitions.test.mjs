@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {once} from 'node:events';
 import pg from 'pg';
 import {AIMessage} from '@langchain/core/messages';
-import {PostgresAgentDefinitions,createConfiguredAgentRun,SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,AgentScheduleWorker,createAgentEventIngress} from '../dist/index.js';
+import {PostgresAgentDefinitions,createConfiguredAgentRun,SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,AgentScheduleWorker,DurableAgentWorker,createAgentEventIngress} from '../dist/index.js';
 
 const actor={tenantId:'tenant',principalId:'admin'},manifest=(tenantId='tenant',agentId='agent')=>({manifestVersion:1,tenantId,agentId,name:'Operations',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:2,maxTokensPerRun:100,maxRunsPerDay:10}});
 const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
@@ -18,8 +18,9 @@ test('PostgreSQL definitions drive event and schedule activation',{skip:!process
   await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);
   runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);schedules=new SqliteAgentSchedules(path);
   server=createAgentEventIngress({triggers,definitions:definitions.view(actor),maxPending:5,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,clock:()=>1000});server.listen(0,'127.0.0.1');await once(server,'listening');
-  const response=await fetch(`http://127.0.0.1:${server.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'message',payload:{}})});assert.equal(response.status,202);
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'message',payload:{}})});assert.equal(response.status,202);const {runId}=await response.json();
   schedules.save(scope,'timer',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,0);const worker=new AgentScheduleWorker({schedules,scope,definitions:definitions.view(actor),authorize:()=>true,maxPending:5,maxPerPass:2,pollMs:100,onError:error=>{throw error},clock:()=>1000});assert.equal(await worker.runOnce(),1);assert.deepEqual(runs.list(scope).map(run=>run.definitionVersion),[1,1]);
+  const durable=new DurableAgentWorker({runs,definitions:definitions.view(actor),asyncDefinitions:true,workerId:'worker',leaseMs:600,pollMs:25,clock:()=>1000,authorizeStart:()=>true,execute:async(_run,{assertLeaseAsync})=>{await assertLeaseAsync();return 'succeeded'}});assert.equal((await durable.runOnce(scope,runId)).status,'succeeded');
  }finally{if(server?.listening)await new Promise(resolve=>server.close(resolve));schedules?.close();triggers?.close();runs?.close();rmSync(dir,{recursive:true,force:true});await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
 

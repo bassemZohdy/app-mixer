@@ -12,6 +12,32 @@ const input={threadId:'thread',runId:'one',messages:[{role:'user',content:'Find 
 function setup(){const runs=new SqliteAgentRuns(':memory:'),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('t',manifest,0);runs.create(scope,'one',{definitionVersion:1,maxAttempts:3,deadline:Date.now()+10000});return {runs,definitions};}
 const options=s=>({...s,workerId:'worker',leaseMs:600,pollMs:25,authorizeStart:()=>true});
 
+test('worker checks asynchronous definitions at protected capability calls',async()=>{
+ const s=setup();try{const definitions={get:async(...args)=>s.definitions.get(...args)},registry=new CapabilityRegistry(()=>{});let calls=0;registry.register({operationId:'lookup',method:'GET',path:'/lookup'},{authorize:()=>true,validate:()=>true,execute:()=>{calls++;return 'ok'}});
+  const worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,execute:async(run,{signal,assertLease,assertLeaseAsync})=>{assert.throws(assertLease,/unavailable/);const agent=await createConfiguredAgentRun({definitions,tenantId:'t',agentId:'agent',expectedVersion:run.definitionVersion,bindings:[{operationId:'lookup',toolName:'lookup',description:'Lookup'}],registry,authorizeRun:()=>true,authorizeCapability:async()=>{await assertLeaseAsync();return true},createModel:()=>{let turn=0;return {async invoke(){return ++turn===1?new AIMessage({content:'',tool_calls:[{id:'call',name:'lookup',args:{}}]}):new AIMessage('Done')}}}});let last;for await(const event of agent.run(input,{signal}))last=event;return last?.type==='RUN_FINISHED'?'succeeded':'uncertain'} });assert.equal((await worker.runOnce(scope,'one')).status,'succeeded');assert.equal(calls,1);
+ }finally{s.runs.close();s.definitions.close();}
+});
+
+test('asynchronous definitions require explicit mode and recheck before claim',async()=>{
+ const s=setup();try{const definitions={get:async(...args)=>s.definitions.get(...args)};await assert.rejects(new DurableAgentWorker({...options(s),definitions,execute:async()=> 'succeeded'}).runOnce(scope,'one'),/require asyncDefinitions/);let entered,release;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,authorizeStart:async()=>{entered();await gate;return true},execute:async()=> 'succeeded'}),pending=worker.runOnce(scope,'one');await ready;s.definitions.save('t',{...manifest,lifecycle:{...manifest.lifecycle,enabled:false}},1);release();await assert.rejects(pending,/definition changed/);assert.equal(s.runs.get(scope,'one').status,'queued');
+ }finally{s.runs.close();s.definitions.close();}
+});
+
+test('async lease validation fences a cancellation during a definition lookup',async()=>{
+ const s=setup();try{let block=false,entered,release;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),definitions={get:async(...args)=>{if(block){entered();await gate}return s.definitions.get(...args)}},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,execute:async(_run,{assertLeaseAsync})=>{block=true;const check=assertLeaseAsync();await ready;const current=s.runs.get(scope,'one');s.runs.request(scope,'one',current.revision,'cancel');release();await assert.rejects(check,/unavailable/);return 'stopped'}});assert.equal((await worker.runOnce(scope,'one')).status,'cancelled');
+ }finally{s.runs.close();s.definitions.close();}
+});
+
+test('failed asynchronous definition refresh aborts and cannot settle a successful result',async()=>{
+ const s=setup();try{let fail=false,started;const ready=new Promise(r=>started=r),definitions={get:async(...args)=>{if(fail)throw Error('storage unavailable');return s.definitions.get(...args)}},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,execute:async(_run,{signal})=>{started();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));return 'succeeded'}}),pending=worker.runOnce(scope,'one');await ready;fail=true;assert.equal((await pending).status,'uncertain');
+ }finally{s.runs.close();s.definitions.close();}
+});
+
+test('async worker rechecks a changed definition before accepting completion',async()=>{
+ const s=setup();try{const definitions={get:async(...args)=>s.definitions.get(...args)},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,execute:async()=>{s.definitions.save('t',{...manifest,lifecycle:{...manifest.lifecycle,enabled:false}},1);return 'succeeded'}});assert.equal((await worker.runOnce(scope,'one')).status,'uncertain');
+ }finally{s.runs.close();s.definitions.close();}
+});
+
 test('durable worker creates an active, sanitized span and records the settled state',async()=>{
  const s=setup(),manager=new AsyncLocalStorageContextManager().enable();context.setGlobalContextManager(manager);const exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('test'),parent=tracer.startSpan('parent');let nested;
  try{const worker=new DurableAgentWorker({...options(s),tracing:{tracer},execute:async()=>{await Promise.resolve();nested=tracer.startSpan('child',undefined,context.active());nested.end();return 'succeeded';}});const result=await context.with(trace.setSpan(ROOT_CONTEXT,parent),()=>worker.runOnce(scope,'one'));assert.equal(result.status,'succeeded');parent.end();const spans=exporter.getFinishedSpans(),run=spans.find(span=>span.name==='agent.run'),child=spans.find(span=>span.name==='child');assert.ok(run);assert.equal(run.parentSpanContext.spanId,parent.spanContext().spanId);assert.equal(child.parentSpanContext.spanId,run.spanContext().spanId);assert.equal(run.attributes['app_mixer.agent.run.status'],'succeeded');const data=JSON.stringify(spans.map(span=>({name:span.name,attributes:span.attributes})));for(const value of ['worker','one','service','Find it',result.leaseToken].filter(Boolean))assert.equal(data.includes(value),false);
