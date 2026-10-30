@@ -110,14 +110,15 @@ export class EncryptedBrowserQueue {
     if(count!==entries.length){tx.abort();try{await done;}catch{}throw Error('Offline queue changed during rotation');}
     for(const entry of replacements)store.put(entry);store.put(marker);await done;this.close();return replacements.length;
   }
-  async enqueue(operationId:string,requestKey:string,payload:Record<string,unknown>):Promise<BrowserQueueItem>{
+  async enqueue(operationId:string,requestKey:string,payload:Record<string,unknown>,options?:{idempotencyKey:string}):Promise<BrowserQueueItem>{
     if(!identifier(operationId)||!identifier(requestKey))throw Error('Invalid offline request');
-    const normalized=copy(payload),id=await this.itemId(requestKey),item:BrowserQueueItem={id,version:1,operationId,requestKey,idempotencyKey:this.crypt.randomUUID(),payload:normalized,status:'pending',attempts:0},envelope=await this.seal(item);
+    if(options!==undefined&&(!record(options)||Object.keys(options).length!==1||!identifier(options.idempotencyKey)))throw Error('Invalid shared offline key');const sharedKey=options?.idempotencyKey;
+    const normalized=copy(payload),id=await this.itemId(requestKey),item:BrowserQueueItem={id,version:1,operationId,requestKey,idempotencyKey:sharedKey??this.crypt.randomUUID(),payload:normalized,status:'pending',attempts:0},envelope=await this.seal(item);
     const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');
     await this.guard(store,tx,done);const existing=await req(store.get(id)) as Envelope|undefined;
     if(!existing){const count=await req(store.index('partition').count(this.partition));if(count>=1000){tx.abort();try{await done;}catch{}throw Error('Offline queue full');}store.add(envelope);}
     await done;
-    if(existing){const previous=await this.unseal(existing);await this.ensureCurrent();if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized))throw Error('Offline request conflict');return previous;}
+    if(existing){const previous=await this.unseal(existing);await this.ensureCurrent();if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized)||(sharedKey!==undefined&&previous.idempotencyKey!==sharedKey))throw Error('Offline request conflict');return previous;}
     return structuredClone(item);
   }
   /** Atomically replace a reviewed conflict with a new, separately idempotent intent. */
