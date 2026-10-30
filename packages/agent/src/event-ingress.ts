@@ -8,7 +8,7 @@ type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
 type Options={
  triggers:SqliteAgentTriggers;
- definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined};
+ definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};
  authenticate?: (request:IncomingMessage)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authenticateRaw?: (request:IncomingMessage,body:Buffer)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
  authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
@@ -56,12 +56,13 @@ export function createAgentEventIngress(options:Options):Server {
   if(challengeAuthenticatedBody){try{const challenge=challengeAuthenticatedBody(Buffer.from(raw!),{...source});if(challenge!==undefined){if(typeof challenge!=='string'||!/^[\x21-\x7e]{1,512}$/.test(challenge))throw Error('Invalid challenge');reply(res,200,{challenge});return;}}catch{reply(res,400,{error:'Invalid event'});return;}}
   let event:EventRequest;try{event=mapAuthenticatedBody?validateEvent(structuredClone(mapAuthenticatedBody(Buffer.from(raw!),{...source},req))):parse(raw!);}catch{reply(res,400,{error:'Invalid event'});return;}
   try{
-   const definition=definitions.get(source.tenantId,event.agentId);
-   if(!definition||!definition.manifest.lifecycle.enabled||definition.manifest.tenantId!==source.tenantId||definition.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
+   const selected=await definitions.get(source.tenantId,event.agentId);
+   if(!selected||!selected.manifest.lifecycle.enabled||selected.manifest.tenantId!==source.tenantId||selected.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
+   const definition=structuredClone(selected);
    let allowed=false;try{allowed=await authorize({...source},structuredClone(event),structuredClone(definition))===true;}catch{}
    let parent:string|undefined;if(allowed&&traceParent)try{const candidate=await traceParent(req,{...source},structuredClone(event));if(parseAgentTraceParent(candidate))parent=candidate;}catch{}
-   const latest=definitions.get(source.tenantId,event.agentId);
-   if(!allowed||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled){reply(res,403,{error:'Forbidden'});return;}
+   const latest=await definitions.get(source.tenantId,event.agentId);
+   if(!allowed||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled||latest.manifest.tenantId!==source.tenantId||latest.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
    const now=clock(),deadline=now+definition.manifest.lifecycle.runTimeoutMs;if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(deadline))throw Error('Invalid clock');
    let span:Span|undefined;try{if(tracing){const parsed=parseAgentTraceParent(parent),context=parsed?trace.setSpanContext(ROOT_CONTEXT,parsed):ROOT_CONTEXT;span=tracing.tracer.startSpan('agent.event.enqueue',{kind:SpanKind.PRODUCER},context);if(tracing.propagateToRun){const sc=span.spanContext(),candidate=`00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2,'0')}`;if(parseAgentTraceParent(candidate))parent=candidate;}}}catch{}
    let result:{runId:string;duplicate:boolean};try{result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);try{span?.setAttribute('app_mixer.agent.event.outcome',result.duplicate?'duplicate':'accepted');}catch{}}catch(error){try{span?.setStatus({code:SpanStatusCode.ERROR});span?.setAttribute('error.type','agent_event_enqueue_failed');}catch{}throw error;}finally{try{span?.end();}catch{}}
