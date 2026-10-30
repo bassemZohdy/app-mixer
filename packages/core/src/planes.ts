@@ -9,6 +9,7 @@ import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
 import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
+import {context,propagation,ROOT_CONTEXT,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -79,9 +80,9 @@ function authorized(req: IncomingMessage, token: string): boolean {
   const expected = Buffer.from(`Bearer ${token}`);
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
-function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>): Server {
+function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void): Server {
   return createServer((req, res) => {
-    handler(req, res).catch(error => {
+    const run=()=>handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
       else if (error instanceof Error && ['Revision conflict','Unsupported schema migration','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
@@ -90,6 +91,7 @@ function server(handler: (req: IncomingMessage, res: ServerResponse) => Promise<
       else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal','Invalid promotion package','Invalid page description','Invalid migration request'].includes(error.message)) respond(res, 400, {error:error.message});
       else respond(res, 500, {error:'Internal server error'});
     });
+    if(dispatch)dispatch(req,res,run);else run();
   });
 }
 /** Local-development control plane. Bind to loopback and protect its token. */
@@ -211,9 +213,23 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
 }
 export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)=>boolean|Promise<boolean>};
 export type DataPlaneRequestObservation={route:'application'|'version'|'live'|'ready'|'other';outcome:'completed'|'aborted';statusClass:'2xx'|'3xx'|'4xx'|'5xx'|'other'|'none';durationMs:number};
+export type DataPlaneTracingOptions={tracer:Tracer;trustRemoteParent?:boolean};
+function traceDataPlane(options:DataPlaneTracingOptions,healthEnabled:boolean){
+ return (req:IncomingMessage,res:ServerResponse,run:()=>void):void=>{
+  let started=false;try{
+   let parent=ROOT_CONTEXT;
+   if(options.trustRemoteParent){let value:string|undefined,duplicate=false;for(let i=0;i<req.rawHeaders.length;i+=2)if(req.rawHeaders[i].toLowerCase()==='traceparent'){if(value!==undefined)duplicate=true;value=req.rawHeaders[i+1];}if(!duplicate&&value&&value.length<=512)parent=propagation.extract(ROOT_CONTEXT,{traceparent:value});}
+   const method=req.method==='GET'?'GET':'_OTHER',path=method!=='GET'?undefined:req.url==='/application'?'/application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'/application/versions/{version}':healthEnabled&&req.url==='/health/live'?'/health/live':healthEnabled&&req.url==='/health/ready'?'/health/ready':undefined;
+   const span=options.tracer.startSpan(path?`${method} ${path}`:method,{kind:SpanKind.SERVER,attributes:{'http.request.method':method,...(path?{'http.route':path}:{})}},parent);let ended=false;
+   const end=(aborted:boolean)=>{if(ended)return;ended=true;try{if(aborted){span.setAttribute('error.type','client_disconnect');span.setStatus({code:SpanStatusCode.ERROR});}else{span.setAttribute('http.response.status_code',res.statusCode);if(res.statusCode>=500)span.setStatus({code:SpanStatusCode.ERROR});}}catch{}finally{try{span.end();}catch{}}};
+   res.once('finish',()=>end(false));res.once('close',()=>end(true));context.with(trace.setSpan(parent,span),()=>{started=true;run();});
+  }catch{if(!started)run();}
+ };
+}
 /** Data plane exposes only immutable publications. It does not depend on the control plane. */
-export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void}): Server {
+export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions}): Server {
   const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');
+  const tracing=options?.tracing;if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid data plane tracing configuration');
   const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined;
   const readinessCheck=():Promise<boolean>=>{
     if(!check)return Promise.resolve(true);if(pending)return pending;
@@ -248,7 +264,7 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     if(tags.includes(tag)||tags.includes('*')){res.writeHead(304,{'etag':tag,'cache-control':'no-store'});res.end();return;}
     res.setHeader('etag',tag);
     respond(res, 200, published);
-  });
+  },tracing?traceDataPlane({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},!!health):undefined);
   instance.on('close',()=>controller?.abort());return instance;
 }
 
