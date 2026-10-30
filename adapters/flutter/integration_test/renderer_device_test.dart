@@ -40,10 +40,12 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Grace');
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Grace'), findsOneWidget);
+    expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, 'Grace');
+    expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace', reason: 'Edited value must be available to assistive technology before submit');
     await tester.tap(find.byType(TextButton));
     await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
-    expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace');
+    expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace', reason: 'Edited value must remain accessible after submit');
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
     await tester.pumpAndSettle();
     final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
