@@ -100,11 +100,12 @@ export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition
 export type DevelopmentPreviewOptions = {extensionModule?: string};
 export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>PromotionPackage;verifyWithEvidence?:never}|{verify?:never;verifyWithEvidence:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>VerifiedPromotion};
 export type PromotionExportSigner = (pkg:PromotionPackage,targetEnvironment:string,expectedVersion:number)=>SignedPromotionPackage|Promise<SignedPromotionPackage>;
-export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy, exportSigner?:PromotionExportSigner): Server {
+export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy, exportSigner?:PromotionExportSigner, tracing?:ControlPlaneTracingOptions): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
   if(promotionPolicy!==undefined&&(!promotionPolicy||(typeof promotionPolicy.verify==='function')===(typeof promotionPolicy.verifyWithEvidence==='function')))throw Error('Invalid promotion policy');
   if(exportSigner!==undefined&&typeof exportSigner!=='function')throw Error('Invalid promotion export signer');
+  if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid control plane tracing configuration');
   const verifyPromotion=promotionPolicy?.verify,verifyWithEvidence=promotionPolicy?.verifyWithEvidence;
   const extensionModule=preview?.extensionModule ?? 'export const installedExtensions = [];';
   return server(async (req, res) => {
@@ -209,17 +210,18 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       respond(res, 201, repository.rollback(input.sourceVersion, input.expectedVersion)); return;
     }
     respond(res, 404, {error:'Not found'});
-  });
+  },tracing?traceHttp({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},req=>{const method=req.method==='GET'?'GET':req.method==='POST'?'POST':'_OTHER';const path=(method==='GET'&&req.url==='/publications/latest')||(method==='POST'&&(req.url==='/promotion/export'||req.url==='/promotion/export-signed'))?req.url:undefined;return {method,path};}):undefined);
 }
 export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)=>boolean|Promise<boolean>};
 export type DataPlaneRequestObservation={route:'application'|'version'|'live'|'ready'|'other';outcome:'completed'|'aborted';statusClass:'2xx'|'3xx'|'4xx'|'5xx'|'other'|'none';durationMs:number};
 export type DataPlaneTracingOptions={tracer:Tracer;trustRemoteParent?:boolean};
-function traceDataPlane(options:DataPlaneTracingOptions,healthEnabled:boolean){
+export type ControlPlaneTracingOptions=DataPlaneTracingOptions;
+function traceHttp(options:DataPlaneTracingOptions,route:(req:IncomingMessage)=>{method:string;path?:string}){
  return (req:IncomingMessage,res:ServerResponse,run:()=>void):void=>{
   let started=false;try{
    let parent=ROOT_CONTEXT;
    if(options.trustRemoteParent){let value:string|undefined,duplicate=false;for(let i=0;i<req.rawHeaders.length;i+=2)if(req.rawHeaders[i].toLowerCase()==='traceparent'){if(value!==undefined)duplicate=true;value=req.rawHeaders[i+1];}if(!duplicate&&value&&value.length<=512)parent=propagation.extract(ROOT_CONTEXT,{traceparent:value});}
-   const method=req.method==='GET'?'GET':'_OTHER',path=method!=='GET'?undefined:req.url==='/application'?'/application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'/application/versions/{version}':healthEnabled&&req.url==='/health/live'?'/health/live':healthEnabled&&req.url==='/health/ready'?'/health/ready':undefined;
+   const {method,path}=route(req);
    const span=options.tracer.startSpan(path?`${method} ${path}`:method,{kind:SpanKind.SERVER,attributes:{'http.request.method':method,...(path?{'http.route':path}:{})}},parent);let ended=false;
    const end=(aborted:boolean)=>{if(ended)return;ended=true;try{if(aborted){span.setAttribute('error.type','client_disconnect');span.setStatus({code:SpanStatusCode.ERROR});}else{span.setAttribute('http.response.status_code',res.statusCode);if(res.statusCode>=500)span.setStatus({code:SpanStatusCode.ERROR});}}catch{}finally{try{span.end();}catch{}}};
    res.once('finish',()=>end(false));res.once('close',()=>end(true));context.with(trace.setSpan(parent,span),()=>{started=true;run();});
@@ -264,7 +266,7 @@ export function createDataPlane(repository: Pick<DefinitionRepository, 'getPubli
     if(tags.includes(tag)||tags.includes('*')){res.writeHead(304,{'etag':tag,'cache-control':'no-store'});res.end();return;}
     res.setHeader('etag',tag);
     respond(res, 200, published);
-  },tracing?traceDataPlane({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},!!health):undefined);
+  },tracing?traceHttp({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},req=>{const method=req.method==='GET'?'GET':'_OTHER',path=method!=='GET'?undefined:req.url==='/application'?'/application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'/application/versions/{version}':health&&req.url==='/health/live'?'/health/live':health&&req.url==='/health/ready'?'/health/ready':undefined;return {method,path};}):undefined);
   instance.on('close',()=>controller?.abort());return instance;
 }
 
