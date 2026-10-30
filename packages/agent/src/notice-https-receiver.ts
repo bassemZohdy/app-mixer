@@ -4,7 +4,7 @@ import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
 
 type Actor={tenantId:string;principalId:string};
-type Access='receive'|'list'|'read'|'acknowledge';
+type Access='receive'|'verify'|'list'|'read'|'acknowledge';
 export type ReceivedAgentNotice={id:number;senderId:string;message:AgentNoticeMessage;receivedAt:number;acknowledgedAt:number|null;acknowledgedBy:string|null};
 type Options={scope:AgentRunScope;maxPending:number;authorize:(actor:Actor,action:Access,notice:ReceivedAgentNotice|null)=>boolean|Promise<boolean>;clock?:()=>number};
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
@@ -43,6 +43,11 @@ export class SqliteAgentNoticeReceiver {
   const who=this.actor(actor);if(!key(deliveryKey))throw Error('Invalid notice delivery key');const safe=message(payload,this.scope),canonical=JSON.stringify(safe),normalized=deliveryKey.toLowerCase(),candidate:ReceivedAgentNotice={id:0,senderId:who.principalId,message:safe,receivedAt:0,acknowledgedAt:null,acknowledgedBy:null};await this.permit(who,'receive',candidate);
   return this.transaction(()=>{const existing=this.db.prepare('SELECT id,sender_id,message FROM received_agent_notices WHERE tenant_id=? AND agent_id=? AND delivery_key=?').get(this.scope.tenantId,this.scope.agentId,normalized);if(existing){if(existing.sender_id!==who.principalId||existing.message!==canonical)throw Error('Notice delivery conflict');return {id:Number(existing.id),duplicate:true};}const count=this.db.prepare('SELECT COUNT(*) AS n FROM received_agent_notices n WHERE n.tenant_id=? AND n.agent_id=? AND NOT EXISTS (SELECT 1 FROM received_agent_notice_acks a WHERE a.notice_id=n.id)').get(this.scope.tenantId,this.scope.agentId);if(Number(count?.n)>=this.maxPending)throw Error('Notice receiver backlog full');const result=this.db.prepare('INSERT INTO received_agent_notices (tenant_id,agent_id,delivery_key,sender_id,message,received_at) VALUES (?,?,?,?,?,?)').run(this.scope.tenantId,this.scope.agentId,normalized,who.principalId,canonical,this.now());return {id:Number(result.lastInsertRowid),duplicate:false};});
  }
+ /** Only a matching stored receipt proves delivery. A missing receipt is inconclusive. */
+ async verify(actor:Actor,deliveryKey:string,payload:unknown):Promise<boolean>{
+  const who=this.actor(actor);if(!key(deliveryKey))throw Error('Invalid notice delivery key');const safe=message(payload,this.scope),canonical=JSON.stringify(safe),candidate:ReceivedAgentNotice={id:0,senderId:who.principalId,message:safe,receivedAt:0,acknowledgedAt:null,acknowledgedBy:null};await this.permit(who,'verify',candidate);
+  const row=this.db.prepare('SELECT sender_id,message FROM received_agent_notices WHERE tenant_id=? AND agent_id=? AND delivery_key=?').get(this.scope.tenantId,this.scope.agentId,deliveryKey.toLowerCase());if(!row)return false;if(row.sender_id!==who.principalId||row.message!==canonical)throw Error('Notice delivery conflict');return true;
+ }
  async list(actor:Actor,options:{after?:number;limit?:number}={}):Promise<{items:ReceivedAgentNotice[];nextAfter?:number}>{
   const who=this.actor(actor),after=options?.after??0,limit=options?.limit??50;if(!options||!integer(after)||!integer(limit)||limit<1||limit>100)throw Error('Invalid notice receiver listing');await this.permit(who,'list',null);const rows=this.db.prepare('SELECT id FROM received_agent_notices WHERE tenant_id=? AND agent_id=? AND id>? ORDER BY id LIMIT ?').all(this.scope.tenantId,this.scope.agentId,after,limit),items:ReceivedAgentNotice[]=[];for(const row of rows){const before=this.row(Number(row.id));if(!before)continue;if(await this.authorize({...who},'read',structuredClone(before))!==true)continue;const current=this.row(before.id);if(current&&JSON.stringify(current)===JSON.stringify(before))items.push(current);}return {items,...(rows.length===limit?{nextAfter:Number(rows.at(-1)!.id)}:{})};
  }
@@ -55,11 +60,11 @@ const reply=(res:ServerResponse,status:number)=>{res.writeHead(status,{'cache-co
 export function createAgentNoticeReceiverServer(options:ServerOptions):Server{
  if(!options||!(options.receiver instanceof SqliteAgentNoticeReceiver)||typeof options.authenticate!=='function')throw Error('Invalid notice receiver server');const {receiver,authenticate}=options;
  return createServer(async(req,res)=>{
-  if(req.method!=='POST'||req.url!=='/notice'){reply(res,404);return;}let actor:Actor|undefined;try{actor=await authenticate(req);}catch{}if(!actor){reply(res,401);return;}
+  if(req.method!=='POST'||!['/notice','/notice/status'].includes(req.url??'')){reply(res,404);return;}let actor:Actor|undefined;try{actor=await authenticate(req);}catch{}if(!actor){reply(res,401);return;}
   let contentType:string|undefined,deliveryKey:string|undefined;for(let i=0;i<req.rawHeaders.length;i+=2){const name=req.rawHeaders[i].toLowerCase();if(name==='content-type'){if(contentType!==undefined){reply(res,400);return;}contentType=req.rawHeaders[i+1];}if(name==='idempotency-key'){if(deliveryKey!==undefined){reply(res,400);return;}deliveryKey=req.rawHeaders[i+1];}}
   if(!contentType||!/^application\/json(?:\s*;|$)/i.test(contentType)||!key(deliveryKey)){reply(res,400);return;}
   let payload:unknown;try{const parts:Buffer[]=[];let size=0;for await(const chunk of req){const part=Buffer.from(chunk);size+=part.length;if(size>8192)throw Error('large');parts.push(part);}payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}catch{reply(res,400);return;}
-  try{await receiver.receive(actor,deliveryKey,payload);reply(res,204);}catch(error){const text=error instanceof Error?error.message:'';reply(res,text==='Notice receiver access denied'||text==='Invalid notice receiver actor'?403:text==='Notice delivery conflict'?409:text==='Notice receiver backlog full'?503:text==='Invalid notice message'||text==='Invalid notice delivery key'?400:500);}
+  try{if(req.url==='/notice/status'){reply(res,await receiver.verify(actor,deliveryKey,payload)?204:404);}else{await receiver.receive(actor,deliveryKey,payload);reply(res,204);}}catch(error){const text=error instanceof Error?error.message:'';reply(res,text==='Notice receiver access denied'||text==='Invalid notice receiver actor'?403:text==='Notice delivery conflict'?409:text==='Notice receiver backlog full'?503:text==='Invalid notice message'||text==='Invalid notice delivery key'?400:500);}
  });
 }
 export type {Options as AgentNoticeReceiverOptions,Actor as AgentNoticeReceiverActor,Access as AgentNoticeReceiverAccess,ServerOptions as AgentNoticeReceiverServerOptions};
