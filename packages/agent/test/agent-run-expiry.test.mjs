@@ -4,7 +4,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
-import {SqliteAgentRuns,AgentRunExpiryWorker,SqliteAgentRunHistory} from '../dist/index.js';
+import {SqliteAgentRuns,AgentRunExpiryWorker,SqliteAgentRunHistory,SqliteAgentExpiryHistory} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},conf={definitionVersion:1,maxAttempts:2,deadline:100};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'agent-expiry-')),path=join(dir,'test.db'),runs=new SqliteAgentRuns(path);return {dir,path,runs};}
 function close(s){s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
@@ -26,4 +26,15 @@ test('expiry worker authorizes each run, avoids stale decisions and revisits den
 
 test('stopping expiry while authorization is pending prevents a late transition',async()=>{
  const s=setup();let resolve,started;const gate=new Promise(r=>{resolve=r;}),entered=new Promise(r=>{started=r;});try{s.runs.create(scope,'a',conf,0);const worker=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:5,pollMs:100,clock:()=>100,onError:()=>{},authorize:async()=>{started();await gate;return true;}});worker.start();await entered;const stop=worker.stop();resolve();await stop;assert.equal(s.runs.get(scope,'a').status,'queued');assert.equal(await worker.runOnce(),1);assert.equal(s.runs.get(scope,'a').status,'failed');}finally{close(s);}
+});
+
+
+test('expiry decisions atomically record scoped actor and evidence across restart',async()=>{
+ const s=setup();let history,other,db;try{const one=s.runs.create(scope,'one',conf,0),two=s.runs.create(scope,'two',conf,0),outside=s.runs.create({...scope,tenantId:'other'},'outside',conf,0),evidence={principalId:'operator',reference:'case-1'};s.runs.expireDeadline(scope,'one',one.revision,100,evidence);s.runs.expireDeadline({...scope,tenantId:'other'},'outside',outside.revision,100,evidence);const workerOptions={runs:s.runs,scope,maxPerPass:10,pollMs:100,clock:()=>100,onError:()=>{},authorize:()=>true,evidence:{principalId:'worker',reference:'batch-1'}},worker=new AgentRunExpiryWorker(workerOptions);workerOptions.evidence.principalId='changed';assert.equal(await worker.runOnce(),1);history=new SqliteAgentExpiryHistory(s.path,{scope,authorize:(actor,action,event)=>actor.principalId==='auditor'&&(action==='list'||event.runId==='one')});const actor={tenantId:'tenant',principalId:'auditor'},first=await history.list(actor,{limit:1}),second=await history.list(actor,{after:first.nextAfter,limit:1});assert.deepEqual(first.items.map(e=>[e.runId,e.revision,e.previousStatus,e.deadline,e.principalId,e.reference,e.observedAt]),[['one',2,'queued',100,'operator','case-1',100]]);assert.deepEqual(second.items,[]);await assert.rejects(history.list({...actor,tenantId:'other'}),/actor/);await assert.rejects(history.list({...actor,principalId:'other'}),/denied/);history.close();history=new SqliteAgentExpiryHistory(s.path,{scope,authorize:()=>true});const all=(await history.list(actor)).items;assert.deepEqual(all.map(x=>x.principalId),['operator','worker']);assert.equal(all[1].reference,'batch-1');other=new SqliteAgentExpiryHistory(s.path,{scope:{...scope,tenantId:'other'},authorize:()=>true});assert.deepEqual((await other.list({...actor,tenantId:'other'})).items.map(x=>x.runId),['outside']);db=new DatabaseSync(s.path);assert.throws(()=>db.exec("UPDATE agent_run_expiry_audit SET reference='changed'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_run_expiry_audit'),/immutable/);
+ }finally{db?.close();other?.close();history?.close();close(s);}
+});
+
+test('expiry audit failure rolls back transition and invalid evidence fails closed',async()=>{
+ const s=setup();let db;try{const run=s.runs.create(scope,'run',conf,0);assert.throws(()=>s.runs.expireDeadline(scope,'run',run.revision,100,{principalId:'',reference:'case'}),/evidence/);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_expiry_audit BEFORE INSERT ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");assert.throws(()=>s.runs.expireDeadline(scope,'run',run.revision,100,{principalId:'operator',reference:'case'}),/audit unavailable/);assert.equal(s.runs.get(scope,'run').status,'queued');assert.equal(s.runs.get(scope,'run').revision,run.revision);db.exec('DROP TRIGGER reject_expiry_audit');assert.equal(s.runs.expireDeadline(scope,'run',run.revision,100,{principalId:'operator',reference:'case'}).status,'failed');
+ }finally{db?.close();close(s);}
 });
