@@ -144,6 +144,8 @@ export { PostgresOfflineRequestKeys } from './postgres-offline-request-keys.js';
 export type { PostgresOfflineRequestKeysOptions } from './postgres-offline-request-keys.js';
 export {PostgresOfflineExecutions} from './postgres-offline-executions.js';
 export type {PostgresOfflineExecutionsOptions,SharedOfflineExecution} from './postgres-offline-executions.js';
+export {PostgresOfflineRecovery} from './postgres-offline-recovery.js';
+export type {PostgresOfflineRecoveryOptions,OfflineRecoveryActor,OfflineRecoveryTarget,OfflineRecoveryAction,OfflineRecoveryEvent} from './postgres-offline-recovery.js';
 export {registerSharedOfflineAllocation,registerSharedOfflineDispatch} from './shared-offline-capabilities.js';
 export type {SharedOfflineCapabilityOptions} from './shared-offline-capabilities.js';
 export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure } from './offline-queue.js';
