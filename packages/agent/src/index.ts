@@ -145,6 +145,8 @@ export type {SignedWebhookSource,SignedWebhookOptions} from './signed-webhook.js
 
 export {createGithubWebhookAdapter} from './github-webhook.js';
 export {createStripeWebhookAdapter} from './stripe-webhook.js';
+export {createSlackWebhookAdapter} from './slack-webhook.js';
+export type {SlackWebhookOptions} from './slack-webhook.js';
 export type {StripeWebhookOptions} from './stripe-webhook.js';
 export type {GithubWebhookOptions} from './github-webhook.js';
 
