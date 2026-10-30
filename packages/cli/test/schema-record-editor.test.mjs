@@ -13,6 +13,19 @@ const wait=async predicate=>{for(let n=0;n<200&&!predicate();n++)await new Promi
 async function setup(){const dir=await mkdtemp(join(tmpdir(),'schema-form-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'data-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(RECORD_EDITOR_PREVIEW).toString('base64'));return {dir,runtime,preview};}
 function render(factory,fields=schema){const dom=new JSDOM('<!doctype html>'),root=factory({getOperation:'items.get',putOperation:'items.put',fields}).render({label:'People'},null,null,dom.window.document);dom.window.document.body.appendChild(root);const labels=[...root.querySelectorAll('label')],controls=labels.map(label=>label.querySelector('input,select,textarea'));return {dom,root,controls,buttons:[...root.querySelectorAll('button')],status:root.querySelector('[role=status]')};}
 
+test('property name constraints protect preserved properties at every object level',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',propertyNames:{pattern:'^[a-z]+$',minLength:2},properties:{name:{type:'string'},profile:{type:['object','null'],propertyNames:{enum:['label','extra']},properties:{label:{type:'string'}}},people:{type:'array',items:{type:['object','null'],propertyNames:{maxLength:5,pattern:'^[a-z]+$'},properties:{name:{type:'string'}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
+  const records={root:{name:'Ada',Bad:1},nested:{name:'Ada',profile:{label:'A',unknown:1}},item:{name:'Ada',people:[{name:'A',longname:true}]},valid:{name:'Ada',profile:{label:'A',extra:1},people:[null,{name:'B',more:true}]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const record of ['root','nested','item']){id.value=record;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/property name that does not match/);assert.equal(saved.length,0);}
+  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const propertyNames of [{pattern:'['},{minLength:-1},{enum:['x','x']},{type:'number'},{format:'email'},{const:null}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,propertyNames}}),/Unsupported/);}
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('object property counts are checked for root, nested objects and array items',async()=>{
  const s=await setup(),originalFetch=globalThis.fetch;let dom;
  try{
