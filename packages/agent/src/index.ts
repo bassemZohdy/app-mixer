@@ -164,3 +164,6 @@ export type {AgentRunExpiryWorkerOptions} from './agent-run-expiry.js';
 
 export {AgentActionRecoveryWorker} from './action-recovery-worker.js';
 export type {AgentActionRecoveryWorkerOptions} from './action-recovery-worker.js';
+
+export {registerSemanticMemoryWrite} from './semantic-memory-write-capability.js';
+export type {SemanticMemoryWriteOptions,SemanticMemoryWriteInput,SemanticMemoryWriteMetadata} from './semantic-memory-write-capability.js';
