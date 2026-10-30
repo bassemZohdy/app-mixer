@@ -28,8 +28,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: PostgreSQL revocation integration test
-        run: node --test packages/core/test/postgres-jwt-revocations.test.mjs
+      - name: PostgreSQL security storage integration tests
+        run: node --test packages/core/test/postgres-jwt-revocations.test.mjs packages/core/test/postgres-capability-audit.test.mjs
         env:
           APP_MIXER_TEST_POSTGRES_URL: postgresql://appmixer:test-only-password@127.0.0.1:5432/appmixer_test
   test:

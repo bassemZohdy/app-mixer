@@ -171,6 +171,8 @@ export type {JwtJwksManagerOptions} from './jwt-jwks-manager.js';
 export {discoverOidcJwks,createOidcJwtJwksManager} from './oidc-discovery.js';
 export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discovery.js';
 export {SqliteCapabilityAudit} from './capability-audit.js';
+export {PostgresCapabilityAudit} from './postgres-capability-audit.js';
+export type {PostgresCapabilityAuditOptions} from './postgres-capability-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportUncertainError} from './remote-control-connector.js';
 export type {RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
