@@ -44,7 +44,7 @@ function createCapabilityHandler(registry:CapabilityRegistry, authenticate:Authe
         reply(res,200,{result});
       }catch(error){
         const message=error instanceof Error?error.message:'';
-        const status=message==='Data schema guard unavailable'?503:message==='Capability not found'?404:['Capability forbidden','Shared offline key forbidden'].includes(message)?403:message==='Invalid capability input'?400:['Data revision conflict','Data schema version conflict','Staging request conflict','Operation not staged','Shared offline request conflict','Shared offline operation in progress','Shared offline outcome uncertain'].includes(message)?409:500;
+        const status=message==='Data schema guard unavailable'?503:message==='Capability not found'?404:['Capability forbidden','Shared offline key forbidden'].includes(message)?403:message==='Invalid capability input'?400:['Data revision conflict','Data schema version conflict','Staging request conflict','Operation not staged','Shared offline request conflict','Shared offline slot conflict','Shared offline operation in progress','Shared offline outcome uncertain'].includes(message)?409:500;
         reply(res,status,{error:status===500?'Capability invocation failed':message});
       }
     })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,{error:'Internal server error'});else if(!res.destroyed)res.destroy();});};
