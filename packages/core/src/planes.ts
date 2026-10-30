@@ -17,6 +17,7 @@ export interface DefinitionRepository {
   publish(revision: number): { version: number; definition: ApplicationDefinition };
   promote?(input:unknown,expectedVersion:number,targetEnvironment:string): { version: number; definition: ApplicationDefinition };
   promoteVerified?(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence): { version: number; definition: ApplicationDefinition };
+  promoteAdvancing?(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence): { version: number; definition: ApplicationDefinition };
   getPublicationProvenance?(version:number): PublicationProvenance | undefined;
   rollback?(sourceVersion: number, expectedVersion: number): { version: number; definition: ApplicationDefinition };
   getPublished(version?: number): { version: number; definition: ApplicationDefinition } | undefined;

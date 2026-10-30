@@ -74,9 +74,14 @@ export class ApplicationStore {
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  promote(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){
+  return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,false);
+ }
+ promoteAdvancing(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,true);}
+ private promoteInternal(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence|undefined,advancing:boolean){
   if(!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw Error('Invalid version');
   const item=checkPromotionPackage(input,targetEnvironment,this.draft.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence,expectedVersion),latest=this.published.at(-1)?.version??0;
   if(latest!==expectedVersion)throw Error('Publication version conflict');
+  if(advancing)for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===item.sourceEnvironment&&previous.targetEnvironment===targetEnvironment&&item.sourceVersion<=previous.sourceVersion)throw Error('Source publication did not advance');
   enforcePublicationGuard(this.publicationGuard,item.definition);
   const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
   const publication={version,definition:item.definition},hash=definitionSha256(item.definition);
