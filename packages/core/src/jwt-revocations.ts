@@ -3,6 +3,10 @@ import {createHash} from 'node:crypto';
 import type {JWTPayload} from 'jose';
 const valid=(x:unknown,max=256):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=max&&!/[\x00-\x1f\x7f]/.test(x);
 const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+export function verifiedJwtRevocationDeadline(claims:JWTPayload,issuer:string,options:{maxClockToleranceSeconds:number;maxClockSkewSeconds:number}):number{
+ if(!claims||claims.iss!==issuer||!valid(claims.jti)||!integer(claims.iat)||!integer(claims.exp)||claims.exp<=claims.iat||!options||!integer(options.maxClockToleranceSeconds)||options.maxClockToleranceSeconds>60||!integer(options.maxClockSkewSeconds)||options.maxClockSkewSeconds>86400)throw Error('Invalid verified JWT revocation');
+ const seconds=claims.exp+options.maxClockToleranceSeconds+options.maxClockSkewSeconds+1,retainUntil=seconds*1000;if(!integer(seconds)||!integer(retainUntil))throw Error('Invalid verified JWT revocation');return retainUntil;
+}
 /** Host-authorized local revocations for one exact issuer. */
 export class SqliteJwtRevocations {
  private readonly db:DatabaseSync;private readonly issuer:string;private readonly clock:()=>number;
@@ -16,8 +20,7 @@ export class SqliteJwtRevocations {
  revoke(tokenId:string,retainUntil:number):void{if(!valid(tokenId)||!integer(retainUntil)||retainUntil<=this.now())throw Error('Invalid JWT revocation');this.db.prepare('INSERT INTO jwt_revocations VALUES (?,?,?) ON CONFLICT(issuer,token_hash) DO UPDATE SET retain_until=MAX(retain_until,excluded.retain_until)').run(this.issuer,this.hash(tokenId),retainUntil);}
  /** Accept only independently verified claims and deployment-wide upper bounds on clock tolerance and skew. */
  revokeVerifiedToken(claims:JWTPayload,options:{maxClockToleranceSeconds:number;maxClockSkewSeconds:number}):number{
-  if(!claims||claims.iss!==this.issuer||!valid(claims.jti)||!integer(claims.iat)||!integer(claims.exp)||claims.exp<=claims.iat||!options||!integer(options.maxClockToleranceSeconds)||options.maxClockToleranceSeconds>60||!integer(options.maxClockSkewSeconds)||options.maxClockSkewSeconds>86400)throw Error('Invalid verified JWT revocation');
-  const seconds=claims.exp+options.maxClockToleranceSeconds+options.maxClockSkewSeconds+1,retainUntil=seconds*1000;if(!integer(seconds)||!integer(retainUntil))throw Error('Invalid verified JWT revocation');this.revoke(claims.jti,retainUntil);const row=this.db.prepare('SELECT retain_until FROM jwt_revocations WHERE issuer=? AND token_hash=?').get(this.issuer,this.hash(claims.jti));return Number(row!.retain_until);
+  const retainUntil=verifiedJwtRevocationDeadline(claims,this.issuer,options);this.revoke(claims.jti!,retainUntil);const row=this.db.prepare('SELECT retain_until FROM jwt_revocations WHERE issuer=? AND token_hash=?').get(this.issuer,this.hash(claims.jti!));return Number(row!.retain_until);
  }
  /** Only pass claims already verified by the configured authenticator. */
  isTokenActive(claims:JWTPayload):boolean{if(!claims||claims.iss!==this.issuer||!valid(claims.jti))return false;return !this.db.prepare('SELECT 1 FROM jwt_revocations WHERE issuer=? AND token_hash=?').get(this.issuer,this.hash(claims.jti));}
