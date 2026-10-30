@@ -31,7 +31,7 @@ void main() {
     ]}});
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada'), findsOneWidget);
-    final heading = tester.getSemantics(find.text('Ada')).getSemanticsData();
+    final heading = tester.getSemantics(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Ada')).getSemanticsData();
     expect(heading.flagsCollection.isHeader, isTrue);expect(heading.label, 'Ada');
     final field = tester.getSemantics(find.byType(TextField)).getSemanticsData();
     expect(field.flagsCollection.isTextField, isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
