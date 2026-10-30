@@ -14,6 +14,11 @@ export class SqliteJwtRevocations {
  private hash(tokenId:string):string{return createHash('sha256').update(tokenId,'utf8').digest('hex');}
  /** retainUntil is a host-calculated UTC millisecond deadline covering all token acceptance. */
  revoke(tokenId:string,retainUntil:number):void{if(!valid(tokenId)||!integer(retainUntil)||retainUntil<=this.now())throw Error('Invalid JWT revocation');this.db.prepare('INSERT INTO jwt_revocations VALUES (?,?,?) ON CONFLICT(issuer,token_hash) DO UPDATE SET retain_until=MAX(retain_until,excluded.retain_until)').run(this.issuer,this.hash(tokenId),retainUntil);}
+ /** Accept only independently verified claims and deployment-wide upper bounds on clock tolerance and skew. */
+ revokeVerifiedToken(claims:JWTPayload,options:{maxClockToleranceSeconds:number;maxClockSkewSeconds:number}):number{
+  if(!claims||claims.iss!==this.issuer||!valid(claims.jti)||!integer(claims.iat)||!integer(claims.exp)||claims.exp<=claims.iat||!options||!integer(options.maxClockToleranceSeconds)||options.maxClockToleranceSeconds>60||!integer(options.maxClockSkewSeconds)||options.maxClockSkewSeconds>86400)throw Error('Invalid verified JWT revocation');
+  const seconds=claims.exp+options.maxClockToleranceSeconds+options.maxClockSkewSeconds+1,retainUntil=seconds*1000;if(!integer(seconds)||!integer(retainUntil))throw Error('Invalid verified JWT revocation');this.revoke(claims.jti,retainUntil);const row=this.db.prepare('SELECT retain_until FROM jwt_revocations WHERE issuer=? AND token_hash=?').get(this.issuer,this.hash(claims.jti));return Number(row!.retain_until);
+ }
  /** Only pass claims already verified by the configured authenticator. */
  isTokenActive(claims:JWTPayload):boolean{if(!claims||claims.iss!==this.issuer||!valid(claims.jti))return false;return !this.db.prepare('SELECT 1 FROM jwt_revocations WHERE issuer=? AND token_hash=?').get(this.issuer,this.hash(claims.jti));}
  /** Delete a bounded batch only after the host's retention horizon has elapsed. */
