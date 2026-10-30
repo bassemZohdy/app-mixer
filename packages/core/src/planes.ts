@@ -9,7 +9,7 @@ import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
 import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
-import {context,propagation,ROOT_CONTEXT,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
+import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -214,20 +214,8 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
 }
 export type DataPlaneHealthOptions={timeoutMs:number;check?:(signal:AbortSignal)=>boolean|Promise<boolean>};
 export type DataPlaneRequestObservation={route:'application'|'version'|'live'|'ready'|'other';outcome:'completed'|'aborted';statusClass:'2xx'|'3xx'|'4xx'|'5xx'|'other'|'none';durationMs:number};
-export type DataPlaneTracingOptions={tracer:Tracer;trustRemoteParent?:boolean};
+export type DataPlaneTracingOptions=HttpServerTracingOptions;
 export type ControlPlaneTracingOptions=DataPlaneTracingOptions;
-function traceHttp(options:DataPlaneTracingOptions,route:(req:IncomingMessage)=>{method:string;path?:string}){
- return (req:IncomingMessage,res:ServerResponse,run:()=>void):void=>{
-  let started=false;try{
-   let parent=ROOT_CONTEXT;
-   if(options.trustRemoteParent){let value:string|undefined,duplicate=false;for(let i=0;i<req.rawHeaders.length;i+=2)if(req.rawHeaders[i].toLowerCase()==='traceparent'){if(value!==undefined)duplicate=true;value=req.rawHeaders[i+1];}if(!duplicate&&value&&value.length<=512)parent=propagation.extract(ROOT_CONTEXT,{traceparent:value});}
-   const {method,path}=route(req);
-   const span=options.tracer.startSpan(path?`${method} ${path}`:method,{kind:SpanKind.SERVER,attributes:{'http.request.method':method,...(path?{'http.route':path}:{})}},parent);let ended=false;
-   const end=(aborted:boolean)=>{if(ended)return;ended=true;try{if(aborted){span.setAttribute('error.type','client_disconnect');span.setStatus({code:SpanStatusCode.ERROR});}else{span.setAttribute('http.response.status_code',res.statusCode);if(res.statusCode>=500)span.setStatus({code:SpanStatusCode.ERROR});}}catch{}finally{try{span.end();}catch{}}};
-   res.once('finish',()=>end(false));res.once('close',()=>end(true));context.with(trace.setSpan(parent,span),()=>{started=true;run();});
-  }catch{if(!started)run();}
- };
-}
 /** Data plane exposes only immutable publications. It does not depend on the control plane. */
 export function createDataPlane(repository: Pick<DefinitionRepository, 'getPublished'>,options?:{health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions}): Server {
   const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');

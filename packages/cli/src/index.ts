@@ -54,7 +54,8 @@ import {readFile} from 'node:fs/promises';
 import {once} from 'node:events';
 import {createPublicationTracing} from './publication-tracing.mjs';
 const flag=name=>{const value=process.env[name]??'false';if(value!=='true'&&value!=='false')throw Error('Invalid '+name);return value==='true';};
-const tracing=await createPublicationTracing({enabled:flag('WORKSPACE_TRACING_ENABLED'),trustIncoming:flag('WORKSPACE_TRACING_TRUST_INCOMING'),propagate:flag('WORKSPACE_TRACING_PROPAGATE')});
+const tracingEnabled=flag('WORKSPACE_TRACING_ENABLED'),capabilityPropagation=flag('WORKSPACE_TRACING_PROPAGATE_CAPABILITIES');if(capabilityPropagation&&!tracingEnabled)throw Error('Invalid workspace tracing configuration');
+const tracing=await createPublicationTracing({enabled:tracingEnabled,trustIncoming:flag('WORKSPACE_TRACING_TRUST_INCOMING'),propagate:flag('WORKSPACE_TRACING_PROPAGATE')});
 const port=Number(process.env.PORT||3000);
 const publicationSchemaVersion=/^[12]$/.test(process.env.PUBLICATION_SCHEMA_VERSION||'1')?Number(process.env.PUBLICATION_SCHEMA_VERSION||'1'):null;
 const bind=process.env.APP_MIXER_BIND||'127.0.0.1';
@@ -77,10 +78,10 @@ createServer(async(req,res)=>{
   if(host!==('127.0.0.1:'+req.socket.localPort) && host!==('localhost:'+req.socket.localPort)){json(res,400,{error:'Invalid host'});return;}
   if(req.method==='GET' && req.url==='/api/publication/status'){json(res,200,{configured:!!process.env.DATA_PLANE_URL,schemaVersion:publicationSchemaVersion});return;}
   if(req.method==='GET' && req.url==='/api/publication'){
-    return tracing.handle(req,res,async()=>{
+    return tracing.handle(req,res,'GET','/api/publication',async()=>{
     if(!dataURL){json(res,503,{error:'Data plane is not configured'});return;}
     try{
-      await tracing.upstream(async(traceHeaders,report)=>{
+      await tracing.upstream('GET','/application',async(traceHeaders,report)=>{
       const upstream=await fetch(dataURL,{headers:{...traceHeaders,...(req.headers['if-none-match']?{'If-None-Match':req.headers['if-none-match']}:{})},redirect:'error',signal:AbortSignal.timeout(5000)});report(upstream.status);
       const etag=upstream.headers.get('etag');
       if(upstream.status===304&&etag){res.writeHead(304,{'etag':etag,'cache-control':'no-store'});res.end();return;}
@@ -92,6 +93,7 @@ createServer(async(req,res)=>{
   }
   const capabilityMatch=req.method==='POST'&&/^\/api\/capabilities\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})$/.exec(req.url||'');
   if(capabilityMatch){
+    return tracing.handle(req,res,'POST','/api/capabilities/{operationId}',async()=>{
     if(req.headers.origin!=='http://'+host){json(res,403,{error:'Invalid origin'});return;}
     if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'Expected JSON'});return;}
     if(!capabilityURL){json(res,503,{error:'Capabilities are not configured'});return;}
@@ -99,12 +101,12 @@ createServer(async(req,res)=>{
     try {for await(const chunk of req){size+=chunk.length;if(size>1024*1024){json(res,413,{error:'Request too large'});return;}parts.push(chunk);}input=JSON.parse(Buffer.concat(parts).toString('utf8'));}
     catch{if(!res.destroyed)json(res,400,{error:'Invalid request'});return;}
     try {
-      const upstream=await fetch(new URL(capabilityMatch[1]+'/invoke',capabilityURL),{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+process.env.CAPABILITY_TOKEN},body:JSON.stringify({origin:'ui',input}),redirect:'error',signal:AbortSignal.timeout(5000)});
+      await tracing.upstream('POST','/capabilities/{operationId}/invoke',async(traceHeaders,report)=>{const upstream=await fetch(new URL(capabilityMatch[1]+'/invoke',capabilityURL),{method:'POST',headers:{...traceHeaders,'Content-Type':'application/json','Authorization':'Bearer '+process.env.CAPABILITY_TOKEN},body:JSON.stringify({origin:'ui',input}),redirect:'error',signal:AbortSignal.timeout(5000)});report(upstream.status);
       if(![200,400,401,403,404,409,415,500,503].includes(upstream.status)||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||'')||!upstream.body)throw Error('Invalid capability response');
       const chunks=[];let length=0;for await(const chunk of upstream.body){length+=chunk.length;if(length>1024*1024)throw Error('Capability response too large');chunks.push(chunk);}
-      const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));json(res,upstream.status,result);
+      const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));json(res,upstream.status,result);},capabilityPropagation);
     }catch{if(!res.destroyed)json(res,502,{error:'Capability service unavailable'});}
-    return;
+    });
   }
   if(req.method==='GET' && req.url==='/api/chat/status'){json(res,200,{enabled:!!agentURL});return;}
   if(req.method==='POST' && req.url==='/api/chat'){
@@ -218,7 +220,7 @@ export function prepareWorkspace(app){
  const offlineShell=shellTemplate.replace('__APP_ID__',JSON.stringify(name)),offlineShellWorker=shellWorkerTemplate.replace('__APP_ID__',JSON.stringify(name));
  const offlineURL=new URL(import.meta.resolve('@app-mixer/web/offline'));
  const [offlineSource,offlineWorker,offlineUI]=await Promise.all([readFile(offlineURL),readFile(new URL('./offline-worker.js',offlineURL)),readFile(new URL('./offline-ui.js',offlineURL))]);
- await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
+ await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
