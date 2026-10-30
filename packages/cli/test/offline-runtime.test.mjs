@@ -28,7 +28,7 @@ test('generated offline runtime queues, synchronizes and resolves a conflict thr
   const {invokeCapability}=await import(pathToFileURL(join(target,'capabilities.mjs')).href);
   const {createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);
   let online=false,actor={...scope};const config={enabled:true,databaseName:'generated',scope,key:await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.offline',label:'Update item'}],intervalMs:100,maxPerPass:3,maxAttempts:2,isOnline:()=>online,resolveActor:()=>actor,canEnqueue:(_op,payload)=>typeof payload.value==='string'&&Number.isSafeInteger(payload.version),canDiscard:()=>true,dispatch:(operation,input)=>invokeCapability(operation,input),classify:error=>error.status===409?'conflict':'uncertain',onError:error=>{throw error;},loadCurrent:()=>invokeCapability('items.current',{})};
-  runtime=await createGeneratedOfflineRuntime(config);runtime.start();dom=new JSDOM('<!doctype html><main><div id="enqueue"></div><div id="conflicts"></div></main>');const doc=dom.window.document;
+  runtime=await createGeneratedOfflineRuntime(config);runtime.start();dom=new JSDOM('<!doctype html><main><div id="enqueue"></div><div id="conflicts"></div></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const doc=dom.window.document;
   const form=mountGeneratedOfflineForm(doc.getElementById('enqueue'),runtime),textarea=doc.querySelector('#enqueue textarea');textarea.value=JSON.stringify({value:'mine',version:1});doc.querySelector('#enqueue form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
   await waitFor(async()=>(await runtime.list()).length===1);assert.equal(externalCalls,0);assert.equal((await runtime.list())[0].status,'pending');
   online=true;await waitFor(async()=>(await runtime.list())[0].status==='conflict');assert.equal(externalCalls,1);
@@ -50,4 +50,26 @@ test('generated offline runtime rejects disabled or malformed setup',async()=>{
   await assert.rejects(createGeneratedOfflineRuntime({enabled:false}),/configuration/);
   await assert.rejects(createGeneratedOfflineRuntime({enabled:true,operations:[]}),/configuration/);
  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('offline form retains request identity across remounts and creates new identities for changes',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-form-'));let dom;
+ try{
+  const target=await createProject('demo-app',dir),{mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main id="offline"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const doc=dom.window.document,root=doc.getElementById('offline'),calls=[];let fail=true;
+  const runtime={operations:()=>[{id:'items.update',label:'Update'}],enqueue:async(operation,key,payload)=>{calls.push({operation,key,payload});if(fail)throw Error('outcome unknown');return {status:'pending'};}};
+  const submit=async payload=>{root.querySelector('textarea').value=JSON.stringify(payload);root.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));await waitFor(()=>!root.querySelector('button').disabled);};
+  let form=mountGeneratedOfflineForm(root,runtime);await submit({secret:'private'});assert.equal(calls.length,1);assert.match(root.textContent,/Unable to queue/);const stored=dom.window.sessionStorage.getItem('app-mixer-offline-form-v1:offline');assert.ok(stored);assert.equal(stored.includes('private'),false);form.dispose();
+  fail=false;form=mountGeneratedOfflineForm(root,runtime);await submit({secret:'private'});assert.equal(calls[1].key,calls[0].key);await submit({secret:'changed'});assert.notEqual(calls[2].key,calls[1].key);root.querySelectorAll('button')[1].click();await submit({secret:'changed'});assert.notEqual(calls[3].key,calls[2].key);dom.window.sessionStorage.setItem('app-mixer-offline-form-v1:offline','invalid');await submit({secret:'changed'});assert.equal(calls.length,4);assert.match(root.textContent,/Unable to queue/);form.dispose();
+ }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('a committed enqueue with a lost response is deduplicated after the form is reopened',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retry-'));let dom,runtime;
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'retry',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}});
+  dom=new JSDOM('<!doctype html><main id="offline"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const root=dom.window.document.getElementById('offline');let loseResponse=true;const wrapper={operations:()=>runtime.operations(),enqueue:async(...args)=>{const item=await runtime.enqueue(...args);if(loseResponse)throw Error('response lost');return item;}};
+  const submit=async()=>{root.querySelector('textarea').value='{"value":"same"}';root.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));await waitFor(()=>!root.querySelector('button').disabled);};
+  let form=mountGeneratedOfflineForm(root,wrapper);await submit();assert.equal((await runtime.list()).length,1);form.dispose();loseResponse=false;form=mountGeneratedOfflineForm(root,wrapper);await submit();assert.equal((await runtime.list()).length,1);assert.match(root.textContent,/Operation pending/);form.dispose();
+ }finally{if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });

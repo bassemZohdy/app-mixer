@@ -55,18 +55,23 @@ export async function createGeneratedOfflineRuntime(config){
 }
 
 // Explicit user action creates a durable intent. Hosts must not allowlist staged submission.
-export function mountGeneratedOfflineForm(root,runtime){
-  if(!root?.ownerDocument||typeof runtime?.enqueue!=='function'||typeof runtime.operations!=='function')throw Error('Invalid offline form');
+export function mountGeneratedOfflineForm(root,runtime,options={}){
+  if(!root?.ownerDocument||typeof runtime?.enqueue!=='function'||typeof runtime.operations!=='function'||!options||typeof options!=='object'||(options.storageKey!==undefined&&(typeof options.storageKey!=='string'||!options.storageKey.trim()||options.storageKey.length>200)))throw Error('Invalid offline form');
   const doc=root.ownerDocument,form=doc.createElement('form'),label=doc.createElement('label'),select=doc.createElement('select'),dataLabel=doc.createElement('label'),data=doc.createElement('textarea'),button=doc.createElement('button'),reset=doc.createElement('button'),status=doc.createElement('p');
   label.textContent='Operation';for(const operation of runtime.operations()){const option=doc.createElement('option');option.value=operation.id;option.textContent=operation.label;select.appendChild(option);}label.appendChild(select);
   dataLabel.textContent='Operation data (JSON object)';data.value='{}';dataLabel.appendChild(data);button.type='submit';button.textContent='Queue operation';reset.type='button';reset.textContent='New operation';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-  form.append(label,dataLabel,button,reset,status);root.replaceChildren(form);let busy=false,key='',previous='';
-  reset.addEventListener('click',()=>{if(busy)return;key='';previous='';status.textContent='Ready to queue a new operation.';});
+  form.append(label,dataLabel,button,reset,status);root.replaceChildren(form);let busy=false;const storageKey='app-mixer-offline-form-v1:'+(options.storageKey??(root.id||'default'));
+  reset.addEventListener('click',()=>{if(busy)return;try{doc.defaultView.sessionStorage.removeItem(storageKey);status.textContent='Ready to queue a new operation.';}catch{status.textContent='Unable to create a new request ID. Your data is retained.';}});
   form.addEventListener('submit',event=>{event.preventDefault();void (async()=>{
     if(busy)return;let payload;try{payload=JSON.parse(data.value);if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid');}catch{status.textContent='Enter a valid JSON object.';return;}
-    const signature=JSON.stringify([select.value,payload]);if(!key||previous!==signature){const crypt=doc.defaultView?.crypto;if(!crypt||typeof crypt.randomUUID!=='function'){status.textContent='Secure request IDs are unavailable.';return;}key=crypt.randomUUID();previous=signature;}
-    busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
-    try{const item=await runtime.enqueue(select.value,key,payload);status.textContent='Operation '+item.status+'.';}
+    const operation=select.value;busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
+    try{
+      const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
+      const raw=storage.getItem(storageKey);let saved=raw===null?undefined:JSON.parse(raw);if(saved!==undefined&&(!saved||typeof saved!=='object'||Array.isArray(saved)||Object.keys(saved).sort().join(',')!=='digest,key,salt,version'||saved.version!==1||typeof saved.key!=='string'||!/^[0-9a-f-]{36}$/.test(saved.key)||typeof saved.salt!=='string'||!/^[0-9a-f-]{36}$/.test(saved.salt)||typeof saved.digest!=='string'||!/^[0-9a-f]{64}$/.test(saved.digest)))throw Error('Invalid stored request ID');
+      const digest=async salt=>Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([salt,operation,payload])))),byte=>byte.toString(16).padStart(2,'0')).join('');
+      if(!saved||saved.digest!==await digest(saved.salt)){const salt=crypt.randomUUID();saved={version:1,key:crypt.randomUUID(),salt,digest:await digest(salt)};storage.setItem(storageKey,JSON.stringify(saved));}
+      const item=await runtime.enqueue(operation,saved.key,payload);status.textContent='Operation '+item.status+'.';
+    }
     catch{status.textContent='Unable to queue operation. Your data is retained.';}
     finally{busy=false;button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}
   })();});
