@@ -9,6 +9,10 @@ const options=(indexedDB,key,scopeValue=scope)=>({enabled:true,databaseName:'off
 const request=req=>new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
 const done=tx=>new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
 
+test('separate browser stores preserve a host-issued shared key and reject replacement',async()=>{
+ const secret=await key(),first=await EncryptedBrowserQueue.open(options(new IDBFactory(),secret)),second=await EncryptedBrowserQueue.open(options(new IDBFactory(),secret));try{const a=await first.enqueue('save','logical',{value:1},{idempotencyKey:'shared-key'}),b=await second.enqueue('save','logical',{value:1},{idempotencyKey:'shared-key'});assert.equal(a.idempotencyKey,b.idempotencyKey);assert.equal((await first.enqueue('save','logical',{value:1})).idempotencyKey,'shared-key');await assert.rejects(first.enqueue('save','logical',{value:1},{idempotencyKey:'other'}),/conflict/);await assert.rejects(first.enqueue('save','other',{value:1},{idempotencyKey:''}),/Invalid/);}finally{first.close();second.close();}
+});
+
 test('requires explicit opt-in and a non-extractable encryption key',async()=>{
  const db=new IDBFactory(),good=await key(),extractable=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);
  for(const value of [{...options(db,good),enabled:false},{...options(db,extractable)},{...options(db,good),scope:{...scope,principalId:''}}])await assert.rejects(EncryptedBrowserQueue.open(value),/configuration/);

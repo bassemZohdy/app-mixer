@@ -24,10 +24,11 @@ export async function createGeneratedOfflineRuntime(config){
   }catch(error){queue.close();throw error;}
   const ensureOpen=()=>{if(closed)throw Error('Offline runtime closed');};
   const runtime={
-    async enqueue(operationId,requestKey,payload){
+    async enqueue(operationId,requestKey,payload,options){
+      const safe=structuredClone(payload),keyOptions=options===undefined?undefined:structuredClone(options);
       ensureOpen();if(!operations.has(operationId)||!await current())throw Error('Offline operation not allowed');
-      const safe=structuredClone(payload);if(await canEnqueue(operationId,structuredClone(safe),{...scope})!==true||!await current()||closed)throw Error('Offline operation not allowed');
-      return queue.enqueue(operationId,requestKey,safe);
+      if(await canEnqueue(operationId,structuredClone(safe),{...scope})!==true||!await current()||closed)throw Error('Offline operation not allowed');
+      return queue.enqueue(operationId,requestKey,safe,keyOptions);
     },
     mountConflicts(root){
       ensureOpen();const panel=mountOfflineConflictPanel(root,queue,{

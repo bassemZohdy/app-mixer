@@ -29,19 +29,21 @@ export class SqliteOfflineQueue {
       );`);}catch(error){this.db.close();throw error;}
   }
   close():void{this.db.close();}
-  enqueue(scope:DataScope,principalId:string,operationId:string,requestKey:string,payload:Record<string,unknown>):OfflineOperation {
+  enqueue(scope:DataScope,principalId:string,operationId:string,requestKey:string,payload:Record<string,unknown>,options?:{idempotencyKey:string}):OfflineOperation {
     checkKey(scope,operationId,requestKey);checkKey(scope,'principal',principalId);
+    if(options!==undefined){if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).length!==1)throw Error('Invalid shared offline key');checkKey(scope,'idempotency',options.idempotencyKey);}
+    const sharedKey=options?.idempotencyKey;
     const serialized=JSON.stringify(dataCopy(payload)),normalized=JSON.parse(serialized) as Record<string,unknown>;
     this.db.exec('BEGIN IMMEDIATE');
     try{
       const row=this.db.prepare('SELECT id,operation_id,payload FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND request_key=?').get(scope.tenantId,scope.applicationId,principalId,requestKey);
       if(row){
         if(row.operation_id!==operationId||!isDeepStrictEqual(JSON.parse(row.payload as string),normalized))throw Error('Offline request conflict');
-        const previous=this.get(scope,principalId,row.id as string)!;this.db.exec('COMMIT');return previous;
+        const previous=this.get(scope,principalId,row.id as string)!;if(sharedKey!==undefined&&previous.idempotencyKey!==sharedKey)throw Error('Offline request conflict');this.db.exec('COMMIT');return previous;
       }
       const total=this.db.prepare('SELECT COUNT(*) AS count FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=?').get(scope.tenantId,scope.applicationId,principalId);
       if(Number(total?.count)>=1000)throw Error('Offline queue full');
-      const id=randomUUID(),idempotencyKey=randomUUID();
+      const id=randomUUID(),idempotencyKey=sharedKey??randomUUID();
       this.db.prepare('INSERT INTO offline_operations VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,operationId,requestKey,idempotencyKey,serialized,'pending',0,0);
       this.db.exec('COMMIT');return {id,operationId,requestKey,idempotencyKey,payload:dataCopy(normalized),status:'pending',attempts:0,nextAttemptAt:0};
     }catch(error){this.db.exec('ROLLBACK');throw error;}
