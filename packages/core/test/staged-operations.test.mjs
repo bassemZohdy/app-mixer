@@ -67,6 +67,7 @@ test('staged external submission reconciles a lost response against an idempoten
  const {createServer}=await import('node:http');
  const effects=new Map();let requests=0;
  const server=createServer(async(req,res)=>{
+  if(req.method==='GET'){const key=new URL(req.url,'http://localhost').searchParams.get('key');res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({applied:effects.has(key)}));return;}
   const chunks=[];for await(const chunk of req)chunks.push(chunk);
   const payload=JSON.parse(Buffer.concat(chunks).toString());const key=req.headers['idempotency-key'];requests++;
   if(!effects.has(key))effects.set(key,payload);
@@ -85,7 +86,8 @@ test('staged external submission reconciles a lost response against an idempoten
   await assert.rejects(staged.submit(scope,op.id,registry,context),/response lost/);
   assert.equal(staged.get(scope,op.id).status,'uncertain');
   assert.deepEqual(effects.get(op.idempotencyKey),{sku:'ABC',quantity:2});
-  staged.reconcile(scope,op.id,'applied');
+  const outcome=await staged.verifyAndReconcile(scope,op.id,async(_scope,operation)=>{const response=await fetch(`http://127.0.0.1:${server.address().port}/status?key=${encodeURIComponent(operation.idempotencyKey)}`);return (await response.json()).applied?'applied':'unknown';});
+  assert.equal(outcome,'applied');assert.equal(staged.get(scope,op.id).status,'succeeded');
   await assert.rejects(staged.submit(scope,op.id,registry,context),/not staged/);
   assert.equal(requests,1);assert.equal(effects.size,1);
  } finally {staged.close();await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
@@ -115,4 +117,17 @@ test('existing staging databases migrate without losing operations',async()=>{
  const store=new SqliteStagedOperations(path);
  try {assert.equal(store.get(scope,'old').idempotencyKey,'old-key');const op=store.stage(scope,'charge',{amount:10},'new-request');assert.equal(store.stage(scope,'charge',{amount:10},'new-request').id,op.id);}
  finally {store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('provider verification fails closed and stale results cannot resolve a later attempt',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'staged-verify-')),path=join(dir,'db.sqlite'),first=new SqliteStagedOperations(path),second=new SqliteStagedOperations(path),op=first.stage(scope,'charge',{amount:10}),registry=new CapabilityRegistry(()=>{});
+ registry.register({operationId:'charge',method:'POST',path:'/charge'},{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('unknown')}});
+ try{
+  await assert.rejects(first.verifyAndReconcile(scope,op.id,()=> 'applied'),/state/);await assert.rejects(first.submit(scope,op.id,registry,context),/unknown/);
+  await assert.rejects(first.verifyAndReconcile({...scope,tenantId:'other'},op.id,()=> 'applied'),/state/);
+  assert.equal(await first.verifyAndReconcile(scope,op.id,()=> 'unknown'),'unknown');await assert.rejects(first.verifyAndReconcile(scope,op.id,()=> 'invalid'),/verification outcome/);await assert.rejects(first.verifyAndReconcile(scope,op.id,()=>{throw Error('provider down')}),/provider down/);assert.equal(first.get(scope,op.id).status,'uncertain');
+  let unblock,started;const waiting=new Promise(resolve=>unblock=resolve),entered=new Promise(resolve=>started=resolve),mutableScope={...scope};const verification=first.verifyAndReconcile(mutableScope,op.id,async(s,operation)=>{assert.deepEqual(s,scope);assert.equal(operation.idempotencyKey,op.idempotencyKey);s.tenantId='other';operation.payload.amount=999;started();await waiting;return 'applied';});await entered;mutableScope.tenantId='other';
+  second.reconcile(scope,op.id,'not_applied');await assert.rejects(second.submit(scope,op.id,registry,context),/unknown/);unblock();await assert.rejects(verification,/Stale staged verification/);assert.equal(first.get(scope,op.id).status,'uncertain');assert.deepEqual(first.get(scope,op.id).payload,{amount:10});
+  assert.equal(await second.verifyAndReconcile(scope,op.id,()=> 'not_applied'),'not_applied');assert.equal(first.get(scope,op.id).status,'staged');
+ }finally{first.close();second.close();rmSync(dir,{recursive:true,force:true});}
 });
