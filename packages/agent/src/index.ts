@@ -130,6 +130,8 @@ export type {AgentDelegationActor,AgentDelegationAccess,AgentDelegationRecord,Ag
 export {SqliteAgentNotices} from './agent-notices.js';
 export type {AgentNotice,AgentNoticeActor,AgentNoticeAccess,AgentNoticeOptions} from './agent-notices.js';
 export {SqliteAgentNoticeDelivery} from './agent-notice-delivery.js';
+export {AgentNoticeDeliveryWorker} from './notice-delivery-worker.js';
+export type {AgentNoticeDeliveryWorkerOptions} from './notice-delivery-worker.js';
 export type {AgentNoticeDelivery,AgentNoticeMessage,AgentNoticeDeliveryEvent,AgentNoticeDeliveryOptions,AgentNoticeDeliveryActor,AgentNoticeDeliveryAccess} from './agent-notice-delivery.js';
 
 export {SqliteAgentTokenBudget} from './agent-token-budget.js';
