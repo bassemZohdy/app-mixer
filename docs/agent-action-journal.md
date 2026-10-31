@@ -27,3 +27,10 @@ Protected actions can require a matching approval as described in [agent approva
 
 
 The automated process-crash acceptance test terminates a separate Node worker before an external dispatch, after a simulated HTTP service commits but before it returns, and after the journal records the result. It reopens SQLite, confirms that lease expiry alone does not replay an action, explicitly reconciles the external outcome, and checks the stable key and tenant isolation. The service is a local idempotent test double; these tests do not establish the behavior of a real provider, distributed storage, pod termination, or production key retention.
+
+## Downstream idempotency check
+
+`checkIdempotencyContract({dispatch, countEffects, input, conflictingInput, concurrency?})` exercises how a downstream operation handles idempotency keys before a host relies on it for journaled actions. `dispatch(input, key)` must call the operation exactly as the capability binding would, against a sandbox or staging target; `countEffects(key)` must read the number of applied effects for that key independently, for example from the provider's records. The check sends a sequential replay, `concurrency` simultaneous attempts (5 by default) with one key, the reused key with `conflictingInput`, and a fresh key. It returns `{passed, findings, keys}`; findings name the check and problem, such as more than one effect for one key, replays returning different results, or a reused key accepted for different content, including silently returning the original result.
+
+A passing report is evidence about that target, input and timing only. It does not establish key retention across the recovery horizon, behavior after provider failover, or production configuration. Run it against isolated test accounts, since it creates real effects, and repeat it when the provider or binding changes.
+

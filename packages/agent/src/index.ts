@@ -89,6 +89,8 @@ export type { ToolModel, LimitedToolModel, CostLimitedToolModel } from './tool-m
 export {SqliteAgentDefinitions,validateAgentManifest} from './persistent-definitions.js';
 export {PostgresAgentDefinitions} from './postgres-agent-definitions.js';
 export {PostgresAgentRunSlots} from './postgres-run-slots.js';
+export {checkIdempotencyContract} from './idempotency-contract.js';
+export type {IdempotencyContractOptions,IdempotencyContractFinding,IdempotencyContractReport} from './idempotency-contract.js';
 export type {PostgresAgentRunSlotsOptions,AgentRunSlotLimits} from './postgres-run-slots.js';
 export type {PostgresAgentDefinitionsOptions,AgentDefinitionActor,AgentDefinitionAccess,PostgresAgentDefinitionQuery,AgentDefinitionAudit,AgentDefinitionTenantLimits} from './postgres-agent-definitions.js';
 export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';
