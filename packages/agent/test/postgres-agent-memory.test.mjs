@@ -60,3 +60,17 @@ test('scope-specific pgvector index isolates candidate graphs and rejects other 
   const client=await pool.connect();try{await client.query('SET enable_seqscan=off');const result=await client.query("EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE tenant_id='tenant' AND agent_id='agent' AND owner_kind='organization' AND owner_id='org' AND memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'='model-v1' ORDER BY ((CASE WHEN tenant_id='tenant' AND agent_id='agent' AND owner_kind='organization' AND owner_id='org' THEN ((value::jsonb->'vector')::text::public.vector(2)) ELSE NULL END)::public.vector(2)) OPERATOR(public.<=>) '[1,0]'::public.vector(2) LIMIT 5");const indexes=await client.query("SELECT indexname,indexdef FROM pg_indexes WHERE tablename='app_mixer_agent_memories' AND indexname LIKE 'app_mixer_memory_vec_%'");assert.equal(indexes.rows.length,2);const isolatedIndex=indexes.rows.find(row=>row.indexdef.includes('CASE'));assert.ok(isolatedIndex);assert.match(result.rows.map(row=>row['QUERY PLAN']).join('\\n'),new RegExp(isolatedIndex.indexname));}finally{client.release();}
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
+
+test('PostgreSQL scope erasure is separately authorized, scoped, audited and survives revision reuse',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const schema='app_mixer_erase_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);
+  const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:(who,_scope,action)=>who.principalId==='service'||(who.principalId==='cleaner'&&action==='purge'),query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await memory.initialize();
+  const user={...scope,kind:'episodic',owner:{kind:'user',id:'u1'}},other={...user,owner:{kind:'user',id:'u2'}},opts=expiresAt=>({expectedRevision:null,expiresAt,provenance});
+  await memory.put(actor,user,'a',{secret:'x'},opts(500));await memory.put(actor,user,'b','y',opts(150));await memory.put(actor,other,'a','keep',opts(500));
+  await assert.rejects(memory.eraseScope({...actor,principalId:'cleaner'},user),/access denied/);assert.equal((await memory.get(actor,user,'a')).value.secret,'x');
+  now=200;assert.equal(await memory.eraseScope(actor,user),2);assert.equal(await memory.eraseScope(actor,user),0);
+  assert.equal(await memory.get(actor,user,'a'),undefined);assert.deepEqual((await memory.list(actor,user)).items,[]);assert.equal((await memory.get(actor,other,'a')).value,'keep');
+  const history=(await memory.auditHistory(actor,user)).items;assert.deepEqual(history.map(x=>x.action),['write','write','erase']);assert.equal(history[2].count,2);assert.equal(history[2].memoryId,null);assert.equal(JSON.stringify(history).includes('secret'),false);
+  assert.equal((await memory.put(actor,user,'a','new',opts(500))).revision,3);
+ }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+});
