@@ -26,9 +26,7 @@ spec:
         (!has(object.spec.template.spec.initContainers) || object.spec.template.spec.initContainers.size() == 0)
     - message: Signed release, JWT, TLS and revocation settings must match the trusted policy.
       expression: >-
-        has(params.data) && has(variables.c.env) && variables.c.env.filter(e, e.name != 'APP_MIXER_TLS_RELOAD_MS').size() == 18 &&
-        variables.c.env.filter(e, e.name == 'APP_MIXER_TLS_RELOAD_MS').size() <= 1 &&
-        variables.c.env.filter(e, e.name == 'APP_MIXER_TLS_RELOAD_MS').all(e, has(e.value) && e.value in ['10000', '30000', '60000', '300000', '900000', '3600000']) &&
+        has(params.data) && has(variables.c.env) && (variables.c.env.size() == 18 || (variables.c.env.size() == 19 && variables.c.env.exists_one(e, e.name == 'APP_MIXER_TLS_RELOAD_MS' && has(e.value) && e.value in ['10000', '30000', '60000', '300000', '900000', '3600000']))) &&
         variables.c.env.all(e, has(e.value) && !has(e.valueFrom)) &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_PATH').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_PUBLICATION_PATH' && e.value == '/publication/publication.json') &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_MODE').size() == 1 && variables.c.env.exists(e, e.name == 'APP_MIXER_PUBLICATION_MODE' && e.value == 'signed') &&
