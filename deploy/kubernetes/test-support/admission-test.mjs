@@ -12,8 +12,9 @@ const env=(c,name)=>c.env.find(e=>e.name===name);
 // be denied before asserting individual rejection cases.
 const unsigned=structuredClone(original);env(unsigned.spec.template.spec.containers[0],'APP_MIXER_PUBLICATION_MODE').value='unsigned';
 let enforced;for(let i=0;i<30;i++){enforced=apply(unsigned);if(enforced.status!==0&&enforced.stderr.includes('app-mixer-data-plane-security'))break;await delay(1000);}if(enforced.status===0||!enforced.stderr.includes('app-mixer-data-plane-security'))throw Error('Admission policy did not become active: '+enforced.stderr);
-// The optional TLS reload interval is the only variable beyond the approved set; it must be unique and bounded.
+// The optional TLS reload interval is the only variable beyond the approved set; it must be unique and one of the approved values.
 const reload=structuredClone(original);reload.spec.template.spec.containers[0].env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'});const accepted=apply(reload);if(accepted.status!==0)throw Error('Expected TLS reload interval to pass: '+accepted.stderr);
+changed('unlisted TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'1000'}));
 changed('non-numeric TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'soon'}));
 changed('duplicate TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'},{name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'}));
 changed('unapproved extra variable',(_,c)=>c.env.push({name:'APP_MIXER_DEBUG',value:'1'}));
