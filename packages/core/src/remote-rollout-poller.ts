@@ -17,6 +17,8 @@ export class RemoteRolloutPoller {
   this.rollout=options.rollout;this.intervalMs=options.intervalMs;this.maxBackoffMs=options.maxBackoffMs;this.onResult=options.onResult;this.onError=options.onError;this.jitterRatio=options.jitterRatio??0;this.random=options.random??Math.random;
  }
  isRunning():boolean{return this.active;}
+ /** A throwing or out-of-range random source falls back to the unjittered wait so polling never stops. */
+ private jittered(base:number):number{let draw:number;try{draw=this.random();}catch{return base;}return Number.isFinite(draw)&&draw>=0&&draw<1?Math.max(1,Math.floor(base*(1-this.jitterRatio*draw))):base;}
  start():void{
   if(this.active||this.pending)throw Error('Rollout poller already running');this.active=true;this.failures=0;this.loop();
  }
@@ -26,7 +28,7 @@ export class RemoteRolloutPoller {
    try{const result=await this.rollout.runOnce();this.failures=0;try{void Promise.resolve(this.onResult(result)).catch(()=>{});}catch{}}
    catch(error){let needsReview=true;try{needsReview=(await this.rollout.getState()).phase!=='idle';}catch{}if(needsReview)this.active=false;else this.failures++;try{void Promise.resolve(this.onError(error,needsReview)).catch(()=>{});}catch{}}
   })();this.pending=pending;
-  void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.active){const base=Math.min(this.maxBackoffMs,this.intervalMs*2**Math.min(this.failures,20)),draw=this.random(),delay=this.jitterRatio>0&&Number.isFinite(draw)&&draw>=0&&draw<1?Math.max(1,Math.floor(base*(1-this.jitterRatio*draw))):base;this.timer=setTimeout(()=>{this.timer=undefined;this.loop();},delay);}});
+  void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.active){const base=Math.min(this.maxBackoffMs,this.intervalMs*2**Math.min(this.failures,20)),delay=this.jitterRatio>0?this.jittered(base):base;this.timer=setTimeout(()=>{this.timer=undefined;this.loop();},delay);}});
  }
  async stop():Promise<void>{this.active=false;if(this.timer)clearTimeout(this.timer);this.timer=undefined;const pending=this.pending;if(pending)await pending;}
 }
