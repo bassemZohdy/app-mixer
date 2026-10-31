@@ -18,6 +18,11 @@ const reload=structuredClone(original);reload.spec.template.spec.containers[0].e
 changed('unlisted TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'1000'}));
 changed('non-numeric TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'soon'}));
 changed('duplicate TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'},{name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'}));
+const metrics=structuredClone(original);metrics.spec.template.spec.containers[0].env=metrics.spec.template.spec.containers[0].env.filter(e=>e.name!=='APP_MIXER_METRICS_PORT');
+const withMetrics=value=>{const object=structuredClone(metrics);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_PORT',value});return object;};
+for(const value of ['39092','65535']){const result=apply(withMetrics(value));if(result.status!==0)throw Error('Expected metrics port '+value+' to pass: '+result.stderr);}
+for(const value of ['abc','0','65536','3002','070']){const result=apply(withMetrics(value));if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('Metrics port '+value+' was not denied: '+result.stderr);}
+changed('duplicate metrics port',(_,c)=>c.env.push({name:'APP_MIXER_METRICS_PORT',value:'39093'}));
 changed('unapproved extra variable',(_,c)=>c.env.push({name:'APP_MIXER_DEBUG',value:'1'}));
 changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value='unsigned');
 changed('public access',(_,c)=>env(c,'APP_MIXER_ACCESS_MODE').value='public');
