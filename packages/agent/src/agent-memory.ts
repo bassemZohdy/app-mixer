@@ -3,9 +3,9 @@ import {DatabaseSync} from 'node:sqlite';
 type MemoryScope={tenantId:string;agentId:string;owner:{kind:'organization'|'team'|'application'|'user';id:string};kind:'session'|'semantic'|'episodic'|'procedural'};
 type MemoryActor={tenantId:string;principalId:string};
 type Provenance={kind:'run'|'human'|'system';id:string};
-type MemoryAction='read'|'write'|'delete'|'list'|'purge'|'audit';
+type MemoryAction='read'|'write'|'delete'|'list'|'purge'|'audit'|'erase';
 export type AgentMemoryRecord={id:string;revision:number;value:unknown;provenance:Provenance;expiresAt:number};
-export type AgentMemoryAuditEvent={id:number;action:'write'|'delete'|'purge';actorId:string;memoryId:string|null;revision:number|null;count:number;observedAt:number};
+export type AgentMemoryAuditEvent={id:number;action:'write'|'delete'|'purge'|'erase';actorId:string;memoryId:string|null;revision:number|null;count:number;observedAt:number};
 type Options={enabled:true;maxTtlMs:number;maxEntries:number;authorize:(actor:MemoryActor,scope:MemoryScope,action:MemoryAction,id?:string)=>boolean|Promise<boolean>;clock?:()=>number;audit?:boolean};
 export class MemoryAccessDenied extends Error {constructor(){super('Memory access denied');}}
 export const validMemoryId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
@@ -52,7 +52,7 @@ export class SqliteAgentMemory {
   return {id:String(row.memory_id),revision:Number(row.revision),value:JSON.parse(row.value),provenance:JSON.parse(row.provenance) as Provenance,expiresAt:Number(row.expires_at)};
  }
  async assertAccess(actor:MemoryActor,scope:MemoryScope,action:MemoryAction,memoryId?:string):Promise<void>{
-  const c=checkedMemoryScope(actor,scope);if(!['read','write','delete','list','purge','audit'].includes(action)||(memoryId!==undefined&&!validMemoryId(memoryId))||(['read','write','delete'].includes(action)&&memoryId===undefined))throw Error('Invalid memory access');await this.permit(c.actor,c.scope,action,memoryId);
+  const c=checkedMemoryScope(actor,scope);if(!['read','write','delete','list','purge','audit','erase'].includes(action)||(memoryId!==undefined&&!validMemoryId(memoryId))||(['read','write','delete'].includes(action)&&memoryId===undefined))throw Error('Invalid memory access');await this.permit(c.actor,c.scope,action,memoryId);
  }
  async get(actor:MemoryActor,scope:MemoryScope,memoryId:string):Promise<AgentMemoryRecord|undefined>{
   const checkedScope=checkedMemoryScope(actor,scope);if(!validMemoryId(memoryId))throw Error('Invalid memory ID');await this.permit(checkedScope.actor,checkedScope.scope,'read',memoryId);
@@ -84,6 +84,11 @@ export class SqliteAgentMemory {
  }
  async purgeExpired(actor:MemoryActor,scope:MemoryScope):Promise<number>{
   const c=checkedMemoryScope(actor,scope);await this.permit(c.actor,c.scope,'purge');const now=this.now();this.db.exec('BEGIN IMMEDIATE');try{const result=this.db.prepare('UPDATE agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0 AND expires_at<=? AND revision<?').run(...this.args(c.scope),now,Number.MAX_SAFE_INTEGER),count=Number(result.changes);if(count)this.recordAudit(c.actor,c.scope,'purge',null,null,count,now);this.db.exec('COMMIT');return count;}catch(error){this.db.exec('ROLLBACK');throw error;}
+ }
+ /** Tombstone every live or expired memory in one scope (for example when an owner asks for erasure). Needs the separate `erase` permission; returns how many were erased. */
+ async eraseScope(actor:MemoryActor,scope:MemoryScope):Promise<number>{
+  const c=checkedMemoryScope(actor,scope);await this.permit(c.actor,c.scope,'erase');const now=this.now();this.db.exec('BEGIN IMMEDIATE');
+  try{const result=this.db.prepare('UPDATE agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0 AND revision<?').run(...this.args(c.scope),Number.MAX_SAFE_INTEGER),count=Number(result.changes);if(count)this.recordAudit(c.actor,c.scope,'erase',null,null,count,now);this.db.exec('COMMIT');return count;}catch(error){this.db.exec('ROLLBACK');throw error;}
  }
  async auditHistory(actor:MemoryActor,scope:MemoryScope,options:{after?:number;limit?:number}={}):Promise<{items:AgentMemoryAuditEvent[];nextAfter?:number}>{
   const c=checkedMemoryScope(actor,scope),after=options?.after??0,limit=options?.limit??50;if(!this.audit||!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid memory audit listing');await this.permit(c.actor,c.scope,'audit');

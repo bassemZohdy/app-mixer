@@ -58,3 +58,18 @@ test('separate connections enforce revision and live-record quota atomically',as
  try{await a.put(actor,scope,'one',{a:1},write(500));const revision=(await b.get(actor,scope,'one')).revision;await a.put(actor,scope,'one',{a:2},write(500,revision));await assert.rejects(b.put(actor,scope,'one',{a:3},write(500,revision)),/revision conflict/);await assert.rejects(b.put(actor,scope,'two',{},write(500)),/quota/);assert.equal((await b.get(actor,scope,'one')).value.a,2);}
  finally{a.close();b.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('erasing a scope needs its own permission, removes only that scope and is audited without values',async()=>{
+ const actor={tenantId:'t',principalId:'admin'},scope={tenantId:'t',agentId:'a',owner:{kind:'user',id:'u1'},kind:'episodic'},other={...scope,owner:{kind:'user',id:'u2'}};
+ let now=100;const policy=(who,_s,action)=>who.principalId==='admin'||(who.principalId==='cleaner'&&action==='purge');
+ const store=new SqliteAgentMemory(':memory:',settings({audit:true,authorize:policy,clock:()=>now}));
+ try{
+  const write=expiresAt=>({expectedRevision:null,expiresAt,provenance:{kind:'human',id:'h'}});
+  await store.put(actor,scope,'a',{secret:'x'},write(500));await store.put(actor,scope,'b','y',write(150));await store.put(actor,other,'a','keep',write(500));
+  await assert.rejects(store.eraseScope({...actor,principalId:'cleaner'},scope),/access denied/);assert.equal((await store.get(actor,scope,'a')).value.secret,'x');
+  now=200;assert.equal(await store.eraseScope(actor,scope),2);assert.equal(await store.eraseScope(actor,scope),0);
+  assert.equal(await store.get(actor,scope,'a'),undefined);assert.deepEqual((await store.list(actor,scope)).items,[]);assert.equal((await store.get(actor,other,'a')).value,'keep');
+  const history=(await store.auditHistory(actor,scope)).items;assert.deepEqual(history.map(x=>x.action),['write','write','erase']);assert.equal(history[2].count,2);assert.equal(history[2].memoryId,null);assert.equal(JSON.stringify(history).includes('secret'),false);
+  assert.equal((await store.put(actor,scope,'a','new',write(500))).revision,3);
+ }finally{store.close();}
+});
