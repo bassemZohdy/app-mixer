@@ -187,6 +187,8 @@ export type {JwtJwksManagerOptions} from './jwt-jwks-manager.js';
 export {discoverOidcJwks,createOidcJwtJwksManager} from './oidc-discovery.js';
 export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discovery.js';
 export {SqliteCapabilityAudit} from './capability-audit.js';
+export {createTlsCredentialReloader,validateTlsCredentials} from './tls-reloader.js';
+export type {TlsCredentials,TlsCredentialInfo,TlsCredentialReloaderOptions} from './tls-reloader.js';
 export {SqlitePromotionSigningAudit,createAuditedPromotionSigner} from './promotion-signing-audit.js';
 export type {PromotionSigningAuditEntry,PromotionSigningAuditHead,PromotionImportRecord,UnauditedPromotionImport} from './promotion-signing-audit.js';
 export {PostgresCapabilityAudit} from './postgres-capability-audit.js';
