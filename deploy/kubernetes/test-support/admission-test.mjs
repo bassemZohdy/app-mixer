@@ -6,7 +6,7 @@ process.on('uncaughtException',error=>{console.log('::error title=Admission poli
 const namespace='app-mixer-test',path=join(process.env.RUNNER_TEMP,'admission-deployment.json'),image='registry.example/app-mixer@sha256:'+'a'.repeat(64);
 const original=JSON.parse(execFileSync('kubectl',['get','deployment','app-mixer-data-plane','-n',namespace,'-o','json'],{encoding:'utf8'}));original.spec.template.spec.containers[0].image=image;
 const apply=object=>{writeFileSync(path,JSON.stringify(object));return spawnSync('kubectl',['replace','--dry-run=server','-f',path],{encoding:'utf8'});};
-let valid;for(let i=0;i<30;i++){valid=apply(original);if(valid.status===0)break;await delay(1000);}if(valid.status!==0)throw Error('Expected approved deployment to pass: '+valid.stderr);
+let valid;for(let i=0;i<30;i++){valid=apply(original);if(valid.status===0)break;await delay(1000);}if(valid.status!==0){const live=spawnSync('kubectl',['get','validatingadmissionpolicy','app-mixer-data-plane-security','-o','jsonpath={.status}'],{encoding:'utf8'}).stdout;const e0=original.spec.template.spec.containers[0].env;throw Error('Expected approved deployment to pass: '+valid.stderr+' env='+e0.length+' names='+e0.map(e=>e.name).join(',')+' status='+live);}
 const changed=(name,mutate)=>{const object=structuredClone(original),c=object.spec.template.spec.containers[0];mutate(object,c);const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error(`${name} was not denied by the security policy: ${result.stderr}`);};
 const env=(c,name)=>c.env.find(e=>e.name===name);
 // Policy and binding propagation is asynchronous; wait for an unsafe update to
