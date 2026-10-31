@@ -122,3 +122,31 @@ test('a read delayed during decryption is rejected after rotation',async()=>{
  const factory=new IDBFactory(),oldKey=await key(),newKey=await key();let armed=false,resume,started;const gate=new Promise(r=>resume=r),ready=new Promise(r=>started=r),slow={subtle:{digest:webcrypto.subtle.digest.bind(webcrypto.subtle),encrypt:webcrypto.subtle.encrypt.bind(webcrypto.subtle),decrypt:async(...args)=>{if(armed){started();await gate;}return webcrypto.subtle.decrypt(...args);}},getRandomValues:webcrypto.getRandomValues.bind(webcrypto),randomUUID:webcrypto.randomUUID.bind(webcrypto)};const stale=await EncryptedBrowserQueue.open({...options(factory,oldKey),crypto:slow}),rotating=await EncryptedBrowserQueue.open(options(factory,oldKey));
  try{await rotating.enqueue('save','original',{});armed=true;const pending=stale.list();await ready;await rotating.rotateKey(newKey);resume();await assert.rejects(pending,/key changed/);}finally{resume();stale.close();rotating.close();}
 });
+
+test('rollback anchor detects restored queue snapshots and tolerates concurrent tabs and anchor outages',async()=>{
+ const factory=new IDBFactory(),queueKey=await key(),floor={value:0,fail:false,calls:0},anchor={read:async()=>floor.value,advance:async n=>{floor.calls++;if(floor.fail)throw Error('anchor offline');floor.value=Math.max(floor.value,n);}},open=(k=queueKey,a=anchor)=>EncryptedBrowserQueue.open({...options(factory,k),rollbackAnchor:a});
+ const snapshot=async()=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readonly'),all=request(tx.objectStore('offline').getAll());await done(tx);return await all;}finally{db.close();}};
+ const restore=async records=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readwrite'),store=tx.objectStore('offline');store.clear();for(const value of records)store.put(value);await done(tx);}finally{db.close();}};
+ for(const bad of [{},{read:async()=>0},{read:1,advance:async()=>{}}])await assert.rejects(EncryptedBrowserQueue.open({...options(factory,queueKey),rollbackAnchor:bad}),/Invalid encrypted offline storage configuration/);
+ let queue=await open(),tab=await open();
+ const first=await queue.enqueue('save','one',{n:1});assert.equal(floor.value,1);assert.deepEqual(await queue.enqueue('save','one',{n:1}),first);assert.equal(floor.value,1);
+ const old=await snapshot();
+ const [claimed,second]=await Promise.all([queue.transition(first.id,1,'claim'),tab.enqueue('save','two',{n:2})]);assert.equal(claimed.status,'running');assert.equal(second.status,'pending');assert.equal(floor.value,3);
+ await queue.transition(first.id,claimed.version,'succeed');assert.equal(floor.value,4);queue.close();tab.close();
+ const current=await snapshot();await restore(old);await assert.rejects(open(),/rollback detected/);
+ await restore(current.filter(value=>!String(value.id).startsWith('@queue-counter:')));await assert.rejects(open(),/rollback detected/);
+ const counter=current.find(value=>String(value.id).startsWith('@queue-counter:'));await restore(current.map(value=>value===counter?{...value,counter:9}:value));await assert.rejects(open(),/Invalid offline queue counter/);
+ await restore(current);queue=await open();assert.equal((await queue.get(first.id)).status,'succeeded');
+ floor.fail=true;const third=await queue.enqueue('save','three',{n:3});assert.equal(third.status,'pending');assert.equal(queue.hasPendingRollbackAnchor(),true);assert.equal(floor.value,4);await assert.rejects(queue.syncRollbackAnchor(),/anchor offline/);
+ floor.fail=false;assert.equal(await queue.syncRollbackAnchor(),5);assert.equal(queue.hasPendingRollbackAnchor(),false);assert.equal(floor.value,5);
+ const nextKey=await key();await queue.rotateKey(nextKey);assert.equal(floor.value,6);await assert.rejects(open(queueKey),/Cannot authenticate/);queue=await open(nextKey);assert.equal((await queue.list()).length,3);queue.close();
+ floor.value=50;await assert.rejects(open(nextKey),/rollback detected/);
+ const plain=await EncryptedBrowserQueue.open(options(factory,nextKey));const before=(await snapshot()).find(value=>String(value.id).startsWith('@queue-counter:')).counter;await plain.enqueue('save','four',{n:4});assert.equal((await snapshot()).find(value=>String(value.id).startsWith('@queue-counter:')).counter,before);plain.close();
+ await assert.rejects(EncryptedBrowserQueue.open({...options(factory,nextKey),rollbackAnchor:{read:async()=>-1,advance:async()=>{}}}),/Invalid offline rollback anchor/);
+ await assert.rejects(EncryptedBrowserQueue.open({...options(factory,nextKey),rollbackAnchor:{read:async()=>{throw Error('down');},advance:async()=>{}}}),/down/);
+});
+
+test('rollback counter serializes contending tabs without losing writes',async()=>{
+ const factory=new IDBFactory(),queueKey=await key();let floor=0;const anchor={read:async()=>floor,advance:async n=>{floor=Math.max(floor,n);}},tabs=await Promise.all(Array.from({length:4},()=>EncryptedBrowserQueue.open({...options(factory,queueKey),rollbackAnchor:anchor})));
+ try{const results=await Promise.all(Array.from({length:24},(_,i)=>tabs[i%4].enqueue('save','request-'+i,{i})));assert.equal(new Set(results.map(item=>item.id)).size,24);assert.equal(floor,24);assert.equal((await tabs[0].list()).length,24);}finally{for(const tab of tabs)tab.close();}
+});
