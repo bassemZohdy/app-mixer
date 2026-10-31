@@ -88,6 +88,8 @@ export { createOpenAIToolModel, createToolCallingModel } from './tool-model.js';
 export type { ToolModel, LimitedToolModel, CostLimitedToolModel } from './tool-model.js';
 export {SqliteAgentDefinitions,validateAgentManifest} from './persistent-definitions.js';
 export {PostgresAgentDefinitions} from './postgres-agent-definitions.js';
+export {PostgresAgentRunSlots} from './postgres-run-slots.js';
+export type {PostgresAgentRunSlotsOptions,AgentRunSlotLimits} from './postgres-run-slots.js';
 export type {PostgresAgentDefinitionsOptions,AgentDefinitionActor,AgentDefinitionAccess,PostgresAgentDefinitionQuery,AgentDefinitionAudit,AgentDefinitionTenantLimits} from './postgres-agent-definitions.js';
 export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';
 export {createConfiguredAgentRun} from './configured-runtime.js';
