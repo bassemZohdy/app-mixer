@@ -37,3 +37,23 @@ test('PostgreSQL definitions coordinate concurrent versions, isolate tenants and
  let finalStarted,finalRelease,finalChecks=0;const finalReady=new Promise(r=>finalStarted=r),finalGate=new Promise(r=>finalRelease=r),finalReader=new PostgresAgentDefinitions({...config(a),authorize:async(_actor,action)=>{if(action==='read'&&++finalChecks===3){finalStarted();await finalGate;}return true;}}),finalRead=finalReader.get(actor,'agent');await finalReady;await second.save(actor,{...manifest(),name:'Fourth'},3);finalRelease();await assert.rejects(finalRead,/changed during read/);
  await a.query("CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");await a.query('CREATE TRIGGER reject_agent_audit BEFORE INSERT ON app_mixer_agent_definition_audit FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()');await assert.rejects(first.save(actor,{...manifest(),name:'Rejected'},4),/audit unavailable/);assert.equal((await first.get(actor,'agent')).version,4);allowed=false;await assert.rejects(first.get(actor,'agent'),/denied/);await assert.rejects(first.save(actor,manifest(),4),/denied/);
  }finally{await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}});
+
+test('PostgreSQL definitions enforce host tenant limits under concurrent creation',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const schema='agent_limits_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,max:12,options:`-c search_path=${schema}`});
+ const limits={tenant:{maxAgents:3,maxVersionsPerAgent:2,maxConcurrentRuns:2,maxTokensPerRun:500},other:{}};
+ try{
+  await admin.query(`CREATE SCHEMA "${schema}"`);
+  for(const bad of [()=>({maxAgents:0}),()=>({unknown:1}),()=>[],()=>({maxRunsPerDay:1.5})]){const store=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:bad});await store.initialize();await assert.rejects(store.save(actor,manifest('tenant','bad'),0),/Invalid agent definition tenant limits/);}
+  assert.throws(()=>new PostgresAgentDefinitions({enabled:true,query:()=>{},transaction:()=>{},authorize:()=>true,tenantLimits:{}}),/Invalid agent definition configuration/);
+  const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:async tenantId=>limits[tenantId]});await definitions.initialize();
+  const over={...manifest('tenant','greedy'),quotas:{maxConcurrentRuns:3,maxTokensPerRun:100,maxRunsPerDay:10}};await assert.rejects(definitions.save(actor,over,0),/quota exceeds tenant limit/);
+  const results=await Promise.allSettled(Array.from({length:8},(_,i)=>definitions.save(actor,manifest('tenant','agent-'+i),0)));
+  assert.equal(results.filter(result=>result.status==='fulfilled').length,3);assert.ok(results.filter(result=>result.status==='rejected').every(result=>/Agent limit reached/.test(result.reason.message)));
+  const created=results.find(result=>result.status==='fulfilled').value.manifest.agentId;
+  assert.equal((await definitions.save(actor,{...manifest('tenant',created),name:'Second'},1)).version,2);await assert.rejects(definitions.save(actor,{...manifest('tenant',created),name:'Third'},2),/version limit reached/);
+  assert.equal((await definitions.list(actor)).items.length,3);
+  for(let i=0;i<5;i++)await definitions.save({tenantId:'other',principalId:'admin'},{...manifest('other','agent-'+i),quotas:{maxConcurrentRuns:100,maxTokensPerRun:10000000,maxRunsPerDay:1000000}},0);
+  limits.tenant.maxAgents=4;assert.equal((await definitions.save(actor,manifest('tenant','late'),0)).version,1);
+  limits.tenant.maxConcurrentRuns=1;await assert.rejects(definitions.save(actor,{...manifest('tenant','late'),name:'Updated'},1),/quota exceeds tenant limit/);assert.equal((await definitions.get(actor,'late')).version,1);
+ }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});
