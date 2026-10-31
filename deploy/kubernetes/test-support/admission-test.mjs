@@ -2,6 +2,7 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
+process.on('uncaughtException',error=>{console.log('::error title=Admission policy check::'+String(error.message).replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A').slice(0,1500));process.exit(1);});
 const namespace='app-mixer-test',path=join(process.env.RUNNER_TEMP,'admission-deployment.json'),image='registry.example/app-mixer@sha256:'+'a'.repeat(64);
 const original=JSON.parse(execFileSync('kubectl',['get','deployment','app-mixer-data-plane','-n',namespace,'-o','json'],{encoding:'utf8'}));original.spec.template.spec.containers[0].image=image;
 const apply=object=>{writeFileSync(path,JSON.stringify(object));return spawnSync('kubectl',['replace','--dry-run=server','-f',path],{encoding:'utf8'});};
