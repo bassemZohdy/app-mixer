@@ -48,6 +48,7 @@ if(floorMode==='postgres'){
  releaseAllowed=()=>registry.isAllowed(releaseScope,snapshot.version,digest);
 }else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
 const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
+metrics?.setPublicationVersion(snapshot.version);
 const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return releaseAllowed?await releaseAllowed():true;}catch{return false;}}}:{})},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)&&(!releaseAllowed||await releaseAllowed())}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
 let tlsReloader;
 if(transport==='tls'){
@@ -64,4 +65,4 @@ metricsServer?.listen(Number(metricsPort),'127.0.0.1');
 server.on('close',()=>{tlsReloader?.stop();metricsServer?.close();authenticate?.close();authenticateMetrics?.close();if(revocationPool)void revocationPool.end().catch(()=>{});});
 server.listen(Number(portText),'0.0.0.0');
 server.once('listening',()=>console.log('Data Plane ready'));
-let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;server.beginDrain();setTimeout(()=>server.close(),Number(delayText));});
+let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;server.beginDrain();metrics?.setDraining(true);setTimeout(()=>server.close(),Number(delayText));});

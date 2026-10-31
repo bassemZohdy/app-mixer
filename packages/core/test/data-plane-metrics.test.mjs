@@ -17,3 +17,11 @@ test('Data Plane observations feed a metrics instance without including request 
  const metrics=new DataPlaneRequestMetrics(),store=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});store.publish(0);const server=createDataPlane(store,{observe:metrics.observe});server.listen(0,'127.0.0.1');await once(server,'listening');
  try{const base=`http://127.0.0.1:${server.address().port}`;assert.equal((await fetch(base+'/application',{headers:{authorization:'Bearer secret'}})).status,200);assert.equal((await fetch(base+'/secret-path')).status,404);const value=metrics.render();assert.ok(value.includes('route="application",outcome="completed",status_class="2xx"'));assert.ok(value.includes('route="other",outcome="completed",status_class="4xx"'));assert.equal(value.includes('secret'),false);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+test('state gauges expose start time, draining and served publication version only',()=>{
+ const metrics=new DataPlaneRequestMetrics(()=>1700000123456);let text=metrics.render();
+ assert.match(text,/^app_mixer_data_plane_start_time_seconds 1700000123$/m);assert.match(text,/^app_mixer_data_plane_draining 0$/m);assert.doesNotMatch(text,/publication_version [0-9]/);
+ metrics.setPublicationVersion(7);metrics.setDraining(true);text=metrics.render();assert.match(text,/^app_mixer_data_plane_publication_version 7$/m);assert.match(text,/^app_mixer_data_plane_draining 1$/m);
+ for(const bad of [0,1.5,'2',NaN])assert.throws(()=>metrics.setPublicationVersion(bad),/Invalid publication version/);assert.throws(()=>metrics.setDraining(1),/Invalid draining state/);
+ for(const bad of [()=>-1,()=>NaN,'x'])assert.throws(()=>new DataPlaneRequestMetrics(bad),/Invalid metrics clock/);
+});
