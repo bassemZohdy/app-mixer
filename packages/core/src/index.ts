@@ -126,7 +126,7 @@ export type { CapabilityServerTracingOptions, CapabilityHttpsOptions } from './c
 export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
-export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry } from './extensions.js';
+export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry, computeExtensionIntegrity, verifyExtensionIntegrity } from './extensions.js';
 export { registerExtensionComponent, registerDeclaredNativeExtensionComponent, createFlutterExtensionPlan, registerExtensionCapability, registerDeclaredExtensionCapability, createExtensionRuntime } from './extension-adapters.js';
 export type { ExtensionRuntimeBindings, ExtensionInvocationApproval, FlutterExtensionPlan } from './extension-adapters.js';
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration } from './extensions.js';

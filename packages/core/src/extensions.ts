@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { isValidExtensionReferences, type ApplicationDefinition, type ExtensionReference, type PublicationGuard } from './index.js';
 
 export type ExtensionConfigRule =
@@ -23,15 +24,34 @@ export type ExtensionManifest = {
   providers: string[];
   permissions: string[];
   configSchema?: ExtensionConfigSchema;
+  /** Optional SRI-style SHA-256 digest (`sha256-<base64>`) of the trusted package bytes. */
+  integrity?: string;
 };
 export type ExtensionHost = {
   runtimeVersion: string;
   renderer: string;
-  approved: { id: string; version: string; scope: ExtensionManifest['scope']; permissions: string[] }[];
+  /** An approval may pin `integrity`; the manifest must then declare exactly that digest. */
+  approved: { id: string; version: string; scope: ExtensionManifest['scope']; permissions: string[]; integrity?: string }[];
 };
 export type ExtensionRequirements = { components: string[]; tools: string[]; providers: string[] };
 const idPattern = /^[a-z][a-z0-9.-]{0,127}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const integrityPattern = /^sha256-[A-Za-z0-9+/]{43}=$/;
+const optional = (x: unknown, names: string[]) => record(x) ? names.filter(name => Object.hasOwn(x, name)) : [];
+const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
+
+/** Compute the SRI-style SHA-256 digest used by `ExtensionManifest.integrity`. */
+export function computeExtensionIntegrity(packageBytes: Uint8Array): string {
+  if (!(packageBytes instanceof Uint8Array) || packageBytes.byteLength > MAX_PACKAGE_BYTES) throw Error('Invalid extension package');
+  return 'sha256-' + createHash('sha256').update(packageBytes).digest('base64');
+}
+
+/** Check trusted package bytes against a manifest digest. Returns false for a missing or different digest. */
+export function verifyExtensionIntegrity(integrity: unknown, packageBytes: Uint8Array): boolean {
+  if (typeof integrity !== 'string' || !integrityPattern.test(integrity)) return false;
+  const expected = Buffer.from(integrity.slice(7), 'base64'), actual = Buffer.from(computeExtensionIntegrity(packageBytes).slice(7), 'base64');
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 const record = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === 'object' && !Array.isArray(x) && (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);
 function fields(x: unknown, names: string[]): x is Record<string, unknown> {
   return record(x) && Object.keys(x).length === names.length && names.every(name => Object.hasOwn(x, name));
@@ -116,20 +136,20 @@ function validateConfiguration(schema:ExtensionConfigSchema, config:unknown):Ext
  * Exact versions only; neither approval nor this check enforces runtime authorization. */
 export function checkExtensionCompatibility(manifests: unknown, host: unknown, requirements: unknown): { compatible: boolean; errors: string[] } {
   if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved']) || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
-  const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]}>();
+  const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string}>();
   for (const a of host.approved) {
-    if (!fields(a, ['id','version','scope','permissions']) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
-    approvals.set(a.id, {version:a.version,scope:a.scope,permissions:a.permissions});
+    if (!fields(a, ['id','version','scope','permissions', ...optional(a,['integrity'])]) || (Object.hasOwn(a,'integrity') && (typeof a.integrity !== 'string' || !integrityPattern.test(a.integrity))) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
+    approvals.set(a.id, {version:a.version,scope:a.scope,permissions:a.permissions,integrity:a.integrity as string|undefined});
   }
   const errors:string[] = [], ids = new Set<string>();
   const registrations = {components:new Set<string>(),tools:new Set<string>(),providers:new Set<string>()};
   for (const m of manifests) {
-    if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...(record(m) && Object.hasOwn(m,'configSchema') ? ['configSchema'] : [])]) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
+    if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...optional(m,['configSchema','integrity'])]) || (Object.hasOwn(m,'integrity') && (typeof m.integrity !== 'string' || !integrityPattern.test(m.integrity))) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
     if (Object.hasOwn(m,'configSchema')) validateConfigSchema(m.configSchema);
     if (ids.has(m.id)) { errors.push(`Duplicate extension: ${m.id}`); continue; }
     ids.add(m.id);
     const approval=approvals.get(m.id);
-    if (!approval || approval.version !== m.version || approval.scope !== m.scope || m.permissions.some(p => !approval.permissions.includes(p))) errors.push(`Extension not approved: ${m.id}`);
+    if (!approval || approval.version !== m.version || approval.scope !== m.scope || m.permissions.some(p => !approval.permissions.includes(p)) || (approval.integrity !== undefined && approval.integrity !== m.integrity)) errors.push(`Extension not approved: ${m.id}`);
     if (!m.runtimeVersions.includes(host.runtimeVersion) || !m.renderers.includes(host.renderer)) errors.push(`Incompatible extension: ${m.id}`);
     for (const kind of ['components','tools','providers'] as const) for (const name of m[kind] as string[]) {
       if (registrations[kind].has(name)) errors.push(`Duplicate ${kind} registration: ${name}`);
@@ -191,10 +211,15 @@ export class ExtensionRegistry {
     checkExtensionCompatibility([], this.host, {components:[], tools:[], providers:[]});
   }
 
-  register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}): void {
+  /** When the manifest declares `integrity`, `options.packageBytes` must contain the trusted package bytes with that digest. */
+  register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}, options: {packageBytes?: Uint8Array} = {}): void {
     const snapshot = structuredClone(manifest);
     const result = checkExtensionCompatibility([...this.manifests, snapshot], this.host, {components:[], tools:[], providers:[]});
     if (!result.compatible) throw Error('Extension compatibility failed');
+    if (!fields(options, optional(options,['packageBytes']))) throw Error('Invalid extension registration options');
+    if (snapshot.integrity !== undefined || options.packageBytes !== undefined) {
+      if (snapshot.integrity === undefined || !(options.packageBytes instanceof Uint8Array) || !verifyExtensionIntegrity(snapshot.integrity, options.packageBytes)) throw Error('Extension integrity failed');
+    }
     const configSnapshot = validateConfiguration(snapshot.configSchema ?? {}, configuration);
     if (!fields(bindings, ['components','tools','providers'])) throw Error('Invalid extension bindings');
     const pending: {kind:RegistrationKind; name:string; implementation:ExtensionImplementation}[] = [];

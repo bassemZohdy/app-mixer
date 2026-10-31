@@ -382,3 +382,26 @@ test('signed Flutter plans bind the checked plan to the target and validity wind
  const {signFlutterExtensionPlan}=await import('../dist/index.js'),{generateKeyPairSync,verify,createPublicKey}=await import('node:crypto'),{readFileSync}=await import('node:fs');const m={...manifest(),renderers:['flutter']},h={...host(),renderer:'flutter'},ref={id:m.id,version:m.version,scope:m.scope},app={id:'demo',schemaVersion:1,revision:0,extensions:[ref],pages:[{id:'home',title:'Home',route:'/',components:[{id:'one',type:'Extension',extensionId:ref.id,name:'chart'}]}]},keys=generateKeyPairSync('ed25519'),options={tenantId:'tenant',environment:'production',keyId:'key-1',privateKey:keys.privateKey,issuedAt:100,expiresAt:10000};const signed=signFlutterExtensionPlan(app,[m],h,options),message=Buffer.from(`app-mixer-flutter-plan-v1.${signed.keyId}.${signed.payload}`),payload=JSON.parse(Buffer.from(signed.payload,'base64url'));assert.equal(verify(null,message,keys.publicKey,Buffer.from(signed.signature,'base64url')),true);assert.equal(verify(null,Buffer.from(message.toString().replace('key-1','key-2')),keys.publicKey,Buffer.from(signed.signature,'base64url')),false);assert.deepEqual([payload.tenantId,payload.environment,payload.issuedAt,payload.expiresAt,payload.plan.applicationId,payload.plan.revision],['tenant','production',100,10000,'demo',0]);for(const invalid of [{keyId:'bad key'},{tenantId:'../tenant'},{environment:'Other'},{privateKey:keys.publicKey},{expiresAt:100},{expiresAt:100+86400001}])assert.throws(()=>signFlutterExtensionPlan(app,[m],h,{...options,...invalid}),/Invalid/);assert.throws(()=>signFlutterExtensionPlan(app,[m],{...h,approved:[]},options),/compatibility/i);
  const fixture=JSON.parse(readFileSync(new URL('../../../adapters/flutter/test/fixtures/signed-extension-plan.json',import.meta.url),'utf8')),key=createPublicKey({key:{kty:'OKP',crv:'Ed25519',x:fixture.publicKey},format:'jwk'}),envelope=fixture.envelope;assert.equal(verify(null,Buffer.from(`app-mixer-flutter-plan-v1.${envelope.keyId}.${envelope.payload}`),key,Buffer.from(envelope.signature,'base64url')),true);assert.deepEqual(JSON.parse(Buffer.from(envelope.payload,'base64url')).plan,payload.plan);
 });
+test('registration verifies declared package integrity and approval-pinned digests',async()=>{
+ const {ExtensionRegistry,computeExtensionIntegrity,verifyExtensionIntegrity,createExtensionPublicationGuard}=await import('../dist/index.js');
+ const bytes=new TextEncoder().encode('export const chart=()=>1;'),integrity=computeExtensionIntegrity(bytes),bindings=()=>({components:{chart:()=>1},tools:{lookup:()=>2},providers:{}});
+ assert.match(integrity,/^sha256-[A-Za-z0-9+/]{43}=$/);assert.equal(verifyExtensionIntegrity(integrity,bytes),true);assert.equal(verifyExtensionIntegrity(integrity,new TextEncoder().encode('tampered')),false);
+ for(const bad of [undefined,'sha256-short','sha512-'+integrity.slice(7),integrity+'x'])assert.equal(verifyExtensionIntegrity(bad,bytes),false);
+ assert.throws(()=>computeExtensionIntegrity('not bytes'),/Invalid extension package/);
+ const m={...manifest(),integrity};assert.deepEqual(check([m],host(),required()),{compatible:true,errors:[]});
+ for(const bad of ['sha256-abc',42,'SHA256-'+integrity.slice(7)])assert.throws(()=>check([{...manifest(),integrity:bad}],host(),required()),/Invalid extension manifest/);
+ const pinned=host();pinned.approved[0].integrity=integrity;assert.equal(check([m],pinned,required()).compatible,true);
+ assert.deepEqual(check([manifest()],pinned,required()).errors,['Extension not approved: example.chart']);
+ const other=computeExtensionIntegrity(new TextEncoder().encode('other'));assert.equal(check([{...manifest(),integrity:other}],pinned,required()).compatible,false);
+ const badApproval=host();badApproval.approved[0].integrity='sha256-nope';assert.throws(()=>check([m],badApproval,required()),/Invalid extension approval/);
+ assert.throws(()=>createExtensionPublicationGuard([manifest()],{...pinned},()=>({components:[],tools:[],providers:[]}))({id:'demo',schemaVersion:1,revision:0,extensions:[{id:'example.chart',version:'1.0.0',scope:'application'}],pages:[]}),/compatibility/);
+ const registry=new ExtensionRegistry(pinned);
+ assert.throws(()=>registry.register(m,bindings()),/integrity failed/);
+ assert.throws(()=>registry.register(m,bindings(),{},{packageBytes:new TextEncoder().encode('tampered')}),/integrity failed/);
+ assert.throws(()=>registry.register(m,bindings(),{},{packageBytes:'export const chart=()=>1;'}),/integrity failed/);
+ assert.throws(()=>registry.register(m,bindings(),{},{packageBytes:bytes,extra:true}),/Invalid extension registration options/);
+ assert.throws(()=>registry.register(manifest(),bindings(),{},{packageBytes:bytes}),/compatibility failed/);
+ assert.deepEqual(registry.getManifests(),[]);
+ registry.register(m,bindings(),{},{packageBytes:bytes});assert.equal(registry.getManifests()[0].integrity,integrity);assert.equal(registry.get('components','chart')(),1);
+ const open=new ExtensionRegistry(host());assert.throws(()=>open.register(manifest(),bindings(),{},{packageBytes:bytes}),/integrity failed/);open.register(manifest(),bindings());assert.equal(open.getManifests()[0].integrity,undefined);
+});
