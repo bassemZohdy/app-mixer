@@ -74,3 +74,12 @@ test('PostgreSQL scope erasure is separately authorized, scoped, audited and sur
   assert.equal((await memory.put(actor,user,'a','new',opts(500))).revision,3);
  }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
 });
+
+test('PostgreSQL erasure and expiry clear maximum-revision records',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const schema='app_mixer_maxrev_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await memory.initialize();
+  const opts=expiresAt=>({expectedRevision:null,expiresAt,provenance});await memory.put(actor,scope,'erase','secret',opts(500));await memory.put(actor,scope,'expire','secret',opts(150));await pool.query('UPDATE app_mixer_agent_memories SET revision=$1',[Number.MAX_SAFE_INTEGER]);
+  now=200;assert.equal(await memory.purgeExpired(actor,scope),1);assert.equal(await memory.eraseScope(actor,scope),1);const rows=(await pool.query('SELECT revision,value,provenance,deleted FROM app_mixer_agent_memories')).rows;for(const row of rows){assert.equal(Number(row.revision),Number.MAX_SAFE_INTEGER);assert.equal(row.value,null);assert.equal(row.provenance,null);assert.equal(row.deleted,true);}
+  assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(x=>x.action),['write','write','purge','erase']);await assert.rejects(memory.put(actor,scope,'erase','replacement',opts(500)),/Invalid memory revision/);await assert.rejects(memory.put(actor,scope,'expire','replacement',opts(500)),/Invalid memory revision/);
+ }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});

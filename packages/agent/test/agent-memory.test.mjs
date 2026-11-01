@@ -73,3 +73,17 @@ test('erasing a scope needs its own permission, removes only that scope and is a
   assert.equal((await store.put(actor,scope,'a','new',write(500))).revision,3);
  }finally{store.close();}
 });
+
+test('erasure and expiry clear maximum-revision records and prevent revision reuse',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'memory-max-revision-')),path=join(dir,'memory.sqlite');let now=100;const store=new SqliteAgentMemory(path,settings({audit:true,clock:()=>now}));let db;
+ try{
+  await store.put(actor,scope,'erase','secret',write(500));await store.put(actor,scope,'expire','secret',write(150));
+  db=new DatabaseSync(path);db.prepare('UPDATE agent_memories SET revision=?').run(Number.MAX_SAFE_INTEGER);
+  now=200;assert.equal(await store.purgeExpired(actor,scope),1);assert.equal(await store.eraseScope(actor,scope),1);
+  const rows=db.prepare('SELECT revision,value,provenance,deleted FROM agent_memories ORDER BY memory_id').all();
+  for(const row of rows){assert.equal(row.revision,Number.MAX_SAFE_INTEGER);assert.equal(row.value,null);assert.equal(row.provenance,null);assert.equal(row.deleted,1);}
+  assert.deepEqual((await store.auditHistory(actor,scope)).items.map(x=>x.action),['write','write','purge','erase']);
+  await assert.rejects(store.put(actor,scope,'erase','replacement',write(500)),/Invalid memory revision/);
+  await assert.rejects(store.put(actor,scope,'expire','replacement',write(500)),/Invalid memory revision/);
+ }finally{db?.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});
