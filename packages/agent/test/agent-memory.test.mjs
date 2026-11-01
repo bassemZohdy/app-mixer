@@ -87,3 +87,17 @@ test('erasure and expiry clear maximum-revision records and prevent revision reu
   await assert.rejects(store.put(actor,scope,'expire','replacement',write(500)),/Invalid memory revision/);
  }finally{db?.close();store.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('SQLite listings recheck scope permission after asynchronous record authorization',async()=>{
+ for(const kind of ['list','list-page','audit']){
+  let allowed=true,started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);let pause=false;
+  const store=new SqliteAgentMemory(':memory:',settings({audit:true,authorize:async(_actor,_scope,action,id)=>{
+   if(pause&&id!==undefined&&((kind==='audit'&&action==='audit')||(kind!=='audit'&&action==='read'))){pause=false;started();await gate;return true;}
+   if((kind==='audit'&&action==='audit'&&id===undefined)||(kind!=='audit'&&action==='list'))return allowed;
+   return true;
+  }}));
+  try{await store.put(actor,scope,'one','secret',write(500));await store.put(actor,scope,'two','secret',write(500));pause=true;
+   const pending=kind==='audit'?store.auditHistory(actor,scope):store.list(actor,scope,{limit:kind==='list-page'?1:5});await ready;allowed=false;release();await assert.rejects(pending,/access denied/);
+  }finally{store.close();}
+ }
+});

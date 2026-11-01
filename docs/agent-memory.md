@@ -14,6 +14,8 @@ Each bounded JSON value carries an explicit `run`, `human` or `system` provenanc
 
 The database and backups are not encrypted, and SQLite pages, journals or backups may retain deleted data. Clearing a value is not cryptographic erasure. The host must secure storage, control backup retention, authorize all callers, validate provenance and choose a consistent clock and policy across instances. This store provides structured records for all four kinds. Production identity, comprehensive audit coverage and distributed adapters remain open.
 
+SQLite memory listings and audit history recheck scope permission before returning after asynchronous per-record authorization; policy changes and records are not read from a consistent snapshot.
+
 ## Semantic retrieval
 
 `AgentSemanticMemory` wraps the store with exact cosine search for a bounded semantic scope. The host supplies an embedding function, a stable model/version ID and dimensions. `put` checks write permission before sending text to the embedding provider and rechecks it before storing the text, normalized vector, provenance and expiration. `search` checks list permission before embedding the query, scans authorized records for the same model ID, ranks them, and rechecks record permission and revision before returning hits. Invalid vectors, mismatched models and expired or inaccessible records are excluded or rejected. The current local store is limited to 1,000 live entries per scope; search is a linear scan, not a production vector index. Changing embedding models requires an explicit re-embedding plan.
