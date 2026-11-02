@@ -199,3 +199,34 @@ spec:
   validations:
     - message: Preserve the Data Plane Deployment while the guard is enforced.
       expression: "false"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-data-plane-service
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [services]
+  matchConditions:
+    - name: data-plane-name
+      expression: "request.operation == 'DELETE' ? oldObject.metadata.name == 'app-mixer-data-plane' : object.metadata.name == 'app-mixer-data-plane'"
+  validations:
+    - message: Preserve the internal Data Plane Service, selector and listener.
+      expression: >-
+        request.operation != 'DELETE' && has(object.spec) && object.spec.type == 'ClusterIP' &&
+        (!has(object.spec.clusterIP) || object.spec.clusterIP != 'None') &&
+        (!has(object.spec.externalIPs) || object.spec.externalIPs.size() == 0) &&
+        (!has(object.spec.externalName) || object.spec.externalName == '') &&
+        has(object.spec.selector) && object.spec.selector.size() == 2 &&
+        'app.kubernetes.io/name' in object.spec.selector && object.spec.selector['app.kubernetes.io/name'] == 'app-mixer' &&
+        'app.kubernetes.io/component' in object.spec.selector && object.spec.selector['app.kubernetes.io/component'] == 'data-plane' &&
+        has(object.spec.ports) && object.spec.ports.size() == 1 &&
+        object.spec.ports[0].name == 'http' && object.spec.ports[0].port == 3002 &&
+        object.spec.ports[0].targetPort == 'http' &&
+        (!has(object.spec.ports[0].protocol) || object.spec.ports[0].protocol == 'TCP') &&
+        (!has(object.spec.ports[0].nodePort) || object.spec.ports[0].nodePort == 0)
