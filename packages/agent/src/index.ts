@@ -119,7 +119,7 @@ export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFi
 export {SqliteAgentScheduleHistory} from './agent-schedule-history.js';
 export type {AgentScheduleEvent,AgentScheduleHistoryOptions,AgentScheduleHistoryActor} from './agent-schedule-history.js';
 export {AgentScheduleWorker} from './schedule-worker.js';
-export type {AgentScheduleWorkerOptions} from './schedule-worker.js';
+export type {AgentScheduleWorkerOptions,AgentScheduleWakeupTarget} from './schedule-worker.js';
 export {SqliteAgentMemory} from './agent-memory.js';
 export type {AgentMemoryRecord,AgentMemoryAuditEvent,AgentMemoryScope,AgentMemoryActor,AgentMemoryProvenance,AgentMemoryAction,AgentMemoryOptions} from './agent-memory.js';
 export {AgentSemanticMemory} from './semantic-memory.js';

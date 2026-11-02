@@ -3,7 +3,7 @@ import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
-import {resumeAgentRunWithTriggerInTransaction,type AgentRunScope} from './durable-runs.js';
+import {SqliteAgentRuns,resumeAgentRunWithTriggerInTransaction,type AgentRunScope} from './durable-runs.js';
 
 type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string;excludeDates?:string[];excludeDateRanges?:{start:string;end:string}[];excludeAnnualDates?:string[];observeAnnualWeekends?:boolean};
 type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
@@ -93,6 +93,9 @@ export class SqliteAgentSchedules {
   for(const table of ['agent_runs','agent_trigger_inbox'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Trigger registry unavailable');ensureTriggerReceiptSchema(this.db);
  }catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
+ /** Scheduled wakeups require a shared on-disk run registry. */
+ sharesRunDatabase(runs:SqliteAgentRuns):boolean{if(!(runs instanceof SqliteAgentRuns))return false;const row=this.db.prepare('PRAGMA database_list').all().find(item=>item.name==='main');return typeof row?.file==='string'&&row.file.length>0&&runs.isBackedByDatabase(row.file);}
+
  private check(scope:AgentRunScope,scheduleId:string):void{if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(scheduleId))throw Error('Invalid schedule scope');}
  private parse(row:Record<string,unknown>):AgentSchedule{return {tenantId:String(row.tenant_id),agentId:String(row.agent_id),scheduleId:String(row.schedule_id),revision:Number(row.revision),generation:Number(row.generation),nextAt:Number(row.next_at),config:checkConfig(JSON.parse(String(row.config)))};}
  get(scope:AgentRunScope,scheduleId:string):AgentSchedule|undefined{this.check(scope,scheduleId);const row=this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND schedule_id=?').get(scope.tenantId,scope.agentId,scheduleId);return row?this.parse(row):undefined;}
