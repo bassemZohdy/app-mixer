@@ -149,7 +149,7 @@ export type {AgentNoticeDeliveryWorkerOptions} from './notice-delivery-worker.js
 export type {AgentNoticeDelivery,AgentNoticeMessage,AgentNoticeDeliveryEvent,AgentNoticeDeliveryOptions,AgentNoticeDeliveryActor,AgentNoticeDeliveryAccess} from './agent-notice-delivery.js';
 
 export {SqliteAgentTokenBudget} from './agent-token-budget.js';
-export type {AgentTokenUsage,AgentCostUsage,AgentTokenBudgetOptions} from './agent-token-budget.js';
+export type {AgentTokenUsage,AgentCostUsage,AgentTokenBudgetOptions,AgentBudgetReconciliationEvidence,AgentBudgetReconciliationEvent} from './agent-token-budget.js';
 
 export {SqliteAgentRunHistory} from './agent-run-history.js';
 export {SqliteAgentRunMetrics} from './agent-run-metrics.js';
