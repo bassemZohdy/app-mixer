@@ -16,6 +16,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@app-mixer/web": "0.1.0"
+    "@app-mixer/web": "0.1.0",
+    "@app-mixer/core": "0.1.0"
   }
 }

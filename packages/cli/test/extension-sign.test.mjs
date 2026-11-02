@@ -1,0 +1,25 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {generateKeyPairSync} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {verifySignedExtensionManifest,computeExtensionIntegrity} from '@app-mixer/core';
+const run=promisify(execFile),cli=resolve('packages/cli/dist/index.js');
+test('extension-sign creates a verifiable package-bound manifest without overwriting files',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'mixer-extension-sign-'));
+ try{
+  const paths=['manifest.json','package.bin','key.pem','signed.json'].map(name=>join(dir,name)),[manifestPath,packagePath,keyPath,output]=paths;
+  const keys=generateKeyPairSync('ed25519'),bytes=Buffer.from('trusted package'),manifest={manifestVersion:1,id:'example.chart',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:['chart'],tools:[],providers:[],permissions:[]};
+  await writeFile(manifestPath,JSON.stringify(manifest));await writeFile(packagePath,bytes);await writeFile(keyPath,keys.privateKey.export({format:'pem',type:'pkcs8'}));
+  await run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',output]);
+  const signed=JSON.parse(await readFile(output,'utf8')),verified=verifySignedExtensionManifest(signed,{trustedKeys:{publisher:keys.publicKey}},bytes);assert.equal(verified.integrity,computeExtensionIntegrity(bytes));
+  const before=await readFile(output,'utf8');await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',output]));assert.equal(await readFile(output,'utf8'),before);
+  await writeFile(manifestPath,JSON.stringify({...manifest,integrity:computeExtensionIntegrity(Buffer.from('other'))}));await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',join(dir,'bad.json')]),/integrity does not match/);
+  await writeFile(manifestPath,JSON.stringify({...manifest,unknown:true}));await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',join(dir,'invalid.json')]));
+  await writeFile(manifestPath,JSON.stringify(manifest));await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'invalid/key',join(dir,'invalid.json')]));
+  await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher']));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
