@@ -141,6 +141,18 @@ test('bounded approval listing fails closed on a stalled item policy',async()=>{
  }finally{release();restricted?.close();close(s);}
 });
 
+test('approval listing uses one deadline across multiple individually timely policy checks',async()=>{
+ const s=setup();let restricted,reads=0,lateSignal,lateDone;const finished=new Promise(resolve=>lateDone=resolve);
+ try{
+  for(const action of ['a','b','c','d'])await s.approvals.request(service,s.run.leaseToken,action,'pay',{action},90);
+  restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>s.now,timeoutMs:250,maxPending:1,authorize:async(_actor,action,_approval,signal)=>{
+   if(action==='read'){reads++;await new Promise(resolve=>setTimeout(resolve,100));if(signal.aborted){lateSignal=signal;lateDone();}return false;}return true;
+  }});
+  await assert.rejects(restricted.list(human),/authorization unavailable/);assert.ok(reads>=2);await assert.rejects(restricted.list(human),/authorization unavailable/);
+  await finished;assert.equal(lateSignal.aborted,true);const observed=reads;await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,observed);
+ }finally{restricted?.close();close(s);}
+});
+
 test('approval policy limits require a valid deadline and capacity together',()=>{
  const s=setup();try{const base={scope,runId:'run',authorize:()=>true};for(const extra of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:30001,maxPending:1},{timeoutMs:100,maxPending:0},{timeoutMs:100,maxPending:101}])assert.throws(()=>new SqliteAgentApprovals(s.path,{...base,...extra}),/Invalid approval configuration/);}finally{close(s);}
 });

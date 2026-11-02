@@ -45,6 +45,18 @@ test('review server reports a changed approval without deciding it',async()=>{
  }finally{release();await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
 });
 
+test('review server applies one deadline across a slow approval listing',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'review-list-deadline-')),path=join(dir,'db'),scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},runs=new SqliteAgentRuns(path);let slow=true;
+ let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);
+ const approvals=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>10,timeoutMs:250,maxPending:1,authorize:async(actor,access)=>{if(slow&&actor.principalId==='reviewer'&&access==='read')await new Promise(resolve=>setTimeout(resolve,100));return true;}});
+ for(const action of ['a','b','c'])await approvals.request(service,run.leaseToken,action,'pay',{action},90);
+ const server=createAgentApprovalServer({authenticate:()=>({tenantId:'tenant',principalId:'reviewer'}),resolve:()=>approvals});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const url=`http://127.0.0.1:${server.address().port}/api/agents/agent/runs/run/approvals`,response=await fetch(url);assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Review unavailable'});
+  slow=false;await new Promise(resolve=>setTimeout(resolve,120));const retry=await fetch(url);assert.equal(retry.status,200);assert.equal((await retry.json()).items.length,3);
+ }finally{await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('review page renders untrusted input as text and keeps the reviewed run bound to its decision',async()=>{
  const {JSDOM}=await import('jsdom');const server=createAgentApprovalServer({authenticate:()=>undefined,resolve:()=>undefined});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${server.address().port}`;let dom;const requests=[];
  try{const html=await (await fetch(base+'/review')).text();dom=new JSDOM(html,{url:base+'/review',runScripts:'dangerously',beforeParse(window){window.fetch=async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>options.method==='POST'?{}:{items:[{actionId:'action',operationId:'pay',input:{value:'<img src=x onerror=alert(1)>'},status:'pending',definitionVersion:1,expiresAt:1000,requestedBy:'service'}]}}}}});
