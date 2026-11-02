@@ -63,7 +63,7 @@ try {
         {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'}},
         {id:'display',component:'Text',text:{path:'/form/name'}},
         {id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'}}}}},
-        {id:'label',component:'Text',text:'Save'}
+        {id:'label',component:'Text',text:'Save',variant:'h2'}
       ]}});
       const input=document.querySelector('input'); input.focus(); input.value='Grace'; input.setSelectionRange(5,5); input.dispatchEvent(new Event('input',{bubbles:true}));
       const updated=document.querySelector('input');
@@ -71,6 +71,7 @@ try {
       document.querySelector('button').click();
       if(event.action.context.name!=='Grace' || Object.hasOwn(event.action.context,'secret')) throw Error('Action context failed');
       const originalInput=document.querySelector('input'),originalButton=document.querySelector('button');
+      const buttonLabel=originalButton.querySelector('h2');if(!buttonLabel || buttonLabel.getAttribute('role')!=='presentation' || buttonLabel.textContent!=='Save') throw Error('Button label semantics failed');
       for(const invalid of [{id:'label',component:'Row',children:['field']},{id:'label',component:'Button',child:'display',action:{event:{name:'nested'}}}]){
         let rejected=false;try{renderer.apply({version,updateComponents:{surfaceId,components:[invalid]}});}catch(error){rejected=String(error).includes('Interactive component inside button');}
         if(!rejected || document.querySelector('input')!==originalInput || document.querySelector('button')!==originalButton || originalInput.value!=='Grace') throw Error('Invalid button subtree changed the surface');

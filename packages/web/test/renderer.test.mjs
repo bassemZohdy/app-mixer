@@ -4,7 +4,9 @@ import { readFile } from 'node:fs/promises';
 import {A2UIRenderer, A2UIJsonLines, BASIC_CATALOG, APP_MIXER_CATALOG, ComponentRegistry, basicRegistry} from '../dist/index.js';
 
 class Element {
-  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.textContent=''; this.parent=null; this.listeners={}; this.value=''; this.selectionStart=0; this.selectionEnd=0; }
+  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.attributes={}; this.textContent=''; this.parent=null; this.listeners={}; this.value=''; this.selectionStart=0; this.selectionEnd=0; }
+  setAttribute(name,value) { this.attributes[name]=String(value); }
+  getAttribute(name) { return this.attributes[name]??null; }
   appendChild(child) { child.parent=this; this.children.push(child); return child; }
   replaceChildren(...children) { this.children=[]; for(const child of children) this.appendChild(child); }
   remove() { if(this.parent) this.parent.children=this.parent.children.filter(child => child !== this); }
@@ -62,6 +64,13 @@ test('supports incremental child definitions and independent surfaces', () => {
   assert.equal(host.children[1].children[0].textContent,'Other');
   assert.throws(() => new ComponentRegistry().register('x',()=>{}).register('x',()=>{}),/duplicate/);
   assert.ok(basicRegistry().get('Text'));
+});
+
+test('heading-styled button labels are presentational while standalone headings retain semantics',()=>{
+ const {host,renderer}=setup();renderer.apply(create('main'));
+ renderer.apply(components('main',[{id:'root',component:'Column',children:['title','button']},{id:'title',component:'Text',text:'Title',variant:'h2'},{id:'button',component:'Button',child:'nested',action:{event:{name:'go'}}},{id:'nested',component:'Row',children:['title']} ]));
+ const root=host.children[0].children[0],heading=root.children[0],label=root.children[1].children[0].children[0];
+ assert.equal(heading.tagName,'h2');assert.equal(heading.getAttribute('role'),null);assert.equal(label.tagName,'h2');assert.equal(label.textContent,'Title');assert.equal(label.getAttribute('role'),'presentation');
 });
 
 

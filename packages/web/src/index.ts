@@ -254,7 +254,10 @@ export class A2UIRenderer {
           this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
         }
       };
-      return this.registry.get(c.component as string)!(c, child => render(child, next, inButton || c.component === 'Button'), data, doc, interaction);
+      const element = this.registry.get(c.component as string)!(c, child => render(child, next, inButton || c.component === 'Button'), data, doc, interaction);
+      // A heading used as a button label is presentational; preserve its visual tag and text.
+      if (inButton && c.component === 'Text' && /^h[1-5]$/i.test(element.tagName)) element.setAttribute('role', 'presentation');
+      return element;
     };
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
