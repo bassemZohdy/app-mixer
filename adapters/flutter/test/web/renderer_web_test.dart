@@ -2,6 +2,7 @@ import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../signed_plan_fixture.dart';
+import '../signed_registry_plan_fixture.dart';
 import '../parity_scenario.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -47,9 +48,11 @@ void main() {
   });
   test('verifies the signed plan in a browser', () async {
     final component=FlutterExtensionComponent((context,props)=>const Text('Chart'),(value)=>true),installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:{'chart':component})];
-    final registry=await FlutterComponentRegistry.fromSignedPlan(signedPlanFixture,installed,tenantId:'tenant',environment:'production',applicationId:'demo',revision:0,trustedKeys:{'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey))},clock:()=>200);
+    final keys={'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey)),'registry-test-key':base64Url.decode(base64Url.normalize(signedRegistryPlanPublicKey))};
+    await FlutterComponentRegistry.fromSignedPlan(signedPlanFixture,installed,tenantId:'tenant',environment:'production',applicationId:'demo',revision:0,trustedKeys:keys,clock:()=>200);
+    final registry=await FlutterComponentRegistry.fromSignedPlan(signedRegistryPlanFixture,installed,tenantId:'tenant',environment:'production',applicationId:'demo',revision:0,trustedKeys:keys,clock:()=>200);
     final store=FlutterSurfaceStore(registry);store.apply({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});store.apply({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[{'id':'root','component':'chart'}]}});expect(store.snapshot().single?.kind,'chart');
-    await expectLater(FlutterComponentRegistry.fromSignedPlan({...signedPlanFixture,'keyId':'other'},installed,tenantId:'tenant',environment:'production',applicationId:'demo',revision:0,trustedKeys:{'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey))},clock:()=>200),throwsFormatException);
+    await expectLater(FlutterComponentRegistry.fromSignedPlan({...signedRegistryPlanFixture,'keyId':'other'},installed,tenantId:'tenant',environment:'production',applicationId:'demo',revision:0,trustedKeys:keys,clock:()=>200),throwsFormatException);
   });
   testWidgets('edits a bound field and emits explicit action context', (tester) async {
     final semantics=tester.ensureSemantics();

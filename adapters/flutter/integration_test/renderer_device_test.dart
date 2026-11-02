@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import '../test/signed_plan_fixture.dart';
+import '../test/signed_registry_plan_fixture.dart';
 import '../test/parity_scenario.dart';
 
 void main() {
@@ -31,15 +32,16 @@ void main() {
   testWidgets('verifies a signed extension plan and renders its approved widget on a mobile device', (tester) async {
     final component=FlutterExtensionComponent((context,props)=>const Text('Signed chart'),(value)=>true);
     final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:{'chart':component,'extra':component})];
-    final keys={'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey))};
+    final keys={'test-key':base64Url.decode(base64Url.normalize(signedPlanPublicKey)),'registry-test-key':base64Url.decode(base64Url.normalize(signedRegistryPlanPublicKey))};
     Future<FlutterComponentRegistry> verify(Object? value,{String tenant='tenant',int now=200}) => FlutterComponentRegistry.fromSignedPlan(value,installed,tenantId:tenant,environment:'production',applicationId:'demo',revision:0,trustedKeys:keys,clock:()=>now);
     final registry=await tester.runAsync(() async {
-      final valid=await verify(signedPlanFixture);
-      final signature=signedPlanFixture['signature'] as String;
+      await verify(signedPlanFixture);
+      final valid=await verify(signedRegistryPlanFixture);
+      final signature=signedRegistryPlanFixture['signature'] as String;
       final bad=(signature.startsWith('A')?'B':'A')+signature.substring(1);
-      await expectLater(verify({...signedPlanFixture,'signature':bad}),throwsFormatException);
-      await expectLater(verify(signedPlanFixture,tenant:'other'),throwsFormatException);
-      await expectLater(verify(signedPlanFixture,now:10000),throwsFormatException);
+      await expectLater(verify({...signedRegistryPlanFixture,'signature':bad}),throwsFormatException);
+      await expectLater(verify(signedRegistryPlanFixture,tenant:'other'),throwsFormatException);
+      await expectLater(verify(signedRegistryPlanFixture,now:10000),throwsFormatException);
       return valid;
     });
     expect(registry,isNotNull);

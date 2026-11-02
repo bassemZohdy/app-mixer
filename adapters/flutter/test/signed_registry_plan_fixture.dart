@@ -1,0 +1,3 @@
+// Generated from the test-only publisher-verified registry fixture.
+const signedRegistryPlanFixture = <String, dynamic>{"version":1,"keyId":"registry-test-key","payload":"eyJ0ZW5hbnRJZCI6InRlbmFudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsImlzc3VlZEF0IjoxMDAsImV4cGlyZXNBdCI6MTAwMDAsInBsYW4iOnsidmVyc2lvbiI6MSwiYXBwbGljYXRpb25JZCI6ImRlbW8iLCJyZXZpc2lvbiI6MCwiY29tcG9uZW50cyI6W3siaWQiOiJleGFtcGxlLmNoYXJ0IiwidmVyc2lvbiI6IjEuMC4wIiwic2NvcGUiOiJhcHBsaWNhdGlvbiIsIm5hbWUiOiJjaGFydCJ9XX19","signature":"WHlKMl9WuE_ulBulE-9coyF930v6Ctd6GODPP4SCNDBshIuYjuvUJ4J0y-6rrRhYCwV7OrpOzIgSnpFeZBwLBQ"};
+const signedRegistryPlanPublicKey = "_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg";
