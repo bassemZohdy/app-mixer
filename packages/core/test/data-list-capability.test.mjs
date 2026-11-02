@@ -76,3 +76,22 @@ test('approved string prefixes enforce authorization, type, case and cursor bind
   registerDataListCapability(registry,provider,{...base,candidate:{operationId:'prefix',method:'GET',path:'/'}});prefixFields.length=0;const filter={field:'name',operator:'prefix',value:'Al'},first=await registry.invoke('prefix',{filter,limit:2},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);const second=await registry.invoke('prefix',{filter,cursor:first.nextCursor,limit:2},alice);assert.deepEqual(second.items.map(item=>item.id),['c']);for(const changed of [{...filter,value:'al'},{...filter,operator:'eq'}])await assert.rejects(registry.invoke('prefix',{filter:changed,cursor:first.nextCursor},alice),/Invalid capability input/);assert.deepEqual((await registry.invoke('prefix',{filters:[filter,{field:'kind',value:'open'}]},alice)).items.map(item=>item.id),['a','c']);assert.deepEqual((await registry.invoke('prefix',{filter:{...filter,value:''}},alice)).items.map(item=>item.id),['a','c','d']);for(const invalid of [{...filter,value:null},{...filter,value:1},{field:'kind',operator:'prefix',value:'o'}])await assert.rejects(registry.invoke('prefix',{filter:invalid},alice),/Invalid capability input/);registerDataListCapability(registry,provider,{...base,prefixFilterFields:[],candidate:{operationId:'not-approved',method:'GET',path:'/'}});await assert.rejects(registry.invoke('not-approved',{filter},alice),/Invalid capability input/);for(const prefixFilterFields of [['unknown'],['name','name'],'name'])assert.throws(()=>registerDataListCapability(registry,provider,{...base,prefixFilterFields,candidate:{operationId:'bad',method:'GET',path:'/'}}),/Invalid data list/);
  }finally{provider.close();}
 });
+
+test('substring filters require approval and retain record authorization and cursor binding',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),fields=['name'];
+ const base={applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['name','kind'],containsFilterFields:fields,authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner};
+ try{
+  for(const [id,value] of [['a',{owner:'alice',name:'Alpha',kind:'open'}],['b',{owner:'bob',name:'Alpine',kind:'open'}],['c',{owner:'alice',name:'Alpine',kind:'open'}],['d',{owner:'alice',name:'alpha',kind:'closed'}],['e',{owner:'alice',name:12}],['f',{owner:'alice'}]])provider.put(scope,'items',id,value,null);
+  registerDataListCapability(registry,provider,{...base,candidate:{operationId:'contains',method:'GET',path:'/'}});fields.length=0;
+  const filter={field:'name',operator:'contains',value:'lp'},first=await registry.invoke('contains',{filter,limit:2},alice);
+  assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);
+  assert.deepEqual((await registry.invoke('contains',{filter,cursor:first.nextCursor,limit:2},alice)).items.map(item=>item.id),['c','d']);
+  for(const changed of [{...filter,value:'LP'},{...filter,operator:'eq'}])await assert.rejects(registry.invoke('contains',{filter:changed,cursor:first.nextCursor},alice),/Invalid capability input/);
+  assert.deepEqual((await registry.invoke('contains',{filters:[filter,{field:'kind',value:'open'}]},alice)).items.map(item=>item.id),['a','c']);
+  assert.deepEqual((await registry.invoke('contains',{filter:{...filter,value:'LP'}},alice)).items,[]);
+  assert.deepEqual((await registry.invoke('contains',{filter:{...filter,value:''}},alice)).items.map(item=>item.id),['a','c','d']);
+  for(const invalid of [{...filter,value:null},{...filter,value:1},{field:'kind',operator:'contains',value:'o'}])await assert.rejects(registry.invoke('contains',{filter:invalid},alice),/Invalid capability input/);
+  registerDataListCapability(registry,provider,{...base,containsFilterFields:[],candidate:{operationId:'not-approved',method:'GET',path:'/'}});await assert.rejects(registry.invoke('not-approved',{filter},alice),/Invalid capability input/);
+  for(const containsFilterFields of [['unknown'],['name','name'],'name'])assert.throws(()=>registerDataListCapability(registry,provider,{...base,containsFilterFields,candidate:{operationId:'bad',method:'GET',path:'/'}}),/Invalid data list/);
+ }finally{provider.close();}
+});
