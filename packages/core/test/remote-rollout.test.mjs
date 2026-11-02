@@ -7,7 +7,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync} from 'node:crypto';
-import {ApplicationStore,SqliteApplicationStore,SqliteRemoteRollout,RemoteRolloutPoller,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportUncertainError} from '../dist/index.js';
+import {ApplicationStore,SqliteApplicationStore,SqliteRemoteRollout,RemoteRolloutPoller,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from '../dist/index.js';
 
 const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
 async function fixture(){const dir=mkdtempSync(join(tmpdir(),'rollout-')),source=new ApplicationStore(definition),target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),server=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);server.listen(0,'127.0.0.1');await once(server,'listening');const config={sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},discovery:{authorize:()=>true,audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence};return {dir,source,target,server,config,publicKey,path:join(dir,'rollout.sqlite')};}
@@ -61,6 +61,10 @@ test('an unexpected cancellation error without an aborted signal keeps the recov
  const f=await fixture(),connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:()=>0,getPublished:()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async()=>{throw new RemoteControlImportCancelledError();}},rollout=new SqliteRemoteRollout(f.path,connector,actor);try{await assert.rejects(rollout.runOnce(),RemoteControlImportCancelledError);assert.equal(rollout.getState().phase,'uncertain');}finally{rollout.close();await cleanup(f);}
 });
 
+test('custom connector preflight errors cannot clear a possible write',async()=>{
+ for(const kind of ['cancel','timeout']){const f=await fixture(),controller=new AbortController(),connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:()=>0,getPublished:()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async()=>{controller.abort();throw kind==='cancel'?new RemoteControlImportCancelledError():new RemoteControlImportPreflightUnavailableError();}},rollout=new SqliteRemoteRollout(f.path,connector,actor);try{await assert.rejects(rollout.runOnce(controller.signal),/cancelled|unavailable/);assert.equal(rollout.getState().phase,'uncertain');}finally{rollout.close();await cleanup(f);}}
+});
+
 test('stopping after a local publication begins waits for its outcome',async()=>{
  const f=await fixture();let started,release,completionSignal;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),repository={promote:f.target.promote.bind(f.target),promoteVerified:f.target.promoteVerified.bind(f.target),promoteAdvancing:async(...args)=>{started();await gate;return f.target.promoteAdvancing(...args);},getPromotionFloor:f.target.getPromotionFloor.bind(f.target),getPublished:f.target.getPublished.bind(f.target)},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,repository,auditWithSignal:(event,signal)=>{if(event.phase==='completed')completionSignal=signal;}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;assert.equal(rollout.getState().phase,'importing');let stopped=false;const pending=poller.stop().then(()=>stopped=true);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(stopped,false);release();await pending;assert.equal(f.target.getPublished().version,1);assert.equal(completionSignal.aborted,false);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
 });
@@ -74,7 +78,8 @@ test('a bounded completion audit timeout keeps a committed import uncertain',asy
 });
 
 test('scheduled rollout imports signed newer versions and skips an already applied version',async()=>{
- const f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor);
+ const f=await fixture(),connector=createRemoteControlConnector(f.config),rollout=new SqliteRemoteRollout(f.path,connector,actor);
+ assert.equal(Object.isFrozen(connector),true);assert.throws(()=>{connector.importPublication=async()=>{};},TypeError);
  try{assert.deepEqual(await rollout.runOnce(),{status:'imported',sourceVersion:1,targetVersion:1});assert.deepEqual(await rollout.runOnce(),{status:'unchanged',sourceVersion:1,targetVersion:1});f.source.publish(0);assert.deepEqual(await rollout.runOnce(),{status:'imported',sourceVersion:2,targetVersion:2});assert.equal(f.target.getPublicationProvenance(2).signature.keyId,'key');assert.equal(rollout.getState().phase,'idle');}finally{rollout.close();await cleanup(f);}
 });
 
