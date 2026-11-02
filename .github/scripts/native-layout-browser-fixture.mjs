@@ -2,6 +2,7 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {View, Text, TextInput, Pressable, Platform} from 'react-native-web';
 import {createReactNativeA2UIComponent, APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
+import {A2UIRenderer} from '../../packages/web/dist/index.js';
 
 const Renderer=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform});
 const labels=['A long column label that needs to wrap','A long card label that needs to wrap','A long nested row label that needs to wrap'];
@@ -17,6 +18,14 @@ const subscribe=receive=>{
 const fail=error=>{document.body.dataset.error=String(error?.stack??error);document.body.dataset.result='fail';};
 try {
   createRoot(document.getElementById('host')).render(React.createElement(Renderer,{subscribe,onError:fail}));
+  const modes=['start','center','end','spaceBetween','spaceAround','spaceEvenly'],comparisons=[];
+  for(const [index,mode] of modes.entries()){
+    const components=[{id:'root',component:'Row',align:'start',justify:mode,children:['left','right']},{id:'left',component:'Text',text:`Left ${index}`},{id:'right',component:'Text',text:`Right ${index}`}];
+    const messages=[{version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}},{version:'v0.9.1',updateComponents:{surfaceId:'main',components}}];
+    const nativeHost=document.createElement('div'),webHost=document.createElement('div');nativeHost.style.width=webHost.style.width='240px';document.body.append(nativeHost,webHost);
+    const nativeSubscribe=receive=>messages.forEach(receive);createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
+    const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));comparisons.push({mode,index,nativeHost,webHost});
+  }
   const check=()=>{
     try {
       const host=document.getElementById('host'), bounds=host.getBoundingClientRect();
@@ -25,6 +34,16 @@ try {
       for(const text of texts){
         const child=text.parentElement.getBoundingClientRect(), box=text.getBoundingClientRect();
         if(child.left<bounds.left-1||child.right>bounds.right+1||box.left<bounds.left-1||box.right>bounds.right+1||child.width<=0||box.height<30)throw Error(`Nested row child is not contained and wrapped: ${JSON.stringify({child:child.toJSON(),box:box.toJSON(),host:bounds.toJSON()})}`);
+      }
+      for(const {mode,index,nativeHost,webHost} of comparisons){
+        for(const [name,host] of [['native',nativeHost],['web',webHost]]){
+          const leaf=label=>[...host.querySelectorAll('*')].find(element=>element.childElementCount===0&&element.textContent===label),leftNode=leaf(`Left ${index}`),rightNode=leaf(`Right ${index}`);
+          if(!leftNode||!rightNode){requestAnimationFrame(check);return;}
+          const bounds=host.getBoundingClientRect(),left=leftNode.getBoundingClientRect(),right=rightNode.getBoundingClientRect(),remaining=bounds.width-left.width-right.width;
+          const expectedLeft=mode==='center'?remaining/2:mode==='end'?remaining:mode==='spaceAround'?remaining/4:mode==='spaceEvenly'?remaining/3:0;
+          const expectedGap=mode==='spaceBetween'?remaining:mode==='spaceAround'?remaining/2:mode==='spaceEvenly'?remaining/3:0;
+          if(Math.abs(left.left-bounds.left-expectedLeft)>1||Math.abs(right.left-left.right-expectedGap)>1)throw Error(`${name} ${mode} row spacing mismatch`);
+        }
       }
       document.body.dataset.result='pass';
     }catch(error){fail(error);}
