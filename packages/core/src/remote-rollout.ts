@@ -29,7 +29,7 @@ export class SqliteRemoteRollout {
   if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid rollout signal');const check=()=>{if(signal?.aborted)throw Error('Remote rollout cancelled');};check();
   const token=randomUUID(),claim=this.db.prepare("UPDATE remote_rollouts SET phase='running',token=?,source_version=NULL,expected_version=NULL WHERE id=? AND phase='idle'").run(token,this.key);if(Number(claim.changes)!==1)throw Error('Remote rollout requires recovery');this.active=true;let importing=false;
   try{check();
-   const result=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;check();
+   const result=await this.connector.discoverLatest({...this.actor},signal),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;check();
    const floor=await repo.getPromotionFloor!(c.sourceEnvironment,c.targetEnvironment);check();const target=(await repo.getPublished!())?.version??0;check();
    if(!Number.isSafeInteger(floor)||floor<0||!Number.isSafeInteger(target)||target<0||target>=Number.MAX_SAFE_INTEGER)throw Error('Invalid local rollout state');
    if(result.sourceVersion<floor)throw Error('Remote source version is behind local history');
