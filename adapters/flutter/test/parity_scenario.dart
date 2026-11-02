@@ -171,3 +171,12 @@ void verifyRootValueBindings() {
   expect(store.snapshot().single?.children.single.text,'Root value');
   expect(((store.action('main','root',store.views().single.revision)['action'] as Map)['context'] as Map)['root'],'Root value');
 }
+
+void verifyLineBreakFieldPath() {
+  final store=FlutterSurfaceStore();
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  store.apply(message('updateDataModel',{'surfaceId':'main','value':{'\n':'Ada'}}));
+  store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'TextField','label':'Name','value':{'path':'/\n'}}]}));
+  expect(store.snapshot().single?.value,'Ada');store.writeField('main','root',store.views().single.revision,'Grace');expect(store.snapshot().single?.value,'Grace');
+}

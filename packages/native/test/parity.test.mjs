@@ -236,3 +236,11 @@ test('web and native support root value bindings for text and action context',()
  assert.equal(native.snapshot()[0].root.children[0].text,'Root value');assert.equal(host.children[0].children[0].children[0].textContent,'Root value');
  host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.root,'Root value');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.root,'Root value');
 });
+
+test('web and native fields bind a non-root path containing a line break',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const messages=[message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateDataModel',{surfaceId:'main',value:{'\n':'Ada'}}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'TextField',label:'Name',value:{path:'/\n'}}]})];
+ for(const value of messages){web.apply(value);native.apply(value);}
+ assert.equal(native.snapshot()[0].root.value,'Ada');assert.equal(host.children[0].children[0].children[1].value,'Ada');
+ const revision=native.snapshot()[0].revision;native.writeField('main','root',revision,'Grace');assert.equal(native.snapshot()[0].root.value,'Grace');
+});

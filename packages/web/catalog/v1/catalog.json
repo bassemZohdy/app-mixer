@@ -148,7 +148,7 @@
           "properties": {
             "path": {
               "type": "string",
-              "pattern": "^/.+"
+              "pattern": "^/[\\s\\S]+"
             }
           },
           "required": [

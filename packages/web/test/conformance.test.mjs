@@ -102,3 +102,16 @@ test('catalog permits root bindings for text and button context', async () => {
   renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',...action('')},{id:'label',component:'Text',text:{path:''}}]}));
   const rendered=host.children[0].children[0];assert.equal(rendered.children[0].textContent,'Root value');rendered.listeners.click();assert.equal(emitted.action.context.root,'Root value');
 });
+
+test('catalog accepts non-root field paths containing line breaks', async () => {
+  const catalog=await load('../catalog/v1/catalog.json'),validate=new Ajv2020({strict:false}).compile(catalog.components.TextField);
+  const field=path=>({label:'Name',value:{path}});
+  for(const path of ['/\n','/\r','/\u2028','/\u2029'])assert.equal(validate(field(path)),true,path);
+  for(const path of ['','/','relative'])assert.equal(validate(field(path)),false,path);
+  const doc={createElement:()=>new Element(doc)},host=doc.createElement(),renderer=new A2UIRenderer(host);
+  const message=(kind,payload)=>({version:'v0.9.1',[kind]:payload});
+  renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+  renderer.apply(message('updateDataModel',{surfaceId:'main',value:{'\n':'Ada'}}));
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'TextField',...field('/\n')}]}));
+  assert.equal(host.children[0].children[0].children[1].value,'Ada');
+});
