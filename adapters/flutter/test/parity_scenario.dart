@@ -71,7 +71,7 @@ Future<void> verifyNarrowRowParity(WidgetTester tester) async {
   final actions=<Map<String,dynamic>>[],errors=<Object>[],label='Save this carefully reviewed long form';
   final semantics=tester.ensureSemantics();
   try {
-    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:240,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add,onAction:actions.add))))));
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SafeArea(child:Align(alignment:Alignment.topLeft,child:SizedBox(width:240,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add,onAction:actions.add)))))));
     receive({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});
     receive({'version':'v0.9.1','updateDataModel':{'surfaceId':'main','value':{'name':'Ada'}}});
     receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[
@@ -84,7 +84,7 @@ Future<void> verifyNarrowRowParity(WidgetTester tester) async {
     final row=tester.getRect(find.ancestor(of:find.byType(TextButton),matching:find.byType(Row)).first),field=tester.getRect(find.byType(TextField)),button=tester.getRect(find.byType(TextButton));
     expect(row.width,240);expect(field.left,greaterThanOrEqualTo(row.left-0.01));expect(field.right,lessThanOrEqualTo(row.right+0.01));expect(button.left,greaterThanOrEqualTo(row.left-0.01));expect(button.right,lessThanOrEqualTo(row.right+0.01));expect(tester.getSize(find.text(label)).height,greaterThan(20));
     expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().flagsCollection.isTextField,isTrue);expect(tester.getSemantics(find.byType(TextButton)).getSemanticsData().flagsCollection.isButton,isTrue);
-    await tester.enterText(find.byType(TextField),'Grace');await tester.pump();await tester.tap(find.byType(TextButton));await tester.pump();
+    await tester.enterText(find.byType(TextField),'Grace');await tester.pumpAndSettle();expect(find.byType(TextButton).hitTestable(),findsOneWidget);await tester.tap(find.byType(TextButton));await tester.pumpAndSettle();
     expect((actions.single['action'] as Map)['context'],{'name':'Grace'});expect(errors,isEmpty);expect(tester.takeException(),isNull);
   } finally {semantics.dispose();}
 }
