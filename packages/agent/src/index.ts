@@ -236,3 +236,6 @@ export type {BudgetHttpsVerifierOptions,BudgetHttpsLookupContext} from './budget
 
 export {AgentBudgetRecoveryWorker} from './agent-budget-recovery-worker.js';
 export type {AgentBudgetRecoveryWorkerOptions} from './agent-budget-recovery-worker.js';
+
+export {AgentBudgetRecoveryCoordinator} from './agent-budget-recovery-coordinator.js';
+export type {AgentBudgetRecoveryCoordinatorOptions,AgentBudgetRecoverySession} from './agent-budget-recovery-coordinator.js';
