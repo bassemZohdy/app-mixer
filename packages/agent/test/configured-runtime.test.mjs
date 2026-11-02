@@ -82,3 +82,17 @@ test('versioned model turn limits respect the stricter host ceiling',async()=>{
 test('configured runs reject invalid model turn limits before creating a model',async()=>{
  const s=setup();try{let created=0;s.options.createModel=()=>{created++;return {invoke:async()=>new AIMessage('Done')};};for(const maxTurns of [0,11,1.5,NaN])await assert.rejects(createConfiguredAgentRun({...s.options,maxTurns}),/Invalid configured agent/);const current=s.definitions.get('t','agent');for(const maxTurns of [0,11,1.5]){s.options.definitions={get:()=>({...current,manifest:{...current.manifest,lifecycle:{...current.manifest.lifecycle,maxTurns}}})};await assert.rejects(createConfiguredAgentRun(s.options),/definition unavailable/);}assert.equal(created,0);}finally{s.definitions.close();}
 });
+
+
+test('optional model authority checks discard responses after revocation or expiry',async()=>{
+ for(const mode of ['run-revoked','definition-changed','delegation-expired']){const s=setup();let allowed=true,now=10,started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>allowed;s.options.createModel=()=>({invoke:async()=>{started();await gate;return new AIMessage('Sensitive model output');}});if(mode==='delegation-expired')s.options.delegation={grant:{tenantId:'t',agentId:'agent',runId:'run',principalId:'user',grantId:'grant',permissionVersion:'v1',expiresAt:20},authorize:()=>true,clock:()=>now};const agent=await createConfiguredAgentRun(s.options),pending=collect(agent.run(input));await ready;if(mode==='run-revoked')allowed=false;else if(mode==='definition-changed')s.definitions.save('t',{...base,name:'Changed'},1);else now=20;release();const events=await pending;assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.at(-1).code,mode==='delegation-expired'?'AGENT_DELEGATION_EXPIRED':'AGENT_RUN_FAILED');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(s.count(),0);}finally{release?.();s.definitions.close();}}
+});
+
+test('model authority policy is snapshotted and permits valid responses',async()=>{
+ const s=setup();try{let calls=0;s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>{calls++;return true;};s.options.createModel=()=>{s.options.recheckModelAuthority=false;return {invoke:async()=>new AIMessage('Allowed')};};const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_FINISHED');assert.equal(events.find(event=>event.type==='TEXT_MESSAGE_CONTENT').delta,'Allowed');assert.ok(calls>=4);await assert.rejects(createConfiguredAgentRun({...s.options,recheckModelAuthority:'yes'}),/Invalid configured agent/);}finally{s.definitions.close();}
+});
+
+
+test('model authority recheck can block dispatch before the model is called',async()=>{
+ const s=setup();try{let checks=0,modelCalls=0;s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>++checks<3;s.options.createModel=()=>({invoke:async()=>{modelCalls++;return new AIMessage('Must not appear');}});const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(modelCalls,0);}finally{s.definitions.close();}
+});
