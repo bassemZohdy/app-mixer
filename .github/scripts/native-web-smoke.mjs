@@ -37,6 +37,23 @@ try{
  await React.act(()=>root.render(React.createElement(Component,{subscribe,onError:error=>errors.push(error)})));
  const disabled=document.querySelector('[role="button"]');assert.equal(disabled.getAttribute('aria-disabled'),'true');
  await React.act(()=>disabled.click());assert.equal(actions.length,1);
+ await React.act(()=>root.render(React.createElement(Component,{subscribe,onError:error=>errors.push(error),onAction:event=>actions.push(event)})));
+ await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+  {id:'root',component:'Column',children:['long-field','long-display','long-button']},
+  {id:'long-field',component:'TextField',label:'Notes',value:{path:'/notes'},variant:'longText'},
+  {id:'long-display',component:'Text',text:{path:'/notes'}},
+  {id:'long-button',component:'Button',child:'long-label',action:{event:{name:'saveNotes',context:{notes:{path:'/notes'}}}}},
+  {id:'long-label',component:'Text',text:'Save notes'}
+ ]}}));
+ const textarea=document.querySelector('textarea');assert.ok(textarea);assert.equal(textarea.getAttribute('aria-label'),'Notes');
+ await React.act(()=>{
+  Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(textarea,'First line\nSecond line');
+  textarea.dispatchEvent(new window.Event('input',{bubbles:true}));
+ });
+ assert.equal(document.querySelector('textarea').value,'First line\nSecond line');
+ assert.ok([...document.querySelectorAll('*')].some(element=>element.children.length===0&&element.textContent==='First line\nSecond line'));
+ await React.act(()=>document.querySelector('[role="button"]').click());
+ assert.equal(actions.length,2);assert.equal(actions[1].action.name,'saveNotes');assert.deepEqual(actions[1].action.context,{notes:'First line\nSecond line'});assert.deepEqual(errors,[]);
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
   {id:'root',component:'Column',children:['heading','caption']},
   {id:'heading',component:'Text',text:'Heading',variant:'h1'},
