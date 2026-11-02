@@ -225,3 +225,8 @@ export type {AgentBudgetRecoveryActor,AgentBudgetRecoveryTarget,AgentBudgetVerif
 
 export {registerBudgetRecovery,registerBudgetRecoveryHistory} from './agent-budget-recovery-capability.js';
 export type {BudgetRecoveryCapabilityOptions,BudgetRecoveryHistoryCapabilityOptions} from './agent-budget-recovery-capability.js';
+
+export {SqliteAgentBudgetRecoveryDiscovery} from './agent-budget-recovery-discovery.js';
+export type {AgentBudgetRecoveryCandidate,AgentBudgetRecoveryPage,AgentBudgetRecoveryDiscoveryActor,AgentBudgetRecoveryDiscoveryOptions} from './agent-budget-recovery-discovery.js';
+export {registerBudgetRecoveryDiscovery} from './agent-budget-recovery-discovery-capability.js';
+export type {BudgetRecoveryDiscoveryCapabilityOptions} from './agent-budget-recovery-discovery-capability.js';
