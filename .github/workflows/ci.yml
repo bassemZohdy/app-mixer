@@ -53,6 +53,7 @@ jobs:
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/react-smoke.mjs
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/native-smoke.mjs
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/native-web-smoke.mjs
+          REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/native-device-fixture-smoke.mjs
           REACT_SMOKE_DEPS="$RUNNER_TEMP/react-smoke" node .github/scripts/native-layout-browser-smoke.mjs
       - name: Angular AOT and lifecycle smoke test
         if: matrix.node == '22'

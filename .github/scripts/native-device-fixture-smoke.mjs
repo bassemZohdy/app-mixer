@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import * as adapter from '../../packages/native/dist/index.js';
+if(!process.env.REACT_SMOKE_DEPS)throw Error('REACT_SMOKE_DEPS is required');
+const require=createRequire(resolve(process.env.REACT_SMOKE_DEPS,'package.json'));
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<!doctype html><div id="app"></div>',{url:'http://localhost/',pretendToBeVisual:true});
+globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.HTMLElement=dom.window.HTMLElement;
+globalThis.Node=dom.window.Node;globalThis.ShadowRoot=dom.window.ShadowRoot;globalThis.getComputedStyle=dom.window.getComputedStyle;
+Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react'),{createRoot}=require('react-dom/client'),native=require('react-native-web');
+const {code}=require('esbuild').transformSync(await readFile('packages/native/device-test/App.js','utf8'),{loader:'jsx',format:'cjs'});
+const module={exports:{}};
+new Function('require','module','exports',code)(name=>name==='react'?React:name==='react-native'?native:name==='./app-mixer'?adapter:require(name),module,module.exports);
+const root=createRoot(document.getElementById('app'));
+const button=name=>[...document.querySelectorAll('[role="button"]')].find(node=>node.textContent===name);
+const text=value=>[...document.querySelectorAll('*')].some(node=>node.children.length===0&&node.textContent===value);
+const click=async name=>{const found=button(name);assert.ok(found,`Missing button: ${name}`);await React.act(()=>found.click());};
+try{
+ await React.act(()=>root.render(React.createElement(module.exports.default)));
+ assert.equal(document.querySelector('[aria-label="Name"]').value,'Ada');
+ await click('Update data');assert.equal(document.querySelector('[aria-label="Name"]').value,'Lin');
+ await click('Reject invalid');assert.ok(text('Rejected safely'));assert.ok(text('Device heading'));
+ const input=document.querySelector('[aria-label="Name"]');
+ await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(input,'Grace');input.dispatchEvent(new window.Event('input',{bubbles:true}));});
+ assert.equal(document.querySelector('[aria-label="Name copy"]').value,'Grace');await click('Save');assert.ok(text('Saved Grace'));
+ await click('Advance surface');assert.ok(text('Secondary Ada'));
+ await click('Advance surface');assert.ok(!text('Secondary Ada'));
+ await click('Advance surface');assert.ok(text('Secondary Grace'));
+ await click('Check narrow layout');
+ for(const label of ['A long nested column label needs to wrap','A long nested card label needs to wrap','A long nested row label needs to wrap'])assert.ok(text(label),`Missing layout label: ${label}`);
+ assert.ok(!text('FAIL renderer'));
+ await React.act(()=>root.unmount());
+}finally{dom.window.close();}
