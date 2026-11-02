@@ -1,3 +1,4 @@
+import {RemoteControlImportCancelledError} from './remote-control-connector.js';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import type {createRemoteControlConnector} from './remote-control-connector.js';
@@ -35,8 +36,8 @@ export class SqliteRemoteRollout {
    if(result.sourceVersion<floor)throw Error('Remote source version is behind local history');
    if(result.sourceVersion===floor){this.release(token);return {status:'unchanged',sourceVersion:floor,targetVersion:target};}
    const marked=this.db.prepare("UPDATE remote_rollouts SET phase='importing',source_version=?,expected_version=? WHERE id=? AND phase='running' AND token=?").run(result.sourceVersion,target,this.key,token);if(Number(marked.changes)!==1)throw Error('Remote rollout state changed');check();importing=true;
-   const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:result.sourceVersion,expectedVersion:target});this.release(token);return {status:'imported',sourceVersion:result.sourceVersion,targetVersion:publication.version};
-  }catch(error){if(importing)this.db.prepare("UPDATE remote_rollouts SET phase='uncertain' WHERE id=? AND phase='importing' AND token=?").run(this.key,token);else this.release(token);throw error;}finally{this.active=false;}
+   const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:result.sourceVersion,expectedVersion:target},signal);this.release(token);return {status:'imported',sourceVersion:result.sourceVersion,targetVersion:publication.version};
+  }catch(error){if(importing&&!(signal?.aborted&&error instanceof RemoteControlImportCancelledError))this.db.prepare("UPDATE remote_rollouts SET phase='uncertain' WHERE id=? AND phase='importing' AND token=?").run(this.key,token);else this.release(token);throw error;}finally{this.active=false;}
  }
  private release(token:string):void{const result=this.db.prepare("UPDATE remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=? AND token=? AND phase IN ('running','importing')").run(this.key,token);if(Number(result.changes)!==1)throw Error('Remote rollout state changed');}
  async recover(authorize:(state:State)=>boolean|Promise<boolean>,evidence?:RemoteRolloutRecoveryEvidence):Promise<void>{

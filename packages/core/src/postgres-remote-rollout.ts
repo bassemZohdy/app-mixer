@@ -1,3 +1,4 @@
+import {RemoteControlImportCancelledError} from './remote-control-connector.js';
 import {randomUUID} from 'node:crypto';
 import type {createRemoteControlConnector} from './remote-control-connector.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
@@ -46,9 +47,9 @@ export class PostgresRemoteRollout {
    if(discovered.sourceVersion<floor)throw Error('Remote source version is behind local history');
    if(discovered.sourceVersion===floor){await this.release(token);claimed=false;return {status:'unchanged',sourceVersion:floor,targetVersion:target};}
    await this.change("UPDATE app_mixer_remote_rollouts SET phase='importing',source_version=$3,expected_version=$4 WHERE id=$1 AND phase='running' AND token=$2 RETURNING id",[this.key,token,discovered.sourceVersion,target]);check();importing=true;
-   const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:discovered.sourceVersion,expectedVersion:target});await this.release(token);claimed=false;return {status:'imported',sourceVersion:discovered.sourceVersion,targetVersion:publication.version};
+   const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:discovered.sourceVersion,expectedVersion:target},signal);await this.release(token);claimed=false;return {status:'imported',sourceVersion:discovered.sourceVersion,targetVersion:publication.version};
   }catch(error){
-   if(claimed){if(importing){try{await this.query("UPDATE app_mixer_remote_rollouts SET phase='uncertain' WHERE id=$1 AND phase='importing' AND token=$2",[this.key,token]);}catch{}}else{try{await this.release(token);}catch{}}}throw error;
+   if(claimed){if(importing&&!(signal?.aborted&&error instanceof RemoteControlImportCancelledError)){try{await this.query("UPDATE app_mixer_remote_rollouts SET phase='uncertain' WHERE id=$1 AND phase='importing' AND token=$2",[this.key,token]);}catch{}}else{try{await this.release(token);}catch{}}}throw error;
   }finally{this.active=false;}
  }
  async recover(authorize:(state:PostgresRemoteRolloutState)=>boolean|Promise<boolean>,evidence?:RemoteRolloutRecoveryEvidence):Promise<void>{
