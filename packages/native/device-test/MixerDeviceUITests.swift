@@ -82,5 +82,17 @@ final class MixerDeviceUITests: XCTestCase {
     replace.tap()
     XCTAssertTrue(app.staticTexts.matching(identifier: "Mount 2").firstMatch.waitForExistence(timeout: 10))
     XCTAssertFalse(app.staticTexts.matching(identifier: "Mount 1").firstMatch.exists)
+    let multiline = app.buttons["Check multiline input"]
+    XCTAssertTrue(multiline.waitForExistence(timeout: 10))
+    multiline.tap()
+    let notes = app.textViews["Notes"]
+    XCTAssertTrue(notes.waitForExistence(timeout: 10))
+    notes.tap()
+    notes.typeText("First\nSecond")
+    XCTAssertEqual(notes.value as? String, "First\nSecond")
+    let saveNote = app.buttons["Save note"]
+    XCTAssertTrue(saveNote.waitForExistence(timeout: 10))
+    saveNote.tap()
+    XCTAssertTrue(app.staticTexts["Saved multiline note"].waitForExistence(timeout: 10))
   }
 }

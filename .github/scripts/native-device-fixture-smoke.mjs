@@ -32,6 +32,9 @@ try{
  for(const label of ['A long nested column label needs to wrap','A long nested card label needs to wrap','A long nested row label needs to wrap'])assert.ok(text(label),`Missing layout label: ${label}`);
  await click('Check surface identity');assert.ok(text('Mount 1'));
  await click('Replace test surface');assert.ok(text('Mount 2'));assert.ok(!text('Mount 1'));
+ await click('Check multiline input');const note=document.querySelector('textarea[aria-label="Notes"]');assert.ok(note,'Missing accessible multiline field');
+ await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(note,'First\nSecond');note.dispatchEvent(new window.Event('input',{bubbles:true}));});
+ await click('Save note');assert.ok(text('Saved multiline note'));
  assert.ok(!text('FAIL renderer'));
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}
