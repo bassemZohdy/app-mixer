@@ -37,3 +37,12 @@ test('reopening a legacy evidence table protects existing records against update
   assert.throws(()=>db.exec("UPDATE staged_reconciliation_evidence SET reference='forged'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM staged_reconciliation_evidence'),/immutable/);assert.throws(()=>db.exec("INSERT OR REPLACE INTO staged_reconciliation_evidence SELECT tenant_id,application_id,operation_id,revision,'forged',reference,outcome,recorded_at FROM staged_reconciliation_evidence"),/immutable/);assert.deepEqual(store.listReconciliationEvidence(scope,op.id),original);
  }finally{db?.close();store.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('submission reserves revisions for outcome and uncertain reconciliation before dispatch',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'staged-revision-limit-')),path=join(dir,'data.sqlite'),store=new SqliteStagedOperations(path),db=new DatabaseSync(path),registry=new CapabilityRegistry(()=>{});let calls=0;
+ registry.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{calls++;throw Error('lost')}});
+ try{const allowed=store.stage(scope,'pay',{}),exhausted=store.stage(scope,'pay',{});const update=db.prepare('UPDATE staged_business_operations SET state_revision=? WHERE tenant_id=? AND application_id=? AND id=?');update.run(Number.MAX_SAFE_INTEGER-3,scope.tenantId,scope.applicationId,allowed.id);update.run(Number.MAX_SAFE_INTEGER-2,scope.tenantId,scope.applicationId,exhausted.id);
+  await assert.rejects(store.submit(scope,exhausted.id,registry,ctx),/not staged/);assert.equal(calls,0);assert.equal(store.get(scope,exhausted.id).status,'staged');
+  await assert.rejects(store.submit(scope,allowed.id,registry,ctx),/lost/);assert.equal(calls,1);assert.equal(store.get(scope,allowed.id).status,'uncertain');store.reconcileWithEvidence(scope,allowed.id,'not_applied',{principalId:'operator',reference:'case'});assert.equal(store.get(scope,allowed.id).status,'staged');assert.equal(store.listReconciliationEvidence(scope,allowed.id)[0].revision,Number.MAX_SAFE_INTEGER);await assert.rejects(store.submit(scope,allowed.id,registry,ctx),/not staged/);assert.equal(calls,1);
+ }finally{db.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});
