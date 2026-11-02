@@ -250,17 +250,17 @@ type RegistrationKind = keyof ExtensionBindings;
 
 /** Trusted static registrations only; authorization remains the host's responsibility. */
 export class ExtensionRegistry {
-  private readonly manifests: ExtensionManifest[] = [];
-  private readonly registrations: Record<RegistrationKind, Map<string, ExtensionImplementation>> = {
+  readonly #manifests: ExtensionManifest[] = [];
+  readonly #registrations: Record<RegistrationKind, Map<string, ExtensionImplementation>> = {
     components: new Map(), tools: new Map(), providers: new Map()
   };
-  private readonly host: ExtensionHost;
+  readonly #host: ExtensionHost;
   readonly #signingPolicy?:CheckedSigningPolicy;
-  private readonly configurations = new Map<string, ExtensionConfiguration>();
+  readonly #configurations = new Map<string, ExtensionConfiguration>();
 
   constructor(host: ExtensionHost, policy?:ExtensionSigningPolicy) {
-    this.host = structuredClone(host);
-    checkExtensionCompatibility([], this.host, {components:[], tools:[], providers:[]});
+    this.#host = structuredClone(host);
+    checkExtensionCompatibility([], this.#host, {components:[], tools:[], providers:[]});
     if(policy!==undefined)this.#signingPolicy=checkedSigningPolicy(policy);
   }
 
@@ -278,7 +278,7 @@ export class ExtensionRegistry {
 
   #install(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration, options: {packageBytes?: Uint8Array}): void {
     const snapshot = structuredClone(manifest);
-    const result = checkExtensionCompatibility([...this.manifests, snapshot], this.host, {components:[], tools:[], providers:[]});
+    const result = checkExtensionCompatibility([...this.#manifests, snapshot], this.#host, {components:[], tools:[], providers:[]});
     if (!result.compatible) throw Error('Extension compatibility failed');
     if (!fields(options, optional(options,['packageBytes']))) throw Error('Invalid extension registration options');
     if (snapshot.integrity !== undefined || options.packageBytes !== undefined) {
@@ -294,33 +294,33 @@ export class ExtensionRegistry {
       for (const name of snapshot[kind]) pending.push({kind,name,implementation:values[name] as ExtensionImplementation});
     }
     // Install only after all metadata and bindings have been checked.
-    this.manifests.push(snapshot);
-    this.configurations.set(snapshot.id,configSnapshot);
-    for (const {kind,name,implementation} of pending) this.registrations[kind].set(name,implementation);
+    this.#manifests.push(snapshot);
+    this.#configurations.set(snapshot.id,configSnapshot);
+    for (const {kind,name,implementation} of pending) this.#registrations[kind].set(name,implementation);
   }
 
   get(kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
     if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
-    return this.registrations[kind].get(name);
+    return this.#registrations[kind].get(name);
   }
 
-  private resolveReferences(references:ExtensionReference[]):ExtensionManifest[] {
+  #resolveReferences(references:ExtensionReference[]):ExtensionManifest[] {
     if (!isValidExtensionReferences(references)) throw Error('Invalid extension references');
     return references.map(ref => {
-      const manifest = this.manifests.find(m => m.id === ref.id && m.version === ref.version && m.scope === ref.scope);
+      const manifest = this.#manifests.find(m => m.id === ref.id && m.version === ref.version && m.scope === ref.scope);
       if (!manifest) throw Error('Extension compatibility failed');
       return manifest;
     });
   }
 
   /** Check that every application reference is installed in this approved registry. */
-  validateReferences(references:ExtensionReference[]):void { this.resolveReferences(references); }
+  validateReferences(references:ExtensionReference[]):void { this.#resolveReferences(references); }
 
   /** Resolve only registrations belonging to the application's declared, installed extensions. */
   getForApplication(references: ExtensionReference[], kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
     if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
-    const selected = this.resolveReferences(references);
-    return selected.some(manifest => manifest[kind].includes(name)) ? this.registrations[kind].get(name) : undefined;
+    const selected = this.#resolveReferences(references);
+    return selected.some(manifest => manifest[kind].includes(name)) ? this.#registrations[kind].get(name) : undefined;
   }
 
   /** Resolve a name only when its declared owner is installed and selected. */
@@ -328,15 +328,20 @@ export class ExtensionRegistry {
     const implementation=this.getForApplication(references,kind,name);
     if(typeof extensionId!=='string'||!idPattern.test(extensionId))throw Error('Invalid extension lookup');
     const ref=references.find(item=>item.id===extensionId);
-    const manifest=ref && this.manifests.find(item=>item.id===ref.id&&item.version===ref.version&&item.scope===ref.scope);
+    const manifest=ref && this.#manifests.find(item=>item.id===ref.id&&item.version===ref.version&&item.scope===ref.scope);
     return manifest?.[kind].includes(name) ? implementation : undefined;
   }
 
   getConfiguration(id:string): ExtensionConfiguration | undefined {
     if (typeof id !== 'string' || !idPattern.test(id)) throw Error('Invalid extension lookup');
-    const config=this.configurations.get(id);
+    const config=this.#configurations.get(id);
     return config === undefined ? undefined : structuredClone(config);
   }
 
-  getManifests(): ExtensionManifest[] { return structuredClone(this.manifests); }
+  /** Snapshot the installed manifests and approvals into a publication guard. */
+  createPublicationGuard(requirementsFor:(draft:ApplicationDefinition)=>ExtensionRequirements):PublicationGuard {
+    return createExtensionPublicationGuard(this.#manifests,this.#host,requirementsFor);
+  }
+
+  getManifests(): ExtensionManifest[] { return structuredClone(this.#manifests); }
 }
