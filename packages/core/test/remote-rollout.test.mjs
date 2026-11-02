@@ -7,6 +7,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import {ApplicationStore,SqliteApplicationStore,SqliteRemoteRollout,RemoteRolloutPoller,RemoteRolloutMetrics,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from '../dist/index.js';
 
 const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
@@ -20,6 +21,10 @@ test('rollout metrics are scoped, authorized and report the recovery gate withou
 
 test('rollout metric policy is rechecked and bounded callbacks cannot return late data',async()=>{
  const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor);let release,blocked=true,seen,calls=0;const gate=new Promise(resolve=>release=resolve),metrics=new RemoteRolloutMetrics(rollout,{scope,timeoutMs:100,maxPending:1,authorize:(_actor,_scope,signal)=>{if(blocked){seen=signal;calls++;return gate;}return true;}});try{await assert.rejects(metrics.render(actor),/unavailable/);assert.equal(seen.aborted,true);await assert.rejects(metrics.render(actor),/unavailable/);assert.equal(calls,1);blocked=false;release(true);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(await metrics.snapshot(actor),{phase:'idle'});let checks=0;const revoked=new RemoteRolloutMetrics(rollout,{scope,authorize:()=>++checks===1});await assert.rejects(revoked.snapshot(actor),/access denied/);await assert.rejects(metrics.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);}finally{release();rollout.close();await cleanup(f);}
+});
+
+test('rollout metrics reject malformed gate records instead of reporting healthy states',async()=>{
+ const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),metrics=new RemoteRolloutMetrics(rollout,{scope,authorize:()=>true}),db=new DatabaseSync(f.path);try{const update=db.prepare('UPDATE remote_rollouts SET phase=?,token=?,source_version=?,expected_version=?');for(const state of [['idle','stale',null,null],['running',null,null,null],['running','token',1,null],['importing','token',null,0],['uncertain','token',1,-1]]){update.run(...state);await assert.rejects(metrics.snapshot(actor),/Invalid rollout metrics data/);}update.run('uncertain','token',1,0);assert.deepEqual(await metrics.snapshot(actor),{phase:'uncertain'});}finally{db.close();rollout.close();await cleanup(f);}
 });
 
 test('poller backs off on pre-import failure and imports when the source becomes available',async()=>{
