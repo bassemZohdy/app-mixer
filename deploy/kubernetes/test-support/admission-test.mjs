@@ -57,5 +57,9 @@ changed('short shutdown grace',o=>o.spec.template.spec.terminationGracePeriodSec
 changed('alternate listener port',(_,c)=>c.ports[0].containerPort=8080);
 changed('host listener port',(_,c)=>c.ports[0].hostPort=3002);
 changed('extra listener port',(_,c)=>c.ports.push({name:'other',containerPort:8080,protocol:'TCP'}));
+// Scale updates use a separate admission resource and must preserve the same minimum.
+const scale=replicas=>spawnSync('kubectl',['scale','deployment','app-mixer-data-plane','-n',namespace,`--replicas=${replicas}`,'--dry-run=server'],{encoding:'utf8'});
+for(const replicas of [2,3]){const result=scale(replicas);if(result.status!==0)throw Error(`Expected scale to ${replicas} to pass: ${result.stderr}`);}
+for(const replicas of [0,1]){const result=scale(replicas);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-scale'))throw Error(`Scale to ${replicas} was not denied by the scale policy: ${result.stderr}`);}
 execFileSync('kubectl',['delete','configmap','app-mixer-security-policy','-n',namespace]);const missing=apply(original);if(missing.status===0||!missing.stderr.includes('app-mixer-data-plane-security'))throw Error('Missing policy parameters did not fail closed: '+missing.stderr);
 console.log('Admission policy accepted the approved deployment and denied unsafe changes and missing parameters.');
