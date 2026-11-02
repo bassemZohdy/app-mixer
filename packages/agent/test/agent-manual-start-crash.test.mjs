@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fork} from 'node:child_process';
+import {existsSync,mkdtempSync,rmSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {CapabilityRegistry} from '../../core/dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,registerAgentManualStart} from '../dist/index.js';
+const scope={tenantId:'tenant',agentId:'agent'},other={tenantId:'other',agentId:'agent'},manifest={manifestVersion:1,...scope,name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'model'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
+async function killAtBarrier(path,barrier,phase){const child=fork(fileURLToPath(new URL('./fixtures/crash-manual-start.mjs',import.meta.url)),[path,barrier,phase],{stdio:['ignore','ignore','pipe','ipc']});let errors='',problem,exited=false;child.stderr.on('data',data=>errors+=String(data));child.on('message',message=>{if(message?.error)problem=message.error;});const exit=new Promise(resolve=>child.once('exit',()=>{exited=true;resolve();}));try{const limit=Date.now()+15000;while(!existsSync(barrier)){if(exited||problem)throw Error(`Worker exited before ${phase}: ${problem??errors}`);if(Date.now()>limit)throw Error(`Worker did not reach ${phase}`);await new Promise(resolve=>setTimeout(resolve,20));}child.kill('SIGKILL');await exit;}finally{if(!exited){child.kill('SIGKILL');await exit;}}}
+for(const phase of ['during','after'])test(`manual start survives process termination ${phase} commit`,{timeout:30000},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'manual-start-crash-')),path=join(dir,'db.sqlite'),barrier=join(dir,'barrier');let runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),db;try{
+  const foreign=triggers.enqueue(other,{sourceId:'manual',principalId:'foreign',eventId:'request-1',eventType:'manual',payload:{definitionVersion:1}},{definitionVersion:1,maxAttempts:2,deadline:1100,maxPending:2},100);triggers.close();triggers=undefined;runs.close();runs=undefined;await killAtBarrier(path,barrier,phase);db=new DatabaseSync(path);db.exec('DROP TRIGGER IF EXISTS test_manual_start_crash');db.close();db=undefined;runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);const before=runs.queuedPage(scope).runIds;assert.equal(before.length,phase==='after'?1:0);const registry=new CapabilityRegistry(()=>{});registerAgentManualStart(registry,{triggers,scope,sourceId:'manual',operationId:'start',path:'/start',maxPendingRuns:2,clock:()=>100,getDefinition:()=>({version:1,manifest}),authorize:()=>true});const result=await registry.invoke('start',{requestId:'request-1',definitionVersion:1},{tenantId:'tenant',principalId:'operator',origin:'ui'});assert.equal(result.duplicate,phase==='after');if(phase==='after')assert.equal(result.runId,before[0]);assert.deepEqual(runs.queuedPage(scope).runIds,[result.runId]);assert.equal(triggers.get(scope,result.runId).principalId,'operator');assert.deepEqual(triggers.get(scope,result.runId).payload,{definitionVersion:1});assert.equal(runs.get(other,foreign.runId).status,'queued');assert.equal(triggers.get(other,foreign.runId).principalId,'foreign');
+ }finally{db?.close();triggers?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
+});
