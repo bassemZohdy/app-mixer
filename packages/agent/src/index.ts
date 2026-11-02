@@ -199,3 +199,6 @@ export type {PostgresAgentMemoryOptions,PostgresAgentMemoryQuery} from './postgr
 
 export {AgentMemoryRetentionWorker} from './agent-memory-retention.js';
 export type {AgentMemoryRetentionWorkerOptions} from './agent-memory-retention.js';
+
+export {AgentIngressMetrics} from './agent-ingress-metrics.js';
+export type {AgentIngressMetricsOptions} from './agent-ingress-metrics.js';

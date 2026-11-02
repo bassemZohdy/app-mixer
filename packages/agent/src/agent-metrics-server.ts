@@ -1,7 +1,7 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
-import type {SqliteAgentRunMetrics,AgentRunMetricsActor} from './agent-run-metrics.js';
+import type {AgentRunMetricsActor} from './agent-run-metrics.js';
 
-export type AgentMetricsServerOptions={metrics:SqliteAgentRunMetrics;authenticate:(request:IncomingMessage,signal:AbortSignal)=>AgentRunMetricsActor|undefined|Promise<AgentRunMetricsActor|undefined>;timeoutMs:number;maxPending:number};
+export type AgentMetricsServerOptions={metrics:{render:(actor:AgentRunMetricsActor)=>string|Promise<string>};authenticate:(request:IncomingMessage,signal:AbortSignal)=>AgentRunMetricsActor|undefined|Promise<AgentRunMetricsActor|undefined>;timeoutMs:number;maxPending:number};
 function reply(res:ServerResponse,status:number,body:string,type='text/plain; charset=utf-8'):void{if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'});res.end(body);}
 
 /** Host-authenticated, separately bound scrape endpoint for one scoped aggregate. */
