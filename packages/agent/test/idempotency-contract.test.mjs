@@ -71,3 +71,12 @@ test('provider errors after possible effects retain all keys and preserve the ca
  await assert.rejects(checkIdempotencyContract(options),error=>error.name==='IdempotencyContractExecutionError'&&error.cause===original&&error.keys.replay==='key-1'&&error.keys.concurrent==='key-2'&&error.keys.fresh==='key-3');assert.equal(effects,1);assert.equal(reads,0);
  const readError=Error('independent read unavailable');await assert.rejects(checkIdempotencyContract({...options,newKey:(()=>{let n=0;return()=>`read-${++n}`;})(),dispatch:async()=>({ok:true}),countEffects:async()=>{throw readError;}}),error=>error.name==='IdempotencyContractExecutionError'&&error.cause===readError&&error.keys.replay==='read-1');
 });
+
+test('replay comparison snapshots returned objects before a provider can mutate them',async()=>{
+ const effects=new Map();let counter=0;const report=await checkIdempotencyContract({input:{amount:1},conflictingInput:{amount:2},newKey:()=>`snapshot-${++counter}`,countEffects:async key=>effects.has(key)?1:0,dispatch:async(input,key)=>{const prior=effects.get(key);if(prior){if(input.amount!==1)throw Error('key conflict');if(key==='snapshot-1')prior.version++;return prior;}const result={version:1};effects.set(key,result);return result;}});
+ assert.equal(report.passed,false);assert.deepEqual(report.findings,[{check:'sequential-replay',problem:'replay returned a different result'}]);
+});
+
+test('uncloneable provider results fail the check with retained investigation keys',async()=>{
+ let n=0;await assert.rejects(checkIdempotencyContract({input:{a:1},conflictingInput:{a:2},newKey:()=>`bad-result-${++n}`,dispatch:async()=>({bad:()=>{}}),countEffects:async()=>1}),error=>error.name==='IdempotencyContractExecutionError'&&error.keys.replay==='bad-result-1'&&error.cause?.name==='DataCloneError');
+});

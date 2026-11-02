@@ -42,7 +42,7 @@ export async function checkIdempotencyContract(options:IdempotencyContractOption
  const timer=timeoutMs===undefined?undefined:setTimeout(()=>{if(!controller.signal.aborted){reason='timeout';controller.abort();}},timeoutMs);
  const interrupted=()=>new IdempotencyContractInterruptedError(reason,keys);
  const invoke=async<T>(work:()=>Promise<T>):Promise<T>=>{if(controller.signal.aborted)throw interrupted();let onAbort:()=>void=()=>{};const stopped=new Promise<never>((_,reject)=>{onAbort=()=>reject(interrupted());controller.signal.addEventListener('abort',onAbort,{once:true});});try{return await Promise.race([Promise.resolve().then(()=>{if(controller.signal.aborted)throw interrupted();return work();}),stopped]);}finally{controller.signal.removeEventListener('abort',onAbort);}};
- const dispatch=(input:Record<string,unknown>,key:string)=>invoke(()=>hostDispatch(input,key,controller.signal));
+ const dispatch=(input:Record<string,unknown>,key:string)=>invoke(async()=>structuredClone(await hostDispatch(input,key,controller.signal)));
  const countEffects=(key:string)=>invoke(()=>hostCountEffects(key,controller.signal));
  const settle=async(work:()=>Promise<unknown>)=>{try{return {ok:true as const,value:await work()};}catch(error){if(error instanceof IdempotencyContractInterruptedError)throw error;return {ok:false as const,error};}};
  try {
