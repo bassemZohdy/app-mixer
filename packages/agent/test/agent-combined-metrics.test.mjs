@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {AgentCombinedMetrics,AgentIngressMetrics,AgentActionRecoveryMetrics,createAgentMetricsServer} from '../dist/index.js';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {AgentCombinedMetrics,AgentIngressMetrics,AgentActionRecoveryMetrics,SqliteAgentRuns,SqliteAgentRunMetrics,createAgentMetricsServer} from '../dist/index.js';
 const actor={tenantId:'tenant',principalId:'operator'};
 
 test('combined metric sources retain independent authorization and serve one protected endpoint',async()=>{
@@ -32,4 +35,17 @@ test('combined metrics fail closed on changing authorization and invalid sources
 
 test('legacy metric sources keep their one-argument render interface',async()=>{
  let seen=0;const combined=new AgentCombinedMetrics({authorize:()=>true,sources:[{render(...args){seen=args.length;return '# TYPE legacy counter\nlegacy 1\n';}}]});assert.match(await combined.renderWithSignal(actor,new AbortController().signal),/legacy 1/);assert.equal(seen,1);
+});
+
+
+test('built-in metric sources propagate cancellation to optional signal-aware policies',async()=>{
+ for(const kind of ['ingress','recovery','runs'])for(const phase of [1,2]){
+  const dir=mkdtempSync(join(tmpdir(),'metrics-cancel-')),path=join(dir,'db.sqlite');let runs,source,checks=0,seen,entered;const ready=new Promise(resolve=>entered=resolve),authorizeWithSignal=async(...args)=>{const signal=args.at(-1);if(++checks===phase){seen=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return true;};
+  try{const options={authorize:()=>{throw Error('legacy callback must not run');},authorizeWithSignal};if(kind==='runs'){runs=new SqliteAgentRuns(path);source=new SqliteAgentRunMetrics(path,{...options,scope:{tenantId:'tenant',agentId:'agent'}});}else source=kind==='ingress'?new AgentIngressMetrics(options):new AgentActionRecoveryMetrics(options);options.authorizeWithSignal=()=>false;const combined=new AgentCombinedMetrics({sources:[source],authorize:()=>true,callbackTimeoutMs:100,maxPendingCallbacks:1}),pending=combined.render(actor);await ready;await assert.rejects(pending,/unavailable/);assert.equal(seen.aborted,true);assert.equal(checks,phase);await assert.rejects(source.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);
+  }finally{source?.close?.();runs?.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
+
+test('legacy built-in metric policy callbacks keep their argument count',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'metrics-legacy-')),path=join(dir,'db.sqlite');let runs,source;const lengths=[];try{const authorize=(...args)=>{lengths.push(args.length);return true;};runs=new SqliteAgentRuns(path);source=new SqliteAgentRunMetrics(path,{scope:{tenantId:'tenant',agentId:'agent'},authorize});const combined=new AgentCombinedMetrics({sources:[new AgentIngressMetrics({authorize}),new AgentActionRecoveryMetrics({authorize}),source],authorize:()=>true});await combined.render(actor);assert.deepEqual(lengths,[1,1,1,1,2,2]);}finally{source?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
 });
