@@ -46,6 +46,11 @@ export class PostgresAgentRunSlots {
   const {tenantId,agentId}=this.scope(scope);if(!id(runId)||!id(token)||!Number.isSafeInteger(leaseMs)||leaseMs<1||leaseMs>3600000)throw Error('Invalid agent run slot request');
   const result=await this.query(`UPDATE app_mixer_agent_run_slots SET lease_until=${NOW}+$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND token=$4 AND lease_until>${NOW}`,[tenantId,agentId,runId,token,leaseMs]);return result.rowCount===1;
  }
+ /** Check whether this exact token still holds an unexpired slot. */
+ async holds(scope:AgentRunScope,runId:string,token:string):Promise<boolean>{
+  const {tenantId,agentId}=this.scope(scope);if(!id(runId)||!id(token))throw Error('Invalid agent run slot request');
+  const result=await this.query(`SELECT 1 FROM app_mixer_agent_run_slots WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND token=$4 AND lease_until>${NOW}`,[tenantId,agentId,runId,token]);return result.rows.length===1;
+ }
  async release(scope:AgentRunScope,runId:string,token:string):Promise<void>{
   const {tenantId,agentId}=this.scope(scope);if(!id(runId)||!id(token))throw Error('Invalid agent run slot request');
   await this.query('DELETE FROM app_mixer_agent_run_slots WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND token=$4',[tenantId,agentId,runId,token]);

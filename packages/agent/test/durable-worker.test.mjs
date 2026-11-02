@@ -111,3 +111,13 @@ test('worker aborts a blocked definition check when its lease expires', {timeout
 test('a failed shared slot renewal remains a failure when execution finishes', {timeout:5000}, async()=>{
  for(const failure of ['lost','error']){const s=setup();let release,finish;try{let entered,released=0;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),done=new Promise(r=>finish=r),shared=new PostgresAgentRunSlots({enabled:true,query:async()=>({rows:[],rowCount:0}),transaction:async fn=>fn(async()=>({rows:[],rowCount:0}))});shared.acquire=async()=> 'slot';shared.renew=async()=>{entered();await gate;if(failure==='error')throw Error('database unavailable');return false;};shared.release=async()=>{released++;};const definitions={get:async(...args)=>s.definitions.get(...args)},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,sharedSlots:shared,execute:async()=>{await done;return 'succeeded';}}),pending=worker.runOnce(scope,'one');await ready;finish();await new Promise(r=>setImmediate(r));release();assert.equal((await pending).status,'uncertain');assert.equal(released,1);}finally{finish?.();release?.();s.runs.close();s.definitions.close();}}
 });
+
+
+test('shared slot verification requires a slot store and a boolean option',()=>{
+ const s=setup();try{for(const extra of [{verifySharedSlotAtUse:true},{verifySharedSlotAtUse:'yes'}])assert.throws(()=>new DurableAgentWorker({...options(s),execute:async()=> 'succeeded',...extra}),/Invalid agent worker/);}finally{s.runs.close();s.definitions.close();}
+});
+
+
+test('shared slot check failures abort and remain uncertain even if execution claims success',async()=>{
+ const s=setup();try{let checks=0;const shared=new PostgresAgentRunSlots({enabled:true,query:async()=>({rows:[],rowCount:0}),transaction:async fn=>fn(async()=>({rows:[],rowCount:0}))});shared.acquire=async()=> 'slot';shared.release=async()=>{};shared.holds=async()=>{if(++checks>1)throw Error('database unavailable');return true;};const configured={...options(s),sharedSlots:shared,verifySharedSlotAtUse:true,execute:async(_run,{signal,assertLease,assertLeaseAsync})=>{assert.throws(assertLease,/unavailable/);await assert.rejects(assertLeaseAsync(),/unavailable/);assert.equal(signal.aborted,true);return 'succeeded';}},worker=new DurableAgentWorker(configured);configured.verifySharedSlotAtUse=false;assert.equal((await worker.runOnce(scope,'one')).status,'uncertain');assert.equal(checks,2);}finally{s.runs.close();s.definitions.close();}
+});

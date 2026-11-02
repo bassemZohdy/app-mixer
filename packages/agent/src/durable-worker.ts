@@ -16,13 +16,15 @@ type WorkerOptions={
  tracing?:{tracer:Tracer;usePersistedParent?:boolean};
  /** Optional shared slots enforcing the manifest's concurrency and daily-run quotas across workers on separate nodes. */
  sharedSlots?:PostgresAgentRunSlots;
+ /** Recheck the shared slot on asynchronous lease assertions before protected work. */
+ verifySharedSlotAtUse?:boolean;
 };
 /** Execute one explicitly selected run. The host supplies policy, execution and outcome classification. */
 export class DurableAgentWorker {
- private readonly clock:()=>number;private readonly tracer:Tracer|undefined;private readonly usePersistedParent:boolean;
+ private readonly clock:()=>number;private readonly tracer:Tracer|undefined;private readonly usePersistedParent:boolean;private readonly verifySharedSlotAtUse:boolean;
  constructor(private readonly options:WorkerOptions){
-  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(options.asyncDefinitions!==undefined&&typeof options.asyncDefinitions!=='boolean')||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.sharedSlots!==undefined&&!(options.sharedSlots instanceof PostgresAgentRunSlots))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.usePersistedParent!==undefined&&typeof options.tracing.usePersistedParent!=='boolean'))))throw Error('Invalid agent worker');
-  this.clock=options.clock??Date.now;this.tracer=options.tracing?.tracer;this.usePersistedParent=options.tracing?.usePersistedParent===true;
+  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(options.asyncDefinitions!==undefined&&typeof options.asyncDefinitions!=='boolean')||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.sharedSlots!==undefined&&!(options.sharedSlots instanceof PostgresAgentRunSlots))||(options.verifySharedSlotAtUse!==undefined&&typeof options.verifySharedSlotAtUse!=='boolean')||(options.verifySharedSlotAtUse===true&&!options.sharedSlots)||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.usePersistedParent!==undefined&&typeof options.tracing.usePersistedParent!=='boolean'))))throw Error('Invalid agent worker');
+  this.verifySharedSlotAtUse=options.verifySharedSlotAtUse===true;this.clock=options.clock??Date.now;this.tracer=options.tracing?.tracer;this.usePersistedParent=options.tracing?.usePersistedParent===true;
  }
  usesRegistry(runs:SqliteAgentRuns):boolean{return this.options.runs===runs;}
  async runOnce(scope:AgentRunScope,runId:string):Promise<DurableAgentRun>{
@@ -45,7 +47,7 @@ export class DurableAgentWorker {
   const validDefinition=()=>matches(readSync());
   if(await authorizeStart(structuredClone(run),structuredClone(definition))!==true)throw Error('Agent run forbidden');
   if(!(isAsync?matches(await lookup()):validDefinition()))throw Error('Agent definition changed');
-  const shared=this.options.sharedSlots,quotas=definition.manifest.quotas;let slot:string|undefined;
+  const shared=this.options.sharedSlots,verifySharedSlotAtUse=this.verifySharedSlotAtUse,quotas=definition.manifest.quotas;let slot:string|undefined;
   if(shared)slot=await shared.acquire(scope,runId,workerId,leaseMs,{maxConcurrentRuns:quotas.maxConcurrentRuns,maxRunsPerDay:quotas.maxRunsPerDay});
   const releaseSlot=async()=>{if(shared&&slot)try{await shared.release(scope,runId,slot);}catch{}};
   try{run=runs.claim(scope,runId,run.revision,workerId,leaseMs,this.clock(),quotas.maxConcurrentRuns,quotas.maxRunsPerDay);}catch(error){await releaseSlot();throw error;}
@@ -55,10 +57,10 @@ export class DurableAgentWorker {
    const current=runs.get(scope,runId),now=this.clock();
    if(controller.signal.aborted||!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.status!=='running'||current.leaseUntil===null||!Number.isSafeInteger(now)||now>=current.leaseUntil)throw Error('Agent run lease unavailable');
   };
-  const assertLease=()=>{assertLocalLease();if(isAsync||!validDefinition())throw Error('Agent run lease unavailable');};
+  const assertLease=()=>{assertLocalLease();if(isAsync||verifySharedSlotAtUse||!validDefinition())throw Error('Agent run lease unavailable');};
   const activeLookup=async(signal:AbortSignal)=>{if(signal.aborted)throw Error('Agent run lease unavailable');return new Promise<AgentDefinitionVersion|undefined>((resolve,reject)=>{const aborted=()=>{cleanup();reject(Error('Agent run lease unavailable'));},cleanup=()=>signal.removeEventListener('abort',aborted);signal.addEventListener('abort',aborted,{once:true});Promise.resolve().then(()=>{if(signal.aborted)throw Error('Agent run lease unavailable');return definitions.getWithSignal?definitions.getWithSignal(scope.tenantId,scope.agentId,signal):lookup();}).then(value=>{cleanup();if(signal.aborted)reject(Error('Agent run lease unavailable'));else resolve(value);},error=>{cleanup();reject(error);});});};
   const validateLease=async(signal:AbortSignal)=>{assertLocalLease();if(!(isAsync?matches(await activeLookup(signal)):validDefinition()))throw Error('Agent run lease unavailable');if(signal.aborted)throw Error('Agent run lease unavailable');assertLocalLease();};
-  const assertLeaseAsync=()=>validateLease(controller.signal);
+  const assertLeaseAsync=async()=>{await validateLease(controller.signal);if(verifySharedSlotAtUse){try{if(!shared||!slot||!(await shared.holds(scope,runId,slot)))throw Error('Agent run slot lost');assertLocalLease();}catch{lost=true;controller.abort();throw Error('Agent run lease unavailable');}}};
   let pulsing:Promise<void>|undefined;const pulseStop=new AbortController(),pulseSignal=AbortSignal.any([controller.signal,pulseStop.signal]);
   const pulse=async()=>{
    try{await validateLease(pulseSignal);}catch{if(!pulseStop.signal.aborted||controller.signal.aborted){lost=true;controller.abort();}return;}
@@ -78,7 +80,7 @@ export class DurableAgentWorker {
   const current=runs.get(scope,runId);
   if(!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.leaseUntil===null||this.clock()>=current.leaseUntil)throw Error('Agent run lease lost');
   if(typeof outcome==='object'){if(!lost&&current.status==='running'){try{return outcome.status==='approval_required'?runs.pauseForApproval(scope,runId,current.revision,token,outcome.actionId,this.clock()):runs.pauseForDelegation(scope,runId,current.revision,token,outcome.grantId,outcome.revision,this.clock());}catch{outcome='uncertain';}}else outcome=current.status==='pause_requested'||current.status==='cancel_requested'?'stopped':'uncertain';}
-  if(lost&&(isAsync||outcome!=='succeeded'&&outcome!=='failed'))outcome=current.status==='pause_requested'||current.status==='cancel_requested'?(outcome==='stopped'?'stopped':'uncertain'):'uncertain';
+  if(lost&&(isAsync||verifySharedSlotAtUse||outcome!=='succeeded'&&outcome!=='failed'))outcome=current.status==='pause_requested'||current.status==='cancel_requested'?(outcome==='stopped'?'stopped':'uncertain'):'uncertain';
   if(outcome==='stopped'&&!['pause_requested','cancel_requested'].includes(current.status))outcome='uncertain';
   return runs.settle(scope,runId,current.revision,token,outcome,this.clock());
   }finally{await releaseSlot();}
