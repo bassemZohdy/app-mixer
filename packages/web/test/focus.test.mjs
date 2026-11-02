@@ -39,3 +39,28 @@ test('repeated field references remain editable and retain the focused occurrenc
   [first,second]=doc.querySelectorAll('input');assert.equal(first.value,'Nested');assert.equal(second.value,'Nested');assert.equal(doc.activeElement,first);assert.equal(first.selectionStart,3);
  }finally{dom.window.close();}
 });
+
+test('external data updates wait for text composition without losing model changes',()=>{
+ const dom=new JSDOM('<!doctype html><main></main>',{pretendToBeVisual:true}),doc=dom.window.document,actions=[],renderer=new A2UIRenderer(doc.querySelector('main'),undefined,action=>actions.push(action));
+ try{
+  renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+  renderer.apply(message('updateDataModel',{surfaceId:'main',value:{name:'Ada',note:'old'}}));
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[
+   {id:'root',component:'Column',children:['field','note','button']},
+   {id:'field',component:'TextField',label:'Name',value:{path:'/name'}},
+   {id:'note',component:'Text',text:{path:'/note'}},
+   {id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{note:{path:'/note'}}}}},
+   {id:'label',component:'Text',text:'Save'}
+  ]}));
+  const input=doc.querySelector('input');input.focus();input.dispatchEvent(new dom.window.CompositionEvent('compositionstart',{bubbles:true}));
+  input.value='日本';input.dispatchEvent(new dom.window.InputEvent('input',{bubbles:true,isComposing:true}));
+  renderer.apply(message('updateDataModel',{surfaceId:'main',path:'/note',value:'new'}));
+  renderer.apply(message('updateDataModel',{surfaceId:'main',path:'/name',value:'remote'}));
+  assert.equal(doc.querySelector('input'),input);assert.equal(doc.activeElement,input);assert.equal(input.value,'日本');
+  doc.querySelector('button').click();assert.equal(actions[0].action.context.note,'new');
+  assert.throws(()=>renderer.apply(message('updateDataModel',{surfaceId:'main',path:'/__proto__/x',value:1})));
+  input.dispatchEvent(new dom.window.CompositionEvent('compositionend',{bubbles:true}));
+  assert.equal(doc.querySelector('input').value,'日本');assert.equal(doc.activeElement,doc.querySelector('input'));
+  assert.ok([...doc.querySelectorAll('p')].some(node=>node.textContent==='new'));
+ }finally{dom.window.close();}
+});

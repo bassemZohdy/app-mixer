@@ -112,6 +112,11 @@ try {
       let copies=document.querySelectorAll('input');copies[0].focus();copies[0].value='Lin';copies[0].setSelectionRange(1,1);copies[0].dispatchEvent(new Event('input',{bubbles:true}));
       copies=document.querySelectorAll('input');if(copies.length!==2 || copies[0].value!=='Lin' || copies[1].value!=='Lin' || document.activeElement!==copies[0] || copies[0].selectionStart!==1) throw Error('Repeated field update failed');
       event=undefined;document.querySelector('button').click();if(event?.action.context.name!=='Lin') throw Error('Repeated field action context failed');
+      const composing=copies[0];composing.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));composing.value='日本';composing.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
+      renderer.apply({version,updateDataModel:{surfaceId,path:'/form/secret',value:'updated during composition'}});
+      if(document.querySelector('input')!==composing || document.activeElement!==composing || composing.value!=='日本') throw Error('Composition was interrupted');
+      composing.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
+      copies=document.querySelectorAll('input');if(copies[0].value!=='日本' || copies[1].value!=='日本' || document.activeElement!==copies[0]) throw Error('Composition did not commit');
       document.body.dataset.result='pass';
     } catch(error) {document.body.dataset.result='fail'; document.body.append(String(error));}
   </script></body></html>`;

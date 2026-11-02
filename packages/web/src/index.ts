@@ -4,7 +4,7 @@ export const APP_MIXER_CATALOG = 'https://raw.githubusercontent.com/bassemZohdy/
 export const BASIC_CATALOG = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj = Record<string, unknown>;
 export type ActionMessage = {version:'v0.9.1'; action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string, unknown>}};
-type Interaction = {controlKey: string; write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
+type Interaction = {controlKey: string; write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; composing: (input: HTMLInputElement | HTMLTextAreaElement, active: boolean) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
 type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document, interaction: Interaction) => HTMLElement;
 const obj = (x: unknown): x is Obj => x !== null && typeof x === 'object' && !Array.isArray(x);
 const only = (value: Obj, keys: string[]): boolean => Object.keys(value).every(key => keys.includes(key));
@@ -157,8 +157,8 @@ export function basicRegistry(): ComponentRegistry {
     const input = c.variant === 'longText' ? doc.createElement('textarea') : doc.createElement('input');
     input.value = textValue(c.value, data);
     let composing = false;
-    input.addEventListener('compositionstart', () => { composing = true; });
-    input.addEventListener('compositionend', () => { composing = false; interaction.write(path, input.value, input); });
+    input.addEventListener('compositionstart', () => { composing = true; interaction.composing(input, true); });
+    input.addEventListener('compositionend', () => { composing = false; interaction.composing(input, false); interaction.write(path, input.value, input); });
     input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
     interaction.controls.set(interaction.controlKey, input);
     wrapper.appendChild(input); return wrapper;
@@ -182,7 +182,7 @@ export function basicRegistry(): ComponentRegistry {
   }, validateBasic);
   return registry;
 }
-type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
+type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; composing: Set<HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
 export class A2UIRenderer {
   private readonly surfaces = new Map<string, Surface>();
   constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry(), private readonly onAction?: (message: ActionMessage) => void) {}
@@ -200,7 +200,7 @@ export class A2UIRenderer {
       if (this.surfaces.has(surfaceId)) throw Error('Surface already exists');
       const element = this.host.ownerDocument.createElement('div');
       element.dataset.surfaceId = surfaceId; this.host.appendChild(element);
-      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map(), componentRevision:{}}); return;
+      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map(), composing:new Set(), componentRevision:{}}); return;
     }
     const surface = this.surfaces.get(surfaceId);
     if (!surface) throw Error('Unknown surface');
@@ -242,6 +242,10 @@ export class A2UIRenderer {
           if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(path) !== input) return;
           this.apply({version:'v0.9.1', updateDataModel:{surfaceId,path:fieldPath,value}});
         },
+        composing: (input, active) => {
+          if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(path) !== input) return;
+          if (active) surface.composing.add(input); else surface.composing.delete(input);
+        },
         action: (name, context) => {
           if (this.surfaces.get(surfaceId) !== surface || surface.componentRevision !== componentRevision || !this.onAction) return;
           const resolved: Obj = {};
@@ -264,9 +268,11 @@ export class A2UIRenderer {
     };
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
+    // Keep an active IME control mounted until compositionend commits its text.
+    if (kind === 'updateDataModel' && surface.composing.size) { surface.data = data; return; }
     const restoreFocus = focused && doc.activeElement === focused.control;
     surface.element.replaceChildren(...(root ? [root] : []));
-    surface.components = components; surface.data = data; surface.controls = controls; surface.componentRevision = componentRevision;
+    surface.components = components; surface.data = data; surface.controls = controls; surface.composing.clear(); surface.componentRevision = componentRevision;
     const replacement = restoreFocus ? controls.get(focused.id) : undefined;
     if (replacement && focused) {
       replacement.focus({preventScroll:true});
