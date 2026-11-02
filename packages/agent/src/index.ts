@@ -324,3 +324,6 @@ export type {AgentMemoryErasureEvidenceOptions} from './agent-memory-erasure-evi
 
 export {createSquareWebhookAdapter} from './square-webhook.js';
 export type {SquareWebhookOptions} from './square-webhook.js';
+
+export {registerAgentDelegationCapability} from './agent-delegation-capability.js';
+export type {AgentDelegationCapabilityOptions,AgentDelegationCapabilityInput} from './agent-delegation-capability.js';
