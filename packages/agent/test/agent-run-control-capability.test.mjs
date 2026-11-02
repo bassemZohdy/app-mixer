@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,registerAgentRunControl} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentRunControlHistory,registerAgentRunControl} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},other={...scope,tenantId:'other'},actor={tenantId:'tenant',principalId:'operator'},config={definitionVersion:1,maxAttempts:2,deadline:1000};
 async function serve(registry){const server=createCapabilityServer(registry,req=>req.headers.authorization==='valid'?actor:req.headers.authorization==='other'?{...actor,tenantId:'other'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));return {server,call:(input,auth='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/run-control/invoke`,{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})})};}
 async function stop(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
@@ -23,4 +27,11 @@ test('a lost completion audit leaves an active worker pause request visible and 
 });
 test('control does not bypass the deadline when resuming a paused run',async()=>{
  const runs=new SqliteAgentRuns(':memory:'),registry=new CapabilityRegistry(()=>{});let server;try{const queued=runs.create(scope,'run',config,0),paused=runs.request(scope,'run',queued.revision,'pause',100);registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>1000,authorize:()=>true});const app=await serve(registry);server=app.server;assert.equal((await app.call({action:'resume',revision:paused.revision})).status,409);assert.equal(runs.get(scope,'run').status,'paused');}finally{if(server)await stop(server);runs.close();}
+});
+test('control evidence is atomic, immutable, tenant scoped and reauthorized',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'run-control-audit-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),registry=new CapabilityRegistry(()=>{}),db=new DatabaseSync(path);let server,history;try{
+  const first=runs.create(scope,'run',config,0),foreign=runs.create(other,'run',config,0);runs.request(other,'run',foreign.revision,'pause',100,{principalId:'foreign'});registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>100,authorize:()=>true});const app=await serve(registry);server=app.server;
+  db.exec("CREATE TRIGGER fail_control_evidence BEFORE INSERT ON agent_run_control_audit WHEN NEW.tenant_id='tenant' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");assert.equal((await app.call({action:'pause',revision:first.revision})).status,500);assert.equal(runs.get(scope,'run').status,'queued');assert.equal(runs.get(scope,'run').revision,first.revision);db.exec('DROP TRIGGER fail_control_evidence');assert.equal((await app.call({action:'pause',revision:first.revision})).status,200);assert.throws(()=>db.exec("UPDATE agent_run_control_audit SET actor_id='forged'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_run_control_audit'),/immutable/);assert.throws(()=>db.exec('INSERT OR REPLACE INTO agent_run_control_audit SELECT * FROM agent_run_control_audit'),/immutable/);
+  history=new SqliteAgentRunControlHistory(path,{scope,authorize:()=>true});assert.deepEqual((await history.list({tenantId:'tenant',principalId:'auditor'})).items,[{id:1,runId:'run',revision:2,action:'pause',previousStatus:'queued',status:'paused',principalId:'operator',observedAt:100}]);await assert.rejects(history.list({tenantId:'other',principalId:'auditor'}),/actor/);history.close();let reads=0;history=new SqliteAgentRunControlHistory(path,{scope,authorize:(_actor,action)=>action==='list'||++reads===1});await assert.rejects(history.list({tenantId:'tenant',principalId:'auditor'}),/access denied/);
+ }finally{history?.close();if(server)await stop(server);db.close();runs.close();rmSync(dir,{recursive:true,force:true});}
 });
