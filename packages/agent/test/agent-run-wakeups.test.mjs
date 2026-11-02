@@ -5,10 +5,20 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentRunHistory,SqliteAgentSchedules,SqliteAgentWakeupRetention,AgentWakeupRetentionWorker} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentRunHistory,SqliteAgentSchedules,SqliteAgentWakeupRetention,AgentWakeupRetentionWorker,SqliteWakeupRetentionMetrics} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},other={...scope,tenantId:'other'},event={sourceId:'webhook',principalId:'sender',eventId:'event-1',eventType:'message',payload:{text:'hello',count:1}},config={definitionVersion:1,maxAttempts:3,deadline:1000},triggerConfig={...config,maxPending:10};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'agent-wakeup-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path);return {dir,path,runs,triggers};}
 function close(s){s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
+
+test('wakeup retention metrics count only scoped unredacted terminal records and recheck authorization',async()=>{
+ const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,observed,completion,db;try{
+  const add=(target,runId,eventId,seen,ended)=>{let run=s.runs.create(target,runId,config,1);run=s.runs.request(target,runId,run.revision,'pause',2);run=s.runs.resumeWithTrigger(target,runId,run.revision,{...event,eventId},seen).run;if(ended!==undefined)s.runs.request(target,runId,run.revision,'cancel',ended);};
+  add(scope,'old','old',10,20);add(scope,'recent','recent',70,90);add(scope,'legacy','legacy',11,21);add(scope,'redacted','redacted',12,22);add(scope,'active','active',13);add(other,'foreign','foreign',10,20);
+  retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true});await retention.redact(actor,'webhook','redacted',30);db=new DatabaseSync(s.path);db.exec('DROP TRIGGER agent_run_terminal_no_delete');db.prepare('DELETE FROM agent_run_terminal_times WHERE tenant_id=? AND agent_id=? AND run_id=?').run('tenant','agent','legacy');
+  observed=new SqliteWakeupRetentionMetrics(s.path,{scope,authorize:()=>true,minAgeMs:50,clock:()=>100});completion=new SqliteWakeupRetentionMetrics(s.path,{scope,authorize:()=>true,minAgeMs:50,ageFrom:'completion',clock:()=>100});assert.deepEqual(await observed.snapshot(actor),{eligible:2,notYetEligible:1,unknownAge:0,oldestEligibleSeconds:0.09});assert.deepEqual(await completion.snapshot(actor),{eligible:1,notYetEligible:1,unknownAge:1,oldestEligibleSeconds:0.08});const text=await completion.render(actor);assert.match(text,/app_mixer_wakeup_retention_candidates\{state="unknown_age"\} 1/);for(const secret of ['tenant','operator','recent','hello'])assert.equal(text.includes(secret),false);await assert.rejects(completion.snapshot({...actor,tenantId:'other'}),/Invalid agent metrics actor/);
+  let calls=0;const revoked=new SqliteWakeupRetentionMetrics(s.path,{scope,authorize:()=>++calls===1,minAgeMs:50,clock:()=>100});try{await assert.rejects(revoked.snapshot(actor),/access denied/);await assert.rejects(revoked.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);}finally{revoked.close();}
+ }finally{db?.close();completion?.close();observed?.close();retention?.close();close(s);}
+});
 
 test('wakeup retention worker enforces age again at redaction and retries denied candidates',async()=>{
  const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention;try{

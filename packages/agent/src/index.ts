@@ -276,3 +276,5 @@ export {SqliteAgentWakeupRetention} from './agent-wakeup-retention.js';
 export type {AgentWakeupRetentionActor,AgentWakeupRetentionOptions,AgentWakeupRetentionTarget,AgentWakeupRedactionCandidate} from './agent-wakeup-retention.js';
 export {AgentWakeupRetentionWorker} from './agent-wakeup-retention-worker.js';
 export type {AgentWakeupRetentionWorkerOptions} from './agent-wakeup-retention-worker.js';
+export {SqliteWakeupRetentionMetrics} from './agent-wakeup-retention-metrics.js';
+export type {WakeupRetentionMetricsOptions,WakeupRetentionMetricsSnapshot} from './agent-wakeup-retention-metrics.js';
