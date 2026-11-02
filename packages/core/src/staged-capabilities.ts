@@ -46,7 +46,7 @@ export function registerStagedCapability(registry:CapabilityRegistry, external:C
 export type StagedVerificationCapabilityOptions={
  candidate:CapabilityCandidate;applicationId:string;externalOperationId:string;
  authorize:(actor:PolicyContext)=>boolean|Promise<boolean>;
- authorizeOperation:(actor:PolicyContext,operation:StagedOperation,reference:string)=>boolean|Promise<boolean>;
+ authorizeOperation:(actor:PolicyContext,operation:StagedOperation,reference:string,signal:AbortSignal)=>boolean|Promise<boolean>;
  verify:(actor:PolicyContext,operation:StagedOperation,signal:AbortSignal)=>StagedVerificationOutcome|Promise<StagedVerificationOutcome>;
  timeoutMs?:number;maxPending?:number;
 };
@@ -54,22 +54,25 @@ export function registerStagedVerificationCapability(registry:CapabilityRegistry
  if(!(registry instanceof CapabilityRegistry)||!(store instanceof SqliteStagedOperations)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function'||typeof options.verify!=='function')throw Error('Invalid staged verification capability');
  if((options.timeoutMs===undefined)!==(options.maxPending===undefined)||(options.timeoutMs!==undefined&&(!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000))||(options.maxPending!==undefined&&(!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>100)))throw Error('Invalid staged verification capability');
  const {applicationId,externalOperationId,authorize,authorizeOperation,verify,timeoutMs,maxPending}=options;let pending=0;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');
- const verifyBounded=async(actor:PolicyContext,operation:StagedOperation):Promise<StagedVerificationOutcome>=>{
-  const controller=new AbortController();if(timeoutMs===undefined)return verify(actor,operation,controller.signal);if(pending>=maxPending!)throw Error('Staged verification unavailable');pending++;
-  const task=Promise.resolve().then(()=>verify(actor,operation,controller.signal));void task.then(()=>{pending--;},()=>{pending--;});let timer:ReturnType<typeof setTimeout>|undefined;
+ const runBounded=async<T>(operation:(signal:AbortSignal)=>Promise<T>):Promise<T>=>{
+  const controller=new AbortController();if(timeoutMs===undefined)return operation(controller.signal);if(pending>=maxPending!)throw Error('Staged verification unavailable');pending++;
+  const task=Promise.resolve().then(()=>operation(controller.signal));void task.then(()=>{pending--;},()=>{pending--;});let timer:ReturnType<typeof setTimeout>|undefined;
   try{return await Promise.race([task,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('Staged verification unavailable'));},timeoutMs);})]);}finally{if(timer!==undefined)clearTimeout(timer);}
  };
  registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).length===2&&Object.hasOwn(input,'id')&&Object.hasOwn(input,'reference')&&id(input.id)&&id(input.reference),execute:async(input,context)=>{
-  const value=input as {id:string;reference:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId},staged=store.get(scope,value.id);
-  if(!staged||staged.operationId!==externalOperationId)throw Error('Operation not found');
-  const permitted=async(operation:StagedOperation)=>await authorize({...actor})===true&&await authorizeOperation({...actor},structuredClone(operation),value.reference)===true;
-  if(!await permitted(staged))throw Error('Capability forbidden');
-  const outcome=await store.verifyAndReconcile(scope,value.id,async(_scope,operation)=>{
-   if(operation.operationId!==externalOperationId||!await permitted(operation))throw Error('Capability forbidden');
-   const result=await verifyBounded({...actor},structuredClone(operation));
-   if(!await permitted(operation))throw Error('Capability forbidden');return result;
-  },{principalId:actor.principalId,reference:value.reference});
-  return {outcome};
+  const value=input as {id:string;reference:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};
+  return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Staged verification unavailable');};
+   const staged=store.get(scope,value.id);if(!staged||staged.operationId!==externalOperationId)throw Error('Operation not found');
+   const permitted=async(operation:StagedOperation)=>{active();const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)return false;const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),value.reference,signal);active();return operationAllowed===true;};
+   if(!await permitted(staged))throw Error('Capability forbidden');active();
+   const outcome=await store.verifyAndReconcile(scope,value.id,async(_scope,operation)=>{
+    if(operation.operationId!==externalOperationId||!await permitted(operation))throw Error('Capability forbidden');active();
+    const result=await verify({...actor},structuredClone(operation),signal);active();
+    if(!await permitted(operation))throw Error('Capability forbidden');active();return result;
+   },{principalId:actor.principalId,reference:value.reference});
+   return {outcome};
+  });
  }});
 }
 
