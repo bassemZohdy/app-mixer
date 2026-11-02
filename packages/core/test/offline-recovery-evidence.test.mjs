@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
+import {SqliteOfflineQueue} from '../dist/index.js';
+const scope={tenantId:'tenant',applicationId:'app'},other={tenantId:'other',applicationId:'app'},policy={enabled:true,maxAttempts:2,retryDelayMs:0},evidence={operatorId:'operator',reference:'case-1'};
+function setup(){const dir=mkdtempSync(join(tmpdir(),'offline-evidence-')),path=join(dir,'db.sqlite'),queue=new SqliteOfflineQueue(path,policy),db=new DatabaseSync(path);return {dir,path,queue,db};}
+function running(s,selected=scope,principal='person'){const item=s.queue.enqueue(selected,principal,'update','request',{private:'secret'});s.db.prepare("UPDATE offline_operations SET status='running',attempts=1 WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=?").run(selected.tenantId,selected.applicationId,principal,item.id);return item;}
+function close(s){s.db.close();s.queue.close();rmSync(s.dir,{recursive:true,force:true});}
+
+test('evidence-bearing recovery persists scoped operator decisions and fences repeated changes',()=>{
+ const s=setup();try{const item=running(s),foreign=running(s,other);s.queue.recoverAbandonedWithEvidence(scope,'person',item.id,evidence,10);assert.equal(s.queue.get(scope,'person',item.id).status,'uncertain');s.queue.reconcileWithEvidence(scope,'person',item.id,'not_applied',{operatorId:'second',reference:'case-2'},11);assert.equal(s.queue.get(scope,'person',item.id).status,'pending');assert.throws(()=>s.queue.reconcileWithEvidence(scope,'person',item.id,'applied',evidence,12),/state/);const history=s.queue.listRecoveryEvidence(scope,'person',item.id);assert.deepEqual(history.map(({operatorId,reference,action,recordedAt})=>({operatorId,reference,action,recordedAt})),[{operatorId:'operator',reference:'case-1',action:'recover',recordedAt:10},{operatorId:'second',reference:'case-2',action:'not_applied',recordedAt:11}]);assert.deepEqual(s.queue.listRecoveryEvidence(scope,'person',item.id,{after:history[0].id,limit:1}),[history[1]]);assert.equal(JSON.stringify(history).includes('secret'),false);assert.deepEqual(s.queue.listRecoveryEvidence(other,'person',item.id),[]);assert.equal(s.queue.get(other,'person',foreign.id).status,'running');assert.throws(()=>s.db.exec('UPDATE offline_recovery_events SET reference=\'forged\''),/immutable/);assert.throws(()=>s.db.exec('DELETE FROM offline_recovery_events'),/immutable/);s.queue.close();s.queue=new SqliteOfflineQueue(s.path,policy);assert.deepEqual(s.queue.listRecoveryEvidence(scope,'person',item.id),history);
+ }finally{close(s);}
+});
+
+test('audit insertion failure rolls back both recovery and reconciliation',()=>{
+ const s=setup();try{const item=running(s);s.db.exec("CREATE TRIGGER fail_recovery BEFORE INSERT ON offline_recovery_events BEGIN SELECT RAISE(ABORT,'evidence unavailable'); END");assert.throws(()=>s.queue.recoverAbandonedWithEvidence(scope,'person',item.id,evidence,10),/evidence unavailable/);assert.equal(s.queue.get(scope,'person',item.id).status,'running');assert.deepEqual(s.queue.listRecoveryEvidence(scope,'person',item.id),[]);s.db.exec('DROP TRIGGER fail_recovery');s.queue.recoverAbandonedWithEvidence(scope,'person',item.id,evidence,10);s.db.exec("CREATE TRIGGER fail_recovery BEFORE INSERT ON offline_recovery_events BEGIN SELECT RAISE(ABORT,'evidence unavailable'); END");assert.throws(()=>s.queue.reconcileWithEvidence(scope,'person',item.id,'applied',evidence,11),/evidence unavailable/);assert.equal(s.queue.get(scope,'person',item.id).status,'uncertain');assert.equal(s.queue.listRecoveryEvidence(scope,'person',item.id).length,1);s.db.exec('DROP TRIGGER fail_recovery');s.queue.reconcileWithEvidence(scope,'person',item.id,'applied',evidence,11);assert.equal(s.queue.get(scope,'person',item.id).status,'succeeded');
+ }finally{close(s);}
+});
+
+test('evidence methods reject malformed metadata without changing the operation',()=>{
+ const s=setup();try{const item=running(s);for(const bad of [null,{}, {operatorId:'',reference:'case'}, {operatorId:'op',reference:'case',extra:true}])assert.throws(()=>s.queue.recoverAbandonedWithEvidence(scope,'person',item.id,bad,10),/Invalid/);assert.throws(()=>s.queue.recoverAbandonedWithEvidence(scope,'person',item.id,evidence,NaN),/Invalid/);assert.throws(()=>s.queue.listRecoveryEvidence(scope,'person',item.id,{limit:101}),/Invalid/);assert.equal(s.queue.get(scope,'person',item.id).status,'running');assert.deepEqual(s.queue.listRecoveryEvidence(scope,'person',item.id),[]);}finally{close(s);}
+});

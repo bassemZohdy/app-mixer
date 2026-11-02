@@ -8,6 +8,8 @@ export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'
 export type OfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:OfflineStatus;attempts:number;nextAttemptAt:number};
 export type OfflineQueueOptions={enabled:true;maxAttempts:number;retryDelayMs:number};
 export type OfflineFailure='retry'|'conflict'|'uncertain';
+export type SqliteOfflineRecoveryEvidence={operatorId:string;reference:string};
+export type SqliteOfflineRecoveryEvent=SqliteOfflineRecoveryEvidence & {id:number;action:'recover'|'applied'|'not_applied';recordedAt:number};
 
 /** Local durable queue. The host owns secure storage, access control, and safe retry classification. */
 export class SqliteOfflineQueue {
@@ -26,7 +28,12 @@ export class SqliteOfflineQueue {
         attempts INTEGER NOT NULL, next_attempt_at INTEGER NOT NULL,
         PRIMARY KEY(tenant_id,application_id,principal_id,id),
         UNIQUE(tenant_id,application_id,principal_id,request_key)
-      );`);}catch(error){this.db.close();throw error;}
+      );
+      CREATE TABLE IF NOT EXISTS offline_recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,queue_id TEXT NOT NULL,operator_id TEXT NOT NULL,reference TEXT NOT NULL,action TEXT NOT NULL,recorded_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS offline_recovery_events_scope ON offline_recovery_events(tenant_id,application_id,principal_id,queue_id,id);
+      CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_replace BEFORE INSERT ON offline_recovery_events WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM offline_recovery_events WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_update BEFORE UPDATE ON offline_recovery_events BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_delete BEFORE DELETE ON offline_recovery_events BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;`);}catch(error){this.db.close();throw error;}
   }
   close():void{this.db.close();}
   enqueue(scope:DataScope,principalId:string,operationId:string,requestKey:string,payload:Record<string,unknown>,options?:{idempotencyKey:string}):OfflineOperation {
@@ -94,6 +101,27 @@ export class SqliteOfflineQueue {
   reconcile(scope:DataScope,principalId:string,id:string,outcome:'applied'|'not_applied'):void {
     if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid reconciliation');
     this.transition(scope,principalId,id,'uncertain',outcome==='applied'?'succeeded':'pending',0);
+  }
+  /** Host-authorized, evidence-bearing recovery after the submitter is confirmed stopped. */
+  recoverAbandonedWithEvidence(scope:DataScope,principalId:string,id:string,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):void{
+    this.evidenceTransition(scope,principalId,id,'running','uncertain','recover',evidence,recordedAt);
+  }
+  /** Host-verified outcome and evidence commit atomically with the state change. */
+  reconcileWithEvidence(scope:DataScope,principalId:string,id:string,outcome:'applied'|'not_applied',evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):void{
+    if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid reconciliation');
+    this.evidenceTransition(scope,principalId,id,'uncertain',outcome==='applied'?'succeeded':'pending',outcome,evidence,recordedAt);
+  }
+  private evidenceTransition(scope:DataScope,principalId:string,id:string,from:OfflineStatus,to:OfflineStatus,action:SqliteOfflineRecoveryEvent['action'],evidence:SqliteOfflineRecoveryEvidence,recordedAt:number):void{
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
+    if(!evidence||typeof evidence!=='object'||Array.isArray(evidence)||Object.keys(evidence).length!==2||!Object.hasOwn(evidence,'operatorId')||!Object.hasOwn(evidence,'reference')||!Number.isSafeInteger(recordedAt)||recordedAt<0)throw Error('Invalid offline recovery evidence');
+    checkKey(scope,'operator',evidence.operatorId);checkKey(scope,'reference',evidence.reference);
+    this.db.exec('BEGIN IMMEDIATE');try{this.transition(scope,principalId,id,from,to,0);this.db.prepare('INSERT INTO offline_recovery_events (tenant_id,application_id,principal_id,queue_id,operator_id,reference,action,recorded_at) VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,evidence.operatorId,evidence.reference,action,recordedAt);this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  /** Scoped recovery evidence; the caller must authorize access before exposing it. */
+  listRecoveryEvidence(scope:DataScope,principalId:string,id:string,options:{after?:number;limit?:number}={}):SqliteOfflineRecoveryEvent[]{
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||!Number.isSafeInteger(options.after??0)||(options.after??0)<0||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid offline recovery evidence query');
+    const rows=this.db.prepare('SELECT id,operator_id,reference,action,recorded_at FROM offline_recovery_events WHERE tenant_id=? AND application_id=? AND principal_id=? AND queue_id=? AND id>? ORDER BY id LIMIT ?').all(scope.tenantId,scope.applicationId,principalId,id,options.after??0,options.limit??50);
+    return rows.map(row=>{if(!Number.isSafeInteger(row.id)||Number(row.id)<1||typeof row.operator_id!=='string'||typeof row.reference!=='string'||!['recover','applied','not_applied'].includes(String(row.action))||!Number.isSafeInteger(row.recorded_at)||Number(row.recorded_at)<0)throw Error('Invalid offline recovery evidence data');checkKey(scope,'operator',row.operator_id);checkKey(scope,'reference',row.reference);return {id:Number(row.id),operatorId:row.operator_id,reference:row.reference,action:row.action as SqliteOfflineRecoveryEvent['action'],recordedAt:Number(row.recorded_at)};});
   }
   /** Discard a pending or conflicting intent; it never changes external data. */
   discard(scope:DataScope,principalId:string,id:string):void {

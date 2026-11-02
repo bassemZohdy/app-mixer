@@ -156,7 +156,7 @@ export {PostgresOfflineRecovery} from './postgres-offline-recovery.js';
 export type {PostgresOfflineRecoveryOptions,OfflineRecoveryActor,OfflineRecoveryTarget,OfflineRecoveryAction,OfflineRecoveryEvent} from './postgres-offline-recovery.js';
 export {registerSharedOfflineAllocation,registerSharedOfflineDispatch} from './shared-offline-capabilities.js';
 export type {SharedOfflineCapabilityOptions} from './shared-offline-capabilities.js';
-export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure } from './offline-queue.js';
+export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure, SqliteOfflineRecoveryEvidence, SqliteOfflineRecoveryEvent } from './offline-queue.js';
 
 export { OfflineSyncWorker } from './offline-worker.js';
 export type { OfflineWorkerOptions } from './offline-worker.js';
