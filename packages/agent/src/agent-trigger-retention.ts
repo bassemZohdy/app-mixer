@@ -2,19 +2,27 @@ import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
 
 type Actor={tenantId:string;principalId:string};
-type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'redact'|'read',runId:string)=>boolean|Promise<boolean>};
+type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'redact'|'read',runId:string)=>boolean|Promise<boolean>;authorizeDiscovery?:(actor:Actor,scope:AgentRunScope)=>boolean|Promise<boolean>};
+export type TriggerRedactionCandidate={runId:string;status:'succeeded'|'failed'|'cancelled'};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 
 /** Explicit host-authorized payload redaction for terminal local agent runs. */
 export class SqliteAgentTriggerRetention {
- private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];
+ private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly authorizeDiscovery:Options['authorizeDiscovery'];
  constructor(path:string,options:Options){
-  if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function')throw Error('Invalid trigger retention');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.db=new DatabaseSync(path);
+  if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function'||(options.authorizeDiscovery!==undefined&&typeof options.authorizeDiscovery!=='function'))throw Error('Invalid trigger retention');
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.authorizeDiscovery=options.authorizeDiscovery;this.db=new DatabaseSync(path);
   try{this.db.exec('PRAGMA busy_timeout=5000');for(const name of ['agent_runs','agent_trigger_inbox','agent_trigger_redactions'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Trigger inbox unavailable');}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
  private actor(actor:Actor,runId:string):Actor{if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId)||!id(runId))throw Error('Invalid trigger retention request');return {tenantId:actor.tenantId,principalId:actor.principalId};}
+ /** List terminal unredacted runs; discovery is a separate scope-wide permission. */
+ async listCandidates(actor:Actor,options:{after?:string;limit?:number}={}):Promise<{items:TriggerRedactionCandidate[];nextAfter?:string}>{
+  const who=this.actor(actor,'discovery'),after=options?.after??'',limit=options?.limit??50;if(!options||(after!==''&&!id(after))||!Number.isSafeInteger(limit)||limit<1||limit>100||!this.authorizeDiscovery)throw Error('Invalid trigger retention discovery');
+  const permit=async()=>{if(await this.authorizeDiscovery!({...who},{...this.scope})!==true)throw Error('Trigger retention discovery access denied');};await permit();
+  const rows=this.db.prepare("SELECT i.run_id,r.status FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id>? AND r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL ORDER BY i.run_id LIMIT ?").all(this.scope.tenantId,this.scope.agentId,after,limit+1);
+  const items=rows.slice(0,limit).map(row=>{if(!id(row.run_id)||!['succeeded','failed','cancelled'].includes(String(row.status)))throw Error('Invalid trigger retention result');return {runId:row.run_id,status:row.status as TriggerRedactionCandidate['status']};});await permit();return {items,...(rows.length>limit?{nextAfter:items[items.length-1].runId}:{})};
+ }
  async redact(actor:Actor,runId:string,now=Date.now()):Promise<boolean>{
   const who=this.actor(actor,runId);if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid trigger retention request');
   if(await this.authorize({...who},'redact',runId)!==true)throw Error('Trigger retention access denied');
