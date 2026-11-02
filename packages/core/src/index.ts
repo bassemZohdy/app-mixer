@@ -225,3 +225,5 @@ export type { StagedListCapabilityOptions } from './staged-list-capability.js';
 
 export { registerStagedSummaryCapability } from './staged-summary-capability.js';
 export type { StagedSummaryCapabilityOptions } from './staged-summary-capability.js';
+export {registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability} from './offline-recovery-capabilities.js';
+export type {OfflineAbandonedRecoveryCapabilityOptions,OfflineVerificationCapabilityOptions} from './offline-recovery-capabilities.js';
