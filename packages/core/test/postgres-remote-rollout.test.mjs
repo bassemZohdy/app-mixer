@@ -8,7 +8,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import pg from 'pg';
-import {ApplicationStore,SqliteApplicationStore,PostgresRemoteRollout,RemoteRolloutPoller,CapabilityRegistry,registerRemoteRolloutStatusCapability,registerRemoteRolloutRecoveryCapability,registerRemoteRolloutEvidenceCapability,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportUncertainError} from '../dist/index.js';
+import {ApplicationStore,SqliteApplicationStore,PostgresRemoteRollout,RemoteRolloutPoller,CapabilityRegistry,registerRemoteRolloutStatusCapability,registerRemoteRolloutRecoveryCapability,registerRemoteRolloutEvidenceCapability,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from '../dist/index.js';
 
 const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
 async function waitFor(check){for(let i=0;i<300;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Timed out waiting for rollout');}
@@ -25,6 +25,10 @@ test('shared rollout fences cancellation before and during the import transition
 
 test('shared rollout releases a confirmed pre-publication cancellation',async()=>{
  let release,started,claimed=false,marked=false;const entered=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController(),connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:async()=>0,getPublished:async()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async(_input,signal)=>{started();await gate;if(signal.aborted)throw new RemoteControlImportCancelledError();throw Error('unexpected import');}},query=async sql=>{if(sql.includes("SET phase='running'")){claimed=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='importing'")){marked=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='idle'")){claimed=false;return {rows:[{id:'one'}]};}throw Error('unexpected query');};const rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query}),pending=rollout.runOnce(controller.signal);await entered;controller.abort();release();await assert.rejects(pending,RemoteControlImportCancelledError);assert.equal(marked,true);assert.equal(claimed,false);
+});
+
+test('shared rollout releases a confirmed preflight timeout',async()=>{
+ let claimed=false,marked=false;const connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:async()=>0,getPublished:async()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async()=>{throw new RemoteControlImportPreflightUnavailableError();}},query=async sql=>{if(sql.includes("SET phase='running'")){claimed=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='importing'")){marked=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='idle'")){claimed=false;return {rows:[{id:'one'}]};}throw Error('unexpected query');};const rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query});await assert.rejects(rollout.runOnce(),RemoteControlImportPreflightUnavailableError);assert.equal(marked,true);assert.equal(claimed,false);
 });
 
 test('PostgreSQL rollout coordinates competing hosts and gates uncertain imports',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
