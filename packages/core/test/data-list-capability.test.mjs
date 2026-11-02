@@ -14,6 +14,10 @@ test('authorized reverse listing binds its cursor to direction and preserves rec
  }finally{s.provider.close();}
 });
 
+test('HTTP reverse listing reports an unsupported provider as unavailable',async()=>{
+ const s=setup();let server;try{const legacy={list:s.provider.list.bind(s.provider),get:s.provider.get.bind(s.provider),put:s.provider.put.bind(s.provider),delete:s.provider.delete.bind(s.provider)};registerDataListCapability(s.registry,legacy,{candidate:{operationId:'legacy.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,authorize:()=>true,authorizeItem:()=>true});server=createCapabilityServer(s.registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/legacy.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{order:'desc'}})});assert.equal(response.status,503);}finally{if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));s.provider.close();}
+});
+
 test('field existence filtering distinguishes missing and null, enforces policy and binds cursors',async()=>{
  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),fields=['note'];try{
   for(const [id,value] of [['a',{owner:'alice',note:null}],['b',{owner:'bob',note:'secret'}],['c',{owner:'alice'}],['d',{owner:'alice',note:false}]])provider.put(scope,'items',id,value,null);
