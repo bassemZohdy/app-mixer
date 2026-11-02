@@ -35,6 +35,9 @@ try{
  await click('Check multiline input');const note=document.querySelector('textarea[aria-label="Notes"]');assert.ok(note,'Missing accessible multiline field');
  await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(note,'First\nSecond');note.dispatchEvent(new window.Event('input',{bubbles:true}));});
  await click('Save note');assert.ok(text('Saved multiline note'));
+ await click('Check repeated fields');let repeated=[...document.querySelectorAll('input[aria-label="Repeated"]')];assert.equal(repeated.length,2);assert.deepEqual(repeated.map(field=>field.value),['Ada','Ada']);
+ await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(repeated[0],'Grace');repeated[0].dispatchEvent(new window.Event('input',{bubbles:true}));});assert.deepEqual(repeated.map(field=>field.value),['Grace','Grace']);
+ await click('Reorder fields');const reordered=[...document.querySelectorAll('input[aria-label="Repeated"]')];assert.deepEqual(reordered,repeated);await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(reordered[1],'Lin');reordered[1].dispatchEvent(new window.Event('input',{bubbles:true}));});assert.deepEqual(reordered.map(field=>field.value),['Lin','Lin']);
  await click('Check signed extension');await React.act(async()=>{});assert.ok(text('Verified signed extension'));assert.ok(text('Tampered plan rejected'));
  assert.ok(!text('FAIL renderer'));
  await React.act(()=>root.unmount());

@@ -152,6 +152,39 @@ adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 save_note = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save note' and n.get('clickable')=='true'), None), 'save note button')
 tap(save_note)
 wait_for(lambda nodes: find(nodes, text='Saved multiline note'), 'multiline action data')
+repeated_button = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Check repeated fields' and n.get('clickable')=='true'), None), 'repeated fields button')
+tap(repeated_button)
+def repeated_fields(nodes, value):
+    fields = [n for n in nodes if n.get('class')=='android.widget.EditText' and n.get('content-desc')=='Repeated' and n.get('text')==value]
+    return fields if len(fields)==2 else None
+fields = wait_for(lambda nodes: repeated_fields(nodes, 'Ada'), 'two repeated fields')
+def top(node):
+    match = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.get('bounds', ''))
+    if not match:
+        raise AssertionError('Invalid repeated field bounds')
+    return int(match.group(2))
+marker = wait_for(lambda nodes: find(nodes, text='Reorder marker'), 'initial reorder marker')
+if not top(fields[0]) < top(marker) < top(fields[1]):
+    raise AssertionError('Repeated field marker did not start between the fields')
+tap(fields[0])
+adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
+for _ in range(3):
+    adb('shell', 'input', 'keyevent', 'KEYCODE_DEL')
+adb('shell', 'input', 'text', 'Grace')
+wait_for(lambda nodes: repeated_fields(nodes, 'Grace'), 'repeated fields synchronize')
+adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+tap(wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Reorder fields' and n.get('clickable')=='true'), None), 'reorder fields button'))
+fields = wait_for(lambda nodes: repeated_fields(nodes, 'Grace'), 'reordered fields retain data')
+marker = wait_for(lambda nodes: find(nodes, text='Reorder marker'), 'reordered marker')
+if not top(marker) < top(fields[0]) < top(fields[1]):
+    raise AssertionError('Marker did not move before both repeated fields')
+tap(fields[1])
+adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
+for _ in range(5):
+    adb('shell', 'input', 'keyevent', 'KEYCODE_DEL')
+adb('shell', 'input', 'text', 'Lin')
+wait_for(lambda nodes: repeated_fields(nodes, 'Lin'), 'reordered fields remain editable')
+adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 signed = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Check signed extension' and n.get('clickable')=='true'), None), 'signed extension button')
 tap(signed)
 wait_for(lambda nodes: find(nodes, text='Verified signed extension'), 'signed extension rendering')
