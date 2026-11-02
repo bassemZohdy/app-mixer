@@ -6,6 +6,8 @@ import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
+export type StagedOperationSummary={id:string;status:StagedStatus;stateRevision:number};
+export type StagedOperationPage={items:StagedOperationSummary[];nextAfter?:string};
 export type StagedVerificationOutcome='applied'|'not_applied'|'unknown';
 export type StagedReconciliationEvidence={principalId:string;reference:string};
 export type StagedReconciliationRecord=StagedReconciliationEvidence & {revision:number;outcome:'applied'|'not_applied';recordedAt:number};
@@ -32,6 +34,7 @@ export class SqliteStagedOperations {
         this.db.exec(`CREATE TRIGGER IF NOT EXISTS staged_evidence_no_update BEFORE UPDATE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_evidence_no_delete BEFORE DELETE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_evidence_no_replace BEFORE INSERT ON staged_reconciliation_evidence WHEN EXISTS(SELECT 1 FROM staged_reconciliation_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;`);
+        this.db.exec('CREATE INDEX IF NOT EXISTS staged_status_listing ON staged_business_operations(tenant_id,application_id,operation_id,status,id)');
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
         this.db.exec('COMMIT');
       } catch(error){this.db.exec('ROLLBACK');throw error;}
@@ -61,6 +64,17 @@ export class SqliteStagedOperations {
     const row=this.db.prepare('SELECT operation_id,idempotency_key,payload,status FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND id=?').get(scope.tenantId,scope.applicationId,id);
     if(!row)return undefined;
     return {id,operationId:row.operation_id as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:row.status as StagedStatus};
+  }
+  /** Trusted host-only bounded discovery; authorization belongs at the calling boundary. */
+  list(scope:DataScope,operationId:string,status:StagedStatus,options:{after?:string;limit?:number}={}):StagedOperationPage {
+    checkKey(scope,operationId,'list');if(!['staged','submitting','uncertain','succeeded'].includes(status)||!options||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid staged listing');if(options.after!==undefined)checkKey(scope,operationId,options.after);
+    const limit=options.limit??50,rows=this.db.prepare('SELECT id,status,state_revision FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND operation_id=? AND status=? AND id>? ORDER BY id LIMIT ?').all(scope.tenantId,scope.applicationId,operationId,status,options.after??'',limit+1),items=rows.slice(0,limit).map(row=>{if(typeof row.id!=='string'||!Number.isSafeInteger(row.state_revision)||Number(row.state_revision)<0)throw Error('Invalid staged listing');return {id:row.id,status:row.status as StagedStatus,stateRevision:Number(row.state_revision)};});
+    return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.id}:{})};
+  }
+  /** Check a discovery snapshot before returning an authorized summary. */
+  matchesListing(scope:DataScope,operationId:string,item:StagedOperationSummary):boolean {
+    checkKey(scope,operationId,item.id);if(!['staged','submitting','uncertain','succeeded'].includes(item.status)||!Number.isSafeInteger(item.stateRevision)||item.stateRevision<0)throw Error('Invalid staged listing');
+    return !!this.db.prepare('SELECT 1 FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND operation_id=? AND id=? AND status=? AND state_revision=?').get(scope.tenantId,scope.applicationId,operationId,item.id,item.status,item.stateRevision);
   }
   async submit(scope:DataScope,id:string,registry:CapabilityRegistry,context:InvocationContext):Promise<unknown> {
     checkKey(scope,'staged',id);

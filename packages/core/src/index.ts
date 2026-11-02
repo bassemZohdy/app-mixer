@@ -135,7 +135,7 @@ export { SqliteDataProvider } from './data-provider.js';
 export type { DataProvider, DataRecord, DataRecordPage, DataScope, DataMigration, DataRollback, DataRollbackEvent, DataMigrationEvidence, DataMigrationAuditEvent, MigrationPreview } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
-export type { StagedOperation, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord } from './staged-operations.js';
+export type { StagedOperation, StagedOperationSummary, StagedOperationPage, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord } from './staged-operations.js';
 
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
@@ -219,3 +219,6 @@ export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signe
 
 export {registerDataMigrationPreview,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
 export type {DataMigrationReadCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
+
+export { registerStagedListCapability } from './staged-list-capability.js';
+export type { StagedListCapabilityOptions } from './staged-list-capability.js';
