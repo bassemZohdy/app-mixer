@@ -38,7 +38,7 @@ export class DevelopmentAgent {
     const prompt='Return only a JSON object with a patches array. Supported operations: '+
       (schemaVersion===2?'addPage with page {id,title,route,description,components}; setPageDescription with pageId and description; ':'addPage with page {id,title,route,components}; ')+
       'setPageTitle with pageId and title; addComponent with pageId and component {id,type,props}. '+
-      'Renderable component types: Text with props {text} or {path,variant?}; Input with props {label,path,variant?}. Paths are absolute JSON pointers. Input variants: shortText or longText. Input edits and Text bindings use the local surface model and do not persist. '+
+      'Renderable component types: Text with props {text} or {path,variant?}; Input with props {label,path,variant?}; Card with props {title?,text?}. Paths are absolute JSON pointers. Input variants: shortText or longText. Input edits and Text bindings use the local surface model and do not persist. '+
       'Do not include code or additional properties. Proposals require separate human approval.\n'+
       'Current draft: '+snapshot+'\nRequest: '+instruction;
     let output='';
