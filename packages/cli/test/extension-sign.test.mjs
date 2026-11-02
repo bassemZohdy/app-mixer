@@ -48,6 +48,10 @@ test('extension-check-set verifies trusted packages and detects conflicts across
   await writeFile(config,JSON.stringify({...set,artifacts:[...artifacts,{...artifacts[0]}]}));await assert.rejects(run(process.execPath,args),/Duplicate extension/);
   await writeFile(config,JSON.stringify({...set,artifacts:[artifacts[0],{...artifacts[1],keyId:'unknown'}]}));await assert.rejects(run(process.execPath,args),/Invalid extension artifact set/);
   await sign('example.second','chart','collision.json');await writeFile(config,JSON.stringify({...set,artifacts:[artifacts[0],{...artifacts[1],manifest:'collision.json'}]}));await writeFile(requirementsPath,JSON.stringify({...requirements,components:['chart']}));await assert.rejects(run(process.execPath,args),/Duplicate components/);
+
+  const refs=['example.first','example.second'].map(id=>({id,version:'1.0.0',scope:'application'})),allowlisted={...set,allowedExtensions:{publisher:refs}};await writeFile(config,JSON.stringify(allowlisted));await writeFile(requirementsPath,JSON.stringify(requirements));assert.match((await run(process.execPath,args)).stdout,/Compatible extensions: 2/);
+  await writeFile(config,JSON.stringify({...allowlisted,allowedExtensions:{publisher:[refs[0]]}}));await assert.rejects(run(process.execPath,args),/Invalid signed extension manifest/);
+  await writeFile(config,JSON.stringify({...allowlisted,trustedKeys:{publisher:'public.pem',other:'public.pem'},allowedExtensions:{publisher:refs,other:refs}}));await assert.rejects(run(process.execPath,args),/Invalid extension signing policy/);
   await writeFile(config,JSON.stringify(set));await writeFile(join(dir,'package.bin'),Buffer.from('tampered'));await assert.rejects(run(process.execPath,args),/Invalid signed extension manifest/);
  }finally{await rm(dir,{recursive:true,force:true});}
 });

@@ -1,7 +1,7 @@
 import {open,writeFile} from 'node:fs/promises';
 import {createPrivateKey,createPublicKey,type KeyObject} from 'node:crypto';
 import {dirname,resolve} from 'node:path';
-import {checkExtensionCompatibility,computeExtensionIntegrity,signExtensionManifest,verifySignedExtensionManifest,type ExtensionManifest} from '@app-mixer/core';
+import {checkExtensionCompatibility,computeExtensionIntegrity,signExtensionManifest,verifySignedExtensionManifest,type ExtensionManifest,type ExtensionSigningPolicy} from '@app-mixer/core';
 
 // Bounded reads do not trust a file size that can change while it is being read.
 async function readBounded(path:string,max:number):Promise<Buffer>{
@@ -21,10 +21,11 @@ export async function signExtensionFiles(manifestPath:string,packagePath:string,
 }
 
 async function readPublicKey(keyPath:string):Promise<KeyObject>{const keyBytes=await readBounded(keyPath,65536);if(!keyBytes.toString('ascii').trimStart().startsWith('-----BEGIN PUBLIC KEY-----'))throw Error('Expected a PEM public key');return createPublicKey(keyBytes);}
-async function verifyArtifact(manifestPath:string,packagePath:string,keyId:string,key:KeyObject):Promise<ExtensionManifest>{
+async function verifyArtifact(manifestPath:string,packagePath:string,keyId:string,key:KeyObject,policy?:ExtensionSigningPolicy):Promise<ExtensionManifest>{
  const manifestBytes=await readBounded(manifestPath,4*1024*1024),packageBytes=await readBounded(packagePath,64*1024*1024),signed:unknown=JSON.parse(manifestBytes.toString('utf8'));
+ if(!signed||typeof signed!=='object'||!Object.hasOwn(signed,'keyId')||(signed as {keyId:unknown}).keyId!==keyId)throw Error('Invalid signed extension manifest');
  const trustedKeys:Record<string,KeyObject>=Object.create(null) as Record<string,KeyObject>;trustedKeys[keyId]=key;
- return verifySignedExtensionManifest(signed,{trustedKeys},packageBytes);
+ return verifySignedExtensionManifest(signed,policy??{trustedKeys},packageBytes);
 }
 /** Verify using an explicitly selected public key; this does not approve installation. */
 export async function verifyExtensionFiles(manifestPath:string,packagePath:string,keyPath:string,keyId:string):Promise<ExtensionManifest>{
@@ -44,17 +45,18 @@ export async function checkExtensionFiles(manifestPath:string,packagePath:string
 /** Verify a host-selected set and check compatibility across all registrations. */
 export async function checkExtensionSetFiles(setPath:string,hostPath:string,requirementsPath:string):Promise<ExtensionManifest[]>{
  const input:unknown=JSON.parse((await readBounded(setPath,1024*1024)).toString('utf8'));
- if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'artifacts')||!Object.hasOwn(input,'trustedKeys'))throw Error('Invalid extension artifact set');
+ if(!input||typeof input!=='object'||Array.isArray(input)||![2,3].includes(Object.keys(input).length)||!Object.hasOwn(input,'artifacts')||!Object.hasOwn(input,'trustedKeys')||(Object.keys(input).length===3&&!Object.hasOwn(input,'allowedExtensions')))throw Error('Invalid extension artifact set');
  const {artifacts, trustedKeys}=input as {artifacts:unknown;trustedKeys:unknown};if(!Array.isArray(artifacts)||artifacts.length<1||artifacts.length>256||!trustedKeys||typeof trustedKeys!=='object'||Array.isArray(trustedKeys)||Object.keys(trustedKeys).length<1||Object.keys(trustedKeys).length>100)throw Error('Invalid extension artifact set');
  const keys=trustedKeys as Record<string,unknown>,validPath=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=4096&&!value.includes('\0');
  if(Object.entries(keys).some(([id,path])=>!/^[a-z][a-z0-9.-]{0,127}$/.test(id)||!validPath(path)))throw Error('Invalid extension artifact set');
  const base=dirname(resolve(setPath)),manifests:ExtensionManifest[]=[],publicKeys=new Map<string,KeyObject>();
  const host:unknown=JSON.parse((await readBounded(hostPath,1024*1024)).toString('utf8')),requirements:unknown=JSON.parse((await readBounded(requirementsPath,1024*1024)).toString('utf8'));
  for(const [id,path] of Object.entries(keys))publicKeys.set(id,await readPublicKey(resolve(base,path as string)));
+ const policy:ExtensionSigningPolicy|undefined=Object.hasOwn(input,'allowedExtensions')?{trustedKeys:Object.fromEntries(publicKeys),allowedExtensions:(input as {allowedExtensions:ExtensionSigningPolicy['allowedExtensions']}).allowedExtensions}:undefined;
  for(const entry of artifacts){
   if(!entry||typeof entry!=='object'||Array.isArray(entry)||Object.keys(entry).length!==3||!['manifest','package','keyId'].every(key=>Object.hasOwn(entry,key)))throw Error('Invalid extension artifact set');
   const value=entry as Record<string,unknown>;if(!validPath(value.manifest)||!validPath(value.package)||typeof value.keyId!=='string'||!Object.hasOwn(keys,value.keyId)||!validPath(keys[value.keyId]))throw Error('Invalid extension artifact set');
-  manifests.push(await verifyArtifact(resolve(base,value.manifest),resolve(base,value.package),value.keyId,publicKeys.get(value.keyId)!));
+  manifests.push(await verifyArtifact(resolve(base,value.manifest),resolve(base,value.package),value.keyId,publicKeys.get(value.keyId)!,policy));
  }
  const result=checkExtensionCompatibility(manifests,host,requirements);
  if(!result.compatible)throw Error('Extension compatibility failed: '+result.errors.join('; '));return manifests;
