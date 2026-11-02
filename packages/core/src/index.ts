@@ -110,6 +110,8 @@ export { SqliteApplicationStore } from './sqlite.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
 export type { RemoteRolloutScope, RemoteRolloutRecoveryEvidence, RemoteRolloutRecoveryEvent } from './remote-rollout.js';
 export { registerRemoteRolloutStatusCapability } from './remote-rollout-status-capability.js';
+export {RemoteRolloutMetrics} from './remote-rollout-metrics.js';
+export type {RemoteRolloutMetricsActor,RemoteRolloutMetricsOptions,RemoteRolloutMetricPhase} from './remote-rollout-metrics.js';
 export { registerRemoteRolloutRecoveryCapability } from './remote-rollout-recovery-capability.js';
 export { registerRemoteRolloutEvidenceCapability } from './remote-rollout-evidence-capability.js';
 export type { RemoteRolloutEvidenceCapabilityOptions } from './remote-rollout-evidence-capability.js';
