@@ -515,6 +515,31 @@ void main() {
     expect(state.widget.controller.selection,const TextSelection(baseOffset:2,extentOffset:1,isDirectional:true));
     expect(state.widget.focusNode.hasFocus,isTrue);expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
+  testWidgets('external updates do not interrupt input composition', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Ada'}}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['field','echo']},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
+      {'id':'echo','component':'Text','text':{'path':'/name'}}
+    ]}));
+    await tester.pump();await tester.showKeyboard(find.byType(TextField));
+    final state=tester.state<EditableTextState>(find.byType(EditableText));
+    state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2),composing:TextRange(start:0,end:2)));
+    await tester.pump();expect(state.textEditingValue.composing,const TextRange(start:0,end:2));
+    receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'External'}));await tester.pump();
+    expect(state.textEditingValue.text,'日本');expect(state.textEditingValue.composing,const TextRange(start:0,end:2));expect(find.text('External'),findsOneWidget);
+    state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2)));
+    await tester.pump();expect(state.textEditingValue.text,'日本');expect(find.text('日本'),findsNWidgets(2));
+    receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'Other'}));await tester.pump();
+    state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2)));await tester.pump();
+    expect(find.text('日本'),findsNWidgets(2));
+    expect(state.widget.focusNode.hasFocus,isTrue);expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   testWidgets('incremental sibling insertion and reordering preserve field editing state', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

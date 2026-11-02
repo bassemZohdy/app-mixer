@@ -431,12 +431,27 @@ class _BoundTextField extends StatefulWidget {
 }
 class _BoundTextFieldState extends State<_BoundTextField> {
   late final TextEditingController _controller;
+  bool _composing=false;
+  String? _compositionCommit;
+  bool get _hasComposition => _controller.value.composing.isValid && !_controller.value.composing.isCollapsed;
+  void _editingChanged(){
+    final composing=_hasComposition;
+    final finished=_composing && !composing;
+    _composing=composing;
+    if(finished){_compositionCommit=_controller.text;widget.onChanged(_controller.text);}
+  }
+  void _changed(String value){
+    if(_hasComposition)return;
+    if(_compositionCommit==value){_compositionCommit=null;return;}
+    _compositionCommit=null;widget.onChanged(value);
+  }
   @override
-  void initState(){super.initState();_controller=TextEditingController(text:widget.value);}
+  void initState(){super.initState();_controller=TextEditingController(text:widget.value)..addListener(_editingChanged);}
   @override
   void didUpdateWidget(covariant _BoundTextField oldWidget){
     super.didUpdateWidget(oldWidget);
-    if(_controller.text!=widget.value){
+    if(_controller.text!=widget.value && !_hasComposition){
+      _compositionCommit=null;
       final selection=_controller.selection;
       final nextSelection=selection.isValid ? TextSelection(
         baseOffset:selection.baseOffset.clamp(0,widget.value.length).toInt(),
@@ -447,7 +462,7 @@ class _BoundTextFieldState extends State<_BoundTextField> {
     }
   }
   @override
-  void dispose(){_controller.dispose();super.dispose();}
+  void dispose(){_controller.removeListener(_editingChanged);_controller.dispose();super.dispose();}
   @override
-  Widget build(BuildContext context)=>TextField(controller:_controller,decoration:InputDecoration(labelText:widget.label),maxLines:widget.multiline?null:1,onChanged:widget.onChanged);
+  Widget build(BuildContext context)=>TextField(controller:_controller,decoration:InputDecoration(labelText:widget.label),maxLines:widget.multiline?null:1,onChanged:_changed);
 }
