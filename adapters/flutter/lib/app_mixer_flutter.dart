@@ -297,21 +297,27 @@ class FlutterSurfaceStore {
   NativeNode? _root(Map<String, Map<String, dynamic>> components, dynamic data) {
     if (!components.containsKey('root')) return null;
     var count = 0;
-    NativeNode? visit(String id, Set<String> ancestors, int stretchDepth) {
+    NativeNode? visit(String id, Set<String> ancestors, int intrinsicDepth, bool tightWidth, bool tightHeight) {
       if (++count > 5000) throw FormatException('Component tree too large');
       final c = components[id]; if (c == null) return null;
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
-      final nextStretchDepth=stretchDepth+((c['component']=='Column'||c['component']=='Row')&&(c['align']==null||c['align']=='stretch')?1:0);
-      if(nextStretchDepth>4) throw FormatException('Too many nested stretch layouts');
+      final type=c['component'];
+      final stretch=(type=='Column'||type=='Row')&&(c['align']==null||c['align']=='stretch');
+      // Only loose cross-axis constraints need intrinsic measurement. Tight stretch
+      // constraints from a parent can be forwarded without another intrinsic pass.
+      final needsIntrinsic=stretch&&((type=='Column'&&!tightWidth)||(type=='Row'&&!tightHeight));
+      final nextIntrinsicDepth=intrinsicDepth+(needsIntrinsic?1:0);
+      if(nextIntrinsicDepth>4) throw FormatException('Too many nested intrinsic stretch layouts');
+      final childTightWidth=type=='Column'&&stretch, childTightHeight=type=='Row'&&stretch;
       final ids = c['component'] == 'Card' || c['component'] == 'Button' ? [c['child'] as String] : c['component'] == 'Column' || c['component'] == 'Row' ? List<String>.from(c['children'] as List) : <String>[];
       final rawText=c['component']=='Text' ? c['text'] : null; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextStretchDepth)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
     }
-    return visit('root', {}, 0);
+    return visit('root', {}, 0, true, false);
   }
 }
 
@@ -355,12 +361,12 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     return Column(children: store.views().map((surface){
       final root=surface.root;
       if(root==null) return const SizedBox.shrink();
-      final rendered=_widget(root,surface,store,generation,'root');
+      final rendered=_widget(root,surface,store,generation,'root',true,false);
       return ['Column','Row','Card'].contains(root.kind) ? SizedBox(width:double.infinity,child:rendered) : rendered;
     }).toList());
   }
   bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
-  Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path) {
+  Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path, bool tightWidth, bool tightHeight) {
     final extension=store._extensions[node.kind];
     if (extension!=null) return extension.builder(context, _object(_copy(node.extensionProps)));
     if (node.kind == 'Text') {
@@ -377,9 +383,11 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       final style = (theme.bodyMedium ?? const TextStyle()).copyWith(fontSize: size, fontWeight: node.variant?.startsWith('h') == true ? FontWeight.bold : null);
       return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? '', style: style));
     }
+    final stretch=(node.kind=='Column'||node.kind=='Row')&&(node.align==null||node.align=='stretch');
+    final childTightWidth=node.kind=='Column'&&stretch, childTightHeight=node.kind=='Row'&&stretch;
     final children=<Widget>[];
     for (var i=0;i<node.children.length;i++) {
-      final child=node.children[i], rendered=_widget(child,surface,store,generation,'$path/$i');
+      final child=node.children[i], rendered=_widget(child,surface,store,generation,'$path/$i',childTightWidth,childTightHeight);
       // Row gives non-flex children unbounded width. Material text inputs require a finite width.
       children.add(node.kind=='Row' && _containsTextField(child) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered);
     }
@@ -395,7 +403,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     final main = {'start':MainAxisAlignment.start,'center':MainAxisAlignment.center,'end':MainAxisAlignment.end,'spaceBetween':MainAxisAlignment.spaceBetween,'spaceAround':MainAxisAlignment.spaceAround,'spaceEvenly':MainAxisAlignment.spaceEvenly}[node.justify] ?? MainAxisAlignment.start;
     final cross = {'start':CrossAxisAlignment.start,'center':CrossAxisAlignment.center,'end':CrossAxisAlignment.end,'stretch':CrossAxisAlignment.stretch}[node.align] ?? CrossAxisAlignment.stretch;
     final layout = node.kind == 'Row' ? Row(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children) : Column(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children);
-    if(cross!=CrossAxisAlignment.stretch) return layout;
+    if(cross!=CrossAxisAlignment.stretch || (node.kind=='Row' ? tightHeight : tightWidth)) return layout;
     return node.kind=='Row' ? IntrinsicHeight(child:layout) : IntrinsicWidth(child:layout);
   }
 }

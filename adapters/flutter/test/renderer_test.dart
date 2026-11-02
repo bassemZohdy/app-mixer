@@ -412,11 +412,37 @@ void main() {
     ]}));
     await tester.pump();expect(tester.getSize(find.text('Left')).width,lessThan(300));expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
-  test('rejects excessive nested stretch atomically', () {
+  testWidgets('deep same-axis stretch layouts render and preserve loose sizing', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    for(final kind in ['Column','Row']) {
+      final components=<Map<String,dynamic>>[];
+      for(var i=0;i<12;i++){components.add({'id':i==0?'root':'n$i','component':kind,'children':[i==11?'leaf':'n${i+1}']});}
+      components.add({'id':'leaf','component':'Text','text':'Deep $kind'});
+      receive(message('updateComponents',{'surfaceId':'main','components':components}));
+      await tester.pump();
+      expect(find.text('Deep $kind'),findsOneWidget);
+      expect(tester.takeException(),isNull);
+    }
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','align':'center','children':['inner']},
+      {'id':'inner','component':'Column','children':['wide','short']},
+      {'id':'wide','component':'Text','text':'A wider label'},
+      {'id':'short','component':'Text','text':'Short'}
+    ]}));
+    await tester.pump();
+    expect(tester.getSize(find.text('Short')).width,tester.getSize(find.text('A wider label')).width);
+    expect(tester.getSize(find.text('Short')).width,lessThan(300));
+    expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+  test('rejects excessive nested intrinsic stretch atomically', () {
     final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
     store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':'Safe'}]}));
     final components=<Map<String,dynamic>>[];
-    for(var i=0;i<5;i++){components.add({'id':i==0?'root':'n$i','component':'Column','align':'stretch','children':[i==4?'leaf':'n${i+1}']});}
+    for(var i=0;i<6;i++){components.add({'id':i==0?'root':'n$i','component':i.isEven?'Column':'Row','align':'stretch','children':[i==5?'leaf':'n${i+1}']});}
     components.add({'id':'leaf','component':'Text','text':'deep'});
     expect(()=>store.apply(message('updateComponents',{'surfaceId':'main','components':components})),throwsFormatException);
     expect(store.snapshot().single?.text,'Safe');

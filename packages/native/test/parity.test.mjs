@@ -88,6 +88,18 @@ test('shared Flutter fixture matches web and native layout trees',async()=>{
  for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0];const nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?domTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeTree(nativeRoot):null,step.tree);}
 });
 
+test('deep same-axis stretch trees are accepted by web and native',()=>{
+ for(const kind of ['Column','Row']){
+  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+  const apply=value=>{web.apply(value);native.apply(value);};
+  apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+  const components=Array.from({length:12},(_,i)=>({id:i===0?'root':`n${i}`,component:kind,children:[i===11?'leaf':`n${i+1}`]}));
+  components.push({id:'leaf',component:'Text',text:`Deep ${kind}`});
+  apply(message('updateComponents',{surfaceId:'main',components}));
+  assert.deepEqual(domTree(host.children[0].children[0]),nativeTree(native.snapshot()[0].root));
+ }
+});
+
 test('deleted array elements differ from null in action context on web and native',()=>{
  const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
  const apply=value=>{web.apply(value);native.apply(value);};
