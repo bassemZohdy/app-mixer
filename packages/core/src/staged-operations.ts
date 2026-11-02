@@ -12,6 +12,8 @@ export type StagedOperationCounts=Record<StagedStatus,number>;
 export type StagedVerificationOutcome='applied'|'not_applied'|'unknown';
 export type StagedReconciliationEvidence={principalId:string;reference:string};
 export type StagedReconciliationRecord=StagedReconciliationEvidence & {revision:number;outcome:'applied'|'not_applied';recordedAt:number};
+export type StagedRecoveryRecord=StagedReconciliationEvidence & {revision:number;recordedAt:number};
+export type StagedSubmitterVerifier=(scope:DataScope,operation:StagedOperation)=>boolean|Promise<boolean>;
 export type StagedOutcomeVerifier=(scope:DataScope,operation:StagedOperation)=>StagedVerificationOutcome|Promise<StagedVerificationOutcome>;
 
 /** Durable staging; the host authorizes stage/read/recovery and the capability authorizes submission. */
@@ -35,6 +37,10 @@ export class SqliteStagedOperations {
         this.db.exec(`CREATE TRIGGER IF NOT EXISTS staged_evidence_no_update BEFORE UPDATE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_evidence_no_delete BEFORE DELETE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_evidence_no_replace BEFORE INSERT ON staged_reconciliation_evidence WHEN EXISTS(SELECT 1 FROM staged_reconciliation_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;`);
+        this.db.exec(`CREATE TABLE IF NOT EXISTS staged_recovery_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));
+        CREATE TRIGGER IF NOT EXISTS staged_recovery_no_update BEFORE UPDATE ON staged_recovery_evidence BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS staged_recovery_no_delete BEFORE DELETE ON staged_recovery_evidence BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS staged_recovery_no_replace BEFORE INSERT ON staged_recovery_evidence WHEN EXISTS(SELECT 1 FROM staged_recovery_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;`);
         this.db.exec('CREATE INDEX IF NOT EXISTS staged_status_listing ON staged_business_operations(tenant_id,application_id,operation_id,status,id)');
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
         this.db.exec('COMMIT');
@@ -101,6 +107,20 @@ export class SqliteStagedOperations {
   }
   /** Call only after confirming that the process which submitted the operation is no longer running. */
   recoverAbandoned(scope:DataScope,id:string):void {this.transition(scope,id,'submitting','uncertain');}
+  /** Host confirms the original submitter is permanently stopped before recovering; the confirmation is revision-fenced and recorded atomically. */
+  async verifyAndRecoverAbandoned(scope:DataScope,id:string,verify:StagedSubmitterVerifier,evidence:StagedReconciliationEvidence):Promise<boolean> {
+    checkKey(scope,'staged',id);if(typeof verify!=='function')throw Error('Invalid staged recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId},proof=this.checkEvidence(selected,evidence);
+    const row=this.db.prepare('SELECT operation_id,idempotency_key,payload,status,state_revision FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND id=?').get(selected.tenantId,selected.applicationId,id);
+    if(!row||row.status!=='submitting'||!Number.isSafeInteger(row.state_revision)||Number(row.state_revision)<0)throw Error('Invalid operation state');
+    const operation:StagedOperation={id,operationId:row.operation_id as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:'submitting'},confirmed=await verify({...selected},operation);
+    if(typeof confirmed!=='boolean')throw Error('Invalid staged recovery result');if(!confirmed)return false;
+    this.db.exec('BEGIN IMMEDIATE');try{const updated=this.db.prepare("UPDATE staged_business_operations SET status='uncertain',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='submitting' AND state_revision=? AND state_revision<9007199254740991 RETURNING state_revision").get(selected.tenantId,selected.applicationId,id,row.state_revision as number);if(!updated)throw Error('Stale staged recovery');this.db.prepare('INSERT INTO staged_recovery_evidence (tenant_id,application_id,operation_id,revision,principal_id,reference,recorded_at) VALUES (?,?,?,?,?,?,?)').run(selected.tenantId,selected.applicationId,id,updated.state_revision as number,proof.principalId,proof.reference,Date.now());this.db.exec('COMMIT');return true;}catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  /** Trusted host must authorize access to recovery evidence. */
+  listRecoveryEvidence(scope:DataScope,id:string,options:{after?:number;limit?:number}={}):StagedRecoveryRecord[] {
+    checkKey(scope,'staged',id);const after=options?.after??0,limit=options?.limit??100;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid recovery query');
+    return this.db.prepare('SELECT revision,principal_id,reference,recorded_at FROM staged_recovery_evidence WHERE tenant_id=? AND application_id=? AND operation_id=? AND revision>? ORDER BY revision LIMIT ?').all(scope.tenantId,scope.applicationId,id,after,limit).map(row=>({revision:row.revision as number,principalId:row.principal_id as string,reference:row.reference as string,recordedAt:row.recorded_at as number}));
+  }
   /** The authorized host must independently verify the external outcome before resolving uncertainty. */
   reconcile(scope:DataScope,id:string,outcome:'applied'|'not_applied'):void {
     if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid reconciliation');

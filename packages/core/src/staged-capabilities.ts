@@ -90,3 +90,23 @@ export function registerStagedEvidenceCapability(registry:CapabilityRegistry,sto
   });
  }});
 }
+
+/** Explicit host-confirmed recovery of an abandoned submission. */
+export type StagedRecoveryCapabilityOptions={
+ candidate:CapabilityCandidate;applicationId:string;externalOperationId:string;
+ authorize:(actor:PolicyContext)=>boolean|Promise<boolean>;
+ authorizeOperation:(actor:PolicyContext,operation:StagedOperation,reference:string,signal:AbortSignal)=>boolean|Promise<boolean>;
+ verifyStopped:(actor:PolicyContext,operation:StagedOperation,signal:AbortSignal)=>boolean|Promise<boolean>;
+ timeoutMs?:number;maxPending?:number;
+};
+export function registerStagedRecoveryCapability(registry:CapabilityRegistry,store:SqliteStagedOperations,options:StagedRecoveryCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(store instanceof SqliteStagedOperations)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function'||typeof options.verifyStopped!=='function')throw Error('Invalid staged recovery capability');
+ const {applicationId,externalOperationId,authorize,authorizeOperation,verifyStopped,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid staged recovery capability','Staged recovery unavailable');
+ registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).length===2&&Object.hasOwn(input,'id')&&Object.hasOwn(input,'reference')&&id(input.id)&&id(input.reference),execute:async(input,context)=>{
+  const value=input as {id:string;reference:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Staged recovery unavailable');},staged=store.get(scope,value.id);if(!staged||staged.operationId!==externalOperationId)throw Error('Operation not found');
+   const permitted=async(operation:StagedOperation)=>{active();const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)return false;const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),value.reference,signal);active();return operationAllowed===true;};
+   if(!await permitted(staged))throw Error('Capability forbidden');active();const recovered=await store.verifyAndRecoverAbandoned(scope,value.id,async(_scope,operation)=>{if(operation.operationId!==externalOperationId||!await permitted(operation))throw Error('Capability forbidden');active();const confirmed=await verifyStopped({...actor},structuredClone(operation),signal);active();if(!await permitted(operation))throw Error('Capability forbidden');active();return confirmed;},{principalId:actor.principalId,reference:value.reference});return {recovered};
+  });
+ }});
+}

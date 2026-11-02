@@ -135,13 +135,13 @@ export { SqliteDataProvider } from './data-provider.js';
 export type { DataProvider, DataRecord, DataRecordPage, DataScope, DataMigration, DataRollback, DataRollbackEvent, DataMigrationEvidence, DataMigrationAuditEvent, MigrationPreview } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
-export type { StagedOperation, StagedOperationSummary, StagedOperationPage, StagedOperationCounts, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord } from './staged-operations.js';
+export type { StagedOperation, StagedOperationSummary, StagedOperationPage, StagedOperationCounts, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord, StagedRecoveryRecord, StagedSubmitterVerifier } from './staged-operations.js';
 
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
 
-export { registerStagedCapability, registerStagedVerificationCapability, registerStagedEvidenceCapability } from './staged-capabilities.js';
-export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions, StagedEvidenceCapabilityOptions } from './staged-capabilities.js';
+export { registerStagedCapability, registerStagedVerificationCapability, registerStagedEvidenceCapability, registerStagedRecoveryCapability } from './staged-capabilities.js';
+export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions, StagedEvidenceCapabilityOptions, StagedRecoveryCapabilityOptions } from './staged-capabilities.js';
 
 export { SqliteOfflineQueue } from './offline-queue.js';
 export { PostgresOfflineRequestKeys } from './postgres-offline-request-keys.js';
