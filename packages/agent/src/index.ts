@@ -245,3 +245,6 @@ export type {PostgresAgentSharedCostOptions,SharedCostActor,SharedCostScope,Shar
 
 export {registerSharedCostPending} from './postgres-shared-cost-capability.js';
 export type {SharedCostPendingCapabilityOptions} from './postgres-shared-cost-capability.js';
+
+export {createPricedCostLimitedToolModel} from './priced-cost-model.js';
+export type {PricedCostLimitedToolModelOptions} from './priced-cost-model.js';
