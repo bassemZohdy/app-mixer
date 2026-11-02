@@ -140,8 +140,8 @@ export type { StagedOperation, StagedStatus, StagedVerificationOutcome, StagedOu
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
 
-export { registerStagedCapability, registerStagedVerificationCapability } from './staged-capabilities.js';
-export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions } from './staged-capabilities.js';
+export { registerStagedCapability, registerStagedVerificationCapability, registerStagedEvidenceCapability } from './staged-capabilities.js';
+export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions, StagedEvidenceCapabilityOptions } from './staged-capabilities.js';
 
 export { SqliteOfflineQueue } from './offline-queue.js';
 export { PostgresOfflineRequestKeys } from './postgres-offline-request-keys.js';

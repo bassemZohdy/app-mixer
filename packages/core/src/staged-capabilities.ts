@@ -72,3 +72,19 @@ export function registerStagedVerificationCapability(registry:CapabilityRegistry
   return {outcome};
  }});
 }
+
+/** Host-authorized access to all reconciliation evidence for one staged operation. */
+export type StagedEvidenceCapabilityOptions={
+ candidate:CapabilityCandidate;applicationId:string;externalOperationId:string;
+ authorize:(actor:PolicyContext)=>boolean|Promise<boolean>;
+ authorizeOperation:(actor:PolicyContext,operation:StagedOperation)=>boolean|Promise<boolean>;
+};
+export function registerStagedEvidenceCapability(registry:CapabilityRegistry,store:SqliteStagedOperations,options:StagedEvidenceCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(store instanceof SqliteStagedOperations)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function')throw Error('Invalid staged evidence capability');
+ const {applicationId,externalOperationId,authorize,authorizeOperation}=options;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');
+ registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).every(key=>['id','after','limit'].includes(key))&&Object.hasOwn(input,'id')&&id(input.id)&&(input.after===undefined||(Number.isSafeInteger(input.after)&&Number(input.after)>=0))&&(input.limit===undefined||(Number.isSafeInteger(input.limit)&&Number(input.limit)>=1&&Number(input.limit)<=99)),execute:async(input,context)=>{
+  const value=input as {id:string;after?:number;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};
+  const permit=async()=>{const operation=store.get(scope,value.id);if(!operation||operation.operationId!==externalOperationId)throw Error('Operation not found');if(await authorize({...actor})!==true||await authorizeOperation({...actor},structuredClone(operation))!==true)throw Error('Capability forbidden');};
+  await permit();const limit=value.limit??50,rows=store.listReconciliationEvidence(scope,value.id,{after:value.after,limit:limit+1});await permit();const items=rows.slice(0,limit);return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.revision}:{})};
+ }});
+}
