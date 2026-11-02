@@ -1,4 +1,5 @@
 import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
+import {createBoundedOperation} from './bounded-operation.js';
 import {PostgresExtensionApprovals,type ExtensionApprovalScope} from './postgres-extension-approvals.js';
 import {isValidExtensionReferences,isValidExtensionOperations,type ExtensionReference,type ExtensionOperation} from './index.js';
 
@@ -6,7 +7,7 @@ type Actor={tenantId:string;principalId:string};
 type Decision={allowed:boolean;expiresAt:number;expectedRevision:number};
 type Page={after?:number;limit?:number};
 type Base={store:PostgresExtensionApprovals;scope:ExtensionApprovalScope;reference:ExtensionReference;operation:ExtensionOperation;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
-type DecisionOptions=Base&{authorizeDecision:(actor:Actor,decision:Decision)=>boolean|Promise<boolean>};
+type DecisionOptions=Base&{authorizeDecision:(actor:Actor,decision:Decision)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeDecisionWithSignal?:(actor:Actor,decision:Decision,signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number};
 type ReadOptions=Base;
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -19,8 +20,9 @@ function snapshot(registry:CapabilityRegistry,options:Base,method:'GET'|'POST'){
 }
 /** Fixed-target administrative approval decisions; the store independently authorizes and audits. */
 export function registerExtensionApprovalDecision(registry:CapabilityRegistry,options:DecisionOptions):void{
- const c=snapshot(registry,options,'POST');if(typeof options.authorizeDecision!=='function')throw Error('Invalid extension approval capability');const authorizeDecision=options.authorizeDecision;
- registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>!!decision(input),authorizeInput:async(actor,input)=>{const safe=decision(input);return !!safe&&await c.authorize({...actor})===true&&await authorizeDecision({...actor},{...safe})===true&&await c.authorize({...actor})===true;},execute:async(input,actor)=>{const safe=decision(input);if(!safe)throw Error('Invalid extension approval decision');const revision=await c.store.decide({...actor},c.scope,c.reference,c.operation,safe);return {revision};}});
+ const c=snapshot(registry,options,'POST');if(typeof options.authorizeDecision!=='function'||(options.authorizeWithSignal!==undefined&&typeof options.authorizeWithSignal!=='function')||(options.authorizeDecisionWithSignal!==undefined&&typeof options.authorizeDecisionWithSignal!=='function'))throw Error('Invalid extension approval capability');const authorizeDecision=options.authorizeDecision,authorizeWithSignal=options.authorizeWithSignal,authorizeDecisionWithSignal=options.authorizeDecisionWithSignal,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid extension approval capability','Extension decision policy unavailable');
+ const scope=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw Error('Extension decision policy unavailable');};check();if(actor.tenantId!==c.scope.tenantId)return false;const allowed=authorizeWithSignal?await authorizeWithSignal({...actor},signal):await c.authorize({...actor});check();return allowed===true;};
+ registry.register(c.candidate,{authorize:actor=>bounded(signal=>scope(actor,signal)),validate:input=>!!decision(input),authorizeInput:(actor,input)=>{const safe=decision(input);if(!safe)return false;return bounded(async signal=>{const permit=async()=>{if(signal.aborted)throw Error('Extension decision policy unavailable');const allowed=authorizeDecisionWithSignal?await authorizeDecisionWithSignal({...actor},{...safe},signal):await authorizeDecision({...actor},{...safe});if(signal.aborted)throw Error('Extension decision policy unavailable');return allowed===true;};return await scope(actor,signal)&&await permit()&&await scope(actor,signal)&&await permit();});},execute:async(input,actor)=>{const safe=decision(input);if(!safe)throw Error('Invalid extension approval decision');const revision=await c.store.decide({...actor},c.scope,c.reference,c.operation,safe);return {revision};}});
 }
 /** Fixed-target administrative status, with separate store inspection authorization. */
 export function registerExtensionApprovalStatus(registry:CapabilityRegistry,options:ReadOptions):void{
