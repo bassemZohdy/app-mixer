@@ -219,3 +219,6 @@ export type {AgentScheduleMetricsOptions,AgentScheduleMetricsSnapshot} from './a
 
 export {createPaddleWebhookAdapter} from './paddle-webhook.js';
 export type {PaddleWebhookOptions} from './paddle-webhook.js';
+
+export {AgentBudgetRecovery} from './agent-budget-recovery.js';
+export type {AgentBudgetRecoveryActor,AgentBudgetRecoveryTarget,AgentBudgetVerifiedUsage,AgentBudgetRecoveryOptions} from './agent-budget-recovery.js';
