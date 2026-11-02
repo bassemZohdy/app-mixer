@@ -179,6 +179,8 @@ export type {GithubWebhookOptions} from './github-webhook.js';
 export {DurableAgentDispatcher} from './durable-dispatcher.js';
 export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';
 
+export {registerAgentLeaseRecovery} from './agent-run-lease-recovery-capability.js';
+export type {AgentLeaseRecoveryCapabilityOptions} from './agent-run-lease-recovery-capability.js';
 export {AgentRunLeaseRecoveryWorker} from './agent-run-lease-recovery.js';
 export type {AgentRunLeaseRecoveryWorkerOptions} from './agent-run-lease-recovery.js';
 export type {ExpiredAgentLease,AgentRunLeaseRecoveryEvidence} from './durable-runs.js';
