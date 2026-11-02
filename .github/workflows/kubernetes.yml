@@ -16,7 +16,7 @@ permissions:
 jobs:
   kind-rollout:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,6 +36,8 @@ jobs:
           kind create cluster --name app-mixer
           docker build -f Dockerfile.data-plane -t app-mixer-data-plane:test .
           kind load docker-image app-mixer-data-plane:test --name app-mixer
+      - name: Verify mounted JWT key rotation across replicas
+        run: node deploy/kubernetes/test-support/jwks-projection-test.mjs
       - name: Verify rollout, replacement and pod recovery
         run: |
           set -eu
