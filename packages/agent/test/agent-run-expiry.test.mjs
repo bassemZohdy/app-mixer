@@ -67,3 +67,22 @@ test('bounded expiry stop aborts authorization and never applies its late decisi
 test('expiry authorization limits must be paired and bounded',()=>{
  const s=setup();try{const options={runs:s.runs,scope,maxPerPass:1,pollMs:100,onError:()=>{},authorize:()=>true};for(const extra of [{authorizationTimeoutMs:100},{maxPendingAuthorizations:1},{authorizationTimeoutMs:99,maxPendingAuthorizations:1},{authorizationTimeoutMs:100,maxPendingAuthorizations:101}])assert.throws(()=>new AgentRunExpiryWorker({...options,...extra}),/Invalid run expiry worker/);}finally{close(s);}
 });
+
+test('expiry metrics aggregate authorized passes without identifiers and recheck access',async()=>{
+ const {AgentRunExpiryMetrics,AgentCombinedMetrics}=await import('../dist/index.js'),s=setup();let allow=true,permits=0;
+ try{
+  for(const name of ['secret-a','secret-b','secret-c'])s.runs.create(scope,name,conf,0);
+  const metrics=new AgentRunExpiryMetrics({authorize:()=>{permits++;return allow;}}),worker=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:5,pollMs:100,clock:()=>100,onError:()=>{},observe:metrics.observe,authorize:run=>{if(run.runId==='secret-b')return false;if(run.runId==='secret-c')throw Error('policy unavailable');return true;}});
+  assert.equal(await worker.runOnce(),1);const actor={tenantId:'tenant',principalId:'operator'},text=await metrics.render(actor);assert.match(text,/app_mixer_agent_run_expiry_passes_total\{outcome="completed"\} 1/);assert.match(text,/app_mixer_agent_run_expiry_results_total\{result="expired"\} 1/);assert.match(text,/app_mixer_agent_run_expiry_results_total\{result="denied"\} 1/);assert.match(text,/app_mixer_agent_run_expiry_results_total\{result="error"\} 1/);assert.doesNotMatch(text,/secret-|tenant|operator/);assert.equal(permits,2);
+  const combined=new AgentCombinedMetrics({sources:[metrics],authorize:()=>true});assert.match(await combined.render(actor),/app_mixer_agent_run_expiry_pass_seconds_count 1/);allow=false;await assert.rejects(metrics.render(actor),/denied/);
+  assert.throws(()=>metrics.observe({outcome:'completed',expired:101,denied:0,errors:0,durationMs:1}),/Invalid/);
+ }finally{close(s);}
+});
+
+test('expiry observation records stopped and failed passes without affecting transitions',async()=>{
+ const s=setup(),observed=[];let entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ try{
+  s.runs.create(scope,'run',conf,0);const worker=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:2,pollMs:100,clock:()=>100,authorizationTimeoutMs:1000,maxPendingAuthorizations:1,onError:()=>{},observe:value=>{observed.push(value);throw Error('metrics down');},authorize:async()=>{entered();await gate;return true;}});const pass=worker.runOnce();await ready;await worker.stop();assert.equal(await pass,0);assert.equal(observed[0].outcome,'stopped');assert.equal(observed[0].expired,0);release();
+  const failed=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:1,pollMs:100,clock:()=>-1,onError:()=>{},observe:value=>observed.push(value),authorize:()=>true});await assert.rejects(failed.runOnce());assert.equal(observed[1].outcome,'failed');assert.equal(s.runs.get(scope,'run').status,'queued');
+ }finally{release();close(s);}
+});

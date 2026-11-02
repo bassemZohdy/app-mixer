@@ -180,7 +180,9 @@ export {DurableAgentDispatcher} from './durable-dispatcher.js';
 export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';
 
 export {AgentRunExpiryWorker} from './agent-run-expiry.js';
-export type {AgentRunExpiryWorkerOptions} from './agent-run-expiry.js';
+export type {AgentRunExpiryWorkerOptions,AgentRunExpiryObservation} from './agent-run-expiry.js';
+export {AgentRunExpiryMetrics} from './agent-run-expiry-metrics.js';
+export type {AgentRunExpiryMetricsOptions} from './agent-run-expiry-metrics.js';
 
 export {AgentActionRecoveryWorker} from './action-recovery-worker.js';
 export {createActionHttpsVerifier} from './action-https-verifier.js';
