@@ -42,5 +42,17 @@ final class MixerDeviceUITests: XCTestCase {
     save.tap()
     XCTAssertTrue(app.staticTexts["Saved Grace"].waitForExistence(timeout: 10))
     XCTAssertFalse(save.isEnabled)
+    let advance = app.buttons["Advance surface"]
+    XCTAssertTrue(advance.waitForExistence(timeout: 10))
+    advance.tap()
+    XCTAssertTrue(app.staticTexts["Secondary Ada"].waitForExistence(timeout: 10))
+    XCTAssertEqual(field.value as? String, "Grace")
+    advance.tap()
+    XCTAssertTrue(app.staticTexts["Secondary Ada"].waitForNonExistence(timeout: 10))
+    XCTAssertEqual(field.value as? String, "Grace")
+    advance.tap()
+    XCTAssertTrue(app.staticTexts["Secondary Grace"].waitForExistence(timeout: 10))
+    XCTAssertFalse(app.staticTexts["Secondary Ada"].exists)
+    XCTAssertEqual(field.value as? String, "Grace")
   }
 }
