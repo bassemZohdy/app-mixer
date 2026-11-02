@@ -50,3 +50,18 @@ test('a temporary concurrent rejection is allowed when a later replay resolves t
 test('idempotency check preserves the host callback receiver',async()=>{
  const options={input:{amount:1},conflictingInput:{amount:2},effects:new Map(),async countEffects(key){return this.effects.has(key)?1:0;},async dispatch(input,key){const existing=this.effects.get(key);if(existing){if(existing.amount!==input.amount)throw Error('conflict');return existing;}const result={amount:input.amount};this.effects.set(key,result);return result;}};assert.equal((await checkIdempotencyContract(options)).passed,true);
 });
+
+test('contract deadline interrupts a stalled dispatch and retains keys for investigation',async()=>{
+ let signal,release,dispatches=0,counts=0;const pending=new Promise(resolve=>release=resolve),options={input:{value:1},conflictingInput:{value:2},timeoutMs:25,newKey:(()=>{let n=0;return()=>`test-${++n}`;})(),countEffects:async()=>{counts++;return 1;},dispatch:async(_value,_key,s)=>{dispatches++;signal=s;await pending;return {ok:true};}};
+ await assert.rejects(checkIdempotencyContract(options),error=>error.name==='IdempotencyContractInterruptedError'&&/timed out/.test(error.message)&&error.keys.replay==='test-1'&&error.keys.concurrent==='test-2');assert.equal(signal.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(dispatches,1);assert.equal(counts,0);
+});
+
+test('caller cancellation interrupts parallel work without starting later checks',async()=>{
+ let count=0,dispatches=0,ready,release;const entered=new Promise(resolve=>ready=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController();const options={input:{value:1},conflictingInput:{value:2},concurrency:3,signal:controller.signal,countEffects:async()=>{count++;return 1;},dispatch:async(_value,_key,signal)=>{dispatches++;if(dispatches<=2)return {ok:true};if(dispatches===5)ready();await gate;assert.equal(signal.aborted,true);return {ok:true};}};
+ const result=checkIdempotencyContract(options);await entered;controller.abort();await assert.rejects(result,error=>error.name==='IdempotencyContractInterruptedError'&&/cancelled/.test(error.message)&&Object.keys(error.keys).length===3);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(dispatches,5);assert.equal(count,1);
+ const pre=new AbortController();pre.abort();await assert.rejects(checkIdempotencyContract({...options,signal:pre.signal}),/cancelled/);assert.equal(dispatches,5);
+});
+
+test('deadline rejects invalid settings and interrupts stalled effect reads',async()=>{
+ const base={input:{value:1},conflictingInput:{value:2},dispatch:async()=>({ok:true}),countEffects:async()=>new Promise(()=>{})};for(const timeoutMs of [0,-1,300001,1.5,'20'])await assert.rejects(checkIdempotencyContract({...base,timeoutMs}),/Invalid idempotency contract configuration/);await assert.rejects(checkIdempotencyContract({...base,signal:{}}),/Invalid idempotency contract configuration/);await assert.rejects(checkIdempotencyContract({...base,timeoutMs:20}),/timed out/);
+});

@@ -1,29 +1,45 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
+import {setMaxListeners} from 'node:events';
 
 export type IdempotencyContractOptions={
  /** Perform the operation against a non-production target, passing the key exactly as the journal would. */
- dispatch:(input:Record<string,unknown>,idempotencyKey:string)=>Promise<unknown>;
+ dispatch:(input:Record<string,unknown>,idempotencyKey:string,signal:AbortSignal)=>Promise<unknown>;
  /** Return how many effects the target applied for a key, from an independent read. */
- countEffects:(idempotencyKey:string)=>Promise<number>;
+ countEffects:(idempotencyKey:string,signal:AbortSignal)=>Promise<number>;
  input:Record<string,unknown>;
  /** A different, otherwise valid input used to check that a reused key is not accepted for new content. */
  conflictingInput:Record<string,unknown>;
  concurrency?:number;
+ /** Optional deadline for the complete check and caller cancellation. */
+ timeoutMs?:number;
+ signal?:AbortSignal;
  newKey?:()=>string;
 };
 export type IdempotencyContractFinding={check:'sequential-replay'|'concurrent-replay'|'conflicting-input'|'fresh-key';problem:string};
 export type IdempotencyContractReport={passed:boolean;findings:IdempotencyContractFinding[];keys:{replay:string;concurrent:string;fresh:string}};
 
 const record=(x:unknown):x is Record<string,unknown>=>x!==null&&typeof x==='object'&&!Array.isArray(x);
-const settle=async(work:()=>Promise<unknown>)=>{try{return {ok:true as const,value:await work()};}catch(error){return {ok:false as const,error};}};
+export class IdempotencyContractInterruptedError extends Error {
+ readonly keys:IdempotencyContractReport['keys'];
+ constructor(reason:'timeout'|'cancelled',keys:IdempotencyContractReport['keys']){super(reason==='timeout'?'Idempotency contract timed out':'Idempotency contract cancelled');this.name='IdempotencyContractInterruptedError';this.keys={...keys};}
+}
 
 /** Exercise a downstream operation's idempotency-key handling. This is a host-run conformance check, not proof of production behavior. */
 export async function checkIdempotencyContract(options:IdempotencyContractOptions):Promise<IdempotencyContractReport>{
  const concurrency=options?.concurrency??5;
- if(!options||typeof options.dispatch!=='function'||typeof options.countEffects!=='function'||!record(options.input)||!record(options.conflictingInput)||isDeepStrictEqual(options.input,options.conflictingInput)||!Number.isSafeInteger(concurrency)||concurrency<2||concurrency>50||(options.newKey!==undefined&&typeof options.newKey!=='function'))throw Error('Invalid idempotency contract configuration');
- let fixedInput:Record<string,unknown>,fixedConflict:Record<string,unknown>;try{fixedInput=structuredClone(options.input);fixedConflict=structuredClone(options.conflictingInput);}catch{throw Error('Invalid idempotency contract configuration');}const dispatch=options.dispatch.bind(options),countEffects=options.countEffects.bind(options),newKey=options.newKey??randomUUID,keys={replay:newKey(),concurrent:newKey(),fresh:newKey()};
+ if(!options||typeof options.dispatch!=='function'||typeof options.countEffects!=='function'||!record(options.input)||!record(options.conflictingInput)||isDeepStrictEqual(options.input,options.conflictingInput)||!Number.isSafeInteger(concurrency)||concurrency<2||concurrency>50||(options.newKey!==undefined&&typeof options.newKey!=='function')||(options.timeoutMs!==undefined&&(!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<1||options.timeoutMs>300000))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw Error('Invalid idempotency contract configuration');
+ let fixedInput:Record<string,unknown>,fixedConflict:Record<string,unknown>;try{fixedInput=structuredClone(options.input);fixedConflict=structuredClone(options.conflictingInput);}catch{throw Error('Invalid idempotency contract configuration');}const hostDispatch=options.dispatch.bind(options),hostCountEffects=options.countEffects.bind(options),newKey=options.newKey??randomUUID,timeoutMs=options.timeoutMs,callerSignal=options.signal,keys={replay:newKey(),concurrent:newKey(),fresh:newKey()};
  if(new Set(Object.values(keys)).size!==3||Object.values(keys).some(key=>typeof key!=='string'||!key))throw Error('Invalid idempotency contract keys');
+ const controller=new AbortController();setMaxListeners(0,controller.signal);let reason:'timeout'|'cancelled'='cancelled';
+ const cancel=()=>{if(!controller.signal.aborted){reason='cancelled';controller.abort();}};if(callerSignal?.aborted)cancel();else callerSignal?.addEventListener('abort',cancel,{once:true});
+ const timer=timeoutMs===undefined?undefined:setTimeout(()=>{if(!controller.signal.aborted){reason='timeout';controller.abort();}},timeoutMs);
+ const interrupted=()=>new IdempotencyContractInterruptedError(reason,keys);
+ const invoke=async<T>(work:()=>Promise<T>):Promise<T>=>{if(controller.signal.aborted)throw interrupted();let onAbort:()=>void=()=>{};const stopped=new Promise<never>((_,reject)=>{onAbort=()=>reject(interrupted());controller.signal.addEventListener('abort',onAbort,{once:true});});try{return await Promise.race([Promise.resolve().then(()=>{if(controller.signal.aborted)throw interrupted();return work();}),stopped]);}finally{controller.signal.removeEventListener('abort',onAbort);}};
+ const dispatch=(input:Record<string,unknown>,key:string)=>invoke(()=>hostDispatch(input,key,controller.signal));
+ const countEffects=(key:string)=>invoke(()=>hostCountEffects(key,controller.signal));
+ const settle=async(work:()=>Promise<unknown>)=>{try{return {ok:true as const,value:await work()};}catch(error){if(error instanceof IdempotencyContractInterruptedError)throw error;return {ok:false as const,error};}};
+ try {
  const findings:IdempotencyContractFinding[]=[],input=()=>structuredClone(fixedInput);
  const effects=async(key:string)=>{const count=await countEffects(key);if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid effect count');return count;};
 
@@ -45,4 +61,5 @@ export async function checkIdempotencyContract(options:IdempotencyContractOption
 
  await dispatch(input(),keys.fresh);const fresh=await effects(keys.fresh);if(fresh!==1)findings.push({check:'fresh-key',problem:`expected 1 effect for a new key, observed ${fresh}`});
  return {passed:findings.length===0,findings,keys};
+ } finally {if(timer!==undefined)clearTimeout(timer);callerSignal?.removeEventListener('abort',cancel);}
 }
