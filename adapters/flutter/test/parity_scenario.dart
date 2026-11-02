@@ -118,17 +118,20 @@ Future<void> verifyAdjacentFieldSemantics(WidgetTester tester) async {
       await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
       receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
       receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Ada'}}));
-      for(final layout in ['Column','Row']) {for(final order in [['field','display'],['display','field']]) {
+      for(final layout in ['Column','Row']) {for(final wrapper in ['direct','Column','Row','Card']) {for(final fieldFirst in [true,false]) {
+        final adjacent=wrapper=='direct' ? 'display' : 'nested';
         receive(message('updateComponents',{'surfaceId':'main','components':[
-          {'id':'root','component':layout,'children':order},
+          {'id':'root','component':layout,'children':fieldFirst?['field',adjacent]:[adjacent,'field']},
           {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
+          if(wrapper=='Card') {'id':'nested','component':'Card','child':'display'},
+          if(wrapper=='Column'||wrapper=='Row') {'id':'nested','component':wrapper,'children':['display']},
           {'id':'display','component':'Text','text':{'path':'/name'}}
         ]}));await tester.pump();
         final field=tester.getSemantics(find.byType(EditableText)).getSemanticsData();
         final text=tester.getSemantics(find.byWidgetPredicate((w)=>w is Text && w.data=='Ada')).getSemanticsData();
         expect(field.flagsCollection.isTextField,isTrue);expect(field.label,'Name');expect(field.value,'Ada');
         expect(text.flagsCollection.isTextField,isFalse);expect(text.label,'Ada');expect(tester.takeException(),isNull);
-      }}
+      }}}
       expect(errors,isEmpty);
     } finally {semantics.dispose();}
 }
