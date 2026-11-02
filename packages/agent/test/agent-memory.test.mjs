@@ -107,3 +107,11 @@ test('local memory list and audit fail closed when earlier item access changes',
  let active=false,revoked=false;const store=new SqliteAgentMemory(':memory:',settings({audit:true,authorize:(_actor,_scope,action,id)=>{if(active&&(action==='read'||action==='audit')&&id==='b')revoked=true;return !(active&&revoked&&(action==='read'||action==='audit')&&id==='a');}}));
  try{for(const id of ['a','b','c'])await store.put(actor,scope,id,id,write(500));for(const limit of [1,3]){active=true;revoked=false;await assert.rejects(store.list(actor,scope,{limit}),/access denied/);active=false;}active=true;revoked=false;await assert.rejects(store.auditHistory(actor,scope),/access denied/);}finally{store.close();}
 });
+
+
+test('local memory listing rejects records changed or expired during page authorization',async()=>{
+ for(const change of ['update','delete','expire'])for(const limit of [1,2]){
+  const dir=mkdtempSync(join(tmpdir(),'memory-list-change-')),path=join(dir,'memory.sqlite');let now=100,active=false,changed=false,writer;const reader=new SqliteAgentMemory(path,settings({clock:()=>now,authorize:async(_actor,_scope,action,id)=>{if(active&&!changed&&action==='read'&&id==='b'){changed=true;if(change==='update')await writer.put(actor,scope,'a','new',write(500,1));else if(change==='delete')await writer.delete(actor,scope,'a',1);else now=500;}return true;}}));writer=new SqliteAgentMemory(path,settings({clock:()=>now}));
+  try{await writer.put(actor,scope,'a','old',write(500));await writer.put(actor,scope,'b','other',write(900));active=true;await assert.rejects(reader.list(actor,scope,{limit}),/Memory changed during read/,`${change} limit ${limit}`);}finally{reader.close();writer.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
