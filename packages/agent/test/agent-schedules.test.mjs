@@ -213,3 +213,13 @@ test('annual exclusions reject invalid calendars and unsatisfiable schedules',()
  const s=setup();try{const base={kind:'cron',expression:'0 0 * * *'};for(const excludeAnnualDates of [null,'01-01',['00-01'],['02-30'],['2-01'],['01-01','01-01'],Array(367).fill('01-01')])assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{...base,excludeAnnualDates}},0,0),/annual excluded dates/);assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'interval',intervalMs:1000,excludeAnnualDates:[]}},0,0),/Invalid schedule/);assert.throws(()=>s.schedules.save(scope,'none',{...config,rule:{kind:'cron',expression:'0 0 1 1 *',excludeAnnualDates:['01-01']}},0,Date.parse('2026-01-02T00:00:00Z')),/nine years/);assert.equal(s.schedules.get(scope,'none'),undefined);
  }finally{close(s);}
 });
+
+test('annual weekend observance skips Friday or Monday across year boundaries',()=>{
+ const s=setup();try{const rule={kind:'cron',expression:'0 9 * * 1-5',excludeAnnualDates:['01-01'],observeAnnualWeekends:true};const saturday=s.schedules.save(scope,'saturday',{...config,rule},0,Date.parse('2021-12-30T10:00:00Z'));assert.equal(saturday.nextAt,Date.parse('2022-01-03T09:00:00Z'));const sunday=s.schedules.save(scope,'sunday',{...config,rule},0,Date.parse('2022-12-30T10:00:00Z'));assert.equal(sunday.nextAt,Date.parse('2023-01-03T09:00:00Z'));const plain=s.schedules.save(scope,'plain',{...config,rule:{...rule,observeAnnualWeekends:false}},0,Date.parse('2021-12-30T10:00:00Z'));assert.equal(plain.nextAt,Date.parse('2021-12-31T09:00:00Z'));const tokyo=s.schedules.save(scope,'tokyo-observed',{...config,rule:{...rule,timeZone:'Asia/Tokyo',excludeDates:['2022-01-03']}},0,Date.parse('2021-12-30T00:30:00Z'));assert.equal(tokyo.nextAt,Date.parse('2022-01-04T00:00:00Z'));assert.equal(s.schedules.get(scope,'tokyo-observed').config.rule.observeAnnualWeekends,true);
+ }finally{close(s);}
+});
+
+test('annual weekend observance handles leap days and rejects invalid settings',()=>{
+ const s=setup();try{const rule={kind:'cron',expression:'0 0 * * *',excludeAnnualDates:['02-29'],observeAnnualWeekends:true},leap=s.schedules.save(scope,'leap-observed',{...config,rule},0,Date.parse('2020-02-27T01:00:00Z'));assert.equal(leap.nextAt,Date.parse('2020-03-01T00:00:00Z'));for(const value of [null,'true',1])assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{...rule,observeAnnualWeekends:value}},0,0),/annual observance/);assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'cron',expression:'0 0 * * *',observeAnnualWeekends:true}},0,0),/annual observance/);assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'interval',intervalMs:1000,observeAnnualWeekends:true}},0,0),/Invalid schedule/);
+ }finally{close(s);}
+});
