@@ -273,4 +273,4 @@ export {AgentCombinedMetrics} from './agent-combined-metrics.js';
 export type {AgentCombinedMetricsOptions} from './agent-combined-metrics.js';
 
 export {SqliteAgentWakeupRetention} from './agent-wakeup-retention.js';
-export type {AgentWakeupRetentionActor,AgentWakeupRetentionOptions,AgentWakeupRetentionTarget} from './agent-wakeup-retention.js';
+export type {AgentWakeupRetentionActor,AgentWakeupRetentionOptions,AgentWakeupRetentionTarget,AgentWakeupRedactionCandidate} from './agent-wakeup-retention.js';
