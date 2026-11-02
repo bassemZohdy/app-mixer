@@ -391,8 +391,9 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       final occurrence=occurrences.update(child.id,(value)=>value+1,ifAbsent:()=>0);
       final childPath='$path${child.id.length}:${child.id}:$occurrence;';
       final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight,inButton || node.kind=='Button');
-      // Built-in row children need bounded width so nested content can wrap.
-      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
+      // Keep standalone row text separate from nearby control labels.
+      final accessibleChild=node.kind=='Row' && child.kind=='Text' && !inButton ? Semantics(container:true,child:rendered) : rendered;
+      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:accessibleChild) : accessibleChild;
       // Preserve child state when another referenced component arrives or the order changes.
       children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }

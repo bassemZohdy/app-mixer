@@ -58,7 +58,7 @@ Future<void> verifySurfaceParity(WidgetTester tester) async {
   await tester.enterText(find.byType(TextField),notes);await tester.pump();
   expect(display(notes),findsOneWidget);expect(display('Fresh'),findsOneWidget);
   final semantics=tester.ensureSemantics();
-  try {final field=tester.getSemantics(find.byType(EditableText)).getSemanticsData();expect(field.flagsCollection.isTextField,isTrue);expect(field.label,startsWith('Notes'));expect(field.value,notes);} finally {semantics.dispose();}
+  try {final field=tester.getSemantics(find.byType(EditableText)).getSemanticsData();expect(field.flagsCollection.isTextField,isTrue);expect(field.label,'Notes');expect(field.value,notes);final mirrored=tester.getSemantics(display(notes)).getSemanticsData();expect(mirrored.label,notes);expect(mirrored.flagsCollection.isTextField,isFalse);} finally {semantics.dispose();}
   await tester.tap(find.byType(TextButton));await tester.pump();
   expect((actions.last['action'] as Map)['context'],{'name':notes});expect(actions,hasLength(3));
   expect(errors,hasLength(3));expect(tester.takeException(),isNull);

@@ -401,6 +401,8 @@ void main() {
       final labelSemantics=tester.widget<Semantics>(find.ancestor(of:label,matching:find.byType(Semantics)).first);
       expect(labelSemantics.properties.header,isFalse);expect(labelSemantics.properties.headingLevel,isNull);
       final button=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(button.flagsCollection.isButton,isTrue);expect(button.flagsCollection.isHeader,isFalse);expect(button.label,'Continue');
+      receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'nested','component':'Row','children':['heading']}]}));await tester.pump();
+      final rowButton=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(rowButton.flagsCollection.isButton,isTrue);expect(rowButton.flagsCollection.isHeader,isFalse);expect(rowButton.label,'Continue');
       await tester.tap(find.byType(TextButton));await tester.pump();expect((actions.single['action'] as Map)['name'],'go');expect(errors,isEmpty);
     } finally {semantics.dispose();}
   });
