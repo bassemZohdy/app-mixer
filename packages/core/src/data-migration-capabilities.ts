@@ -1,10 +1,11 @@
 import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
-import {SqliteDataProvider,checkKey,type DataScope,type DataMigration,type DataRollback} from './data-provider.js';
+import {SqliteDataProvider,checkKey,type DataScope,type DataMigration,type DataMigrationRehearsal,type DataRollback} from './data-provider.js';
 
 type Actor={tenantId:string;principalId:string};
 type Plan={kind:'forward';fromVersion:number;toVersion:number;transform:DataMigration['transform'];validate:DataMigration['validate']}|{kind:'rollback';fromVersion:number;targetVersion:number;transform:DataRollback['transform'];validate:DataRollback['validate']};
 type Base={provider:SqliteDataProvider;scope:DataScope;collection:string;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
 type ApplyOptions=Base&{plan:Plan;authorizeApply:(actor:Actor,input:{digest:string;reference:string})=>boolean|Promise<boolean>;clock?:()=>number};
+type RehearsalOptions=Base&{plan:DataMigrationRehearsal;authorizeRehearsal:(actor:Actor)=>boolean|Promise<boolean>};
 type Page={after?:number;limit?:number};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const query=(input:unknown):Record<string,unknown>|undefined=>object(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&object(input.query)?input.query:undefined;
@@ -17,6 +18,12 @@ function snapshot(registry:CapabilityRegistry,options:Base,method:'GET'|'POST'){
 export function registerDataMigrationPreview(registry:CapabilityRegistry,options:Base):void{
  const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>c.authorize({...actor}),execute:()=>c.provider.previewMigration(c.scope,c.collection)});
 }
+/** Rehearse one host-fixed plan without returning records or transformed values. */
+export function registerDataMigrationRehearsal(registry:CapabilityRegistry,options:RehearsalOptions):void{
+ const c=snapshot(registry,options,'POST'),plan=options.plan;if(!plan||!Number.isSafeInteger(plan.fromVersion)||plan.fromVersion<0||plan.fromVersion>=Number.MAX_SAFE_INTEGER||typeof plan.transform!=='function'||typeof plan.validate!=='function'||typeof options.authorizeRehearsal!=='function')throw Error('Invalid migration capability');
+ const fixed={fromVersion:plan.fromVersion,transform:plan.transform,validate:plan.validate},authorizeRehearsal=options.authorizeRehearsal,permit=async(actor:Actor)=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true&&await authorizeRehearsal({...actor})===true;
+ registry.register(c.candidate,{authorize:permit,validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:permit,execute:async(_input,actor)=>{const result=c.provider.rehearseMigration(c.scope,c.collection,fixed);if(!await permit(actor))throw Error('Capability forbidden');return result;}});
+}
 /** Execute only a trusted, fixed migration plan, with actor-attributed transactional evidence. */
 export function registerDataMigrationApply(registry:CapabilityRegistry,options:ApplyOptions):void{
  const c=snapshot(registry,options,'POST'),plan=options.plan;if(!plan||!['forward','rollback'].includes(plan.kind)||!Number.isSafeInteger(plan.fromVersion)||plan.fromVersion<0||plan.fromVersion>=Number.MAX_SAFE_INTEGER||typeof plan.transform!=='function'||typeof plan.validate!=='function'||(plan.kind==='forward'&&(!Number.isSafeInteger(plan.toVersion)||plan.toVersion!==plan.fromVersion+1))||(plan.kind==='rollback'&&(!Number.isSafeInteger(plan.targetVersion)||plan.fromVersion<1||plan.targetVersion<0||plan.targetVersion>=plan.fromVersion))||typeof options.authorizeApply!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid migration capability');
@@ -27,4 +34,4 @@ export function registerDataMigrationApply(registry:CapabilityRegistry,options:A
 export function registerDataMigrationAudit(registry:CapabilityRegistry,options:Base):void{
  const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>!!page(input),authorizeInput:actor=>c.authorize({...actor}),execute:input=>{const safe=page(input);if(!safe)throw Error('Invalid migration audit');return c.provider.migrationAudit(c.scope,c.collection,safe);}});
 }
-export type {Base as DataMigrationReadCapabilityOptions,ApplyOptions as DataMigrationApplyCapabilityOptions,Plan as DataMigrationPlan};
+export type {Base as DataMigrationReadCapabilityOptions,ApplyOptions as DataMigrationApplyCapabilityOptions,RehearsalOptions as DataMigrationRehearsalCapabilityOptions,Plan as DataMigrationPlan};

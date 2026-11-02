@@ -230,8 +230,8 @@ export type {ExtensionApprovalDecisionCapabilityOptions,ExtensionApprovalReadCap
 export {signFlutterExtensionPlan,signFlutterExtensionPlanFromRegistry} from './signed-flutter-plan.js';
 export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signed-flutter-plan.js';
 
-export {registerDataMigrationPreview,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
-export type {DataMigrationReadCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
+export {registerDataMigrationPreview,registerDataMigrationRehearsal,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
+export type {DataMigrationReadCapabilityOptions,DataMigrationRehearsalCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
 
 export { registerStagedListCapability } from './staged-list-capability.js';
 export type { StagedListCapabilityOptions } from './staged-list-capability.js';
