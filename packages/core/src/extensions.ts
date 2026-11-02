@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual, sign, verify, KeyObject } from 'node:crypto';
 import { isValidExtensionReferences, type ApplicationDefinition, type ExtensionReference, type PublicationGuard } from './index.js';
 
 export type ExtensionConfigRule =
@@ -34,6 +34,8 @@ export type ExtensionHost = {
   approved: { id: string; version: string; scope: ExtensionManifest['scope']; permissions: string[]; integrity?: string }[];
 };
 export type ExtensionRequirements = { components: string[]; tools: string[]; providers: string[] };
+export type SignedExtensionManifest = {formatVersion:1;keyId:string;manifest:ExtensionManifest;signature:string};
+export type ExtensionSigningPolicy = {trustedKeys:Record<string,KeyObject>};
 const idPattern = /^[a-z][a-z0-9.-]{0,127}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const integrityPattern = /^sha256-[A-Za-z0-9+/]{43}=$/;
@@ -132,8 +134,45 @@ function validateConfiguration(schema:ExtensionConfigSchema, config:unknown):Ext
   return resolveSchema(schema,config,{count:0,ancestors:new Set()},0);
 }
 
-/** Check metadata against an explicit host approval and required registrations.
- * Exact versions only; neither approval nor this check enforces runtime authorization. */
+function validateManifest(m:unknown):asserts m is ExtensionManifest {
+  if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...optional(m,['configSchema','integrity'])]) || (Object.hasOwn(m,'integrity') && (typeof m.integrity !== 'string' || !integrityPattern.test(m.integrity))) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
+  if (Object.hasOwn(m,'configSchema')) validateConfigSchema(m.configSchema);
+}
+
+function canonicalSignedValue(value:unknown,depth=0,budget={size:0}):string {
+  if(depth>30)throw Error('Invalid signed extension manifest');
+  const add=(part:string)=>{budget.size+=part.length;if(budget.size>1000000)throw Error('Invalid signed extension manifest');return part;};
+  if(typeof value==='number'&&Object.is(value,-0))throw Error('Invalid signed extension manifest');
+  if(value===null||typeof value==='string'||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))return add(JSON.stringify(value));
+  if(Array.isArray(value)){if(Object.keys(value).length!==value.length||Array.from({length:value.length},(_,i)=>Object.hasOwn(value,i)).some(present=>!present))throw Error('Invalid signed extension manifest');return add('[')+value.map((item,index)=>(index?add(','):'')+canonicalSignedValue(item,depth+1,budget)).join('')+add(']');}
+  if(!record(value))throw Error('Invalid signed extension manifest');
+  return add('{')+Object.keys(value).sort().map((key,index)=>(index?add(','):'')+add(JSON.stringify(key))+add(':')+canonicalSignedValue(value[key],depth+1,budget)).join('')+add('}');
+}
+function signingBytes(keyId:string,manifest:ExtensionManifest):Buffer{return Buffer.from('app-mixer-extension-manifest-v1.'+keyId+'.'+canonicalSignedValue(manifest),'utf8');}
+function signingKeys(input:unknown):Map<string,KeyObject>{
+  if(!record(input)||Object.keys(input).length<1||Object.keys(input).length>100)throw Error('Invalid extension signing policy');
+  const keys=new Map<string,KeyObject>();for(const [keyId,key] of Object.entries(input)){if(!idPattern.test(keyId)||!(key instanceof KeyObject)||key.type!=='public'||key.asymmetricKeyType!=='ed25519')throw Error('Invalid extension signing policy');keys.set(keyId,key);}return keys;
+}
+/** Sign a validated, digest-bearing manifest with a host-managed Ed25519 private key. */
+export function signExtensionManifest(manifest:ExtensionManifest,keyId:string,privateKey:KeyObject):SignedExtensionManifest {
+  if(typeof keyId!=='string'||!idPattern.test(keyId)||!(privateKey instanceof KeyObject)||privateKey.type!=='private'||privateKey.asymmetricKeyType!=='ed25519')throw Error('Invalid extension signing configuration');
+  const snapshot=structuredClone(manifest);validateManifest(snapshot);if(!snapshot.integrity)throw Error('Signed extension requires integrity');
+  return {formatVersion:1,keyId,manifest:snapshot,signature:sign(null,signingBytes(keyId,snapshot),privateKey).toString('base64url')};
+}
+function verifySigned(input:unknown,keys:Map<string,KeyObject>,packageBytes:Uint8Array):ExtensionManifest {
+  try{
+    if(!fields(input,['formatVersion','keyId','manifest','signature'])||input.formatVersion!==1||typeof input.keyId!=='string'||!idPattern.test(input.keyId)||typeof input.signature!=='string'||input.signature.length!==86)throw Error('Invalid envelope');
+    const key=keys.get(input.keyId),signature=Buffer.from(input.signature,'base64url'),snapshot=structuredClone(input.manifest);validateManifest(snapshot);
+    if(!key||signature.length!==64||signature.toString('base64url')!==input.signature||!snapshot.integrity||!verify(null,signingBytes(input.keyId,snapshot),key,signature)||!verifyExtensionIntegrity(snapshot.integrity,packageBytes))throw Error('Invalid signature');
+    return snapshot;
+  }catch{throw Error('Invalid signed extension manifest');}
+}
+/** Verify both publisher signature and package digest against host-selected public keys. */
+export function verifySignedExtensionManifest(input:unknown,policy:ExtensionSigningPolicy,packageBytes:Uint8Array):ExtensionManifest {
+  if(!fields(policy,['trustedKeys']))throw Error('Invalid extension signing policy');return verifySigned(input,signingKeys(policy.trustedKeys),packageBytes);
+}
+
+/** Check metadata against explicit host approval and required registrations. */
 export function checkExtensionCompatibility(manifests: unknown, host: unknown, requirements: unknown): { compatible: boolean; errors: string[] } {
   if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved']) || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
   const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string}>();
@@ -144,8 +183,7 @@ export function checkExtensionCompatibility(manifests: unknown, host: unknown, r
   const errors:string[] = [], ids = new Set<string>();
   const registrations = {components:new Set<string>(),tools:new Set<string>(),providers:new Set<string>()};
   for (const m of manifests) {
-    if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...optional(m,['configSchema','integrity'])]) || (Object.hasOwn(m,'integrity') && (typeof m.integrity !== 'string' || !integrityPattern.test(m.integrity))) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
-    if (Object.hasOwn(m,'configSchema')) validateConfigSchema(m.configSchema);
+    validateManifest(m);
     if (ids.has(m.id)) { errors.push(`Duplicate extension: ${m.id}`); continue; }
     ids.add(m.id);
     const approval=approvals.get(m.id);
@@ -204,15 +242,28 @@ export class ExtensionRegistry {
     components: new Map(), tools: new Map(), providers: new Map()
   };
   private readonly host: ExtensionHost;
+  readonly #signingKeys?:Map<string,KeyObject>;
   private readonly configurations = new Map<string, ExtensionConfiguration>();
 
-  constructor(host: ExtensionHost) {
+  constructor(host: ExtensionHost, policy?:ExtensionSigningPolicy) {
     this.host = structuredClone(host);
     checkExtensionCompatibility([], this.host, {components:[], tools:[], providers:[]});
+    if(policy!==undefined){if(!fields(policy,['trustedKeys']))throw Error('Invalid extension signing policy');this.#signingKeys=signingKeys(policy.trustedKeys);}
   }
 
   /** When the manifest declares `integrity`, `options.packageBytes` must contain the trusted package bytes with that digest. */
   register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}, options: {packageBytes?: Uint8Array} = {}): void {
+    if(this.#signingKeys)throw Error('Signed extension required');
+    this.#install(manifest,bindings,configuration,options);
+  }
+
+  /** A signing policy requires all registrations to use this verified path. */
+  registerSigned(signed:SignedExtensionManifest,bindings:ExtensionBindings,configuration:ExtensionConfiguration,packageBytes:Uint8Array):void {
+    if(!this.#signingKeys)throw Error('Extension signing policy required');
+    const manifest=verifySigned(signed,this.#signingKeys,packageBytes);this.#install(manifest,bindings,configuration,{packageBytes});
+  }
+
+  #install(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration, options: {packageBytes?: Uint8Array}): void {
     const snapshot = structuredClone(manifest);
     const result = checkExtensionCompatibility([...this.manifests, snapshot], this.host, {components:[], tools:[], providers:[]});
     if (!result.compatible) throw Error('Extension compatibility failed');
