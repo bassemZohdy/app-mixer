@@ -144,6 +144,8 @@ export { registerStagedCapability, registerStagedVerificationCapability, registe
 export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions, StagedEvidenceCapabilityOptions, StagedRecoveryCapabilityOptions } from './staged-capabilities.js';
 
 export { SqliteOfflineQueue } from './offline-queue.js';
+export { OfflineRetentionWorker } from './offline-retention-worker.js';
+export type { OfflineRetentionWorkerOptions } from './offline-retention-worker.js';
 export { PostgresOfflineRequestKeys } from './postgres-offline-request-keys.js';
 export type { PostgresOfflineRequestKeysOptions } from './postgres-offline-request-keys.js';
 export {PostgresOfflineSlots} from './postgres-offline-slots.js';
