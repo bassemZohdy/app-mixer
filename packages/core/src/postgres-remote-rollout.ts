@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {createRemoteControlConnector} from './remote-control-connector.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+import type {RemoteRolloutScope} from './remote-rollout.js';
 
 type Actor={tenantId:string;principalId:string};
 type Connector=ReturnType<typeof createRemoteControlConnector>;
@@ -16,6 +17,7 @@ export class PostgresRemoteRollout {
   if(!options||options.enabled!==true||typeof options.query!=='function'||!options.connector?.rolloutConfig?.safe||!options.connector.rolloutRepository||typeof options.connector.rolloutRepository.getPublished!=='function'||typeof (options.connector.rolloutRepository as {getPromotionFloor?:unknown}).getPromotionFloor!=='function'||!options.actor||!validText(options.actor.tenantId)||!validText(options.actor.principalId))throw Error('Invalid remote rollout configuration');
   this.query=options.query;this.connector=options.connector;this.actor={tenantId:options.actor.tenantId,principalId:options.actor.principalId};const c=options.connector.rolloutConfig;this.key=JSON.stringify([this.actor.tenantId,c.applicationId,c.sourceEnvironment,c.targetEnvironment]);
  }
+ isBoundTo(scope:RemoteRolloutScope):boolean{return !!scope&&JSON.stringify([scope.tenantId,scope.applicationId,scope.sourceEnvironment,scope.targetEnvironment])===this.key;}
  async initialize():Promise<void>{
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_remote_rollouts (id TEXT PRIMARY KEY,phase TEXT NOT NULL CHECK (phase IN ('idle','running','importing','uncertain')),token TEXT,source_version BIGINT,expected_version BIGINT)",[]);
   await this.query("INSERT INTO app_mixer_remote_rollouts(id,phase) VALUES ($1,'idle') ON CONFLICT (id) DO NOTHING",[this.key]);
