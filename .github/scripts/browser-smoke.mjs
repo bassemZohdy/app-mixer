@@ -10,6 +10,28 @@ import { createAGUIServer, LangGraphAGUIAdapter } from '../../packages/agent/dis
 import { ApplicationStore, createDevelopmentPlanes } from '../../packages/core/dist/index.js';
 
 const exec = promisify(execFile);
+async function verifyAccessibilityTree(url, profile) {
+  const browser=spawn(process.env.CHROME_BIN || 'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--remote-debugging-port=0',`--user-data-dir=${profile}`,url],{stdio:['ignore','ignore','pipe']});
+  let socket;
+  try {
+    const endpoint=await new Promise((resolve,reject)=>{
+      let output='';const timer=setTimeout(()=>reject(Error('Chrome debugging startup timed out')),30000);
+      browser.stderr.on('data',chunk=>{output+=String(chunk);const match=output.match(/DevTools listening on (ws:\/\/[^\s]+)/);if(match){clearTimeout(timer);resolve(match[1]);}});
+      browser.once('error',error=>{clearTimeout(timer);reject(error);});browser.once('exit',code=>{clearTimeout(timer);reject(Error(`Chrome exited before debugging was ready: ${code}`));});
+    });
+    socket=new WebSocket(endpoint);await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Chrome debugging connection timed out')),10000);socket.addEventListener('open',()=>{clearTimeout(timer);resolve();},{once:true});socket.addEventListener('error',()=>{clearTimeout(timer);reject(Error('Chrome debugging connection failed'));},{once:true});});
+    let serial=0;const pending=new Map();socket.addEventListener('message',event=>{const message=JSON.parse(String(event.data)),entry=pending.get(message.id);if(!entry)return;pending.delete(message.id);clearTimeout(entry.timer);if(message.error)entry.reject(Error(message.error.message));else entry.resolve(message.result);});
+    const command=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++serial,timer=setTimeout(()=>{pending.delete(id);reject(Error(`Chrome ${method} timed out`));},10000);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));});
+    let page;const targetDeadline=Date.now()+10000;while(Date.now()<targetDeadline){const {targetInfos}=await command('Target.getTargets');page=targetInfos.find(target=>target.type==='page'&&target.url.startsWith(url));if(page)break;await new Promise(resolve=>setTimeout(resolve,50));}if(!page)throw Error('Chrome accessibility page unavailable');
+    const {sessionId}=await command('Target.attachToTarget',{targetId:page.targetId,flatten:true});
+    let ready=false;const until=Date.now()+30000;while(Date.now()<until){const result=await command('Runtime.evaluate',{expression:'document.body && document.body.dataset.result',returnByValue:true},sessionId);if(result.result.value==='fail')throw Error('Interactive browser fixture failed');if(result.result.value==='pass'){ready=true;break;}await new Promise(resolve=>setTimeout(resolve,50));}if(!ready)throw Error('Interactive browser fixture timed out');
+    const {nodes}=await command('Accessibility.getFullAXTree',{},sessionId);const exposed=nodes.filter(node=>!node.ignored),named=(role,name)=>exposed.filter(node=>node.role?.value===role&&node.name?.value===name);
+    assert.equal(named('button','Save').length,1);const headings=named('heading','Standalone heading');assert.equal(headings.length,1);assert.equal(headings[0].properties?.find(property=>property.name==='level')?.value?.value,3);assert.equal(named('heading','Save').length,0);
+    await command('Browser.close');
+  } finally {
+    socket?.close();if(browser.exitCode===null&&browser.signalCode===null){browser.kill();await new Promise(resolve=>{const timer=setTimeout(resolve,5000);browser.once('exit',()=>{clearTimeout(timer);resolve();});});}
+  }
+}
 const dir = await mkdtemp(join(tmpdir(), 'app-mixer-browser-'));
 let server, agent, review;
 try {
@@ -59,7 +81,8 @@ try {
       renderer.apply({version,createSurface:{surfaceId,catalogId:BASIC_CATALOG}});
       renderer.apply({version,updateDataModel:{surfaceId,value:{form:{name:'Ada',secret:'private'}}}});
       renderer.apply({version,updateComponents:{surfaceId,components:[
-        {id:'root',component:'Column',children:['field','display','button']},
+        {id:'root',component:'Column',children:['title','field','display','button']},
+        {id:'title',component:'Text',text:'Standalone heading',variant:'h3'},
         {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'}},
         {id:'display',component:'Text',text:{path:'/form/name'}},
         {id:'button',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'}}}}},
@@ -86,6 +109,7 @@ try {
     '--virtual-time-budget=5000', `--user-data-dir=${join(dir,'chrome-interaction')}`, '--dump-dom', url
   ], {timeout:45000,maxBuffer:1024*1024});
   assert.match(interactive.stdout, /<body data-result="pass">/);
+  await verifyAccessibilityTree(url,join(dir,'chrome-accessibility'));
   const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
   review=createDevelopmentPlanes(repo,'developer-token-at-least-32-characters-long','agent-token-at-least-32-characters-long').control;
   review.listen(0,'127.0.0.1'); await once(review,'listening');
