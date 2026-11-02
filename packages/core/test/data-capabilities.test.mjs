@@ -2,6 +2,24 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {CapabilityRegistry,createCapabilityServer,registerDataCapability,SqliteDataProvider} from '../dist/index.js';
 
+test('bounded data policies cannot execute a late write after timeout or saturation',async()=>{
+ for(const stage of ['authorize','validate','authorizeRecord']){
+  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,signal,blocked=true,server;
+  const gate=new Promise(resolve=>release=resolve),pending=async currentSignal=>{if(blocked){signal=currentSignal;await gate;}return true;};
+  const options={candidate:{operationId:'items.put',method:'PUT',path:'/items'},applicationId:'app',collection:'items',operation:'put',policyTimeoutMs:100,maxPendingPolicies:1,authorize:(_actor,s)=>stage==='authorize'?pending(s):true,validate:(_input,s)=>stage==='validate'?pending(s):true,authorizeRecord:(_actor,_input,s)=>stage==='authorizeRecord'?pending(s):true};
+  try{
+   for(const invalid of [{policyTimeoutMs:100,maxPendingPolicies:undefined},{policyTimeoutMs:99,maxPendingPolicies:1},{policyTimeoutMs:100,maxPendingPolicies:0}])assert.throws(()=>registerDataCapability(new CapabilityRegistry(()=>{}),provider,{...options,...invalid}),/Invalid data capability/);
+   registerDataCapability(registry,provider,options);options.policyTimeoutMs=30000;options.maxPendingPolicies=100;
+   server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+   const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/items.put/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{id:'one',expectedRevision:null,value:{text:'value'}}})});
+   const first=await call();assert.equal(first.status,503,stage);assert.deepEqual(await first.json(),{error:'Data capability unavailable'});assert.equal(signal.aborted,true);
+   assert.equal((await call()).status,503,stage);assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one'),undefined);
+   blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one'),undefined);
+   assert.equal((await call()).status,200,stage);assert.deepEqual(provider.get({tenantId:'tenant',applicationId:'app'},'items','one').value,{text:'value'});
+  }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
+ }
+});
+
 test('authenticated UI and agent calls share data capability policies and tenant isolation',async()=>{
  const provider=new SqliteDataProvider(':memory:'),audit=[],registry=new CapabilityRegistry(event=>audit.push(event));
  const common={applicationId:'app',collection:'people',authorize:context=>context.principalId==='allowed',validate:()=>true};
