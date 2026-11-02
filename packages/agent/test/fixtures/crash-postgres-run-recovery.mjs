@@ -1,0 +1,6 @@
+import pg from 'pg';
+import {PostgresAgentRunLifecycleFoundation} from '../../dist/postgres-run-lifecycle-foundation.js';
+const pool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL,options:`-c search_path=${process.env.TEST_SCHEMA}`}),phase=process.env.TEST_PHASE;
+const hold=()=>new Promise(()=>{});
+const transaction=async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation(async(sql,args)=>{const result=await client.query(sql,args);if(phase==='during'&&sql.startsWith('INSERT INTO app_mixer_shared_run_recovery_audit')){process.send?.({ready:true});await hold();}return result;});await client.query('COMMIT');if(phase==='after'){process.send?.({ready:true});await hold();}return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+try{const store=new PostgresAgentRunLifecycleFoundation({query:(sql,args)=>pool.query(sql,args),transaction});await store.recoverExpired({tenantId:'tenant',agentId:'agent'},process.env.TEST_RUN_ID,2,{principalId:'operator',reference:'case-crash'});process.send?.({error:'recovery returned before barrier'});}catch(error){process.send?.({error:String(error)});}
