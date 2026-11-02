@@ -15,6 +15,23 @@ import {DatabaseSync} from 'node:sqlite';
 const token='capability-secret-at-least-thirty-two-characters',scope={tenantId:'tenant',applicationId:'demo-app',principalId:'local'};
 const waitFor=async condition=>{for(let i=0;i<250;i++){if(await condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for offline integration');};
 
+test('generated offline runtime applies and synchronizes a host rollback anchor',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-runtime-anchor-'));let runtime,db;
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();let floor=0,failAdvance=false,actor={...scope},pauseRead=false,startedRead,releaseRead;const waitingRead=new Promise(resolve=>startedRead=resolve),readGate=new Promise(resolve=>releaseRead=resolve);
+  const anchor={async read(){if(pauseRead){startedRead();await readGate;}return floor;},async advance(value){if(failAdvance)throw Error('anchor unavailable');floor=Math.max(floor,value);}},config={enabled:true,databaseName:'anchored-runtime',scope,key,indexedDB,crypto:webcrypto,rollbackAnchor:anchor,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
+  runtime=await createGeneratedOfflineRuntime(config);anchor.advance=()=>{throw Error('changed callback');};await runtime.enqueue('items.update','first',{value:'one'});assert.equal(floor,1);assert.equal(await runtime.hasPendingRollbackAnchor(),false);
+  db=await new Promise((resolve,reject)=>{const open=indexedDB.open('anchored-runtime',3);open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
+  const snapshot=await new Promise((resolve,reject)=>{const read=db.transaction('offline','readonly').objectStore('offline').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=()=>reject(read.error);});
+  failAdvance=true;await runtime.enqueue('items.update','second',{value:'two'});assert.equal(floor,1);assert.equal(await runtime.hasPendingRollbackAnchor(),true);await assert.rejects(runtime.syncRollbackAnchor(),/anchor unavailable/);
+  actor={...scope,principalId:'other'};await assert.rejects(runtime.hasPendingRollbackAnchor(),/not allowed/);await assert.rejects(runtime.syncRollbackAnchor(),/not allowed/);actor={...scope};failAdvance=false;
+  assert.equal(await runtime.syncRollbackAnchor(),2);assert.equal(await runtime.hasPendingRollbackAnchor(),false);assert.equal((await runtime.list()).length,2);
+  pauseRead=true;const pending=runtime.syncRollbackAnchor();await waitingRead;actor={...scope,principalId:'other'};pauseRead=false;releaseRead();await assert.rejects(pending,/not allowed/);actor={...scope};
+  await new Promise((resolve,reject)=>{const tx=db.transaction('offline','readwrite'),store=tx.objectStore('offline');store.clear();for(const row of snapshot)store.put(row);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+  await assert.rejects(runtime.list(),/rollback detected/);await runtime.close();runtime=undefined;await assert.rejects(createGeneratedOfflineRuntime(config),/rollback detected/);
+ }finally{if(runtime)await runtime.close();db?.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('generated offline runtime authorizes retirement and prevents recovery or reuse of removed payloads',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retire-'));let runtime,dom,release;
  try{

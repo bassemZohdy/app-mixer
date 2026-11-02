@@ -11,7 +11,7 @@ export async function createGeneratedOfflineRuntime(config){
   }
   const {canEnqueue,canDiscard,canRetire,isOnline,resolveActor,dispatch,classify,onError,loadCurrent}=config;
   const scope={tenantId:config.scope?.tenantId,applicationId:config.scope?.applicationId,principalId:config.scope?.principalId};
-  const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{})});
+  const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{}),...(config.rollbackAnchor!==undefined?{rollbackAnchor:config.rollbackAnchor}:{})});
   let closed=false,closePromise;const panels=new Set();
   class OperationNotAllowed extends Error {}
   const current=async()=>{const actor=await resolveActor();return !!actor&&actor.tenantId===scope.tenantId&&actor.applicationId===scope.applicationId&&actor.principalId===scope.principalId;};
@@ -61,6 +61,8 @@ export async function createGeneratedOfflineRuntime(config){
     async stop(){await worker.stop();},
     close(){if(closePromise)return closePromise;closed=true;for(const panel of panels)panel.dispose();closePromise=(async()=>{await worker.stop();queue.close();})();return closePromise;},
     async list(){ensureOpen();if(!await current())throw Error('Offline operation not allowed');const result=await queue.list();if(closed||!await current())throw Error('Offline operation not allowed');return result;},
+    async hasPendingRollbackAnchor(){ensureOpen();if(!await current()||closed)throw Error('Offline operation not allowed');return queue.hasPendingRollbackAnchor();},
+    async syncRollbackAnchor(){ensureOpen();if(!await current()||closed)throw Error('Offline operation not allowed');const result=await queue.syncRollbackAnchor();if(closed||!await current())throw Error('Offline operation not allowed');return result;},
     operations(){return [...operations].map(([id,label])=>({id,label}));}
   };
   return runtime;
