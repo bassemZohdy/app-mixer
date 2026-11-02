@@ -7,7 +7,7 @@ import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
-export type AgentEventIngressObservation={outcome:'accepted'|'completed'|'rejected'|'unavailable'|'disconnected';status?:number;durationMs:number};
+export type AgentEventIngressObservation={outcome:'accepted'|'completed'|'rejected'|'unavailable'|'disconnected';status?:number;reason?:'busy'|'timeout'|'other';durationMs:number};
 type Options={
  triggers:SqliteAgentTriggers;
  definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>;getWithSignal?:(tenantId:string,agentId:string,signal:AbortSignal)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};
@@ -47,10 +47,11 @@ export function createAgentEventIngress(options:Options):Server {
  const basicLookup=definitions.get.bind(definitions),getDefinition=definitions.getWithSignal?definitions.getWithSignal.bind(definitions):(tenantId:string,agentId:string,_signal:AbortSignal)=>basicLookup(tenantId,agentId);
  let inFlight=0;
  return createServer(async(req,res)=>{
-  if(observe){const started=performance.now();let reported=false;const report=(disconnected:boolean)=>{if(reported)return;reported=true;const status=disconnected?undefined:res.statusCode,outcome:AgentEventIngressObservation['outcome']=disconnected?'disconnected':status===202?'accepted':status===200?'completed':status!==undefined&&status>=500?'unavailable':'rejected';try{const result=observe({outcome,...(status===undefined?{}:{status}),durationMs:Math.max(0,performance.now()-started)});if(result&&typeof result.then==='function')Promise.resolve(result).catch(()=>{});}catch{}};res.once('finish',()=>report(false));res.once('close',()=>report(true));}
+  let unavailableReason:'busy'|'timeout'|undefined;
+  if(observe){const started=performance.now();let reported=false;const report=(disconnected:boolean)=>{if(reported)return;reported=true;const status=disconnected?undefined:res.statusCode,outcome:AgentEventIngressObservation['outcome']=disconnected?'disconnected':status===202?'accepted':status===200?'completed':status!==undefined&&status>=500?'unavailable':'rejected';try{const result=observe({outcome,...(status===undefined?{}:{status}),...(outcome==='unavailable'?{reason:unavailableReason??'other'}:{}),durationMs:Math.max(0,performance.now()-started)});if(result&&typeof result.then==='function')Promise.resolve(result).catch(()=>{});}catch{}};res.once('finish',()=>report(false));res.once('close',()=>report(true));}
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
-  if(maxInFlight!==undefined&&inFlight>=maxInFlight){reply(res,503,{error:'Event ingress busy'});return;}
-  inFlight++;let expired=false;const controller=new AbortController(),timer=requestTimeoutMs===undefined?undefined:setTimeout(()=>{expired=true;controller.abort();if(!res.writableEnded&&!res.destroyed){if(!req.complete)res.once('finish',()=>req.destroy());reply(res,503,{error:'Event ingress timeout'});}else if(!req.complete)req.destroy();},requestTimeoutMs);try{
+  if(maxInFlight!==undefined&&inFlight>=maxInFlight){unavailableReason='busy';reply(res,503,{error:'Event ingress busy'});return;}
+  inFlight++;let expired=false;const controller=new AbortController(),timer=requestTimeoutMs===undefined?undefined:setTimeout(()=>{expired=true;unavailableReason='timeout';controller.abort();if(!res.writableEnded&&!res.destroyed){if(!req.complete)res.once('finish',()=>req.destroy());reply(res,503,{error:'Event ingress timeout'});}else if(!req.complete)req.destroy();},requestTimeoutMs);try{
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
   if(authenticate){try{source=await authenticate(req,controller.signal);}catch{}
    if(expired)return;
