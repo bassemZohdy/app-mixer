@@ -121,3 +121,11 @@ test('cron exclusions reject invalid calendars and no occurrence within the boun
  const s=setup();try{const base={kind:'cron',expression:'0 0 * * *'};for(const excludeDates of [null,'2026-01-01',['2026-02-30'],['2026-1-01'],['2026-01-01','2026-01-01'],Array(367).fill('2026-01-01')])assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{...base,excludeDates}},0,0),/excluded dates/);assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'interval',intervalMs:1000,excludeDates:[]}},0,0),/Invalid schedule/);const years=Array.from({length:10},(_,i)=>`${2027+i}-01-01`);assert.throws(()=>s.schedules.save(scope,'none',{...config,rule:{kind:'cron',expression:'0 0 1 1 *',excludeDates:years}},0,Date.parse('2026-01-02T00:00:00Z')),/nine years/);assert.equal(s.schedules.get(scope,'none'),undefined);
  }finally{close(s);}
 });
+
+test('stopping a manual schedule pass prevents enqueue during authorization and retries the occurrence',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');try{
+  definitions.save('tenant',manifest,0);s.schedules.save(scope,'timer',config,0,0);let started,release,block=true;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);
+  const worker=new AgentScheduleWorker({schedules:s.schedules,scope,definitions,authorize:async()=>{if(block){started();await gate;}return true;},maxPending:5,maxPerPass:2,pollMs:100,onError:()=>{},clock:()=>1000});
+  const pending=worker.runOnce();await ready;const stopped=worker.stop();block=false;release();assert.equal(await pending,0);await stopped;assert.equal(s.runs.list(scope).length,0);assert.equal(await worker.runOnce(),1);assert.equal(s.triggers.get(scope,s.runs.list(scope)[0].runId).payload.scheduleId,'timer');
+ }finally{definitions.close();close(s);}
+});
