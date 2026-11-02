@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('literal text limit counts Unicode code points', verifyUnicodeTextLimit);
+  test('identifier limit counts Unicode code points', verifyUnicodeIdentifierLimit);
   testWidgets('preserves isolated surfaces through updates and recreation', verifySurfaceParity);
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);

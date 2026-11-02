@@ -145,3 +145,16 @@ void verifyUnicodeTextLimit() {
   store.apply(update(text));expect(store.snapshot().single?.text,text);
   expect(()=>store.apply(update('${text}x')),throwsFormatException);expect(store.snapshot().single?.text,text);
 }
+
+void verifyUnicodeIdentifierLimit() {
+  final store=FlutterSurfaceStore(),identifier=List.filled(256,'\u{1F600}').join();
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  Map<String,Object?> update(String event)=>message('updateComponents',{'surfaceId':'main','components':[
+    {'id':'root','component':'Button','child':identifier,'action':{'event':{'name':event}}},
+    {'id':identifier,'component':'Text','text':'Safe'}
+  ]});
+  store.apply(update(identifier));expect((store.action('main','root',store.views().single.revision)['action'] as Map)['name'],identifier);
+  expect(()=>store.apply(update('${identifier}x')),throwsFormatException);
+  expect((store.action('main','root',store.views().single.revision)['action'] as Map)['name'],identifier);
+}

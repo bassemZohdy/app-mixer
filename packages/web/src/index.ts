@@ -8,9 +8,9 @@ type Interaction = {write: (path: string, value: string, input: HTMLInputElement
 type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document, interaction: Interaction) => HTMLElement;
 const obj = (x: unknown): x is Obj => x !== null && typeof x === 'object' && !Array.isArray(x);
 const only = (value: Obj, keys: string[]): boolean => Object.keys(value).every(key => keys.includes(key));
-const id = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= 256;
 // JSON Schema maxLength counts Unicode code points, not UTF-16 code units.
-function withinTextLimit(value: string): boolean { if (value.length <= 10000) return true; let count=0; for (const _ of value) if (++count>10000) return false; return true; }
+function withinCodePointLimit(value: string, limit: number): boolean { if (value.length <= limit) return true; let count=0; for (const _ of value) if (++count>limit) return false; return true; }
+const id = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && withinCodePointLimit(x,256);
 function pointer(path: string): string[] {
   if (path === '' || path === '/') return [];
   if (!path.startsWith('/')) throw Error('Only absolute JSON pointers are supported');
@@ -102,7 +102,7 @@ function validateBasic(c: Obj): void {
   const type = c.component;
   if (type === 'Text') {
     if (!only(c,['id','component','text','variant'])) throw Error('Unsupported Text property');
-    if ((!(typeof c.text === 'string' && withinTextLimit(c.text)) && !(obj(c.text) && only(c.text,['path']) && typeof c.text.path === 'string' && pointer(c.text.path))) || (c.variant !== undefined && !['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string))) throw Error('Unsupported Text');
+    if ((!(typeof c.text === 'string' && withinCodePointLimit(c.text,10000)) && !(obj(c.text) && only(c.text,['path']) && typeof c.text.path === 'string' && pointer(c.text.path))) || (c.variant !== undefined && !['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string))) throw Error('Unsupported Text');
   } else if (type === 'Column' || type === 'Row') {
     if (!only(c,['id','component','children','justify','align']) || !Array.isArray(c.children) || c.children.length > 1000 || !c.children.every(id) || (c.justify !== undefined && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].includes(c.justify as string)) || (c.align !== undefined && !['start','center','end','stretch'].includes(c.align as string))) throw Error('Unsupported layout');
   } else if (type === 'Card') {

@@ -9,6 +9,7 @@ import 'parity_scenario.dart';
 Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
 void main() {
   test('literal text limit counts Unicode code points', verifyUnicodeTextLimit);
+  test('identifier limit counts Unicode code points', verifyUnicodeIdentifierLimit);
   testWidgets('surface lifecycle preserves multiline editing', verifySurfaceParity);
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);

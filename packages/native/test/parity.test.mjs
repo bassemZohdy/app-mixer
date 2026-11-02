@@ -218,3 +218,13 @@ test('web and native apply the same Unicode code point limit to literal text ato
  for(const renderer of [web,native])assert.throws(()=>renderer.apply(update(text+'x')));
  assert.equal(host.children[0].children[0].textContent,text);assert.equal(native.snapshot()[0].root.text,text);
 });
+
+test('web and native count Unicode code points in component and action identifiers',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const identifier='\u{1F600}'.repeat(256),tooLong=identifier+'x';
+ const update=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:identifier,action:{event:{name:identifier}}},{id:identifier,component:'Text',text:'Safe'}]});
+ for(const renderer of [web,native]){renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));renderer.apply(update);}
+ assert.equal(native.action('main','root',native.snapshot()[0].revision).action.name,identifier);
+ for(const renderer of [web,native])assert.throws(()=>renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:identifier,action:{event:{name:tooLong}}}]})));
+ assert.equal(native.action('main','root',native.snapshot()[0].revision).action.name,identifier);assert.equal(host.children[0].children[0].children[0].textContent,'Safe');
+});

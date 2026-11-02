@@ -6,7 +6,8 @@ const appMixerCatalog = 'https://raw.githubusercontent.com/bassemZohdy/app-mixer
 const basicCatalog = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 typedef A2UISubscribe = VoidCallback? Function(ValueChanged<Object?> receive);
 
-bool _id(Object? value) => value is String && value.isNotEmpty && value.length <= 256;
+bool _withinCodePointLimit(String value, int limit) => value.length <= limit || value.runes.take(limit+1).length <= limit;
+bool _id(Object? value) => value is String && value.isNotEmpty && _withinCodePointLimit(value,256);
 bool _only(Map<String, dynamic> value, List<String> keys) => value.keys.every(keys.contains);
 Map<String, dynamic> _object(Object? value) {
   if (value is! Map || value.keys.any((key) => key is! String)) throw FormatException('Expected object');
@@ -266,7 +267,7 @@ class FlutterSurfaceStore {
     final type = c['component'];
     if (type == 'Text') {
       final text = c['text'];
-      var validText = text is String && (text.length <= 10000 || text.runes.take(10001).length <= 10000);
+      var validText = text is String && _withinCodePointLimit(text,10000);
       if (text is Map && _only(_object(text), ['path']) && text['path'] is String) {_pointer(text['path'] as String); validText = true;}
       if (!_only(c, ['id','component','text','variant']) || !validText || (c.containsKey('variant') && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
     } else if (type == 'Column' || type == 'Row') {

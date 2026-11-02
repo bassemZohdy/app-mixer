@@ -72,3 +72,18 @@ test('catalog text length follows Unicode code points at the renderer boundary',
   renderer.apply(update(limit));assert.equal(host.children[0].children[0].textContent,limit);
   assert.throws(()=>renderer.apply(update(above)));assert.equal(host.children[0].children[0].textContent,limit);
 });
+
+test('catalog identifiers use Unicode code point limits in actual component references', async () => {
+  const catalog=await load('../catalog/v1/catalog.json'),ajv=new Ajv2020({strict:false});
+  const card=ajv.compile(catalog.components.Card),row=ajv.compile(catalog.components.Row);
+  const identifier='\u{1F600}'.repeat(256),tooLong=identifier+'x';
+  assert.equal(card({child:identifier}),true);assert.equal(card({child:tooLong}),false);
+  assert.equal(row({children:[identifier]}),true);assert.equal(row({children:[tooLong]}),false);
+  const doc={createElement:()=>new Element(doc)},host=doc.createElement(),renderer=new A2UIRenderer(host);
+  const message=(kind,payload)=>({version:'v0.9.1',[kind]:payload});
+  renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Card',child:identifier},{id:identifier,component:'Text',text:'Safe'}]}));
+  assert.equal(host.children[0].children[0].children[0].textContent,'Safe');
+  assert.throws(()=>renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Card',child:tooLong}]})));
+  assert.equal(host.children[0].children[0].children[0].textContent,'Safe');
+});
