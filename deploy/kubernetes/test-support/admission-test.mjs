@@ -13,6 +13,11 @@ const env=(c,name)=>c.env.find(e=>e.name===name);
 // be denied before asserting individual rejection cases.
 const unsigned=structuredClone(original);env(unsigned.spec.template.spec.containers[0],'APP_MIXER_PUBLICATION_MODE').value='unsigned';
 let enforced;for(let i=0;i<30;i++){enforced=apply(unsigned);if(enforced.status!==0&&enforced.stderr.includes('app-mixer-data-plane-security'))break;await delay(1000);}if(enforced.status===0||!enforced.stderr.includes('app-mixer-data-plane-security'))throw Error('Admission policy did not become active: '+enforced.stderr);
+// JWKS reload uses the same approved interval set and rejects duplicates.
+const jwksReload=structuredClone(original);jwksReload.spec.template.spec.containers[0].env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'60000'});const jwksAccepted=apply(jwksReload);if(jwksAccepted.status!==0)throw Error('Expected JWKS reload interval to pass: '+jwksAccepted.stderr);
+changed('unlisted JWKS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'1000'}));
+changed('non-numeric JWKS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'soon'}));
+changed('duplicate JWKS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'60000'},{name:'APP_MIXER_JWKS_RELOAD_MS',value:'60000'}));
 // The optional TLS reload interval must be unique and one of the approved values.
 const reload=structuredClone(original);reload.spec.template.spec.containers[0].env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'});const accepted=apply(reload);if(accepted.status!==0){const live=spawnSync('kubectl',['get','validatingadmissionpolicy','app-mixer-data-plane-security','-o','jsonpath={.status}'],{encoding:'utf8'}).stdout;const e0=reload.spec.template.spec.containers[0].env;throw Error('Expected TLS reload interval to pass: '+accepted.stderr+' env='+e0.length+' names='+e0.map(e=>e.name).join(',')+' status='+live);}
 changed('unlisted TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'1000'}));

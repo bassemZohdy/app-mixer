@@ -26,7 +26,9 @@ spec:
         (!has(object.spec.template.spec.initContainers) || object.spec.template.spec.initContainers.size() == 0)
     - message: Signed release, JWT, TLS and revocation settings must match the trusted policy.
       expression: >-
-        has(params.data) && has(variables.c.env) && variables.c.env.filter(e, e.name != 'APP_MIXER_TLS_RELOAD_MS' && e.name != 'APP_MIXER_METRICS_PORT' && e.name != 'APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS' && e.name != 'APP_MIXER_PUBLICATION_AUTH_MAX_PENDING').size() == 18 &&
+        has(params.data) && has(variables.c.env) && variables.c.env.filter(e, e.name != 'APP_MIXER_JWKS_RELOAD_MS' && e.name != 'APP_MIXER_TLS_RELOAD_MS' && e.name != 'APP_MIXER_METRICS_PORT' && e.name != 'APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS' && e.name != 'APP_MIXER_PUBLICATION_AUTH_MAX_PENDING').size() == 18 &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_JWKS_RELOAD_MS').size() <= 1 &&
+        variables.c.env.filter(e, e.name == 'APP_MIXER_JWKS_RELOAD_MS').all(e, has(e.value) && e.value in ['10000', '30000', '60000', '300000', '900000', '3600000']) &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_TLS_RELOAD_MS').size() <= 1 &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_TLS_RELOAD_MS').all(e, has(e.value) && e.value in ['10000', '30000', '60000', '300000', '900000', '3600000']) &&
         variables.c.env.filter(e, e.name == 'APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS').size() <= 1 &&

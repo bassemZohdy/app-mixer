@@ -1,4 +1,4 @@
-import {readFile,stat} from 'node:fs/promises';
+import {readFile,stat,open} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
 import pg from 'pg';
 import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
@@ -22,13 +22,15 @@ const portText=process.env.DATA_PORT??'3002',delayText=process.env.DATA_DRAIN_DE
 if(!/^[1-9][0-9]{0,4}$/.test(portText)||Number(portText)>65535||!/^(0|[1-9][0-9]{0,4})$/.test(delayText)||Number(delayText)>30000)throw Error('Invalid Data Plane configuration');
 const metricsPort=process.env.APP_MIXER_METRICS_PORT;
 if(metricsPort!==undefined&&(!/^[1-9][0-9]{0,4}$/.test(metricsPort)||Number(metricsPort)>65535||metricsPort===portText))throw Error('Invalid metrics configuration');
-const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,authenticateMetrics,revocationPool,releaseTenant;
+const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,authenticateMetrics,revocationPool,releaseTenant,keyHealth=()=>true,stopJwksReload=()=>{};
+const jwksReloadText=process.env.APP_MIXER_JWKS_RELOAD_MS;if(jwksReloadText!==undefined&&(!/^[1-9][0-9]{3,6}$/.test(jwksReloadText)||Number(jwksReloadText)>3600000||accessMode!=='jwt'))throw Error('Invalid JWKS reload configuration');
 if(metricsPort!==undefined&&accessMode!=='jwt')throw Error('Metrics require JWT access');
 if(accessMode==='jwt'){
  const keyPath=process.env.APP_MIXER_JWKS_PATH,issuer=process.env.APP_MIXER_JWT_ISSUER,audience=process.env.APP_MIXER_JWT_AUDIENCE,tenant=process.env.APP_MIXER_TENANT_ID,requiredScope=process.env.APP_MIXER_JWT_SCOPE??'app-mixer:publication.read',maxAge=process.env.APP_MIXER_JWT_MAX_AGE_SECONDS??'600';
- if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400||(await stat(keyPath)).size>131072)throw Error('Invalid publication access configuration');
+ if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400)throw Error('Invalid publication access configuration');
  if(metricsPort!==undefined&&requiredScope==='app-mixer:metrics.read')throw Error('Invalid metrics configuration');
- releaseTenant=tenant;const jwks=JSON.parse(await readFile(keyPath,'utf8')),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
+ const readJwks=async()=>{const handle=await open(keyPath,'r');try{if(!(await handle.stat()).isFile())throw Error('Invalid JWKS file');const bytes=Buffer.alloc(131073);let length=0;while(length<bytes.length){const result=await handle.read(bytes,length,bytes.length-length,length);if(!result.bytesRead)break;length+=result.bytesRead;}if(length>131072)throw Error('JWKS too large');return new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,length));}finally{await handle.close();}};
+ releaseTenant=tenant;let keyDocument=await readJwks();const jwks=JSON.parse(keyDocument),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
  if(revocationMode==='postgres'){
   const dsnPath=process.env.APP_MIXER_REVOCATION_DSN_PATH,caPath=process.env.APP_MIXER_REVOCATION_CA_PATH;
   if(!dsnPath||!caPath||(await stat(dsnPath)).size>8192||(await stat(caPath)).size>65536)throw Error('Invalid revocation configuration');
@@ -40,6 +42,14 @@ if(accessMode==='jwt'){
  }else if(revocationMode!=='disabled')throw Error('Invalid revocation configuration');
  const authenticator=scope=>createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),...(isTokenActive?{isTokenActive}:{}),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(scope)?{tenantId:tenant,principalId:claims.sub}:undefined});
  authenticate=authenticator(requiredScope);if(metricsPort!==undefined)authenticateMetrics=authenticator('app-mixer:metrics.read');
+ if(jwksReloadText!==undefined){
+  const interval=Number(jwksReloadText),maxStale=interval*3,probe=authenticator(requiredScope),targets=[authenticate,...(authenticateMetrics?[authenticateMetrics]:[])];let lastSuccess=Date.now(),epoch=0,closed=false,timer;
+  keyHealth=()=>{const now=Date.now();return !closed&&Number.isSafeInteger(now)&&now>=lastSuccess&&now-lastSuccess<maxStale;};
+  const protect=original=>Object.assign(async req=>{if(!keyHealth())return undefined;const observed=epoch,result=await original(req);return keyHealth()&&observed===epoch?result:undefined;},{close:()=>original.close()});
+  authenticate=protect(authenticate);if(authenticateMetrics)authenticateMetrics=protect(authenticateMetrics);
+  const refresh=async()=>{try{const document=await readJwks();if(closed)return;const parsed=JSON.parse(document);if(document!==keyDocument){probe.replaceKeys(parsed);if(closed)return;for(const target of targets)target.replaceKeys(parsed);epoch++;keyDocument=document;}lastSuccess=Date.now();}catch{if(!closed)console.error('JWT key reload failed');}finally{if(!closed)timer=setTimeout(refresh,interval);}};
+  timer=setTimeout(refresh,interval);stopJwksReload=()=>{closed=true;epoch++;clearTimeout(timer);probe.close();};
+ }
 }else if(accessMode!=='public')throw Error('Invalid publication access configuration');
 const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled';let releaseAllowed;
 if(floorMode==='postgres'){
@@ -51,7 +61,7 @@ const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
 metrics?.setPublicationVersion(snapshot.version);
 const authTimeout=process.env.APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS??'5000',authPending=process.env.APP_MIXER_PUBLICATION_AUTH_MAX_PENDING??'100';
 if(!/^[1-9][0-9]*$/.test(authTimeout)||Number(authTimeout)<100||Number(authTimeout)>30000||!/^[1-9][0-9]*$/.test(authPending)||Number(authPending)>100)throw Error('Invalid publication authorization limits');
-const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return releaseAllowed?await releaseAllowed():true;}catch{return false;}}}:{})},...(authenticate?{publicationAuthorizationLimits:{timeoutMs:Number(authTimeout),maxPending:Number(authPending)},authorizePublication:async(req,_version,signal)=>{const actor=await authenticate(req);if(signal.aborted||!actor)return false;return !releaseAllowed||await releaseAllowed();}}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
+const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool||jwksReloadText!==undefined?{check:async()=>{try{if(!keyHealth())return false;if(revocationPool)await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');if(releaseAllowed&&!await releaseAllowed())return false;return keyHealth();}catch{return false;}}}:{})},...(authenticate?{publicationAuthorizationLimits:{timeoutMs:Number(authTimeout),maxPending:Number(authPending)},authorizePublication:async(req,_version,signal)=>{const actor=await authenticate(req);if(signal.aborted||!actor)return false;return !releaseAllowed||await releaseAllowed();}}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
 let tlsReloader;
 if(transport==='tls'){
  const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
@@ -64,7 +74,7 @@ if(transport==='tls'){
 }else if(transport==='http')server=createDataPlane(repository,planeOptions);else throw Error('Invalid data plane transport configuration');server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
 const metricsServer=metrics?createMetricsServer({metrics,authorize:async req=>!!await authenticateMetrics(req),timeoutMs:2500,maxPending:20}):undefined;
 metricsServer?.listen(Number(metricsPort),'127.0.0.1');
-server.on('close',()=>{tlsReloader?.stop();metricsServer?.close();authenticate?.close();authenticateMetrics?.close();if(revocationPool)void revocationPool.end().catch(()=>{});});
+server.on('close',()=>{stopJwksReload();tlsReloader?.stop();metricsServer?.close();authenticate?.close();authenticateMetrics?.close();if(revocationPool)void revocationPool.end().catch(()=>{});});
 server.listen(Number(portText),'0.0.0.0');
 server.once('listening',()=>console.log('Data Plane ready'));
 let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;server.beginDrain();metrics?.setDraining(true);setTimeout(()=>server.close(),Number(delayText));});
