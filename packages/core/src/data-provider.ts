@@ -10,7 +10,7 @@ export type DataMigration={fromVersion:number;toVersion:number;digest:string;out
 export type DataMigrationRehearsal={fromVersion:number;transform:DataMigration['transform'];validate:DataMigration['validate']};
 export type DataMigrationRehearsalResult=MigrationPreview&{outputDigest:string};
 export type DataRollback={fromVersion:number;targetVersion:number;digest:string;outputDigest?:string;transform:DataMigration['transform'];validate:DataMigration['validate'];evidence?:DataMigrationEvidence};
-export type DataMigrationAuditEvent={fromVersion:number;toVersion:number;targetVersion:number|null;digest:string;recordCount:number;principalId:string;reference:string;observedAt:number};
+export type DataMigrationAuditEvent={fromVersion:number;toVersion:number;targetVersion:number|null;digest:string;outputDigest?:string;recordCount:number;principalId:string;reference:string;observedAt:number};
 export type DataRollbackEvent={fromVersion:number;toVersion:number;targetVersion:number;digest:string;recordCount:number};
 export interface DataProvider {
   readonly supportsSchemaRead?:boolean;
@@ -90,7 +90,7 @@ export class SqliteDataProvider implements DataProvider {
       CREATE TABLE IF NOT EXISTS business_schema_migration_audit (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, collection_id TEXT NOT NULL, from_version INTEGER NOT NULL,
         to_version INTEGER NOT NULL, target_version INTEGER, snapshot_digest TEXT NOT NULL, record_count INTEGER NOT NULL,
-        actor_id TEXT NOT NULL, evidence TEXT NOT NULL, observed_at INTEGER NOT NULL,
+        actor_id TEXT NOT NULL, evidence TEXT NOT NULL, observed_at INTEGER NOT NULL, output_digest TEXT,
         PRIMARY KEY(tenant_id,application_id,collection_id,to_version)
       );
       CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_replace BEFORE INSERT ON business_schema_migration_audit
@@ -107,7 +107,9 @@ export class SqliteDataProvider implements DataProvider {
         WHEN EXISTS (SELECT 1 FROM business_schema_migrations WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND collection_id=NEW.collection_id AND to_version=NEW.to_version)
         BEGIN SELECT RAISE(ABORT, 'Migration history is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS business_migrations_no_update BEFORE UPDATE ON business_schema_migrations BEGIN SELECT RAISE(ABORT, 'Migration history is immutable'); END;
-      CREATE TRIGGER IF NOT EXISTS business_migrations_no_delete BEFORE DELETE ON business_schema_migrations BEGIN SELECT RAISE(ABORT, 'Migration history is immutable'); END;`);} catch(error){this.db.close();throw error;}
+      CREATE TRIGGER IF NOT EXISTS business_migrations_no_delete BEFORE DELETE ON business_schema_migrations BEGIN SELECT RAISE(ABORT, 'Migration history is immutable'); END;`);
+      this.db.exec('BEGIN IMMEDIATE');try{const columns=this.db.prepare('PRAGMA table_info(business_schema_migration_audit)').all();if(!columns.some(column=>column.name==='output_digest'))this.db.exec('ALTER TABLE business_schema_migration_audit ADD COLUMN output_digest TEXT');this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
+    } catch(error){this.db.close();throw error;}
   }
   close():void {this.db.close();}
   getSchemaVersion(scope:DataScope,collection:string):number {
@@ -156,7 +158,7 @@ export class SqliteDataProvider implements DataProvider {
   /** Bounded actor-attributed history; the caller must separately authorize access. */
   migrationAudit(scope:DataScope,collection:string,options:{after?:number;limit?:number}={}):{items:DataMigrationAuditEvent[];nextAfter?:number}{
     checkKey(scope,collection,'validation');const after=options?.after??0,limit=options?.limit??50;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid migration audit');
-    const rows=this.db.prepare('SELECT from_version,to_version,target_version,snapshot_digest,record_count,actor_id,evidence,observed_at FROM business_schema_migration_audit WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?').all(scope.tenantId,scope.applicationId,collection,after,limit+1),items=rows.slice(0,limit).map(row=>({fromVersion:Number(row.from_version),toVersion:Number(row.to_version),targetVersion:row.target_version===null?null:Number(row.target_version),digest:String(row.snapshot_digest),recordCount:Number(row.record_count),principalId:String(row.actor_id),reference:String(row.evidence),observedAt:Number(row.observed_at)}));return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.toVersion}:{})};
+    const rows=this.db.prepare('SELECT from_version,to_version,target_version,snapshot_digest,output_digest,record_count,actor_id,evidence,observed_at FROM business_schema_migration_audit WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?').all(scope.tenantId,scope.applicationId,collection,after,limit+1),items=rows.slice(0,limit).map(row=>({fromVersion:Number(row.from_version),toVersion:Number(row.to_version),targetVersion:row.target_version===null?null:Number(row.target_version),digest:String(row.snapshot_digest),...(row.output_digest===null?{}:{outputDigest:String(row.output_digest)}),recordCount:Number(row.record_count),principalId:String(row.actor_id),reference:String(row.evidence),observedAt:Number(row.observed_at)}));return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.toVersion}:{})};
   }
   migrateCollection(scope:DataScope,collection:string,migration:DataMigration):MigrationPreview {return this.applyMigration(scope,collection,migration);}
   private applyMigration(scope:DataScope,collection:string,migration:DataMigration,rollbackTarget?:number):MigrationPreview {
@@ -177,7 +179,7 @@ export class SqliteDataProvider implements DataProvider {
       this.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?) ON CONFLICT(tenant_id,application_id,collection_id) DO UPDATE SET version=excluded.version').run(scope.tenantId,scope.applicationId,collection,toVersion);
       this.db.prepare('INSERT INTO business_schema_migrations VALUES (?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,preview.digest,preview.count);
       if(rollbackTarget!==undefined)this.db.prepare('INSERT INTO business_schema_rollbacks VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,rollbackTarget,preview.digest,preview.count);
-      if(safeEvidence)this.db.prepare('INSERT INTO business_schema_migration_audit VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,rollbackTarget??null,preview.digest,preview.count,safeEvidence.principalId,safeEvidence.reference,safeEvidence.observedAt);
+      if(safeEvidence)this.db.prepare('INSERT INTO business_schema_migration_audit (tenant_id,application_id,collection_id,from_version,to_version,target_version,snapshot_digest,record_count,actor_id,evidence,observed_at,output_digest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,rollbackTarget??null,preview.digest,preview.count,safeEvidence.principalId,safeEvidence.reference,safeEvidence.observedAt,outputDigest??null);
       const result=this.snapshot(scope,collection).preview;this.db.exec('COMMIT');return result;
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
