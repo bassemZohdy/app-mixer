@@ -182,10 +182,10 @@ class FlutterComponentRegistry {
 }
 
 class NativeNode {
-  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.extensionProps});
+  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.bindingPath, this.extensionProps});
   final String id, kind;
   final List<NativeNode> children;
-  final String? text, variant, justify, align, label, value;
+  final String? text, variant, justify, align, label, value, bindingPath;
   final Map<String, dynamic>? extensionProps;
 }
 class _Surface {
@@ -319,7 +319,7 @@ class FlutterSurfaceStore {
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
     }
     return visit('root', {}, 0, true, false, false);
   }
@@ -404,7 +404,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       // Preserve child state when another referenced component arrives or the order changes.
       children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }
-    if (node.kind == 'TextField') return _BoundTextField(key:ValueKey((surface.id,path,node.id)),label:node.label ?? '',value:node.value ?? '',multiline:node.variant=='longText',onChanged:(value){
+    if (node.kind == 'TextField') return _BoundTextField(key:ValueKey((surface.id,path,node.id,node.bindingPath)),label:node.label ?? '',value:node.value ?? '',multiline:node.variant=='longText',onChanged:(value){
       if (!mounted || generation!=_generation || !identical(store,_store)) return;
       try {store.writeField(surface.id,node.id,surface.revision,value);setState(() {});} catch(error){widget.onError(error);}
     });

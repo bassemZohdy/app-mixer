@@ -540,6 +540,20 @@ void main() {
     expect(find.text('日本'),findsNWidgets(2));
     expect(state.widget.focusNode.hasFocus,isTrue);expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
+  testWidgets('rebinding a field does not carry composition into another model path', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateDataModel',{'surfaceId':'main','value':{'old':'Original','new':'Target'}}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Column','children':['field','old','new']},{'id':'field','component':'TextField','label':'Name','value':{'path':'/old'}},{'id':'old','component':'Text','text':{'path':'/old'}},{'id':'new','component':'Text','text':{'path':'/new'}}]}));
+    await tester.pump();await tester.showKeyboard(find.byType(TextField));final previous=tester.state<EditableTextState>(find.byType(EditableText));
+    previous.updateEditingValue(const TextEditingValue(text:'Draft',selection:TextSelection.collapsed(offset:5),composing:TextRange(start:0,end:5)));await tester.pump();
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'field','component':'TextField','label':'Name','value':{'path':'/new'}}]}));await tester.pump();
+    final current=tester.state<EditableTextState>(find.byType(EditableText));expect(current,isNot(same(previous)));expect(previous.mounted,isFalse);expect(current.textEditingValue.text,'Target');expect(find.text('Original'),findsOneWidget);expect(find.text('Target'),findsNWidgets(2));
+    await tester.enterText(find.byType(TextField),'Updated');await tester.pump();expect(find.text('Original'),findsOneWidget);expect(find.text('Updated'),findsNWidgets(2));expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   testWidgets('incremental sibling insertion and reordering preserve field editing state', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
