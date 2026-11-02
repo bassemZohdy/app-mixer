@@ -1,11 +1,12 @@
 import { ComponentRegistry, basicRegistry } from '@app-mixer/web';
 import { CapabilityRegistry, type CapabilityCandidate, type CapabilityAuditSink } from './capabilities.js';
+import { createBoundedOperation } from './bounded-operation.js';
 import { ExtensionRegistry, createExtensionPublicationGuard, type ExtensionManifest, type ExtensionHost } from './extensions.js';
 import { isValidExtensionOperations, validate, type ApplicationDefinition, type ExtensionOperation, type ExtensionReference } from './index.js';
 
 export type ExtensionInvocationApproval=(context:{tenantId:string;principalId:string},reference:ExtensionReference,operation:ExtensionOperation)=>boolean|Promise<boolean>;
 type CapabilityPolicy = {authorize:(context:{tenantId:string;principalId:string})=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>};
-type DeclaredCapabilityPolicy = CapabilityPolicy & {authorizeExtension?:ExtensionInvocationApproval};
+type DeclaredCapabilityPolicy = CapabilityPolicy & {authorizeExtension?:ExtensionInvocationApproval;policyTimeoutMs?:number;maxPendingPolicies?:number};
 
 /** Install a host-selected trusted extension component for an application. */
 export function registerExtensionComponent(target: ComponentRegistry, extensions: ExtensionRegistry, references: ExtensionReference[], name: string, validate?: Parameters<ComponentRegistry['register']>[2]): void {
@@ -50,10 +51,10 @@ export function registerDeclaredExtensionCapability(
   if(!implementation)throw Error('Extension operation not available');
   if(!policy||typeof policy.authorize!=='function'||typeof policy.validate!=='function'||(policy.authorizeExtension!==undefined&&typeof policy.authorizeExtension!=='function'))throw Error('Invalid extension capability policy');
   const reference=application.extensions?.find(item=>item.id===operation.extensionId);if(!reference)throw Error('Extension reference not available');
-  const safeReference=structuredClone(reference),safeOperation=structuredClone(operation),{authorize,validate,authorizeExtension}=policy;
-  const permit=async(context:{tenantId:string;principalId:string})=>await authorize({...context})===true&&(!authorizeExtension||await authorizeExtension({...context},structuredClone(safeReference),structuredClone(safeOperation))===true);
+  const safeReference=structuredClone(reference),safeOperation=structuredClone(operation),{authorize,validate,authorizeExtension}=policy,bounded=createBoundedOperation(policy.policyTimeoutMs,policy.maxPendingPolicies,'Invalid extension capability policy','Extension policy unavailable');
+  const permit=(context:{tenantId:string;principalId:string})=>bounded(async signal=>{const check=()=>{if(signal.aborted)throw Error('Extension policy unavailable');},scope=async()=>{check();const allowed=await authorize({...context})===true;check();return allowed;},approval=async()=>{check();const allowed=!authorizeExtension||await authorizeExtension({...context},structuredClone(safeReference),structuredClone(safeOperation))===true;check();return allowed;};return await scope()&&await approval()&&await scope()&&await approval();});
   const execute=implementation as unknown as (input:unknown,context:{tenantId:string;principalId:string})=>unknown|Promise<unknown>;
-  target.register(candidate,{authorize:authorizeExtension?permit:authorize,validate,...(authorizeExtension?{authorizeInput:(context:{tenantId:string;principalId:string})=>permit(context)}:{}),execute});
+  const recheck=!!authorizeExtension||policy.policyTimeoutMs!==undefined;target.register(candidate,{authorize:recheck?permit:authorize,validate,...(recheck?{authorizeInput:(context:{tenantId:string;principalId:string})=>permit(context)}:{}),execute});
 }
 
 export type ExtensionRuntimeBindings = {

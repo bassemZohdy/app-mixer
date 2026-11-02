@@ -4,7 +4,21 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync} from 'node:crypto';
-import {ExtensionRegistry,SqliteApplicationStore,createExtensionPublicationGuard,createExtensionRuntime,signExtensionManifest,computeExtensionIntegrity} from '../dist/index.js';
+import {ExtensionRegistry,SqliteApplicationStore,createExtensionPublicationGuard,createExtensionRuntime,createCapabilityServer,signExtensionManifest,computeExtensionIntegrity} from '../dist/index.js';
+
+function policyFixture(policy){const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:['read.data']},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},registry=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]}),calls=[];registry.register(manifest,{components:{},tools:{lookup:()=>{calls.push('executed');return 'ok';}},providers:{}});const application={id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[reference],extensionOperations:[{extensionId:reference.id,kind:'tool',name:'lookup'}]},runtime=createExtensionRuntime(application,registry,()=>{},{operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},validate:()=>true,...policy}}});return {runtime,calls,context:{tenantId:'tenant',principalId:'operator',origin:'ui'}};}
+
+test('extension scope authorization is rechecked after live approval waits',async()=>{
+ let allowed=true,release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,authorizeExtension:async()=>{entered();await gate;return true;}});const pending=runtime.capabilities.invoke('lookup',{},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(calls,[]);
+});
+
+test('bounded extension policy rejects late approvals and reserves pending capacity',async()=>{
+ let blocked=true,release,callsToPolicy=0;const gate=new Promise(resolve=>release=resolve),{runtime,calls,context}=policyFixture({authorize:()=>true,authorizeExtension:async()=>{callsToPolicy++;if(blocked)await gate;return true;},policyTimeoutMs:100,maxPendingPolicies:1});try{await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);assert.equal(callsToPolicy,1);assert.deepEqual(calls,[]);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls,[]);assert.equal(await runtime.capabilities.invoke('lookup',{},context),'ok');assert.deepEqual(calls,['executed']);}finally{release();}
+});
+
+test('extension policy timeout returns HTTP 503 without invoking the implementation',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),{runtime,calls}=policyFixture({authorize:()=>true,authorizeExtension:()=>gate,policyTimeoutMs:100,maxPendingPolicies:1}),server=createCapabilityServer(runtime.capabilities,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Extension policy unavailable'});assert.deepEqual(calls,[]);}finally{release(true);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
 
 test('approved extension publication survives repository reopening and is rechecked when rebuilding the runtime',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-extension-lifecycle-'));
