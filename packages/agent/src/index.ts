@@ -188,6 +188,8 @@ export {registerAgentRunControl} from './agent-run-control-capability.js';
 export {registerAgentRunInspection} from './agent-run-inspection-capability.js';
 export {registerAgentManualStart} from './agent-manual-start-capability.js';
 export {registerAgentDefinitionControl} from './agent-definition-control-capability.js';
+export {registerAgentDefinitionStatus} from './agent-definition-status-capability.js';
+export type {AgentDefinitionStatusCapabilityOptions} from './agent-definition-status-capability.js';
 export type {AgentDefinitionControlCapabilityOptions} from './agent-definition-control-capability.js';
 export type {AgentManualStartCapabilityOptions} from './agent-manual-start-capability.js';
 export type {AgentRunInspectionCapabilityOptions,AgentRunInspectionSnapshot} from './agent-run-inspection-capability.js';
