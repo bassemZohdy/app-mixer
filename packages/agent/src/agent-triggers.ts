@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
@@ -31,7 +32,7 @@ export class SqliteAgentTriggers {
   CREATE TABLE IF NOT EXISTS agent_trigger_redactions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_replace BEFORE INSERT ON agent_trigger_redactions WHEN EXISTS(SELECT 1 FROM agent_trigger_redactions WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_update BEFORE UPDATE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;
-  CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_delete BEFORE DELETE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;`);if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_runs'").get())throw Error('Run registry unavailable');}catch(error){this.db.close();throw error;}}
+  CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_delete BEFORE DELETE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;`);if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_runs'").get())throw Error('Run registry unavailable');ensureTriggerReceiptSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  get(scope:AgentRunScope,runId:string):TriggerRecord|undefined{
   if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(runId))throw Error('Invalid trigger');
@@ -49,6 +50,7 @@ export class SqliteAgentTriggers {
    const runId=randomUUID();this.db.prepare("INSERT INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,options.definitionVersion,options.maxAttempts,options.deadline);
    insertAgentTraceParent(this.db,scope,runId,options.traceParent);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,event.sourceId,event.eventId,event.principalId,event.eventType,payload,hash,runId);
+   this.db.prepare('INSERT INTO agent_trigger_receipts VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,now);
    this.db.exec('COMMIT');return {runId,duplicate:false};
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }

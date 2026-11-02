@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
 import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
@@ -76,7 +77,7 @@ export class SqliteAgentSchedules {
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_replace BEFORE INSERT ON agent_schedule_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_schedule_events WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_schedule_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND schedule_id=NEW.schedule_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_update BEFORE UPDATE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_delete BEFORE DELETE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;`);
-  for(const table of ['agent_runs','agent_trigger_inbox'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Trigger registry unavailable');
+  for(const table of ['agent_runs','agent_trigger_inbox'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Trigger registry unavailable');ensureTriggerReceiptSchema(this.db);
  }catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  private check(scope:AgentRunScope,scheduleId:string):void{if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(scheduleId))throw Error('Invalid schedule scope');}
@@ -111,6 +112,7 @@ export class SqliteAgentSchedules {
    const scheduledAt=schedule.nextAt,coalesce=schedule.config.misfire==='coalesce',rule=schedule.config.rule;let nextAt=coalesce&&rule.kind==='interval'?now+(rule.intervalMs-((now-scheduledAt)%rule.intervalMs)):next(rule,coalesce?now:scheduledAt);if(!Number.isSafeInteger(nextAt))throw Error('Invalid schedule time');const runId=randomUUID(),sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${schedule.generation}:t${scheduledAt}`,payload=JSON.stringify({scheduleId,scheduledAt,...(coalesce?{coalescedThrough:now}:{})}),hash=createHash('sha256').update(payload).digest('hex');
    this.db.prepare("INSERT INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,policy.definitionVersion,policy.maxAttempts,now+policy.runTimeoutMs);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,sourceId,eventId,schedule.config.principalId,'schedule.tick',payload,hash,runId);
+   this.db.prepare('INSERT INTO agent_trigger_receipts VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,now);
    this.db.prepare('UPDATE agent_schedules SET revision=?,next_at=? WHERE tenant_id=? AND agent_id=? AND schedule_id=?').run(schedule.revision+1,nextAt,scope.tenantId,scope.agentId,scheduleId);
    this.db.prepare("INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,'fired',?,?,?,?,?,?,?,?)").run(scope.tenantId,scope.agentId,scheduleId,schedule.revision+1,schedule.generation,nextAt,JSON.stringify(schedule.config),actorId??null,runId,scheduledAt,now);
    this.db.exec('COMMIT');return {runId,scheduledAt};
