@@ -324,7 +324,7 @@ test('typed array contains rules agree with server validation',async()=>{
   id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],base);
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
-   for(const contains of [{type:'number',multipleOf:0},{type:'string',pattern:'['},{type:'number',minLength:2},{type:'string',minimum:1},{minimum:1},{type:'boolean',const:{}},{type:'array',items:{type:'string'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
+   for(const contains of [{type:'number',multipleOf:0},{type:'string',pattern:'['},{type:'number',minLength:2},{type:'string',minimum:1},{minimum:1},{type:'boolean',const:{}},{type:'array',items:{format:'email'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
@@ -342,6 +342,22 @@ test('object array contains checks nested properties and required fields',async(
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
    for(const contains of [{properties:{x:{type:'string'}}},{type:'object',required:['x','x']},{type:'object',additionalProperties:{type:'string'}},{type:'object',properties:{x:{pattern:'['}}},tooDeep])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
+  }
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('nested array matching checks item rules, uniqueness and match counts',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{core:{type:'string',pattern:'^core:'}},properties:{people:{type:'array',items:{type:'object',properties:{name:{type:'string'},skills:{type:'array',items:{type:'string'}}}},contains:{type:'object',properties:{skills:{type:'array',items:{type:'string',pattern:'^(core|support):'},minItems:2,maxItems:3,uniqueItems:true,contains:{$ref:'#/$defs/core'},minContains:1,maxContains:1}},required:['skills']}}},required:['people']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
+  const valid={people:[{name:'Ada',skills:['core:js','support:ops']}]},records={valid,short:{people:[{skills:['core:js']}]},long:{people:[{skills:['core:a','support:b','support:c','support:d']}]},duplicate:{people:[{skills:['core:js','core:js']}]},baditem:{people:[{skills:['core:js','bad']}]},nocore:{people:[{skills:['support:a','support:b']}]},twocore:{people:[{skills:['core:a','core:b']}]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const name of ['short','long','duplicate','baditem','nocore','twocore']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],valid);
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   assert.doesNotThrow(()=>factory(options));
+   for(const contains of [{type:'array',uniqueItems:'yes'},{type:'array',minItems:-1},{type:'array',minContains:1},{type:'array',contains:{type:'string'},minContains:2,maxContains:1},{type:'string',items:{type:'string'}},{type:'array',items:{type:'string',format:'email'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });

@@ -18,6 +18,12 @@ function matchesContains(rule,value){
     const length=Array.from(value).length;
     if(rule.minLength!==undefined&&length<rule.minLength||rule.maxLength!==undefined&&length>rule.maxLength||rule.pattern&&!rule.pattern.test(value))return false;
   }
+  if(Array.isArray(value)){
+    if(rule.minItems!==undefined&&value.length<rule.minItems||rule.maxItems!==undefined&&value.length>rule.maxItems)return false;
+    if(rule.uniqueItems&&new Set(value.map(canonicalFormValue)).size!==value.length)return false;
+    if(rule.items&&!value.every(item=>matchesContains(rule.items,item)))return false;
+    if(rule.contains){const count=value.filter(item=>matchesContains(rule.contains,item)).length;if(count<rule.contains.min||(rule.contains.max!==undefined&&count>rule.contains.max))return false;}
+  }
   if(value!==null&&typeof value==='object'&&!Array.isArray(value)){
     if(rule.required.some(key=>!Object.hasOwn(value,key)))return false;
     for(const [key,child] of Object.entries(value)){
@@ -74,7 +80,7 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
   const schemaScalar=value=>{if(Object.hasOwn(value,'_nullable')||Object.hasOwn(value,'_choices'))throw Error('Unsupported record JSON Schema form');if(Object.hasOwn(value,'const')){const {const:fixed,...rest}=value;if(value.enum!==undefined){if(!Array.isArray(value.enum))throw Error('Unsupported record JSON Schema form');schemaScalar(rest);if(!value.enum.includes(fixed))throw Error('Unsupported record JSON Schema form');}return schemaScalar({...rest,enum:[fixed]});}const result=scalarType(value.type);if(!['string','number','integer','boolean','object','array'].includes(result.type))return {...value};const copy={...value,type:result.type};let nullable=result.nullable;if(value.enum!==undefined){if(!['string','number','integer','boolean'].includes(result.type)||!Array.isArray(value.enum)||value.enum.length<1||value.enum.length>100||new Set(value.enum).size!==value.enum.length||value.enum.some(choice=>choice===null?!nullable:result.type==='string'?typeof choice!=='string'||choice.length>120:result.type==='boolean'?typeof choice!=='boolean':typeof choice!=='number'||!Number.isFinite(choice)||(result.type==='integer'&&!Number.isSafeInteger(choice))))throw Error('Unsupported record JSON Schema form');nullable=nullable&&value.enum.includes(null);copy._choices=value.enum.filter(choice=>choice!==null);delete copy.enum;}return nullable?{...copy,_nullable:true}:copy;};
   function compileContains(spec,depth){
     const primitive=value=>value===null||typeof value==='string'&&value.length<=1024||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value);
-    if(++context.nodes>200||depth>5||!object(spec)||!ruleKeys(spec,['type','const','enum','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','properties','required','additionalProperties'])||(spec.type!==undefined&&!['string','number','integer','boolean','null','object','array'].includes(spec.type)))throw Error('Unsupported record JSON Schema form');
+    if(++context.nodes>200||depth>5||!object(spec)||!ruleKeys(spec,['type','const','enum','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','properties','required','additionalProperties','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains'])||(spec.type!==undefined&&!['string','number','integer','boolean','null','object','array'].includes(spec.type)))throw Error('Unsupported record JSON Schema form');
     const numeric=spec.type==='number'||spec.type==='integer',string=spec.type==='string';
     for(const key of ['minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf'])if(spec[key]!==undefined&&(!numeric||typeof spec[key]!=='number'||!Number.isFinite(spec[key])||(key==='multipleOf'&&spec[key]<=0)))throw Error('Unsupported record JSON Schema form');
     for(const key of ['minLength','maxLength'])if(spec[key]!==undefined&&(!string||!Number.isSafeInteger(spec[key])||spec[key]<0||spec[key]>1048576))throw Error('Unsupported record JSON Schema form');
@@ -84,8 +90,15 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     if(spec.properties!==undefined&&(!object(spec.properties)||Object.keys(spec.properties).length>40))throw Error('Unsupported record JSON Schema form');
     if(spec.required!==undefined&&(!Array.isArray(spec.required)||spec.required.length>40||spec.required.some(key=>typeof key!=='string'||key.length>256)||new Set(spec.required).size!==spec.required.length))throw Error('Unsupported record JSON Schema form');
     if(spec.additionalProperties!==undefined&&typeof spec.additionalProperties!=='boolean')throw Error('Unsupported record JSON Schema form');
+    if(['items','minItems','maxItems','uniqueItems','contains','minContains','maxContains'].some(key=>spec[key]!==undefined)&&spec.type!=='array')throw Error('Unsupported record JSON Schema form');
+    for(const key of ['minItems','maxItems'])if(spec[key]!==undefined&&(!Number.isSafeInteger(spec[key])||spec[key]<0||spec[key]>1048576))throw Error('Unsupported record JSON Schema form');
+    if(spec.uniqueItems!==undefined&&typeof spec.uniqueItems!=='boolean')throw Error('Unsupported record JSON Schema form');
+    if(spec.contains===undefined&&(spec.minContains!==undefined||spec.maxContains!==undefined))throw Error('Unsupported record JSON Schema form');
+    const min=spec.minContains??1,max=spec.maxContains;
+    if(spec.contains!==undefined&&(!Number.isSafeInteger(min)||min<0||(max!==undefined&&(!Number.isSafeInteger(max)||max<0||max<min))))throw Error('Unsupported record JSON Schema form');
     const properties=Object.create(null);for(const [key,value] of Object.entries(spec.properties??{})){if(key.length>256)throw Error('Unsupported record JSON Schema form');properties[key]=compileContains(value,depth+1);}
-    return {type:spec.type,choices:hasConst?[spec.const]:hasEnum?[...spec.enum]:undefined,minimum:spec.minimum,maximum:spec.maximum,exclusiveMinimum:spec.exclusiveMinimum,exclusiveMaximum:spec.exclusiveMaximum,multipleOf:spec.multipleOf,minLength:spec.minLength,maxLength:spec.maxLength,pattern:regex,properties,required:spec.required===undefined?[]:[...spec.required],additionalProperties:spec.additionalProperties};
+    const items=spec.items===undefined?undefined:compileContains(spec.items,depth+1),contains=spec.contains===undefined?undefined:{...compileContains(spec.contains,depth+1),min,max};
+    return {type:spec.type,choices:hasConst?[spec.const]:hasEnum?[...spec.enum]:undefined,minimum:spec.minimum,maximum:spec.maximum,exclusiveMinimum:spec.exclusiveMinimum,exclusiveMaximum:spec.exclusiveMaximum,multipleOf:spec.multipleOf,minLength:spec.minLength,maxLength:spec.maxLength,pattern:regex,properties,required:spec.required===undefined?[]:[...spec.required],additionalProperties:spec.additionalProperties,items,minItems:spec.minItems,maxItems:spec.maxItems,uniqueItems:spec.uniqueItems===true,contains};
   }
   function visit(node,path,labels,needed,depth){
     if(++context.nodes>200||arrayDepth>3)throw Error('Unsupported record JSON Schema form');
