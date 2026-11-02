@@ -51,3 +51,8 @@ test('shared offline uncertain outcomes are signaled explicitly to clients',asyn
  const registry=new CapabilityRegistry(()=>{});registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('Shared offline outcome uncertain');}});const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'person'}),()=>{});
  try{const url=await start(server),response=await fetch(`${url}/capabilities/write/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:'Shared offline outcome uncertain',code:'CAPABILITY_OUTCOME_UNCERTAIN'});}finally{await stop(server);}
 });
+
+test('successful capability without a return value uses an explicit null result',async()=>{
+ const registry=new CapabilityRegistry(()=>{});registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:()=>true,validate:()=>true,execute:()=>undefined});const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'person'}),()=>{});
+ try{const url=await start(server),response=await fetch(`${url}/capabilities/write/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,200);assert.deepEqual(await response.json(),{result:null});}finally{await stop(server);}
+});

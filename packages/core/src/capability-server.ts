@@ -41,7 +41,7 @@ function createCapabilityHandler(registry:CapabilityRegistry, authenticate:Authe
       if(value.origin!=='ui'&&value.origin!=='agent'){reply(res,400,{error:'Invalid request'});return;}
       try{
         const result=await registry.invoke(operationId,value.input,{tenantId:actor.tenantId,principalId:actor.principalId,origin:value.origin});
-        reply(res,200,{result});
+        reply(res,200,{result:result===undefined?null:result});
       }catch(error){
         if(error instanceof CapabilityOutcomeUncertainError){reply(res,503,{error:'Capability outcome uncertain',code:'CAPABILITY_OUTCOME_UNCERTAIN'});return;}
         const message=error instanceof Error?error.message:'';
