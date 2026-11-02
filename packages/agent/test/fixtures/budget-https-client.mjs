@@ -1,0 +1,3 @@
+import {createBudgetHttpsVerifier} from '../../dist/index.js';
+const target={scope:{tenantId:'tenant',agentId:'agent'},runId:'run',maxTokens:100},verify=createBudgetHttpsVerifier({target,url:process.env.TEST_LOOKUP_URL,bearerToken:'a'.repeat(32),timeoutMs:5000,maxPending:1,interpret:body=>body});
+try{const usage=await verify({tenantId:'tenant',principalId:'operator'},target,{callId:'call',status:'reserved',reserved:50,used:null},undefined,'case-1',new AbortController().signal);if(usage?.usedTokens!==17)throw Error('Wrong usage');}catch(error){process.stderr.write(String(error));process.exitCode=1;}

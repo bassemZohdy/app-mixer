@@ -230,3 +230,6 @@ export {SqliteAgentBudgetRecoveryDiscovery} from './agent-budget-recovery-discov
 export type {AgentBudgetRecoveryCandidate,AgentBudgetRecoveryPage,AgentBudgetRecoveryDiscoveryActor,AgentBudgetRecoveryDiscoveryOptions} from './agent-budget-recovery-discovery.js';
 export {registerBudgetRecoveryDiscovery} from './agent-budget-recovery-discovery-capability.js';
 export type {BudgetRecoveryDiscoveryCapabilityOptions} from './agent-budget-recovery-discovery-capability.js';
+
+export {createBudgetHttpsVerifier} from './budget-https-verifier.js';
+export type {BudgetHttpsVerifierOptions,BudgetHttpsLookupContext} from './budget-https-verifier.js';
