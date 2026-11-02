@@ -33,10 +33,10 @@ export class DevelopmentAgent {
     if(typeof instruction !== 'string' || !instruction.trim() || instruction.length>10000 || !draft ||
        typeof draft.id !== 'string' || !Number.isSafeInteger(draft.revision) || draft.revision<0 ||
        ![1,2].includes(draft.schemaVersion) || !Array.isArray(draft.pages)) throw Error('Invalid development request');
-    const snapshot=JSON.stringify(draft);
+    const baseRevision=draft.revision,schemaVersion=draft.schemaVersion,snapshot=JSON.stringify(draft);
     if(snapshot.length>200000) throw Error('Draft is too large');
     const prompt='Return only a JSON object with a patches array. Supported operations: '+
-      (draft.schemaVersion===2?'addPage with page {id,title,route,description,components}; setPageDescription with pageId and description; ':'addPage with page {id,title,route,components}; ')+
+      (schemaVersion===2?'addPage with page {id,title,route,description,components}; setPageDescription with pageId and description; ':'addPage with page {id,title,route,components}; ')+
       'setPageTitle with pageId and title; addComponent with pageId and component {id,type,props}. '+
       'Renderable component types: Text with props {text} or {path,variant?}; Input with props {label,path,variant?}. Paths are absolute JSON pointers. Input variants: shortText or longText. Input edits and Text bindings use the local surface model and do not persist. '+
       'Do not include code or additional properties. Proposals require separate human approval.\n'+
@@ -51,6 +51,6 @@ export class DevelopmentAgent {
     try { parsed=JSON.parse(output); } catch { throw Error('Model output is not valid JSON'); }
     if(!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).some(key=>key!=='patches') ||
        !Array.isArray((parsed as Record<string,unknown>).patches) || !(parsed as {patches:unknown[]}).patches.length || (parsed as {patches:unknown[]}).patches.length>100) throw Error('Invalid model proposal');
-    return this.submit(draft.revision,(parsed as {patches:unknown[]}).patches,signal);
+    return this.submit(baseRevision,(parsed as {patches:unknown[]}).patches,signal);
   }
 }
