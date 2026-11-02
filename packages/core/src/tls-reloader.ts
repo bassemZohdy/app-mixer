@@ -23,7 +23,10 @@ export function validateTlsCredentials(credentials:TlsCredentials,now:number=Dat
  catch{throw Error('Invalid TLS credentials');}
  const validFrom=Date.parse(leaf.validFrom),validTo=Date.parse(leaf.validTo);
  if(!Number.isFinite(validFrom)||!Number.isFinite(validTo)||now<validFrom||now>=validTo)throw Error('TLS certificate is not currently valid');
- const fingerprint=createHash('sha256').update(leaf.raw).update(credentials.clientCa===undefined?'':Buffer.from(credentials.clientCa)).digest('hex');
+ // The served certificate may contain intermediates after the leaf. Hash the
+ // complete chain and trust bundle so a chain-only rotation is not skipped.
+ const chain=Buffer.from(credentials.cert),ca=credentials.clientCa===undefined?Buffer.alloc(0):Buffer.from(credentials.clientCa);
+ const fingerprint=createHash('sha256').update(`${chain.length}:`).update(chain).update(`${ca.length}:`).update(ca).digest('hex');
  return {fingerprint,subject:leaf.subject,validFrom,validTo};
 }
 

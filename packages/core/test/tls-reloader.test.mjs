@@ -34,3 +34,15 @@ test('a running HTTPS Data Plane reloads valid credentials and keeps serving on 
   assert.throws(()=>createTlsCredentialReloader({},{load:()=>server,intervalMs:1000,clientCa:false}),/Invalid TLS reloader configuration/);
  }finally{reloader.stop();assert.equal(await reloader.reloadNow(),false);plane.closeAllConnections();await new Promise(resolve=>plane.close(resolve));}
 });
+
+test('a chain-only change reloads a running HTTPS Data Plane',async()=>{
+ const store=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});store.publish(0);
+ const plane=createDataPlaneHttps(store,server);plane.listen(0,'127.0.0.1');await once(plane,'listening');
+ const port=plane.address().port,chain=Buffer.concat([server.cert,Buffer.from('\n'),ca]);let next=server;const reloads=[];
+ const reloader=createTlsCredentialReloader(plane,{load:()=>next,intervalMs:60000,clientCa:false,onReload:info=>reloads.push(info.fingerprint)});
+ try{
+  assert.equal(await reloader.reloadNow(),true);assert.equal(await fetchWith(port,ca),200);
+  next={...server,cert:chain};assert.equal(await reloader.reloadNow(),true);assert.equal(await fetchWith(port,ca),200);
+  assert.notEqual(reloads[0],reloads[1]);assert.equal(await reloader.reloadNow(),false);
+ }finally{reloader.stop();plane.closeAllConnections();await new Promise(resolve=>plane.close(resolve));}
+});
