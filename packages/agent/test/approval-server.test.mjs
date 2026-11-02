@@ -118,3 +118,16 @@ test('disconnect signals authentication and store lookup for both review routes'
   try{const base=`http://127.0.0.1:${server.address().port}`,path=route==='approvals'?'/api/agents/agent/runs/run/approvals':'/api/agents/agent/notices',controller=new AbortController(),request=fetch(base+path,{signal:controller.signal}).catch(()=>undefined);await ready;controller.abort();await request;await cancelled;assert.equal(policyCalls,0);if(phase==='authenticate')assert.equal(resolveCalls,0);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(policyCalls,0);}finally{release();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
  }
 });
+
+test('review host callback limits bound time and share capacity across both routes',{timeout:10000},async()=>{
+ for(const phase of ['authenticate','resolve']){
+  let entered,aborted,release,block=true,resolved=0;const started=new Promise(resolve=>entered=resolve),cancelled=new Promise(resolve=>aborted=resolve),gate=new Promise(resolve=>release=resolve);
+  const stall=async signal=>{assert.ok(signal instanceof AbortSignal);signal.addEventListener('abort',aborted,{once:true});entered();await gate;};
+  const options={hostTimeoutMs:100,hostMaxPending:1,authenticate:async(_req,signal)=>{if(phase==='authenticate'&&block)await stall(signal);return {tenantId:'tenant',principalId:'reviewer'};},resolve:async(_scope,_run,signal)=>{resolved++;if(phase==='resolve'&&block)await stall(signal);return undefined;},resolveNotices:()=>undefined};const server=createAgentApprovalServer(options);options.hostTimeoutMs=30000;options.hostMaxPending=100;await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try{const base=`http://127.0.0.1:${server.address().port}`,approval=base+'/api/agents/agent/runs/run/approvals',notices=base+'/api/agents/agent/notices';const first=fetch(approval);await started;await cancelled;assert.equal((await first).status,503);assert.equal((await fetch(notices)).status,503);if(phase==='authenticate')assert.equal(resolved,0);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await fetch(notices)).status,404);}finally{release();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+ }
+});
+
+test('review host callback limits require a valid pair',()=>{
+ for(const limits of [{hostTimeoutMs:100},{hostMaxPending:1},{hostTimeoutMs:99,hostMaxPending:1},{hostTimeoutMs:100,hostMaxPending:0},{hostTimeoutMs:30001,hostMaxPending:1},{hostTimeoutMs:100,hostMaxPending:101}])assert.throws(()=>createAgentApprovalServer({authenticate:()=>undefined,resolve:()=>undefined,...limits}),/Invalid approval server/);
+});
