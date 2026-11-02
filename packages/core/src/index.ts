@@ -142,7 +142,7 @@ export { PublishedDefinitionCache, CachedPublishedRepository } from './published
 export type { CacheScope } from './published-cache.js';
 export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry, computeExtensionIntegrity, verifyExtensionIntegrity, signExtensionManifest, verifySignedExtensionManifest } from './extensions.js';
 export { registerExtensionComponent, registerDeclaredNativeExtensionComponent, createFlutterExtensionPlan, createFlutterExtensionPlanFromRegistry, registerExtensionCapability, registerDeclaredExtensionCapability, createExtensionRuntime } from './extension-adapters.js';
-export type { ExtensionRuntimeBindings, ExtensionInvocationApproval, FlutterExtensionPlan } from './extension-adapters.js';
+export type { ExtensionRuntimeBindings, ExtensionInvocationApproval, ExtensionInvocationApprovalWithSignal, FlutterExtensionPlan } from './extension-adapters.js';
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration, SignedExtensionManifest, ExtensionSigningPolicy } from './extensions.js';
 
 export { SqliteDataProvider } from './data-provider.js';
