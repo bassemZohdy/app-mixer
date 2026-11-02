@@ -1,0 +1,5 @@
+import {writeFileSync} from 'node:fs';
+import {SqliteOfflineQueue} from '../../dist/index.js';
+const [path,barrier,action,phase,id]=process.argv.slice(2),scope={tenantId:'tenant',applicationId:'app'},queue=new SqliteOfflineQueue(path,{enabled:true,maxAttempts:2,retryDelayMs:0}),evidence={operatorId:'operator',reference:'case'};
+const hold=()=>{writeFileSync(barrier,phase);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);};
+try{if(phase==='during'){queue.db.function('test_offline_evidence_barrier',()=>{hold();return 0;});queue.db.exec('CREATE TRIGGER test_offline_evidence_crash BEFORE INSERT ON offline_recovery_events BEGIN SELECT test_offline_evidence_barrier(); END');}if(action==='recover')queue.recoverAbandonedWithEvidence(scope,'owner',id,evidence,10);else queue.reconcileWithEvidence(scope,'owner',id,'applied',evidence,10);if(phase==='after')hold();throw Error('Expected process termination');}catch(error){process.send?.({error:String(error)});process.exitCode=1;}finally{queue.close();}
