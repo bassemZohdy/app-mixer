@@ -4,7 +4,7 @@ export const APP_MIXER_CATALOG = 'https://raw.githubusercontent.com/bassemZohdy/
 export const BASIC_CATALOG = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj = Record<string, unknown>;
 export type ActionMessage = {version:'v0.9.1'; action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string, unknown>}};
-type Interaction = {write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
+type Interaction = {controlKey: string; write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
 type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document, interaction: Interaction) => HTMLElement;
 const obj = (x: unknown): x is Obj => x !== null && typeof x === 'object' && !Array.isArray(x);
 const only = (value: Obj, keys: string[]): boolean => Object.keys(value).every(key => keys.includes(key));
@@ -160,7 +160,7 @@ export function basicRegistry(): ComponentRegistry {
     input.addEventListener('compositionstart', () => { composing = true; });
     input.addEventListener('compositionend', () => { composing = false; interaction.write(path, input.value, input); });
     input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
-    interaction.controls.set(c.id as string, input);
+    interaction.controls.set(interaction.controlKey, input);
     wrapper.appendChild(input); return wrapper;
   }, validateBasic);
   registry.register('Button', (c, child, _data, doc, interaction) => {
@@ -223,27 +223,24 @@ export class A2UIRenderer {
       data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value') || payload.value === undefined);
     }
     const doc = this.host.ownerDocument;
+    // Data updates rebuild the surface; retain a current field's focus and selection.
+    const focusedEntry = kind === 'updateDataModel' ? [...surface.controls].find(([, control]) => doc.activeElement === control) : undefined;
+    const focused = focusedEntry ? {id:focusedEntry[0], control:focusedEntry[1], start:focusedEntry[1].selectionStart, end:focusedEntry[1].selectionEnd, direction:focusedEntry[1].selectionDirection} : undefined;
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
     let renderedCount = 0;
-    const render = (componentId: string, visited: Set<string>, inButton = false): HTMLElement => {
+    const render = (componentId: string, visited: Set<string>, inButton = false, path = 'root;'): HTMLElement => {
       if (++renderedCount > 5000) throw Error('Component tree too large');
       const c = components.get(componentId);
       if (!c) { const placeholder = doc.createElement('span'); placeholder.textContent = ''; return placeholder; }
       if (inButton && (c.component === 'Button' || c.component === 'TextField')) throw Error('Interactive component inside button');
       if (visited.has(componentId) || visited.size >= 100) throw Error('Cyclic or deeply nested components');
       const next = new Set(visited); next.add(componentId);
+      const occurrences = new Map<string,number>();
       const interaction: Interaction = {
-        controls, enabled: !!this.onAction,
-        write: (path, value, input) => {
-          if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(componentId) !== input) return;
-          const focused = input.ownerDocument.activeElement === input;
-          const start = input.selectionStart, end = input.selectionEnd;
-          this.apply({version:'v0.9.1', updateDataModel:{surfaceId,path,value}});
-          const replacement = surface.controls.get(componentId);
-          if (replacement && focused) {
-            replacement.focus();
-            if (start !== null && end !== null) replacement.setSelectionRange(start, end);
-          }
+        controlKey:path, controls, enabled: !!this.onAction,
+        write: (fieldPath, value, input) => {
+          if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(path) !== input) return;
+          this.apply({version:'v0.9.1', updateDataModel:{surfaceId,path:fieldPath,value}});
         },
         action: (name, context) => {
           if (this.surfaces.get(surfaceId) !== surface || surface.componentRevision !== componentRevision || !this.onAction) return;
@@ -257,15 +254,24 @@ export class A2UIRenderer {
           this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
         }
       };
-      const element = this.registry.get(c.component as string)!(c, child => render(child, next, inButton || c.component === 'Button'), data, doc, interaction);
+      const element = this.registry.get(c.component as string)!(c, child => {
+        const occurrence=occurrences.get(child) ?? 0;occurrences.set(child,occurrence+1);
+        return render(child, next, inButton || c.component === 'Button', `${path}${child.length}:${child}:${occurrence};`);
+      }, data, doc, interaction);
       // A heading used as a button label is presentational; preserve its visual tag and text.
       if (inButton && c.component === 'Text' && /^h[1-5]$/i.test(element.tagName)) element.setAttribute('role', 'presentation');
       return element;
     };
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
+    const restoreFocus = focused && doc.activeElement === focused.control;
     surface.element.replaceChildren(...(root ? [root] : []));
     surface.components = components; surface.data = data; surface.controls = controls; surface.componentRevision = componentRevision;
+    const replacement = restoreFocus ? controls.get(focused.id) : undefined;
+    if (replacement && focused) {
+      replacement.focus({preventScroll:true});
+      if (focused.start !== null && focused.end !== null) replacement.setSelectionRange(Math.min(focused.start,replacement.value.length), Math.min(focused.end,replacement.value.length), focused.direction ?? 'none');
+    }
   }
 }
 

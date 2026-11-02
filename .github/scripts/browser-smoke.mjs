@@ -91,6 +91,14 @@ try {
       const input=document.querySelector('input'); input.focus(); input.value='Grace'; input.setSelectionRange(5,5); input.dispatchEvent(new Event('input',{bubbles:true}));
       const updated=document.querySelector('input');
       if(document.activeElement!==updated || updated.selectionStart!==5 || document.querySelector('p').textContent!=='Grace') throw Error('Binding or focus failed');
+      updated.setSelectionRange(1,4,'backward');
+      renderer.apply({version,updateDataModel:{surfaceId,path:'/form/secret',value:'changed'}});
+      let external=document.querySelector('input');
+      if(document.activeElement!==external || external.selectionStart!==1 || external.selectionEnd!==4 || external.selectionDirection!=='backward') throw Error('External update lost selection');
+      renderer.apply({version,updateDataModel:{surfaceId,path:'/form/name',value:'Go'}});
+      external=document.querySelector('input');
+      if(document.activeElement!==external || external.selectionStart!==1 || external.selectionEnd!==2 || external.value!=='Go') throw Error('External update did not clamp selection');
+      renderer.apply({version,updateDataModel:{surfaceId,path:'/form/name',value:'Grace'}});
       document.querySelector('button').click();
       if(event.action.context.name!=='Grace' || Object.hasOwn(event.action.context,'secret')) throw Error('Action context failed');
       const originalInput=document.querySelector('input'),originalButton=document.querySelector('button');
@@ -100,6 +108,10 @@ try {
         if(!rejected || document.querySelector('input')!==originalInput || document.querySelector('button')!==originalButton || originalInput.value!=='Grace') throw Error('Invalid button subtree changed the surface');
       }
       event=undefined;originalButton.click();if(event?.action.name!=='save' || event.action.context.name!=='Grace') throw Error('Button action changed after rejection');
+      renderer.apply({version,updateComponents:{surfaceId,components:[{id:'root',component:'Column',children:['title','field','field','button']}]}});
+      let copies=document.querySelectorAll('input');copies[0].focus();copies[0].value='Lin';copies[0].setSelectionRange(1,1);copies[0].dispatchEvent(new Event('input',{bubbles:true}));
+      copies=document.querySelectorAll('input');if(copies.length!==2 || copies[0].value!=='Lin' || copies[1].value!=='Lin' || document.activeElement!==copies[0] || copies[0].selectionStart!==1) throw Error('Repeated field update failed');
+      event=undefined;document.querySelector('button').click();if(event?.action.context.name!=='Lin') throw Error('Repeated field action context failed');
       document.body.dataset.result='pass';
     } catch(error) {document.body.dataset.result='fail'; document.body.append(String(error));}
   </script></body></html>`;
