@@ -62,14 +62,28 @@ export class EncryptedPublicationCache {
  }
  private counterId():string{return '@publication-counter:'+this.id;}
  private counterAad(counter:number):Uint8Array<ArrayBuffer>{return encoder.encode(JSON.stringify(['publication-counter-v1',this.id,counter]));}
- private async sealCounter(counter:number,key:CryptoKey):Promise<CounterRecord>{if(!Number.isSafeInteger(counter)||counter<1)throw Error('Invalid offline publication counter');const iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.counterAad(counter)},key,encoder.encode('publication-counter-v1'));return {id:this.counterId(),counter,iv,ciphertext};}
- private async readCounter():Promise<CounterRecord|undefined>{
-  const tx=this.db.transaction('publications','readonly'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const value=await request(store.get(this.counterId())) as CounterRecord|undefined;await done;
-  if(value===undefined)return undefined;if(!object(value)||value.id!==this.counterId()||!Number.isSafeInteger(value.counter)||value.counter<1||!(value.iv instanceof Uint8Array)||value.iv.length!==12||!(value.ciphertext instanceof ArrayBuffer)||value.ciphertext.byteLength!==encoder.encode('publication-counter-v1').length+16)throw Error('Invalid offline publication counter');
-  try{const clear=await this.crypt.subtle.decrypt({name:'AES-GCM',iv:value.iv,additionalData:this.counterAad(value.counter)},this.key,value.ciphertext);if(decoder.decode(clear)!=='publication-counter-v1')throw Error('Invalid counter');}catch{throw Error('Invalid offline publication counter');}return value;
+ private async envelopeDigest(value:Envelope|undefined):Promise<string>{
+  if(value===undefined)return 'missing';if(!object(value)||value.id!==this.id||!Number.isSafeInteger(value.revision)||value.revision<1)throw Error('Invalid offline publication entry');
+  if(value.iv===undefined&&value.ciphertext===undefined)return 'clear:'+value.revision;
+  if(!(value.iv instanceof Uint8Array)||value.iv.length!==12||!(value.ciphertext instanceof ArrayBuffer)||value.ciphertext.byteLength>1024*1024+16384)throw Error('Invalid offline publication entry');
+  return 'entry:'+value.revision+':'+hex(value.iv.slice().buffer)+':'+hex(await this.crypt.subtle.digest('SHA-256',value.ciphertext));
  }
+ private sameEnvelope(a:Envelope|undefined,b:Envelope|undefined):boolean{
+  if(a===undefined||b===undefined)return a===b;if(!object(a)||!object(b)||a.id!==b.id||a.revision!==b.revision)return false;
+  if(a.iv===undefined||b.iv===undefined||a.ciphertext===undefined||b.ciphertext===undefined)return a.iv===undefined&&b.iv===undefined&&a.ciphertext===undefined&&b.ciphertext===undefined;
+  if(!(a.iv instanceof Uint8Array)||!(b.iv instanceof Uint8Array)||!(a.ciphertext instanceof ArrayBuffer)||!(b.ciphertext instanceof ArrayBuffer))return false;
+  const equal=(x:Uint8Array,y:Uint8Array)=>x.length===y.length&&x.every((v,i)=>v===y[i]);return equal(a.iv,b.iv)&&equal(new Uint8Array(a.ciphertext),new Uint8Array(b.ciphertext));
+ }
+ private async sealCounter(counter:number,key:CryptoKey,envelope:Envelope):Promise<CounterRecord>{if(!Number.isSafeInteger(counter)||counter<1)throw Error('Invalid offline publication counter');const payload='publication-counter-v2:'+await this.envelopeDigest(envelope),iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.counterAad(counter)},key,encoder.encode(payload));return {id:this.counterId(),counter,iv,ciphertext};}
+ private async snapshot():Promise<{counter:CounterRecord|undefined;envelope:Envelope|undefined}>{
+  const tx=this.db.transaction('publications','readonly'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const counter=await request(store.get(this.counterId())) as CounterRecord|undefined,envelope=await request(store.get(this.id)) as Envelope|undefined;await done;
+  if(counter===undefined)return {counter,envelope};if(!object(counter)||counter.id!==this.counterId()||!Number.isSafeInteger(counter.counter)||counter.counter<1||!(counter.iv instanceof Uint8Array)||counter.iv.length!==12||!(counter.ciphertext instanceof ArrayBuffer)||counter.ciphertext.byteLength>256||counter.ciphertext.byteLength<16)throw Error('Invalid offline publication counter');
+  let payload:string;try{const clear=await this.crypt.subtle.decrypt({name:'AES-GCM',iv:counter.iv,additionalData:this.counterAad(counter.counter)},this.key,counter.ciphertext);payload=decoder.decode(clear);}catch{throw Error('Invalid offline publication counter');}
+  if(payload!=='publication-counter-v1'){if(!payload.startsWith('publication-counter-v2:'))throw Error('Invalid offline publication counter');if(payload!=='publication-counter-v2:'+await this.envelopeDigest(envelope))throw Error('Offline publication integrity mismatch');}return {counter,envelope};
+ }
+ private async readCounter():Promise<CounterRecord|undefined>{return (await this.snapshot()).counter;}
  private async checkRollback():Promise<void>{if(!this.anchor)return;const floor=await this.anchor.read();if(!Number.isSafeInteger(floor)||floor<0)throw Error('Invalid offline publication rollback anchor');const local=(await this.readCounter())?.counter??0;if(local<floor)throw Error('Offline publication rollback detected');await this.ensureCurrent();if(local>floor)await this.anchor.advance(local);await this.ensureCurrent();if(this.anchorPending!==undefined&&this.anchorPending<=local)this.anchorPending=undefined;}
- private async prepareCounter(key:CryptoKey=this.key):Promise<PreparedCounter|undefined>{if(!this.anchor)return undefined;const current=await this.readCounter(),next=(current?.counter??0)+1;if(!Number.isSafeInteger(next))throw Error('Invalid offline publication counter');return {current,next:await this.sealCounter(next,key)};}
+ private async prepareCounter(envelope:Envelope,key:CryptoKey=this.key):Promise<PreparedCounter|undefined>{if(!this.anchor)return undefined;const current=await this.readCounter(),next=(current?.counter??0)+1;if(!Number.isSafeInteger(next))throw Error('Invalid offline publication counter');return {current,next:await this.sealCounter(next,key,envelope)};}
  private async applyCounter(store:IDBObjectStore,tx:IDBTransaction,done:Promise<void>,prepared:PreparedCounter|undefined):Promise<void>{if(!prepared)return;const current=await request(store.get(this.counterId())) as CounterRecord|undefined,expected=prepared.current,equal=(a:Uint8Array,b:Uint8Array)=>a.length===b.length&&a.every((v,i)=>v===b[i]),same=current===undefined?expected===undefined:!!expected&&object(current)&&current.counter===expected.counter&&current.iv instanceof Uint8Array&&current.ciphertext instanceof ArrayBuffer&&equal(current.iv,expected.iv)&&equal(new Uint8Array(current.ciphertext),new Uint8Array(expected.ciphertext));if(!same){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}store.put(prepared.next);}
  private async advanceAnchor(prepared:PreparedCounter|undefined):Promise<void>{if(!prepared||!this.anchor)return;const target=Math.max(prepared.next.counter,this.anchorPending??0);try{await this.anchor.advance(target);if(this.anchorPending!==undefined&&this.anchorPending<=target)this.anchorPending=undefined;}catch{this.anchorPending=target;}}
  /** Push a committed counter to the external anchor after a failed advance. */
@@ -82,7 +96,7 @@ export class EncryptedPublicationCache {
  private async permitted(action:'read'|'write',generation:number):Promise<void>{if(await this.authorize({...this.scope},action)!==true)throw Error('Offline publication access denied');this.checkGeneration(generation);}
  private now():number{const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid clock');return n;}
  private aad(revision:number):Uint8Array<ArrayBuffer>{return encoder.encode(JSON.stringify([this.id,revision]));}
- private async raw():Promise<Envelope|undefined>{if(this.closed)throw Error('Offline publication cache changed');const tx=this.db.transaction('publications','readonly'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const value=await request(store.get(this.id)) as Envelope|undefined;await done;if(value&&(!Number.isSafeInteger(value.revision)||value.revision<1||value.id!==this.id))throw Error('Invalid offline publication entry');return value;}
+ private async raw():Promise<Envelope|undefined>{if(this.anchor)return (await this.snapshot()).envelope;if(this.closed)throw Error('Offline publication cache changed');const tx=this.db.transaction('publications','readonly'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const value=await request(store.get(this.id)) as Envelope|undefined;await done;if(value&&(!Number.isSafeInteger(value.revision)||value.revision<1||value.id!==this.id))throw Error('Invalid offline publication entry');return value;}
  private async verify(publication:unknown,etag:unknown,checkCompatibility=true):Promise<OfflinePublication>{
   const normalized=jsonCopy(publication),definition=normalized.definition;
   if(!Number.isSafeInteger(normalized.version)||(normalized.version as number)<1||!object(definition)||definition.id!==this.scope.applicationId||definition.schemaVersion!==this.scope.schemaVersion||typeof etag!=='string'||!/^"[a-f0-9]{64}"$/.test(etag)||(checkCompatibility&&this.compatible(structuredClone(definition))!==true))throw Error('Incompatible offline publication');
@@ -107,33 +121,33 @@ export class EncryptedPublicationCache {
  }
  async store(publication:unknown,etag:string):Promise<void>{
   const generation=this.generation;this.checkGeneration(generation);await this.permitted('write',generation);await this.checkRollback();
-  const normalized=await this.verify(publication,etag),previous=await this.raw(),old=previous?await this.decode(previous,false):undefined,prepared=await this.prepareCounter();
+  const normalized=await this.verify(publication,etag),previous=await this.raw(),old=previous?await this.decode(previous,false):undefined;
   if(old&&(normalized.version<old.publication.version||(normalized.version===old.publication.version&&etag!==old.etag)))throw Error('Offline publication version conflict');
   const revision=(previous?.revision??0)+1;if(!Number.isSafeInteger(revision))throw Error('Invalid offline publication revision');
   const entry={publication:normalized,etag,savedAt:this.now()},iv=this.crypt.getRandomValues(new Uint8Array(12));
-  const ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},this.key,encoder.encode(JSON.stringify(entry)));
+  const ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},this.key,encoder.encode(JSON.stringify(entry))),replacement={id:this.id,revision,iv,ciphertext},prepared=await this.prepareCounter(replacement);
   await this.permitted('write',generation);await this.checkRollback();this.checkGeneration(generation);
   const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const latest=await request(store.get(this.id)) as Envelope|undefined;
-  if((latest?.revision??0)!==(previous?.revision??0)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
-  await this.applyCounter(store,tx,done,prepared);store.put({id:this.id,revision,iv,ciphertext});await done;await this.advanceAnchor(prepared);
+  if(!this.sameEnvelope(latest,previous)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
+  await this.applyCounter(store,tx,done,prepared);store.put(replacement);await done;await this.advanceAnchor(prepared);
  }
  /** Switch the scope to a host-supplied key, preserving any existing entry. */
  async rotateKey(nextKey:CryptoKey):Promise<boolean>{
   if(!nextKey||nextKey.type!=='secret'||nextKey.extractable||nextKey.algorithm.name!=='AES-GCM'||!nextKey.usages.includes('encrypt')||!nextKey.usages.includes('decrypt'))throw Error('Invalid offline publication key');
   const generation=this.generation;this.checkGeneration(generation);await this.permitted('read',generation);await this.permitted('write',generation);await this.checkRollback();
-  const previous=await this.raw(),entry=previous?await this.decode(previous,false):undefined,prepared=await this.prepareCounter(nextKey);
+  const previous=await this.raw(),entry=previous?await this.decode(previous,false):undefined;
   const revision=(previous?.revision??0)+1;if(!Number.isSafeInteger(revision))throw Error('Invalid offline publication revision');
-  let replacement:Envelope={id:this.id,revision};if(entry){const iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},nextKey,encoder.encode(JSON.stringify(entry)));replacement={id:this.id,revision,iv,ciphertext};}const marker=await this.newMarker(nextKey);
+  let replacement:Envelope={id:this.id,revision};if(entry){const iv=this.crypt.getRandomValues(new Uint8Array(12)),ciphertext=await this.crypt.subtle.encrypt({name:'AES-GCM',iv,additionalData:this.aad(revision)},nextKey,encoder.encode(JSON.stringify(entry)));replacement={id:this.id,revision,iv,ciphertext};}const marker=await this.newMarker(nextKey),prepared=await this.prepareCounter(replacement,nextKey);
   await this.permitted('read',generation);await this.permitted('write',generation);await this.checkRollback();this.checkGeneration(generation);
   const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const latest=await request(store.get(this.id)) as Envelope|undefined;
-  if((latest?.revision??0)!==(previous?.revision??0)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
+  if(!this.sameEnvelope(latest,previous)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
   await this.applyCounter(store,tx,done,prepared);store.put(replacement);store.put(marker);await done;await this.advanceAnchor(prepared);this.close();return !!entry;
  }
  async clear():Promise<void>{
-  if(this.closed)throw Error('Offline publication cache changed');const generation=++this.generation;await this.checkRollback();const prepared=await this.prepareCounter();await this.checkRollback();this.checkGeneration(generation);
+  if(this.closed)throw Error('Offline publication cache changed');const generation=++this.generation;await this.checkRollback();const previous=await this.raw(),revision=(previous?.revision??0)+1;if(!Number.isSafeInteger(revision)||revision<1)throw Error('Invalid offline publication revision');
+  const replacement={id:this.id,revision},prepared=await this.prepareCounter(replacement);await this.checkRollback();this.checkGeneration(generation);
   const tx=this.db.transaction('publications','readwrite'),done=finished(tx),store=tx.objectStore('publications');await this.guard(store,tx,done);const current=await request(store.get(this.id)) as Envelope|undefined;
-  const revision=(current?.revision??0)+1;if(!Number.isSafeInteger(revision)||revision<1){tx.abort();try{await done;}catch{}throw Error('Invalid offline publication revision');}
-  if(this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
-  await this.applyCounter(store,tx,done,prepared);store.put({id:this.id,revision});await done;await this.advanceAnchor(prepared);
+  if(!this.sameEnvelope(current,previous)||this.closed||generation!==this.generation){tx.abort();try{await done;}catch{}throw Error('Offline publication cache changed');}
+  await this.applyCounter(store,tx,done,prepared);store.put(replacement);await done;await this.advanceAnchor(prepared);
  }
 }
