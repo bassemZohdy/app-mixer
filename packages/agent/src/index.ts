@@ -242,3 +242,6 @@ export type {AgentBudgetRecoveryCoordinatorOptions,AgentBudgetRecoverySession} f
 
 export {PostgresAgentSharedCost} from './postgres-agent-shared-cost.js';
 export type {PostgresAgentSharedCostOptions,SharedCostActor,SharedCostScope,SharedCostCall,SharedCostReservation,SharedCostSummary,SharedCostReconciliation} from './postgres-agent-shared-cost.js';
+
+export {registerSharedCostPending} from './postgres-shared-cost-capability.js';
+export type {SharedCostPendingCapabilityOptions} from './postgres-shared-cost-capability.js';
