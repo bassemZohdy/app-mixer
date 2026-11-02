@@ -234,7 +234,7 @@ export {signFlutterExtensionPlan,signFlutterExtensionPlanFromRegistry} from './s
 export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signed-flutter-plan.js';
 
 export {registerDataMigrationPreview,registerDataMigrationStatus,registerDataMigrationRehearsal,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
-export type {DataMigrationReadCapabilityOptions,DataMigrationStatusCapabilityOptions,DataMigrationRehearsalCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
+export type {DataMigrationReadCapabilityOptions,DataMigrationAuditCapabilityOptions,DataMigrationStatusCapabilityOptions,DataMigrationRehearsalCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
 
 export { registerStagedListCapability } from './staged-list-capability.js';
 export type { StagedListCapabilityOptions } from './staged-list-capability.js';
