@@ -52,6 +52,15 @@ Future<void> verifySurfaceParity(WidgetTester tester) async {
   expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text,'Lin');
   await tester.tap(find.byType(TextButton));await tester.pump();
   expect((actions.last['action'] as Map)['context'],{'name':'Lin'});expect(actions,hasLength(2));
+  send('updateComponents',{'surfaceId':'main','components':[{'id':'field','component':'TextField','label':'Notes','value':{'path':'/profile/name'},'variant':'longText'}]});
+  await tester.pump();expect(tester.widget<TextField>(find.byType(TextField)).maxLines,isNull);
+  const notes='First line\nSecond line';
+  await tester.enterText(find.byType(TextField),notes);await tester.pump();
+  expect(display(notes),findsOneWidget);expect(display('Fresh'),findsOneWidget);
+  final semantics=tester.ensureSemantics();
+  try {final field=tester.getSemantics(find.byType(EditableText)).getSemanticsData();expect(field.flagsCollection.isTextField,isTrue);expect(field.label,startsWith('Notes'));expect(field.value,notes);} finally {semantics.dispose();}
+  await tester.tap(find.byType(TextButton));await tester.pump();
+  expect((actions.last['action'] as Map)['context'],{'name':notes});expect(actions,hasLength(3));
   expect(errors,hasLength(3));expect(tester.takeException(),isNull);
 }
 
