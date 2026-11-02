@@ -18,6 +18,7 @@ export type DataCapabilityOptions={
   authorizeRecord?:(context:PolicyContext, input:unknown,signal:AbortSignal)=>boolean|Promise<boolean>;
   policyTimeoutMs?:number;
   maxPendingPolicies?:number;
+  recheckAuthorization?:boolean;
 };
 const record=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const fields=(value:Record<string,unknown>,names:string[])=>Object.keys(value).length===names.length&&names.every(name=>Object.hasOwn(value,name));
@@ -27,7 +28,8 @@ const revision=(value:unknown):value is number=>Number.isSafeInteger(value)&&(va
 /** Install one host-approved collection operation in the normal capability boundary. */
 export function registerDataCapability(registry:CapabilityRegistry, provider:DataProvider, options:DataCapabilityOptions):void {
   if(!(registry instanceof CapabilityRegistry)||!provider||typeof provider.get!=='function'||typeof provider.put!=='function'||typeof provider.delete!=='function'||!options||!['get','put','delete'].includes(options.operation)||typeof options.authorize!=='function'||typeof options.validate!=='function'||(options.authorizeRecord!==undefined&&typeof options.authorizeRecord!=='function'))throw Error('Invalid data capability');
-  const {applicationId,collection,operation,authorize,validate,authorizeRecord}=options;
+  if(options.recheckAuthorization!==undefined&&typeof options.recheckAuthorization!=='boolean')throw Error('Invalid data capability');
+  const {applicationId,collection,operation,authorize,validate,authorizeRecord,recheckAuthorization}=options;
   const runPolicy=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid data capability','Data capability unavailable');
   const checkPolicy=(callback:(signal:AbortSignal)=>boolean|Promise<boolean>)=>runPolicy(async signal=>{const result=await callback(signal);if(signal.aborted)throw Error('Data capability unavailable');return result===true;});
   if(((options.fields!==undefined||options.jsonSchema!==undefined)&&operation!=='put')||(options.fields!==undefined&&options.jsonSchema!==undefined)||(options.allowAdditionalFields!==undefined&&options.fields===undefined))throw Error('Invalid data capability schema');
@@ -44,9 +46,14 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
       const shape=fields(input,hasSchema?[...base,'expectedSchemaVersion']:base)&&(!hasSchema||(Number.isSafeInteger(input.expectedSchemaVersion)&&Number(input.expectedSchemaVersion)>=0))&&(operation==='get'||(operation==='delete'?revision(input.expectedRevision):(input.expectedRevision===null||revision(input.expectedRevision))&&record(input.value)));
       return shape && (!validateFields||validateFields(input.value)) && (!validateSchema||validateSchema(input.value)) && await checkPolicy(signal=>validate(structuredClone(input),signal));
     },
-    execute:(input,context)=>{
+    execute:async(input,context)=>{
       const value=input as {id:string;expectedRevision:number|null;value:Record<string,unknown>;expectedSchemaVersion?:number};
       const scope={tenantId:context.tenantId,applicationId};
+      if(recheckAuthorization){
+        if(!await checkPolicy(signal=>authorize({...context},signal)))throw Error('Capability forbidden');
+        if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw Error('Capability forbidden');
+        if(!await checkPolicy(signal=>authorize({...context},signal)))throw Error('Capability forbidden');
+      }
       if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw Error('Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
       if(operation==='put')return provider.put(scope,collection,value.id,value.value,value.expectedRevision,value.expectedSchemaVersion);
       provider.delete(scope,collection,value.id,value.expectedRevision as number,value.expectedSchemaVersion);return null;

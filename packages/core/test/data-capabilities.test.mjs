@@ -20,6 +20,38 @@ test('bounded data policies cannot execute a late write after timeout or saturat
  }
 });
 
+test('optional rechecks prevent record access when scope or record policy is revoked during authorization',async()=>{
+ for(const operation of ['get','put','delete'])for(const revoked of ['scope','record']){
+  const provider=new SqliteDataProvider(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome)),scope={tenantId:'tenant',applicationId:'app'};let release,started,blocked=true,scopeAllowed=true,recordAllowed=true,server;
+  const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+  try{
+   if(operation!=='put')provider.put(scope,'items','one',{text:'before'},null);
+   const options={candidate:{operationId:`items.${operation}`,method:'POST',path:'/items'},applicationId:'app',collection:'items',operation,recheckAuthorization:true,authorize:()=>scopeAllowed,validate:()=>true,authorizeRecord:async()=>{const allowed=recordAllowed;if(blocked){started();await gate;}return allowed;}};
+   assert.throws(()=>registerDataCapability(new CapabilityRegistry(()=>{}),provider,{...options,recheckAuthorization:'true'}),/Invalid data capability/);
+   registerDataCapability(registry,provider,options);options.recheckAuthorization=false;
+   server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+   const input=operation==='put'?{id:'one',expectedRevision:null,value:{text:'new'}}:operation==='delete'?{id:'one',expectedRevision:1}:{id:'one'};
+   const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/items.${operation}/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});
+   const pending=call();await waiting;if(revoked==='scope')scopeAllowed=false;else recordAllowed=false;blocked=false;release();
+   const denied=await pending;assert.equal(denied.status,403,`${operation}: ${revoked}`);assert.deepEqual(await denied.json(),{error:'Capability forbidden'});assert.equal(events.at(-1),'failed');
+   assert.deepEqual(provider.get(scope,'items','one')?.value,operation==='put'?undefined:{text:'before'});
+   scopeAllowed=true;recordAllowed=true;const allowed=await call();assert.equal(allowed.status,200,operation);
+   assert.deepEqual(provider.get(scope,'items','one')?.value,operation==='put'?{text:'new'}:operation==='delete'?undefined:{text:'before'});
+  }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
+ }
+});
+
+test('timed-out final record recheck cannot perform a late write',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,signal,count=0;const gate=new Promise(resolve=>release=resolve);
+ try{
+  registerDataCapability(registry,provider,{candidate:{operationId:'items.put',method:'PUT',path:'/items'},applicationId:'app',collection:'items',operation:'put',policyTimeoutMs:100,maxPendingPolicies:1,recheckAuthorization:true,authorize:()=>true,validate:()=>true,authorizeRecord:async(_actor,_input,currentSignal)=>{if(++count===2){signal=currentSignal;await gate;}return true;}});
+  const invoke=()=>registry.invoke('items.put',{id:'one',expectedRevision:null,value:{text:'value'}},{tenantId:'tenant',principalId:'alice',origin:'ui'});
+  await assert.rejects(invoke(),/Data capability unavailable/);assert.equal(signal.aborted,true);assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one'),undefined);
+  release();await new Promise(resolve=>setImmediate(resolve));assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one'),undefined);
+  await invoke();assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one').value.text,'value');
+ }finally{release();provider.close();}
+});
+
 test('authenticated UI and agent calls share data capability policies and tenant isolation',async()=>{
  const provider=new SqliteDataProvider(':memory:'),audit=[],registry=new CapabilityRegistry(event=>audit.push(event));
  const common={applicationId:'app',collection:'people',authorize:context=>context.principalId==='allowed',validate:()=>true};
