@@ -309,6 +309,19 @@ void main() {
     for(final invalid in fixture){expect(()=>store.apply(invalid),throwsFormatException);expect(store.snapshot().single?.text,'Safe');}
   });
 
+  test('late children cannot insert an interactive control inside a button', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['button','field']},
+      {'id':'button','component':'Button','child':'late','action':{'event':{'name':'go'}}},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}}
+    ]}));
+    expect(()=>store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'late','component':'Row','children':['field']}]})),throwsFormatException);
+    expect(store.snapshot().single!.children.first.children,isEmpty);
+    store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'late','component':'Text','text':'Continue'}]}));
+    expect(store.snapshot().single!.children.first.children.single.text,'Continue');
+  });
+
   testWidgets('text fields in rows receive bounded width and remain editable', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}

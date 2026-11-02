@@ -189,3 +189,15 @@ test('shared invalid messages leave web and native surfaces unchanged',async()=>
  for(const value of [message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]})]){web.apply(value);native.apply(value);}
  for(const invalid of fixture){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
 });
+
+test('late children cannot insert an interactive control inside a button',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['button','field']},{id:'button',component:'Button',child:'late',action:{event:{name:'go'}}},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}}]}));
+ const invalid=message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Row',children:['field']}]});
+ assert.throws(()=>web.apply(invalid),/Interactive component inside button/);assert.throws(()=>native.apply(invalid),/Interactive component inside button/);
+ assert.equal(native.snapshot()[0].root.children[0].children.length,0);assert.equal(host.children[0].children[0].children[1].tagName,'label');
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Text',text:'Continue'}]}));
+ assert.equal(native.snapshot()[0].root.children[0].children[0].text,'Continue');
+});

@@ -297,9 +297,10 @@ class FlutterSurfaceStore {
   NativeNode? _root(Map<String, Map<String, dynamic>> components, dynamic data) {
     if (!components.containsKey('root')) return null;
     var count = 0;
-    NativeNode? visit(String id, Set<String> ancestors, int intrinsicDepth, bool tightWidth, bool tightHeight) {
+    NativeNode? visit(String id, Set<String> ancestors, int intrinsicDepth, bool tightWidth, bool tightHeight, bool inButton) {
       if (++count > 5000) throw FormatException('Component tree too large');
       final c = components[id]; if (c == null) return null;
+      if (inButton && (c['component']=='Button' || c['component']=='TextField')) throw FormatException('Interactive component inside button');
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
       final type=c['component'];
@@ -315,9 +316,9 @@ class FlutterSurfaceStore {
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
     }
-    return visit('root', {}, 0, true, false);
+    return visit('root', {}, 0, true, false, false);
   }
 }
 

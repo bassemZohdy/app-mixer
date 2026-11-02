@@ -144,16 +144,17 @@ export class NativeSurfaceStore {
   private root(components:Map<string,Obj>,data:unknown):NativeNode|undefined {
     if(!components.has('root'))return undefined;
     let count=0;
-    const visit=(key:string,ancestors:Set<string>):NativeNode|undefined=>{
+    const visit=(key:string,ancestors:Set<string>,inButton=false):NativeNode|undefined=>{
       if(++count>5000)throw Error('Component tree too large');
       const c=components.get(key);if(!c)return undefined;
+      if(inButton&&(c.component==='Button'||c.component==='TextField'))throw Error('Interactive component inside button');
       if(ancestors.has(key)||ancestors.size>=100)throw Error('Cyclic or deeply nested components');
       const next=new Set(ancestors);next.add(key);
       const childIds=c.component==='Card'||c.component==='Button'?[c.child as string]:c.component==='Column'||c.component==='Row'?c.children as string[]:[];
       const boundText=c.component==='Text'?(typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined):undefined;
       const fieldValue=c.component==='TextField'&&obj(c.value)?read(data,c.value.path as string):undefined;
       const extensionProps=this.extensions.has(c.component as string)?Object.fromEntries(Object.entries(cloneData(c) as Obj).filter(([name])=>name!=='id'&&name!=='component')):undefined;
-      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next)).filter((child):child is NativeNode=>child!==undefined)};
+      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next,inButton||c.component==='Button')).filter((child):child is NativeNode=>child!==undefined)};
     };
     return visit('root',new Set());
   }

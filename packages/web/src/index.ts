@@ -222,10 +222,11 @@ export class A2UIRenderer {
     const doc = this.host.ownerDocument;
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
     let renderedCount = 0;
-    const render = (componentId: string, visited: Set<string>): HTMLElement => {
+    const render = (componentId: string, visited: Set<string>, inButton = false): HTMLElement => {
       if (++renderedCount > 5000) throw Error('Component tree too large');
       const c = components.get(componentId);
       if (!c) { const placeholder = doc.createElement('span'); placeholder.textContent = ''; return placeholder; }
+      if (inButton && (c.component === 'Button' || c.component === 'TextField')) throw Error('Interactive component inside button');
       if (visited.has(componentId) || visited.size >= 100) throw Error('Cyclic or deeply nested components');
       const next = new Set(visited); next.add(componentId);
       const interaction: Interaction = {
@@ -253,7 +254,7 @@ export class A2UIRenderer {
           this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
         }
       };
-      return this.registry.get(c.component as string)!(c, child => render(child, next), data, doc, interaction);
+      return this.registry.get(c.component as string)!(c, child => render(child, next, inButton || c.component === 'Button'), data, doc, interaction);
     };
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
