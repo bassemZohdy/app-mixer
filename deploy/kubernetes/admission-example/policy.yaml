@@ -110,6 +110,27 @@ spec:
         (!has(variables.c.ports[0].protocol) || variables.c.ports[0].protocol == 'TCP') &&
         (!has(variables.c.ports[0].hostPort) || variables.c.ports[0].hostPort == 0) &&
         (!has(variables.c.ports[0].hostIP) || variables.c.ports[0].hostIP == '')
+    - message: Bound health-probe timing and preserve the shutdown grace period.
+      expression: >-
+        has(variables.c.readinessProbe) && has(variables.c.readinessProbe.periodSeconds) && variables.c.readinessProbe.periodSeconds <= 5 &&
+        has(variables.c.readinessProbe.timeoutSeconds) && variables.c.readinessProbe.timeoutSeconds <= 5 &&
+        has(variables.c.readinessProbe.failureThreshold) && variables.c.readinessProbe.failureThreshold <= 2 &&
+        has(variables.c.readinessProbe.successThreshold) && variables.c.readinessProbe.successThreshold == 1 &&
+        (!has(variables.c.readinessProbe.initialDelaySeconds) || variables.c.readinessProbe.initialDelaySeconds <= 5) &&
+        !has(variables.c.readinessProbe.terminationGracePeriodSeconds) &&
+        has(variables.c.livenessProbe) && has(variables.c.livenessProbe.periodSeconds) && variables.c.livenessProbe.periodSeconds <= 30 &&
+        has(variables.c.livenessProbe.timeoutSeconds) && variables.c.livenessProbe.timeoutSeconds <= 5 &&
+        has(variables.c.livenessProbe.failureThreshold) && variables.c.livenessProbe.failureThreshold <= 6 &&
+        has(variables.c.livenessProbe.successThreshold) && variables.c.livenessProbe.successThreshold == 1 &&
+        (!has(variables.c.livenessProbe.initialDelaySeconds) || variables.c.livenessProbe.initialDelaySeconds <= 30) &&
+        (!has(variables.c.livenessProbe.terminationGracePeriodSeconds) || variables.c.livenessProbe.terminationGracePeriodSeconds >= 10) &&
+        has(variables.c.startupProbe) && has(variables.c.startupProbe.periodSeconds) && variables.c.startupProbe.periodSeconds <= 10 &&
+        has(variables.c.startupProbe.timeoutSeconds) && variables.c.startupProbe.timeoutSeconds <= 5 &&
+        has(variables.c.startupProbe.failureThreshold) && variables.c.startupProbe.failureThreshold <= 60 &&
+        variables.c.startupProbe.periodSeconds * variables.c.startupProbe.failureThreshold <= 300 &&
+        has(variables.c.startupProbe.successThreshold) && variables.c.startupProbe.successThreshold == 1 &&
+        (!has(variables.c.startupProbe.initialDelaySeconds) || variables.c.startupProbe.initialDelaySeconds <= 30) &&
+        (!has(variables.c.startupProbe.terminationGracePeriodSeconds) || variables.c.startupProbe.terminationGracePeriodSeconds >= 10)
     - message: HTTPS health probes must target the approved local listener and paths.
       expression: >-
         has(variables.c.readinessProbe) && has(variables.c.readinessProbe.httpGet) && variables.c.readinessProbe.httpGet.path == '/health/ready' && variables.c.readinessProbe.httpGet.scheme == 'HTTPS' && variables.c.readinessProbe.httpGet.port == 'http' && (!has(variables.c.readinessProbe.httpGet.host) || variables.c.readinessProbe.httpGet.host == '') && (!has(variables.c.readinessProbe.httpGet.httpHeaders) || variables.c.readinessProbe.httpGet.httpHeaders.size() == 0) &&
