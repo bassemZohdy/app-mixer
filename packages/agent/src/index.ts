@@ -214,3 +214,5 @@ export {registerActionRecoveryDiscovery} from './action-recovery-discovery-capab
 export type {ActionRecoveryDiscoveryCapabilityOptions} from './action-recovery-discovery-capability.js';
 export {AgentActionRecoveryCoordinator} from './action-recovery-coordinator.js';
 export type {AgentActionRecoveryCoordinatorOptions,AgentActionRecoverySession} from './action-recovery-coordinator.js';
+export {SqliteAgentScheduleMetrics} from './agent-schedule-metrics.js';
+export type {AgentScheduleMetricsOptions,AgentScheduleMetricsSnapshot} from './agent-schedule-metrics.js';
