@@ -180,3 +180,22 @@ spec:
         'app.kubernetes.io/name' in object.spec.selector.matchLabels && object.spec.selector.matchLabels['app.kubernetes.io/name'] == 'app-mixer' &&
         'app.kubernetes.io/component' in object.spec.selector.matchLabels && object.spec.selector.matchLabels['app.kubernetes.io/component'] == 'data-plane' &&
         (!has(object.spec.selector.matchExpressions) || object.spec.selector.matchExpressions.size() == 0)
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-data-plane-deletion
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [DELETE]
+        resources: [deployments]
+  matchConditions:
+    - name: data-plane-name
+      expression: "oldObject.metadata.name == 'app-mixer-data-plane'"
+  validations:
+    - message: Preserve the Data Plane Deployment while the guard is enforced.
+      expression: "false"
