@@ -7,6 +7,9 @@ const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._
 const secret=(x:unknown):x is string=>typeof x==='string'&&/^[\x21-\x7e]{32,1024}$/.test(x);
 const decode=(body:Buffer):Record<string,unknown>=>{const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid Linear event');return value as Record<string,unknown>;};
 
+// Normalize object key order while preserving array order and JSON value types.
+function canonical(value:unknown):string{if(value===null||typeof value!=='object')return JSON.stringify(value);if(Array.isArray(value))return `[${value.map(canonical).join(',')}]`;const record=value as Record<string,unknown>;return `{${Object.keys(record).sort().map(key=>`${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;}
+
 /** One host-selected Linear organization, webhook and data-change event type. */
 export function createLinearWebhookAdapter(options:LinearWebhookOptions){
  const identity=options?.identity,tolerance=options?.toleranceMs??60000;
@@ -22,7 +25,7 @@ export function createLinearWebhookAdapter(options:LinearWebhookOptions){
   },
   mapAuthenticatedBody(body:Buffer):AgentEventRequest{
    const event=decode(body);if(event.organizationId!==organizationId||event.webhookId!==webhookId||event.type!==eventType||!['create','update','remove'].includes(String(event.action))||!event.data||typeof event.data!=='object'||Array.isArray(event.data))throw Error('Invalid Linear event');
-   return {agentId,eventId:`linear.${createHash('sha256').update(body).digest('hex')}`,eventType:`linear.${eventType}.${event.action}`,payload:event};
+   const {webhookTimestamp:_timestamp,...payload}=event;return {agentId,eventId:`linear.${createHash('sha256').update(canonical(payload)).digest('hex')}`,eventType:`linear.${eventType}.${event.action}`,payload};
   }
  };
 }
