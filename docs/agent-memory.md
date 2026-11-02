@@ -63,7 +63,7 @@ The worker passes an `AbortSignal` as the third argument to its scope authorizat
 The list and actor are fixed at construction; rebuilding the worker is required when scopes change. This worker does not discover new scopes, guarantee purge timing, coordinate a production scheduler, remove tombstones or erase database backups. Callbacks and database operations must return promptly; the host owns scheduler health, retries, storage protection and alerting.
 
 
-Local SQLite listing and audit pages recheck each returned item and then scope authorization before returning. Listings also verify that returned records still have the same revision and have not expired. Semantic and hybrid searches, including exact/indexed comparisons, recheck access to their selected hits after other asynchronous checks. A failed final check rejects the response rather than returning a partially stale page. Policy may still change after the final check; hosts requiring atomic authorization must coordinate it with data access.
+Local SQLite listing and audit pages recheck each returned item and then scope authorization before returning. Listings also verify that returned records still have the same revision and have not expired. Semantic and hybrid searches, including exact/indexed comparisons, recheck access, revision and expiration for all selected hits after other asynchronous checks. A comparison rejects conflicting revisions for the same record. A failed final check rejects the response rather than returning a partially stale page. Policy may still change after the final check; hosts requiring atomic authorization must coordinate it with data access.
 
 ## Indexed PostgreSQL keyword search
 

@@ -60,7 +60,7 @@ export class AgentSemanticMemory {
  async compareIndexed(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,maxCandidates=100,options:SemanticMemorySearchOptions={}):Promise<{indexed:SemanticMemoryHit[];exact:SemanticMemoryHit[]}>{
   const minSimilarity=this.indexedThreshold(options),prepared=await this.prepareIndexed(actor,scope,query,limit,maxCandidates),indexed=await this.indexedWithVector(prepared.actor,prepared.scope,prepared.vector,limit,maxCandidates,minSimilarity),exact=await this.searchInternal(prepared.actor,prepared.scope,query,limit,false,{minSimilarity},prepared.vector),current:SemanticMemoryHit[]=[];
   for(const hit of indexed){try{const row=await this.memory.get(prepared.actor,prepared.scope,hit.id);if(row&&row.revision===hit.revision)current.push(hit);}catch(error){if(error instanceof MemoryAccessDenied||error instanceof Error&&error.message==='Memory changed during read')continue;throw error;}}
-  for(const hit of [...current,...exact])await this.memory.assertAccess(prepared.actor,prepared.scope,'read',hit.id);await this.memory.assertAccess(prepared.actor,prepared.scope,'list');return {indexed:current,exact};
+  await this.memory.verifySearchHits(prepared.actor,prepared.scope,[...current,...exact]);return {indexed:current,exact};
  }
  async search(actor:AgentMemoryActor,scope:AgentMemoryScope,query:string,limit=5,options:SemanticMemorySearchOptions={}):Promise<SemanticMemoryHit[]>{
   return this.searchInternal(actor,scope,query,limit,false,options);
@@ -91,7 +91,7 @@ export class AgentSemanticMemory {
   }
   const result:SemanticMemoryHit[]=[];
   for(const hit of matches){if(result.length===limit)break;const current=await this.memory.get(safeActor,safeScope,hit.id);if(current&&current.revision===hit.revision)result.push(hit);}
-  for(const hit of result)await this.memory.assertAccess(safeActor,safeScope,'read',hit.id);await this.memory.assertAccess(safeActor,safeScope,'list');return result;
+  await this.memory.verifySearchHits(safeActor,safeScope,result);return result;
  }
 }
 export type {Embedder as AgentMemoryEmbedder};

@@ -136,3 +136,10 @@ test('semantic and hybrid searches reject earlier hits if record access is revok
  let active=false,revoked=false,bReads=0;const memory=new SqliteAgentMemory(':memory:',{enabled:true,maxTtlMs:1000,maxEntries:10,clock:()=>100,authorize:(_actor,_scope,action,id)=>{if(active&&action==='read'&&id==='b'&&++bReads===3)revoked=true;return !(active&&revoked&&action==='read'&&id==='a');}}),semantic=new AgentSemanticMemory(memory,{modelId:'model-v1',dimensions:2,embed:async()=>[1,0]});
  try{await semantic.put(admin,scope,'a','shared a',options);await semantic.put(admin,scope,'b','shared b',options);for(const mode of ['search','searchHybrid']){active=true;revoked=false;bReads=0;await assert.rejects(semantic[mode](admin,scope,'shared',2),/access denied/,mode);active=false;}}finally{memory.close();}
 });
+
+
+test('semantic results fail closed when earlier hits change during final access checks',async()=>{
+ for(const mode of ['search','searchHybrid'])for(const change of ['update','delete','expire']){let active=false,changed=false,bReads=0,now=100,memory;memory=new SqliteAgentMemory(':memory:',{enabled:true,maxTtlMs:1000,maxEntries:10,clock:()=>now,authorize:async(_actor,_scope,action,id)=>{if(active&&!changed&&action==='read'&&id==='b'&&++bReads===4){changed=true;if(change==='update')await memory.put(admin,scope,'a','new',{...options,expectedRevision:1});else if(change==='delete')await memory.delete(admin,scope,'a',1);else now=500;}return true;}});const semantic=new AgentSemanticMemory(memory,{modelId:'model-v1',dimensions:2,embed:async()=>[1,0]});
+  try{await semantic.put(admin,scope,'a','shared a',options);await semantic.put(admin,scope,'b','shared b',options);active=true;await assert.rejects(semantic[mode](admin,scope,'shared',2),/Memory changed during read/,`${mode} ${change}`);assert.equal(changed,true);}finally{memory.close();}
+ }
+});
