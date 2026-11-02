@@ -9,6 +9,7 @@ export type DataMigrationEvidence={principalId:string;reference:string;observedA
 export type DataMigration={fromVersion:number;toVersion:number;digest:string;outputDigest?:string;transform:(value:Record<string,unknown>,id:string)=>Record<string,unknown>;validate:(value:Record<string,unknown>,id:string)=>boolean;evidence?:DataMigrationEvidence};
 export type DataMigrationRehearsal={fromVersion:number;transform:DataMigration['transform'];validate:DataMigration['validate']};
 export type DataMigrationRehearsalResult=MigrationPreview&{outputDigest:string};
+export type SqliteDataProviderOptions={migrationLimits?:{maxRecords?:number;maxBytes?:number}};
 export type DataRollback={fromVersion:number;targetVersion:number;digest:string;outputDigest?:string;transform:DataMigration['transform'];validate:DataMigration['validate'];evidence?:DataMigrationEvidence};
 export type DataMigrationAuditEvent={fromVersion:number;toVersion:number;targetVersion:number|null;digest:string;outputDigest?:string;recordCount:number;principalId:string;reference:string;observedAt:number};
 export type DataRollbackEvent={fromVersion:number;toVersion:number;targetVersion:number;digest:string;recordCount:number};
@@ -65,7 +66,11 @@ export class SqliteDataProvider implements DataProvider {
   readonly supportsReverseList=true;
   readonly supportsIdPrefix=true;
   private readonly db:DatabaseSync;
-  constructor(path:string){
+  private readonly migrationMaxRecords:number;
+  private readonly migrationMaxBytes:number;
+  constructor(path:string,options:SqliteDataProviderOptions={}){
+    const limits=options?.migrationLimits;if(!options||typeof options!=='object'||Array.isArray(options)||(limits!==undefined&&(!limits||typeof limits!=='object'||Array.isArray(limits)))||(limits?.maxRecords!==undefined&&(!Number.isSafeInteger(limits.maxRecords)||limits.maxRecords<1||limits.maxRecords>10000))||(limits?.maxBytes!==undefined&&(!Number.isSafeInteger(limits.maxBytes)||limits.maxBytes<1||limits.maxBytes>128*1024*1024)))throw Error('Invalid migration limits');
+    this.migrationMaxRecords=limits?.maxRecords??1000;this.migrationMaxBytes=limits?.maxBytes??16*1024*1024;
     this.db=new DatabaseSync(path);
     try {this.db.exec(`PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS business_records (
@@ -123,11 +128,11 @@ export class SqliteDataProvider implements DataProvider {
   }
   private snapshot(scope:DataScope,collection:string):{preview:MigrationPreview;rows:DataRecord[]} {
     const version=this.getSchemaVersion(scope,collection),rows:DataRecord[]=[];let bytes=0;
-    const statement=this.db.prepare('SELECT record_id,revision,value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 ORDER BY record_id LIMIT 1001');
-    for(const row of statement.iterate(scope.tenantId,scope.applicationId,collection)){
-      if(rows.length===1000)throw Error('Migration collection too large');
+    const statement=this.db.prepare('SELECT record_id,revision,value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 ORDER BY record_id LIMIT ?');
+    for(const row of statement.iterate(scope.tenantId,scope.applicationId,collection,this.migrationMaxRecords+1)){
+      if(rows.length===this.migrationMaxRecords)throw Error('Migration collection too large');
       const revision=Number(row.revision);if(!Number.isSafeInteger(revision)||revision<1||revision>=Number.MAX_SAFE_INTEGER||typeof row.record_id!=='string'||typeof row.value!=='string')throw Error('Invalid migration record');
-      bytes+=Buffer.byteLength(row.value,'utf8');if(bytes>16*1024*1024)throw Error('Migration collection too large');
+      bytes+=Buffer.byteLength(row.value,'utf8');if(bytes>this.migrationMaxBytes)throw Error('Migration collection too large');
       rows.push({id:row.record_id,revision,value:dataCopy(JSON.parse(row.value))});
     }
     const digest=createHash('sha256').update(JSON.stringify([scope.tenantId,scope.applicationId,collection,version,rows])).digest('hex');
@@ -144,7 +149,7 @@ export class SqliteDataProvider implements DataProvider {
   }
   private migrationOutputDigest(inputDigest:string,rows:DataRecord[]):string{return createHash('sha256').update(JSON.stringify(['app-mixer-migration-output-v1',inputDigest,rows])).digest('hex');}
   private transformMigrationRows(rows:DataRecord[],transform:DataMigration['transform'],validate:DataMigration['validate']):DataRecord[]{
-    let bytes=0;return rows.map(row=>{const candidate:unknown=transform(dataCopy(row.value),row.id);if(candidate instanceof Promise)candidate.catch(()=>{});const value=dataCopy(candidate);const valid:unknown=validate(dataCopy(value),row.id);if(valid instanceof Promise)valid.catch(()=>{});if(valid!==true)throw Error('Migration validation failed');bytes+=Buffer.byteLength(JSON.stringify(value),'utf8');if(bytes>16*1024*1024)throw Error('Migration collection too large');return {...row,value};});
+    let bytes=0;return rows.map(row=>{const candidate:unknown=transform(dataCopy(row.value),row.id);if(candidate instanceof Promise)candidate.catch(()=>{});const value=dataCopy(candidate);const valid:unknown=validate(dataCopy(value),row.id);if(valid instanceof Promise)valid.catch(()=>{});if(valid!==true)throw Error('Migration validation failed');bytes+=Buffer.byteLength(JSON.stringify(value),'utf8');if(bytes>this.migrationMaxBytes)throw Error('Migration collection too large');return {...row,value};});
   }
   /** Restore a previous schema shape in a new monotonic generation. */
   rollbackCollection(scope:DataScope,collection:string,rollback:DataRollback):MigrationPreview {
