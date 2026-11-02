@@ -58,8 +58,12 @@ final class MixerDeviceUITests: XCTestCase {
     XCTAssertTrue(layout.waitForExistence(timeout: 10))
     layout.tap()
     let labels = ["A long nested column label needs to wrap", "A long nested card label needs to wrap", "A long nested row label needs to wrap"]
-    let elements = labels.map { app.staticTexts[$0] }
-    for element in elements { XCTAssertTrue(element.waitForExistence(timeout: 10)) }
+    let elements = labels.map { label -> XCUIElement in
+      let matches = app.staticTexts.matching(identifier: label)
+      XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10))
+      // React Native can expose a matching text wrapper as well as its leaf.
+      return matches.element(boundBy: max(0, matches.count - 1))
+    }
     let left = elements[0].frame.minX
     for element in elements {
       XCTAssertGreaterThan(element.frame.width, 0)
