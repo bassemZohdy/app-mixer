@@ -71,6 +71,9 @@ const capabilityResponseLimit=Number(capabilityResponseLimitText);
 const capabilityRequestLimitText=process.env.CAPABILITY_REQUEST_MAX_BYTES??'1048576';
 if(!/^[1-9]\d{0,7}$/.test(capabilityRequestLimitText)||Number(capabilityRequestLimitText)<1048576||Number(capabilityRequestLimitText)>8388608)throw Error('Invalid CAPABILITY_REQUEST_MAX_BYTES');
 const capabilityRequestLimit=Number(capabilityRequestLimitText);
+const capabilityConcurrencyText=process.env.CAPABILITY_MAX_IN_FLIGHT;
+if(capabilityConcurrencyText!==undefined&&(!/^[1-9]\d{0,2}$/.test(capabilityConcurrencyText)||Number(capabilityConcurrencyText)>100))throw Error('Invalid CAPABILITY_MAX_IN_FLIGHT');
+const capabilityConcurrency=capabilityConcurrencyText===undefined?undefined:Number(capabilityConcurrencyText);let capabilityInFlight=0;
 let capabilityURL;
 try {
   const candidate=new URL(process.env.CAPABILITY_URL||'');
@@ -106,6 +109,9 @@ createServer(async(req,res)=>{
     if(req.headers.origin!=='http://'+host){json(res,403,{error:'Invalid origin'});return;}
     if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'Expected JSON'});return;}
     if(!capabilityURL){json(res,503,{error:'Capabilities are not configured'});return;}
+    if(capabilityConcurrency!==undefined&&capabilityInFlight>=capabilityConcurrency){json(res,503,{error:'Capability proxy busy'});return;}
+    capabilityInFlight++;
+    try{
     const parts=[];let size=0,input;
     try {for await(const chunk of req){size+=chunk.length;if(size>capabilityRequestLimit){json(res,413,{error:'Request too large'});return;}parts.push(chunk);}input=JSON.parse(Buffer.concat(parts).toString('utf8'));}
     catch{if(!res.destroyed)json(res,400,{error:'Invalid request'});return;}
@@ -115,6 +121,7 @@ createServer(async(req,res)=>{
       const chunks=[];let length=0;for await(const chunk of upstream.body){length+=chunk.length;if(length>capabilityResponseLimit)throw Error('Capability response too large');chunks.push(chunk);}
       const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));json(res,upstream.status,result);},capabilityPropagation);
     }catch{if(!res.destroyed)json(res,502,{error:'Capability service unavailable'});}
+    }finally{capabilityInFlight--;}
     });
   }
   if(req.method==='GET' && req.url==='/api/chat/status'){json(res,200,{enabled:!!agentURL});return;}
@@ -231,7 +238,7 @@ export function prepareWorkspace(app){
  const offlineShell=shellTemplate.replace('__APP_ID__',JSON.stringify(name)),offlineShellWorker=shellWorkerTemplate.replace('__APP_ID__',JSON.stringify(name));
  const offlineURL=new URL(import.meta.resolve('@app-mixer/web/offline'));
  const [offlineSource,offlineWorker,offlineUI]=await Promise.all([readFile(offlineURL),readFile(new URL('./offline-worker.js',offlineURL)),readFile(new URL('./offline-ui.js',offlineURL))]);
- await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nWORKSPACE_TRACING_PROPAGATE_AGENT=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\nCAPABILITY_TIMEOUT_MS=5000\nCAPABILITY_RESPONSE_MAX_BYTES=1048576\nCAPABILITY_REQUEST_MAX_BYTES=1048576\n")]);
+ await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nWORKSPACE_TRACING_PROPAGATE_AGENT=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\nCAPABILITY_TIMEOUT_MS=5000\nCAPABILITY_RESPONSE_MAX_BYTES=1048576\nCAPABILITY_REQUEST_MAX_BYTES=1048576\n# CAPABILITY_MAX_IN_FLIGHT=10\n")]);
  return target;
 }
 if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
