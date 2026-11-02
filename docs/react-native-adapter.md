@@ -37,7 +37,7 @@ For application definitions, `registerDeclaredNativeExtensionComponent` from `@a
 
 Array updates reject noncanonical or out-of-range indices, including intermediate paths, and leave the model unchanged on rejection.
 
-Repeated references to the same component within a layout receive distinct, stable sibling identities. React Native for Web checks that repeated bound fields stay editable and retain their instances when an unrelated sibling is reordered. Android and iOS device scenarios also exercise the reorder, synchronized values and editing both repeated fields; check the device workflow results for the revision being deployed. Removing an earlier occurrence can change which remaining occurrence retains its local editing state.
+Repeated references to the same component within a layout receive distinct, stable sibling identities. React Native for Web checks that repeated bound fields stay editable and retain their instances when an unrelated sibling is reordered. Android and iOS device scenarios also exercise the reorder, synchronized values and editing both repeated fields; this passed on the [Android emulator](https://github.com/bassemZohdy/app-mixer/actions/runs/41533732229), and the iOS result remains pending. Check device workflow results for the revision being deployed. Removing an earlier occurrence can change which remaining occurrence retains its local editing state.
 
 Each created surface has a separate rendering identity. Deleting and recreating a surface resets its component state even when both messages are delivered in the same React batch; React Native for Web tests this behavior.
 
