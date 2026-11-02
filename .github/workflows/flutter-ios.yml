@@ -4,6 +4,8 @@ on:
     paths:
       - 'adapters/flutter/**'
       - '.github/workflows/flutter-ios.yml'
+      - '.github/scripts/flutter-ios-drive.py'
+      - '.github/scripts/flutter-ios-drive-test.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,6 +28,8 @@ jobs:
           echo "$checksum  $RUNNER_TEMP/flutter.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/flutter.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Test bounded startup retry
+        run: python3 .github/scripts/flutter-ios-drive-test.py
       - name: Prepare iOS host
         run: |
           flutter create --no-pub --platforms=ios --project-name adapter_device_test "$RUNNER_TEMP/adapter_device_test"
@@ -64,6 +68,5 @@ jobs:
           xcrun simctl bootstatus "$simulator" -b
           open -a Simulator
           cd "$RUNNER_TEMP/adapter_device_test"
-          # Flutter 3.35's `flutter test` can miss the VM service log on iOS.
-          # `flutter drive` starts the log reader before launch and reports the same integration test result.
-          flutter drive --verbose --driver=test_driver/integration_test.dart --target=integration_test/renderer_device_test.dart -d "$simulator"
+          # Retry only the known VM service discovery stall; real test failures fail immediately.
+          python3 "$GITHUB_WORKSPACE/.github/scripts/flutter-ios-drive.py" "$simulator"
