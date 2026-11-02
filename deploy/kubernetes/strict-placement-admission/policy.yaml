@@ -1,0 +1,39 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-strict-placement
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments]
+  matchConditions:
+    - name: data-plane-name
+      expression: "object.metadata.name == 'app-mixer-data-plane'"
+  variables:
+    - name: pod
+      expression: object.spec.template.spec
+  validations:
+    - message: Preserve strict hostname placement using the default scheduler.
+      expression: >-
+        has(object.spec.template.metadata.labels) &&
+        'app.kubernetes.io/name' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['app.kubernetes.io/name'] == 'app-mixer' &&
+        'app.kubernetes.io/component' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['app.kubernetes.io/component'] == 'data-plane' &&
+        (!has(variables.pod.nodeName) || variables.pod.nodeName == '') &&
+        (!has(variables.pod.schedulerName) || variables.pod.schedulerName == 'default-scheduler') &&
+        has(variables.pod.affinity) && has(variables.pod.affinity.podAntiAffinity) &&
+        has(variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution) &&
+        variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.size() == 1 &&
+        variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.all(term,
+          term.topologyKey == 'kubernetes.io/hostname' &&
+          (!has(term.namespaces) || term.namespaces.size() == 0) && !has(term.namespaceSelector) &&
+          (!has(term.matchLabelKeys) || term.matchLabelKeys.size() == 0) &&
+          (!has(term.mismatchLabelKeys) || term.mismatchLabelKeys.size() == 0) &&
+          has(term.labelSelector) && has(term.labelSelector.matchLabels) &&
+          term.labelSelector.matchLabels.size() == 2 &&
+          'app.kubernetes.io/name' in term.labelSelector.matchLabels && term.labelSelector.matchLabels['app.kubernetes.io/name'] == 'app-mixer' &&
+          'app.kubernetes.io/component' in term.labelSelector.matchLabels && term.labelSelector.matchLabels['app.kubernetes.io/component'] == 'data-plane' &&
+          (!has(term.labelSelector.matchExpressions) || term.labelSelector.matchExpressions.size() == 0))

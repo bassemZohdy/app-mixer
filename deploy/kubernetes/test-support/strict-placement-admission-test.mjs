@@ -1,0 +1,31 @@
+import {execFileSync,spawnSync} from 'node:child_process';
+import {setTimeout as delay} from 'node:timers/promises';
+
+// Run only in the disposable node-recovery cluster, after node-failure-test.mjs.
+const namespace='app-mixer-node-test',cluster=process.env.APP_MIXER_KIND_CLUSTER??'app-mixer-nodes',run=(...args)=>execFileSync('kubectl',args,{encoding:'utf8',timeout:30000}),apply=value=>spawnSync('kubectl',['replace','--dry-run=server','-f','-'],{input:JSON.stringify(value),encoding:'utf8',timeout:30000});
+if(!/^[a-z][a-z0-9-]{0,30}$/.test(cluster)||run('config','current-context').trim()!==`kind-${cluster}`)throw Error('Expected the disposable kind test cluster');
+run('apply','-f','deploy/kubernetes/strict-placement-admission/policy.yaml');run('apply','-f','deploy/kubernetes/strict-placement-admission/binding.yaml');run('label','namespace',namespace,'app-mixer.dev/enforce-strict-placement=true','--overwrite');
+const original=JSON.parse(run('get','deployment','app-mixer-data-plane','-n',namespace,'-o','json'));
+const mutate=(label,change)=>{const value=structuredClone(original);change(value.spec.template.spec);return {label,value};};
+const bad=[
+ mutate('missing affinity',pod=>delete pod.affinity),
+ mutate('no required terms',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution=[]),
+ mutate('wrong topology',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey='topology.kubernetes.io/zone'),
+ mutate('wrong selector',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchLabels['app.kubernetes.io/component']='other'),
+ mutate('extra selector',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchLabels.extra='value'),
+ mutate('selector expressions',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchExpressions=[{key:'other',operator:'Exists'}]),
+ mutate('alternate namespace',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].namespaces=['elsewhere']),
+ mutate('namespace selector',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].namespaceSelector={}),
+ mutate('dynamic match label',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].matchLabelKeys=['pod-template-hash']),
+ mutate('dynamic mismatch label',pod=>pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].mismatchLabelKeys=['tenant']),
+ mutate('direct node assignment',pod=>pod.nodeName='some-node'),
+ mutate('custom scheduler',pod=>pod.schedulerName='other-scheduler'),
+];
+// Wait for policy propagation by checking a known unsafe update first.
+let rejected;for(let i=0;i<45;i++){rejected=apply(bad[0].value);if(rejected.status!==0&&rejected.stderr.includes('app-mixer-strict-placement'))break;await delay(1000);}if(rejected.status===0||!rejected.stderr.includes('app-mixer-strict-placement'))throw Error('Strict placement policy did not become active: '+rejected.stderr);
+const approved=apply(original);if(approved.status!==0)throw Error('Approved strict placement was denied: '+approved.stderr);
+for(const {label,value} of bad){const result=apply(value);if(result.status===0||!result.stderr.includes('app-mixer-strict-placement'))throw Error(`${label} was not denied by strict placement policy: ${result.stderr}`);}
+const unrelated=structuredClone(original);unrelated.metadata.name='unrelated-service';delete unrelated.metadata.resourceVersion;delete unrelated.metadata.uid;delete unrelated.metadata.creationTimestamp;delete unrelated.metadata.managedFields;delete unrelated.status;delete unrelated.spec.template.spec.affinity;const unrelatedResult=spawnSync('kubectl',['create','--dry-run=server','-f','-'],{input:JSON.stringify(unrelated),encoding:'utf8',timeout:30000});if(unrelatedResult.status!==0)throw Error('Unrelated deployment was denied: '+unrelatedResult.stderr);
+const creationNamespace='app-mixer-placement-create-test';run('create','namespace',creationNamespace);try{const changed=structuredClone(original);changed.metadata={name:'app-mixer-data-plane',namespace:creationNamespace};delete changed.status;changed.spec.template.metadata.labels['app.kubernetes.io/component']='other';changed.spec.selector.matchLabels['app.kubernetes.io/component']='other';const create=value=>spawnSync('kubectl',['create','--dry-run=server','-f','-'],{input:JSON.stringify(value),encoding:'utf8',timeout:30000});if(create(changed).status!==0)throw Error('Unlabeled namespace was unexpectedly restricted');run('label','namespace',creationNamespace,'app-mixer.dev/enforce-strict-placement=true');let result;for(let i=0;i<45;i++){result=create(changed);if(result.status!==0&&result.stderr.includes('app-mixer-strict-placement'))break;await delay(1000);}if(result.status===0||!result.stderr.includes('app-mixer-strict-placement'))throw Error('Wrong pod label at creation was not denied: '+result.stderr);changed.spec.template.metadata.labels['app.kubernetes.io/component']='data-plane';changed.spec.selector.matchLabels['app.kubernetes.io/component']='data-plane';result=create(changed);if(result.status!==0)throw Error('Approved creation was denied: '+result.stderr);}finally{run('delete','namespace',creationNamespace,'--wait=false');}
+const status=JSON.parse(run('get','validatingadmissionpolicy','app-mixer-strict-placement','-o','json'));const warnings=status.status?.typeChecking?.expressionWarnings??[];if(warnings.length)throw Error('Strict placement policy type warnings: '+JSON.stringify(warnings));
+console.log('Strict placement policy accepts the approved Deployment and rejects placement bypasses.');

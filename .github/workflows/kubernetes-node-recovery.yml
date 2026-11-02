@@ -39,6 +39,8 @@ jobs:
         run: node deploy/kubernetes/test-support/node-failure-test.mjs
       - name: Validate protected overlay against the Kubernetes API
         run: kubectl apply --dry-run=server -n app-mixer-node-test -k deploy/kubernetes/strict-placement-example -o name
+      - name: Verify strict placement admission
+        run: node deploy/kubernetes/test-support/strict-placement-admission-test.mjs
       - name: Diagnostics on failure
         if: failure()
         run: |

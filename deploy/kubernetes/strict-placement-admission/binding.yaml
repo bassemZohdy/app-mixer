@@ -1,0 +1,10 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-mixer-strict-placement
+spec:
+  policyName: app-mixer-strict-placement
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels: {app-mixer.dev/enforce-strict-placement: "true"}
