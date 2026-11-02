@@ -52,20 +52,21 @@ export class DurableAgentWorker {
   const releaseSlot=async()=>{if(shared&&slot)try{await shared.release(scope,runId,slot);}catch{}};
   try{run=runs.claim(scope,runId,run.revision,workerId,leaseMs,this.clock(),quotas.maxConcurrentRuns,quotas.maxRunsPerDay);}catch(error){await releaseSlot();throw error;}
   const token=run.leaseToken!;
-  const controller=new AbortController();let lost=false;
+  const controller=new AbortController();let lost=false,slotUncertain=false;
   const assertLocalLease=()=>{
    const current=runs.get(scope,runId),now=this.clock();
    if(controller.signal.aborted||!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.status!=='running'||current.leaseUntil===null||!Number.isSafeInteger(now)||now>=current.leaseUntil)throw Error('Agent run lease unavailable');
   };
   const assertLease=()=>{assertLocalLease();if(isAsync||verifySharedSlotAtUse||!validDefinition())throw Error('Agent run lease unavailable');};
-  const activeLookup=async(signal:AbortSignal)=>{if(signal.aborted)throw Error('Agent run lease unavailable');return new Promise<AgentDefinitionVersion|undefined>((resolve,reject)=>{const aborted=()=>{cleanup();reject(Error('Agent run lease unavailable'));},cleanup=()=>signal.removeEventListener('abort',aborted);signal.addEventListener('abort',aborted,{once:true});Promise.resolve().then(()=>{if(signal.aborted)throw Error('Agent run lease unavailable');return definitions.getWithSignal?definitions.getWithSignal(scope.tenantId,scope.agentId,signal):lookup();}).then(value=>{cleanup();if(signal.aborted)reject(Error('Agent run lease unavailable'));else resolve(value);},error=>{cleanup();reject(error);});});};
+  const waitActive=<T>(signal:AbortSignal,operation:()=>T|Promise<T>):Promise<T>=>{if(signal.aborted)return Promise.reject(Error('Agent run lease unavailable'));return new Promise<T>((resolve,reject)=>{const aborted=()=>{cleanup();reject(Error('Agent run lease unavailable'));},cleanup=()=>signal.removeEventListener('abort',aborted);signal.addEventListener('abort',aborted,{once:true});Promise.resolve().then(()=>{if(signal.aborted)throw Error('Agent run lease unavailable');return operation();}).then(value=>{cleanup();if(signal.aborted)reject(Error('Agent run lease unavailable'));else resolve(value);},error=>{cleanup();reject(error);});});};
+  const activeLookup=(signal:AbortSignal)=>waitActive(signal,()=>definitions.getWithSignal?definitions.getWithSignal(scope.tenantId,scope.agentId,signal):lookup());
   const validateLease=async(signal:AbortSignal)=>{assertLocalLease();if(!(isAsync?matches(await activeLookup(signal)):validDefinition()))throw Error('Agent run lease unavailable');if(signal.aborted)throw Error('Agent run lease unavailable');assertLocalLease();};
-  const assertLeaseAsync=async()=>{await validateLease(controller.signal);if(verifySharedSlotAtUse){try{if(!shared||!slot||!(await shared.holds(scope,runId,slot)))throw Error('Agent run slot lost');assertLocalLease();}catch{lost=true;controller.abort();throw Error('Agent run lease unavailable');}}};
+  const assertLeaseAsync=async()=>{await validateLease(controller.signal);if(verifySharedSlotAtUse){try{if(!shared||!slot||!(await waitActive(controller.signal,()=>shared.holds(scope,runId,slot!))))throw Error('Agent run slot lost');assertLocalLease();}catch{lost=true;controller.abort();throw Error('Agent run lease unavailable');}}};
   let pulsing:Promise<void>|undefined;const pulseStop=new AbortController(),pulseSignal=AbortSignal.any([controller.signal,pulseStop.signal]);
   const pulse=async()=>{
    try{await validateLease(pulseSignal);}catch{if(!pulseStop.signal.aborted||controller.signal.aborted){lost=true;controller.abort();}return;}
-   try{const current=runs.get(scope,runId)!;run=runs.renew(scope,runId,current.revision,token,leaseMs,this.clock());if(shared&&slot&&!(await shared.renew(scope,runId,slot,leaseMs)))throw Error('Agent run slot lost');}
-   catch{lost=true;controller.abort();}
+   try{const current=runs.get(scope,runId)!;run=runs.renew(scope,runId,current.revision,token,leaseMs,this.clock());if(shared&&slot&&!(await waitActive(pulseSignal,()=>shared.renew(scope,runId,slot!,leaseMs))))throw Error('Agent run slot lost');}
+   catch{lost=true;slotUncertain=true;controller.abort();}
   };
   const timer=setInterval(()=>{try{assertLocalLease();}catch{lost=true;controller.abort();return;}if(!pulsing)pulsing=pulse().finally(()=>{pulsing=undefined;});},pollMs);let outcome:Outcome='uncertain',started=false;
   try{
@@ -75,12 +76,12 @@ export class DurableAgentWorker {
    if(isAsync&&result!=='stopped'&&result!=='uncertain')await assertLeaseAsync();
    if(typeof result==='string'&&['succeeded','failed','stopped','uncertain'].includes(result))outcome=result;else if(result&&typeof result==='object'&&result.status==='delegation_expired')outcome={status:'delegation_expired',grantId:result.grantId,revision:result.revision};else if(result&&typeof result==='object'&&result.status==='approval_required')outcome={status:'approval_required',actionId:result.actionId};
   }catch{if(!started)outcome='failed';}
-  finally{clearInterval(timer);pulseStop.abort();if(pulsing)await pulsing;}
+  finally{clearInterval(timer);if(pulsing&&!controller.signal.aborted){const pending=pulsing;await new Promise<void>(resolve=>{const grace=setTimeout(resolve,Math.min(1000,Math.max(100,pollMs)));void pending.finally(()=>{clearTimeout(grace);resolve();});});}pulseStop.abort();if(pulsing)await pulsing;}
   try{
   const current=runs.get(scope,runId);
   if(!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.leaseUntil===null||this.clock()>=current.leaseUntil)throw Error('Agent run lease lost');
   if(typeof outcome==='object'){if(!lost&&current.status==='running'){try{return outcome.status==='approval_required'?runs.pauseForApproval(scope,runId,current.revision,token,outcome.actionId,this.clock()):runs.pauseForDelegation(scope,runId,current.revision,token,outcome.grantId,outcome.revision,this.clock());}catch{outcome='uncertain';}}else outcome=current.status==='pause_requested'||current.status==='cancel_requested'?'stopped':'uncertain';}
-  if(lost&&(isAsync||verifySharedSlotAtUse||outcome!=='succeeded'&&outcome!=='failed'))outcome=current.status==='pause_requested'||current.status==='cancel_requested'?(outcome==='stopped'?'stopped':'uncertain'):'uncertain';
+  if(lost&&(isAsync||verifySharedSlotAtUse||slotUncertain||outcome!=='succeeded'&&outcome!=='failed'))outcome=current.status==='pause_requested'||current.status==='cancel_requested'?(outcome==='stopped'?'stopped':'uncertain'):'uncertain';
   if(outcome==='stopped'&&!['pause_requested','cancel_requested'].includes(current.status))outcome='uncertain';
   return runs.settle(scope,runId,current.revision,token,outcome,this.clock());
   }finally{await releaseSlot();}
