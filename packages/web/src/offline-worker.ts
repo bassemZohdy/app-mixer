@@ -16,6 +16,7 @@ export class BrowserOfflineWorker {
   private active=false;
   private timer:ReturnType<typeof setTimeout>|undefined;
   private inFlight:Promise<void>|undefined;
+  private cursor:string|undefined;
   private readonly scope:BrowserQueueScope;
   private readonly options:BrowserOfflineWorkerOptions;
   constructor(private readonly queue:EncryptedBrowserQueue,options:BrowserOfflineWorkerOptions){
@@ -35,11 +36,12 @@ export class BrowserOfflineWorker {
   private async pass():Promise<void>{
     try{
       if(!await this.authorized())return;
-      const items=await this.queue.list();let processed=0;
-      for(const item of items){
+      const items=(await this.queue.list()).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);let processed=0;
+      const next=this.cursor===undefined?0:items.findIndex(item=>item.id>this.cursor!);const start=next<0?0:next;
+      for(const item of [...items.slice(start),...items.slice(0,start)]){
         if(!this.active||processed>=this.options.maxPerPass)return;
         if(item.status!=='pending')continue;
-        processed++;
+        processed++;this.cursor=item.id;
         if(!await this.authorized())return;
         if(item.attempts>=this.options.maxAttempts){try{await this.queue.transition(item.id,item.version,'exhaustPending');}catch(error){if(!(error instanceof Error&&error.message==='Offline version conflict'))throw error;}continue;}
         let claimed:BrowserQueueItem;

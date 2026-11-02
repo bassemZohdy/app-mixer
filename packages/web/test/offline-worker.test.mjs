@@ -58,6 +58,17 @@ test('a contested claim consumes a per-pass slot',async()=>{
  }finally{await worker.stop();queue.close();}
 });
 
+test('repeatedly contested claims do not starve other pending entries',async()=>{
+ const queue=await open(new IDBFactory(),await key());let attempts=0,dispatches=0;const transition=queue.transition.bind(queue),worker=new BrowserOfflineWorker(queue,{...config,intervalMs:100,maxPerPass:1,dispatch:()=>{dispatches++;}});
+ try{
+  for(let i=0;i<3;i++)await queue.enqueue('update',`fair-${i}`,{});
+  const items=(await queue.list()).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0),contested=items[0].id;
+  queue.transition=async(id,version,action)=>{if(id===contested&&action==='claim'){attempts++;throw Error('Offline version conflict');}return transition(id,version,action);};
+  worker.start();await waitFor(async()=>(await queue.list()).filter(item=>item.status==='succeeded').length===2);await worker.stop();
+  assert.ok(attempts>=1);assert.equal(dispatches,2);assert.equal((await queue.get(contested)).status,'pending');
+ }finally{await worker.stop();queue.close();}
+});
+
 test('stopping before dispatch releases the claim without consuming an attempt',async()=>{
  const queue=await open(new IDBFactory(),await key());let checks=0,release,started,calls=0;
  const gate=new Promise(resolve=>release=resolve),signal=new Promise(resolve=>started=resolve),item=await queue.enqueue('update','req',{});
