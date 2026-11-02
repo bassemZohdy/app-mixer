@@ -5,6 +5,7 @@ import {once} from 'node:events';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {createProject} from '../../packages/cli/dist/index.js';
 const publicationScript=await readFile(new URL('../../packages/web/dist/offline-publications.js',import.meta.url));
 const script=await readFile(new URL('../../packages/web/dist/offline.js',import.meta.url));
 const workerScript=await readFile(new URL('../../packages/web/dist/offline-worker.js',import.meta.url));
@@ -75,18 +76,20 @@ try{
  if(!sessionStorage.getItem('reload-phase')){sessionStorage.setItem('reload-phase','second');location.reload();}else await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:'pass:reload deduplicated'});
 }catch(error){await fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:'fail:'+String(error)});}
 </script></body>`;
-let resolveResult,rejectResult;
+let resolveResult,rejectResult,capabilitiesScript;
 const browserResult=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;});
 const server=createServer(async(req,res)=>{
  if(req.url==='/result'&&req.method==='POST'){
   const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;
  }
  if(req.url==='/reload-test'){res.writeHead(200,{'content-type':'text/html'});res.end(reloadFixture);return;}
+ if(req.url==='/capabilities.mjs'){res.writeHead(200,{'content-type':'text/javascript'});res.end(capabilitiesScript);return;}
  if(req.url==='/offline-publications.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(publicationScript);return;}
  if(req.url==='/offline.js'||req.url==='/offline-worker.js'||req.url==='/offline-ui.js'||req.url==='/offline-runtime.mjs'){res.writeHead(200,{'content-type':'text/javascript'});res.end(req.url==='/offline.js'?script:req.url==='/offline-worker.js'?workerScript:req.url==='/offline-ui.js'?uiScript:runtimeScript);}else{res.writeHead(200,{'content-type':'text/html'});res.end(fixture);}
 });
 const directory=await mkdtemp(join(tmpdir(),'app-mixer-offline-browser-'));let browser,timer;
 try{
+ const generated=await createProject('offline-browser-smoke',directory);capabilitiesScript=await readFile(join(generated,'capabilities.mjs'));
  server.listen(0,'127.0.0.1');await once(server,'listening');
  browser=spawn(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',`--user-data-dir=${join(directory,'profile')}`,`http://127.0.0.1:${server.address().port}/`],{stdio:['ignore','ignore','pipe']});
  browser.stderr.resume();browser.once('error',rejectResult);browser.once('exit',code=>rejectResult(Error(`Browser exited before reporting: ${code}`)));
