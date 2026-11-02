@@ -6,7 +6,7 @@ import {promisify} from 'node:util';
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {verifySignedExtensionManifest,computeExtensionIntegrity} from '@app-mixer/core';
+import {verifySignedExtensionManifest,computeExtensionIntegrity,ExtensionRegistry,ApplicationStore} from '@app-mixer/core';
 const run=promisify(execFile),cli=resolve('packages/cli/dist/index.js');
 test('extension-sign creates a verifiable package-bound manifest without overwriting files',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mixer-extension-sign-'));
@@ -21,6 +21,12 @@ test('extension-sign creates a verifiable package-bound manifest without overwri
   await assert.rejects(run(process.execPath,[cli,'extension-verify',output,packagePath,otherPublicPath,'publisher']));await assert.rejects(run(process.execPath,[cli,'extension-verify',output,packagePath,publicPath,'wrong-key']));await assert.rejects(run(process.execPath,[cli,'extension-verify',output,packagePath,keyPath,'publisher']),/Expected a PEM public key/);
   await writeFile(packagePath,Buffer.from('tampered package'));await assert.rejects(run(process.execPath,[cli,...args]));await writeFile(packagePath,bytes);
   const altered=join(dir,'altered.json');await writeFile(altered,JSON.stringify({...signed,manifest:{...signed.manifest,version:'2.0.0'}}));await assert.rejects(run(process.execPath,[cli,'extension-verify',altered,packagePath,publicPath,'publisher']));
+  const hostPath=join(dir,'host.json'),requirementsPath=join(dir,'requirements.json'),host={runtimeVersion:'0.1.0',renderer:'react',requireIntegrityPins:true,approved:[{id:manifest.id,version:manifest.version,scope:manifest.scope,permissions:[],integrity:verified.integrity}]},requirements={components:['chart'],tools:[],providers:[]};
+  await writeFile(hostPath,JSON.stringify(host));await writeFile(requirementsPath,JSON.stringify(requirements));const checkArgs=['extension-check',output,packagePath,publicPath,'publisher',hostPath,requirementsPath];assert.match((await run(process.execPath,[cli,...checkArgs])).stdout,/Compatible example\.chart@1\.0\.0/);
+  for(const changed of [{...host,renderer:'flutter'},{...host,approved:[]},{...host,approved:[{...host.approved[0],integrity:computeExtensionIntegrity(Buffer.from('different'))}]},{...host,approved:[{...host.approved[0],integrity:undefined}]}]){await writeFile(hostPath,JSON.stringify(changed));await assert.rejects(run(process.execPath,[cli,...checkArgs]),/compatibility failed/);}
+  await writeFile(hostPath,JSON.stringify(host));await writeFile(requirementsPath,JSON.stringify({...requirements,components:['missing']}));await assert.rejects(run(process.execPath,[cli,...checkArgs]),/compatibility failed/);await writeFile(requirementsPath,JSON.stringify(requirements));
+  const registry=new ExtensionRegistry(host,{trustedKeys:{publisher:keys.publicKey}}),render=()=>1;registry.registerSigned(signed,{components:{chart:render},tools:{},providers:{}},{},bytes);const ref={id:manifest.id,version:manifest.version,scope:manifest.scope},guard=registry.createPublicationGuard(()=>requirements),store=new ApplicationStore({id:'app',schemaVersion:1,revision:0,extensions:[ref],pages:[]},guard);assert.equal(store.publish(0).version,1);assert.equal(registry.getForExtension([ref],ref.id,'components','chart')(),1);
+
 
   const before=await readFile(output,'utf8');await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',output]));assert.equal(await readFile(output,'utf8'),before);
   await writeFile(manifestPath,JSON.stringify({...manifest,integrity:computeExtensionIntegrity(Buffer.from('other'))}));await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',join(dir,'bad.json')]),/integrity does not match/);

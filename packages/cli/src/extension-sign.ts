@@ -1,6 +1,6 @@
 import {open,writeFile} from 'node:fs/promises';
 import {createPrivateKey,createPublicKey} from 'node:crypto';
-import {computeExtensionIntegrity,signExtensionManifest,verifySignedExtensionManifest,type ExtensionManifest} from '@app-mixer/core';
+import {checkExtensionCompatibility,computeExtensionIntegrity,signExtensionManifest,verifySignedExtensionManifest,type ExtensionManifest} from '@app-mixer/core';
 
 // Bounded reads do not trust a file size that can change while it is being read.
 async function readBounded(path:string,max:number):Promise<Buffer>{
@@ -27,4 +27,14 @@ export async function verifyExtensionFiles(manifestPath:string,packagePath:strin
  // A null prototype avoids treating a caller-supplied key ID as an object prototype.
  const trustedKeys:Record<string,typeof key>=Object.create(null) as Record<string,typeof key>;trustedKeys[keyId]=key;
  return verifySignedExtensionManifest(signed,{trustedKeys},packageBytes);
+}
+
+/** Check one verified artifact against a host-owned compatibility configuration. */
+export async function checkExtensionFiles(manifestPath:string,packagePath:string,keyPath:string,keyId:string,hostPath:string,requirementsPath:string):Promise<ExtensionManifest>{
+ const manifest=await verifyExtensionFiles(manifestPath,packagePath,keyPath,keyId);
+ const host:unknown=JSON.parse((await readBounded(hostPath,1024*1024)).toString('utf8'));
+ const requirements:unknown=JSON.parse((await readBounded(requirementsPath,1024*1024)).toString('utf8'));
+ const result=checkExtensionCompatibility([manifest],host,requirements);
+ if(!result.compatible)throw Error('Extension compatibility failed: '+result.errors.join('; '));
+ return manifest;
 }
