@@ -262,3 +262,6 @@ export type {ConfiguredAgentOperationMetricsOptions,ConfiguredAgentOperationMetr
 
 export {createTelegramWebhookAdapter} from './telegram-webhook.js';
 export type {TelegramWebhookOptions} from './telegram-webhook.js';
+
+export {createLinearWebhookAdapter} from './linear-webhook.js';
+export type {LinearWebhookOptions} from './linear-webhook.js';
