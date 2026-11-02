@@ -108,3 +108,27 @@ Future<void> verifyNarrowNestedRowParity(WidgetTester tester) async {
   for(final label in labels){final box=tester.getRect(find.text(label));expect(box.left,greaterThanOrEqualTo(parent.left-0.01));expect(box.right,lessThanOrEqualTo(parent.right+0.01));expect(box.height,greaterThan(20));}
   expect(errors,isEmpty);expect(tester.takeException(),isNull);
 }
+
+Future<void> verifyAdjacentFieldSemantics(WidgetTester tester) async {
+    Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+    final semantics=tester.ensureSemantics();
+    try {
+      late void Function(Object?) receive;final errors=<Object>[];
+      VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+      await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+      receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+      receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Ada'}}));
+      for(final layout in ['Column','Row']) {for(final order in [['field','display'],['display','field']]) {
+        receive(message('updateComponents',{'surfaceId':'main','components':[
+          {'id':'root','component':layout,'children':order},
+          {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
+          {'id':'display','component':'Text','text':{'path':'/name'}}
+        ]}));await tester.pump();
+        final field=tester.getSemantics(find.byType(EditableText)).getSemanticsData();
+        final text=tester.getSemantics(find.byWidgetPredicate((w)=>w is Text && w.data=='Ada')).getSemanticsData();
+        expect(field.flagsCollection.isTextField,isTrue);expect(field.label,'Name');expect(field.value,'Ada');
+        expect(text.flagsCollection.isTextField,isFalse);expect(text.label,'Ada');expect(tester.takeException(),isNull);
+      }}
+      expect(errors,isEmpty);
+    } finally {semantics.dispose();}
+}

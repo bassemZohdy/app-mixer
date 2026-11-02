@@ -20,6 +20,8 @@ void main() {
     try { await verifyNarrowRowParity(tester); } finally { tester.testTextInput.unregister(); }
   });
 
+  testWidgets('field labels do not include adjacent text on a mobile device', verifyAdjacentFieldSemantics);
+
   testWidgets('narrow nested row remains usable on a mobile device', verifyNarrowNestedRowParity);
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {

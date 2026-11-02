@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('preserves isolated surfaces through updates and recreation', verifySurfaceParity);
+  testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
   testWidgets('exposes the correct heading levels to web semantics', (tester) async {
