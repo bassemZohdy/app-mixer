@@ -66,3 +66,8 @@ test('developer UI requests a model proposal, reviews it, approves and publishes
     assert.equal(repo.getPublished().definition.pages[0].title,'Generated');
   }finally{await stop(planes.control);await stop(planes.proposal);}
 });
+
+test('development agent proposes and approves description changes after schema migration',async()=>{
+ const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',title:'Home',route:'/',components:[]}]});repo.migrateDraft(0,2);const planes=createDevelopmentPlanes(repo,developer,token);try{const url=await start(planes.proposal),control=await start(planes.control);let prompt;const model={async *stream(messages){prompt=messages[0].content;yield JSON.stringify({patches:[{op:'setPageDescription',pageId:'home',description:'A useful home page'}]});}},agent=new DevelopmentAgent(model,createProposalClient(`${url}/proposals`,token)),draft=repo.getDraft(),proposal=await agent.propose('Describe the home page',draft);assert.equal(draft.schemaVersion,2);assert.match(prompt,/setPageDescription/);assert.match(prompt,/description,components/);assert.match(prompt,/Input.*label,path/);assert.equal(proposal.preview.pages[0].description,'A useful home page');assert.equal(repo.getDraft().pages[0].description,'');const response=await fetch(`${control}/proposals/${proposal.id}/approve`,{method:'POST',headers:{authorization:`Bearer ${developer}`}});assert.equal(response.status,200);assert.equal(repo.getDraft().pages[0].description,'A useful home page');assert.equal(repo.getPublished(),undefined);await assert.rejects(agent.propose('unsupported',{...draft,schemaVersion:3}),/Invalid development request/);
+ }finally{await stop(planes.control);await stop(planes.proposal);}
+});
