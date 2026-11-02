@@ -2,11 +2,37 @@
   "id": "status-demo",
   "schemaVersion": 1,
   "revision": 0,
-  "extensions": [{"id": "sample.status-badge", "version": "1.0.0", "scope": "application"}],
-  "pages": [{
-    "id": "home",
-    "title": "Status",
-    "route": "/",
-    "components": [{"id": "badge", "type": "Extension", "extensionId": "sample.status-badge", "name": "status-badge", "props": {"label": "Service", "status": "healthy"}}]
-  }]
+  "extensions": [
+    {
+      "id": "sample.status-badge",
+      "version": "1.0.0",
+      "scope": "application"
+    }
+  ],
+  "pages": [
+    {
+      "id": "home",
+      "title": "Status",
+      "route": "/",
+      "components": [
+        {
+          "id": "badge",
+          "type": "Extension",
+          "extensionId": "sample.status-badge",
+          "name": "status-badge",
+          "props": {
+            "label": "Service",
+            "status": "healthy"
+          }
+        }
+      ]
+    }
+  ],
+  "extensionOperations": [
+    {
+      "extensionId": "sample.status-badge",
+      "kind": "tool",
+      "name": "lookup-status"
+    }
+  ]
 }

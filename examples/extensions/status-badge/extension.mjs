@@ -9,6 +9,10 @@ export function render(component, _child, _data, document) {
   badge.textContent = `${component.label}: ${component.status}`;
   return badge;
 }
+// A trusted server host can bind this illustrative tool under its own policy.
+export function lookupStatus(input) {
+  return {label: input.label, status: 'healthy'};
+}
 // A generated workspace's extensions.mjs can include this static registration.
 export const installedExtension = {
   id: 'sample.status-badge', version: '1.0.0', scope: 'application',

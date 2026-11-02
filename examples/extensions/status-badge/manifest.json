@@ -3,10 +3,20 @@
   "id": "sample.status-badge",
   "version": "1.0.0",
   "scope": "application",
-  "runtimeVersions": ["0.1.0"],
-  "renderers": ["web"],
-  "components": ["status-badge"],
-  "tools": [],
+  "runtimeVersions": [
+    "0.1.0"
+  ],
+  "renderers": [
+    "web"
+  ],
+  "components": [
+    "status-badge"
+  ],
+  "tools": [
+    "lookup-status"
+  ],
   "providers": [],
-  "permissions": []
+  "permissions": [
+    "status.read"
+  ]
 }
