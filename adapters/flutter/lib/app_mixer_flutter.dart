@@ -366,7 +366,6 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       return ['Column','Row','Card'].contains(root.kind) ? SizedBox(width:double.infinity,child:rendered) : rendered;
     }).toList());
   }
-  bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path, bool tightWidth, bool tightHeight, bool inButton) {
     final extension=store._extensions[node.kind];
     if (extension!=null) return extension.builder(context, _object(_copy(node.extensionProps)));
@@ -392,8 +391,8 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       final occurrence=occurrences.update(child.id,(value)=>value+1,ifAbsent:()=>0);
       final childPath='$path${child.id.length}:${child.id}:$occurrence;';
       final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight,inButton || node.kind=='Button');
-      // Direct text and buttons, and subtrees containing text inputs, need bounded row width.
-      final layoutChild=node.kind=='Row' && (child.kind=='Text' || child.kind=='Button' || _containsTextField(child)) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
+      // Built-in row children need bounded width so nested content can wrap.
+      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
       // Preserve child state when another referenced component arrives or the order changes.
       children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }

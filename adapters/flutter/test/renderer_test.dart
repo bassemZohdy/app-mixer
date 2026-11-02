@@ -9,6 +9,7 @@ import 'parity_scenario.dart';
 Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
 void main() {
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
+  testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
   test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};
     final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:components)];

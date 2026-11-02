@@ -20,6 +20,8 @@ void main() {
     try { await verifyNarrowRowParity(tester); } finally { tester.testTextInput.unregister(); }
   });
 
+  testWidgets('narrow nested row remains usable on a mobile device', verifyNarrowNestedRowParity);
+
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

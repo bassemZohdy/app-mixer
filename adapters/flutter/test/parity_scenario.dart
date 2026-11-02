@@ -79,3 +79,23 @@ Future<void> verifyNarrowRowParity(WidgetTester tester) async {
     expect((actions.single['action'] as Map)['context'],{'name':'Grace'});expect(errors,isEmpty);expect(tester.takeException(),isNull);
   } finally {semantics.dispose();}
 }
+
+// Nested row children must wrap within the available width on each target.
+Future<void> verifyNarrowNestedRowParity(WidgetTester tester) async {
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+  final errors=<Object>[], labels=['A long nested column label needs to wrap','A long nested card label needs to wrap','A long nested row label needs to wrap'];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:240,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+  receive({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});
+  receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[
+    {'id':'root','component':'Row','children':['column','card','row']},
+    {'id':'column','component':'Column','children':['one']},{'id':'one','component':'Text','text':labels[0]},
+    {'id':'card','component':'Card','child':'two'},{'id':'two','component':'Text','text':labels[1]},
+    {'id':'row','component':'Row','children':['three']},{'id':'three','component':'Text','text':labels[2]}
+  ]}});
+  await tester.pump();expect(tester.takeException(),isNull);
+  final parent=tester.getRect(find.ancestor(of:find.text(labels[0]),matching:find.byType(Row)).last);
+  expect(parent.width,240);
+  for(final label in labels){final box=tester.getRect(find.text(label));expect(box.left,greaterThanOrEqualTo(parent.left-0.01));expect(box.right,lessThanOrEqualTo(parent.right+0.01));expect(box.height,greaterThan(20));}
+  expect(errors,isEmpty);expect(tester.takeException(),isNull);
+}
