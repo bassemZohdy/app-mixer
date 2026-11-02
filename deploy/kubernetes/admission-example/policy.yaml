@@ -222,6 +222,8 @@ spec:
         (!has(object.spec.clusterIP) || object.spec.clusterIP != 'None') &&
         (!has(object.spec.externalIPs) || object.spec.externalIPs.size() == 0) &&
         (!has(object.spec.externalName) || object.spec.externalName == '') &&
+        (!has(object.spec.internalTrafficPolicy) || object.spec.internalTrafficPolicy == 'Cluster') &&
+        (!has(object.spec.publishNotReadyAddresses) || !object.spec.publishNotReadyAddresses) &&
         has(object.spec.selector) && object.spec.selector.size() == 2 &&
         'app.kubernetes.io/name' in object.spec.selector && object.spec.selector['app.kubernetes.io/name'] == 'app-mixer' &&
         'app.kubernetes.io/component' in object.spec.selector && object.spec.selector['app.kubernetes.io/component'] == 'data-plane' &&
