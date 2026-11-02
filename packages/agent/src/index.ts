@@ -315,3 +315,6 @@ export {AgentWakeupRetentionWorker} from './agent-wakeup-retention-worker.js';
 export type {AgentWakeupRetentionWorkerOptions} from './agent-wakeup-retention-worker.js';
 export {SqliteWakeupRetentionMetrics} from './agent-wakeup-retention-metrics.js';
 export type {WakeupRetentionMetricsOptions,WakeupRetentionMetricsSnapshot} from './agent-wakeup-retention-metrics.js';
+
+export {registerAgentMemoryScopeErase} from './agent-memory-erase-capability.js';
+export type {AgentMemoryScopeEraseOptions} from './agent-memory-erase-capability.js';
