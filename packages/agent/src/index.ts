@@ -259,3 +259,6 @@ export {PostgresAgentSharedCostMetrics} from './postgres-shared-cost-metrics.js'
 
 export {ConfiguredAgentOperationMetrics} from './configured-agent-operation-metrics.js';
 export type {ConfiguredAgentOperationMetricsOptions,ConfiguredAgentOperationMetricsSnapshot} from './configured-agent-operation-metrics.js';
+
+export {createTelegramWebhookAdapter} from './telegram-webhook.js';
+export type {TelegramWebhookOptions} from './telegram-webhook.js';
