@@ -115,3 +115,9 @@ test('local memory listing rejects records changed or expired during page author
   try{await writer.put(actor,scope,'a','old',write(500));await writer.put(actor,scope,'b','other',write(900));active=true;await assert.rejects(reader.list(actor,scope,{limit}),/Memory changed during read/,`${change} limit ${limit}`);}finally{reader.close();writer.close();rmSync(dir,{recursive:true,force:true});}
  }
 });
+
+
+test('SQLite scope erasure observes cancellation during authorization',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'memory-erase-cancel-')),path=join(dir,'memory.sqlite'),controller=new AbortController();let release,entered,block=false;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),store=new SqliteAgentMemory(path,settings({audit:true,clock:()=>100,authorize:async(_actor,_scope,action)=>{if(block&&action==='erase'){entered();await gate;}return true;}}));
+ try{await store.put(actor,scope,'note','private',write(500));await assert.rejects(store.eraseScope(actor,scope,AbortSignal.abort()),/cancelled/);block=true;const pending=store.eraseScope(actor,scope,controller.signal);await ready;controller.abort();block=false;release();await assert.rejects(pending,/cancelled/);assert.equal((await store.get(actor,scope,'note')).value,'private');assert.deepEqual((await store.auditHistory(actor,scope)).items.map(event=>event.action),['write']);assert.equal(await store.eraseScope(actor,scope),1);assert.deepEqual((await store.auditHistory(actor,scope)).items.map(event=>event.action),['write','erase']);}finally{release();store.close();rmSync(dir,{recursive:true,force:true});}
+});

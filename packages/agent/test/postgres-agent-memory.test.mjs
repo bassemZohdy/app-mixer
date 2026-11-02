@@ -145,3 +145,18 @@ test('PostgreSQL semantic results detect an earlier hit changed during final che
  try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:async(_actor,_scope,action,id)=>{if(active&&!changed&&action==='read'&&id==='b'&&++bReads===8){changed=true;await pool.query("UPDATE app_mixer_agent_memories SET revision=revision+1 WHERE memory_id='a'");}return true;},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)}),semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]});await store.initialize();for(const id of ['a','b'])await semantic.put(actor,scope,id,`shared ${id}`,{expectedRevision:null,expiresAt:500,provenance});active=true;await assert.rejects(semantic.search(actor,scope,'shared',2),/Memory changed during read/);assert.equal(changed,true);
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
+
+
+test('PostgreSQL scope erasure rolls back on cancellation before commit',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ for(const phase of ['authorization','locked-authorization','update','audit']){
+  const schema='app_mixer_erase_cancel_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release,entered,block=false,checks=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),controller=new AbortController();
+  try{
+   await admin.query(`CREATE SCHEMA "${schema}"`);
+   const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:async(_actor,_scope,action)=>{if(block&&action==='erase'&&++checks===(phase==='authorization'?1:phase==='locked-authorization'?2:0)){entered();await gate;}return true;},query:(sql,args)=>pool.query(sql,args),transaction:async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation(async(sql,args)=>{const result=await client.query(sql,args);if(block&&((phase==='update'&&sql.startsWith('UPDATE app_mixer_agent_memories'))||(phase==='audit'&&sql.startsWith('INSERT INTO app_mixer_agent_memory_audit')))){entered();await gate;}return result;});await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}});
+   await memory.initialize();const other={...scope,owner:{kind:'user',id:'other'}};await memory.put(actor,scope,'note','private',{expectedRevision:null,expiresAt:500,provenance});await memory.put(actor,other,'note','keep',{expectedRevision:null,expiresAt:500,provenance});
+   await assert.rejects(memory.eraseScope(actor,scope,AbortSignal.abort()),/cancelled/);block=true;const pending=memory.eraseScope(actor,scope,controller.signal);await ready;controller.abort();block=false;release();await assert.rejects(pending,/cancelled/);
+   assert.equal((await memory.get(actor,scope,'note')).value,'private');assert.equal((await memory.get(actor,other,'note')).value,'keep');assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(event=>event.action),['write']);
+   assert.equal(await memory.eraseScope(actor,scope),1);assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(event=>event.action),['write','erase']);assert.equal((await memory.get(actor,other,'note')).value,'keep');
+  }finally{release();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+ }
+});
