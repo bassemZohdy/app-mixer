@@ -22,6 +22,7 @@ export class AgentScheduleWorker {
     const definition=structuredClone(selected);
     if(await authorize(structuredClone(schedule),structuredClone(definition),signal)!==true||!keepGoing())continue;
     const latest=await get();if(!keepGoing()||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled||latest.manifest.tenantId!==this.scope.tenantId||latest.manifest.agentId!==this.scope.agentId)continue;
+    if(await authorize(structuredClone(schedule),structuredClone(latest),signal)!==true||!keepGoing())continue;
     schedules.fire(this.scope,schedule.scheduleId,schedule.revision,{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,runTimeoutMs:definition.manifest.lifecycle.runTimeoutMs,maxPending},this.clock(),this.auditActorId);fired++;
    }catch(error){if(keepGoing()&&!(error instanceof Error&&error.message==='Schedule revision conflict'))this.options.onError(error);}
    finally{if(keepGoing())this.cursor={nextAt:schedule.nextAt,scheduleId:schedule.scheduleId};}
