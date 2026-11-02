@@ -66,8 +66,9 @@ function resolveFormSchema(root){
   const visit=(schema,stack,depth)=>{
     if(++count>1000||depth>30)throw Error('Unsupported record JSON Schema form');
     if(!object(schema))return schema;
+    if(Object.hasOwn(schema,'$comment')&&(typeof schema.$comment!=='string'||schema.$comment.length>1024))throw Error('Unsupported record JSON Schema form');
     if(Object.hasOwn(schema,'$ref')){
-      if(Object.keys(schema).some(key=>!['$ref','$defs','$schema','title','description'].includes(key))||(schema.$defs!==undefined&&!object(schema.$defs))||(schema.$schema!==undefined&&(depth!==0||schema.$schema!=='https://json-schema.org/draft/2020-12/schema'))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
+      if(Object.keys(schema).some(key=>!['$ref','$defs','$schema','$comment','title','description'].includes(key))||(schema.$defs!==undefined&&!object(schema.$defs))||(schema.$schema!==undefined&&(depth!==0||schema.$schema!=='https://json-schema.org/draft/2020-12/schema'))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
       const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);
       if(typeof resolved==='boolean'){
         if((schema.title!==undefined&&(typeof schema.title!=='string'||schema.title.length>120))||(schema.description!==undefined&&(typeof schema.description!=='string'||schema.description.length>1024)))throw Error('Unsupported record JSON Schema form');
@@ -78,7 +79,7 @@ function resolveFormSchema(root){
     }
     if(Object.hasOwn(schema,'$defs')&&!object(schema.$defs))throw Error('Unsupported record JSON Schema form');
     const result=Object.create(null);for(const [key,value] of Object.entries(schema)){
-      if(key==='$defs')continue;
+      if(key==='$defs'||key==='$comment')continue;
       if(['properties','patternProperties'].includes(key)&&object(value)){const properties=Object.create(null);for(const [name,child] of Object.entries(value))properties[name]=visit(child,stack,depth+1);result[key]=properties;}
       else if(['items','contains','propertyNames','additionalProperties','if','then','else','not'].includes(key))result[key]=visit(value,stack,depth+1);
       else if(['allOf','anyOf','oneOf','prefixItems'].includes(key)&&Array.isArray(value))result[key]=value.map(child=>visit(child,stack,depth+1));

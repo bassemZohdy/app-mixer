@@ -28,6 +28,19 @@ test('schema root titles label generated and preview forms with explicit label p
  }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('schema comments are accepted as bounded non-displayed annotations',async()=>{
+ const s=await setup();let dom;
+ try{
+  dom=new JSDOM('<!doctype html>');const document=dom.window.document,jsonSchema={$schema:'https://json-schema.org/draft/2020-12/schema',$ref:'#/$defs/record',$comment:'private root comment',$defs:{record:{type:'object',$comment:'private record comment',properties:{name:{$ref:'#/$defs/name',$comment:'private reference comment'},tags:{type:'array',items:{type:'string',$comment:'private item comment'}}}},name:{type:'string',minLength:2,$comment:'private field comment'}}},validate=createRecordJsonSchemaValidator(jsonSchema);
+  assert.equal(validate({name:'Al',tags:['ok']}),true);assert.equal(validate({name:'A'}),false);
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   const options={getOperation:'items.get',putOperation:'items.put',jsonSchema},view=factory(options).render({},null,null,document);assert.doesNotMatch(view.textContent,/private .* comment/);assert.ok([...view.querySelectorAll('label')].some(label=>label.textContent.includes('name')));
+   for(const comment of [4,null,'x'.repeat(1025)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,$comment:comment}}),/Unsupported/);
+   const invalid={...jsonSchema,$defs:{...jsonSchema.$defs,name:{type:'string',$comment:3}}};assert.throws(()=>factory({...options,jsonSchema:invalid}),/Unsupported/);
+  }
+ }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('record browser sends typed filters, resets pages and ignores stale responses',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'active',label:'Active',type:'boolean'}]};let resolvePending;
  globalThis.fetch=async(_path,request)=>{const input=JSON.parse(request.body);calls.push(input);if(input.filter?.value==='slow')return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}]}})}));return {ok:true,json:async()=>({result:{items:[{id:'found',revision:1}],nextCursor:'opaque'}})}};
