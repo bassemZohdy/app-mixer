@@ -1,0 +1,5 @@
+import {writeFileSync} from 'node:fs';
+import {SqliteAgentWakeupRetention} from '../../dist/index.js';
+const [path,barrier,phase]=process.argv.slice(2),scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'};
+const hold=()=>{writeFileSync(barrier,phase);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);};
+try{const retention=new SqliteAgentWakeupRetention(path,{scope,authorizeScope:()=>true,authorize:()=>true});if(phase!=='after'){retention.db.function('test_wakeup_redaction_barrier',()=>{hold();return 0;});const table=phase==='audit'?'agent_run_wakeup_redactions':'agent_run_wakeups',operation=phase==='audit'?'INSERT':'UPDATE';retention.db.exec(`CREATE TRIGGER test_wakeup_redaction_crash BEFORE ${operation} ON ${table} BEGIN SELECT test_wakeup_redaction_barrier(); END`);}await retention.redact(actor,'webhook','event',100);if(phase==='after')hold();throw Error('Expected process termination');}catch(error){process.send?.({error:String(error)});process.exitCode=1;}
