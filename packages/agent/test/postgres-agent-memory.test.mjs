@@ -101,3 +101,24 @@ test('PostgreSQL retention stop rolls back a purge during authorization or an in
   }finally{release();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
  }
 });
+
+
+test('PostgreSQL pages and indexed searches recheck earlier record permissions before returning',async()=>{
+ for(const mode of ['list','text','vector','audit']){
+  let revoked=false;const rows=['a','b'].map(id=>({memory_id:id,revision:1,score:1,distance:0}));const query=async(sql,args)=>{
+   if(sql.startsWith('SET LOCAL'))return {rows:[]};
+   if(sql.startsWith('SELECT * FROM app_mixer_agent_memories')){const id=args[5];return {rows:[{memory_id:id,revision:1,value:JSON.stringify({format:'semantic-v1',modelId:'model',text:id,vector:[1,0]}),provenance:JSON.stringify(provenance),expires_at:500,deleted:false}]};}
+   if(sql.startsWith('SELECT id,actor_id'))return {rows:rows.map((row,index)=>({id:index+1,actor_id:'service',action:'write',memory_id:row.memory_id,revision:1,count:1,observed_at:100}))};
+   return {rows};
+  };const store=new PostgresAgentMemory({enabled:true,audit:true,textIndex:true,vectorIndex:{modelId:'model',dimensions:2},maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:(_actor,_scope,action,id)=>{if((action==='read'||action==='audit')&&id==='b')revoked=true;return !((action==='read'||action==='audit')&&id==='a'&&revoked);},query,transaction:async operation=>operation(query)});
+  const pending=mode==='list'?store.list(actor,scope):mode==='text'?store.searchSemanticText(actor,scope,'query','model'):mode==='vector'?store.searchSemanticVector(actor,scope,[1,0],'model'):store.auditHistory(actor,scope);await assert.rejects(pending,/access denied/,mode);
+ }
+});
+
+
+test('PostgreSQL rejects a page when an earlier record permission is revoked mid-read',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const schema='app_mixer_policy_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let active=false,revoked=false;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,audit:true,textIndex:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:(_actor,_scope,action,id)=>{if(active&&(action==='read'||action==='audit')&&id==='b')revoked=true;return !(active&&revoked&&(action==='read'||action==='audit')&&id==='a');},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await store.initialize();for(const id of ['a','b'])await store.put(actor,scope,id,{format:'semantic-v1',modelId:'model',text:'shared term',vector:[1,0]},{expectedRevision:null,expiresAt:500,provenance});
+  for(const mode of ['list','text','audit']){revoked=false;active=true;const result=mode==='list'?store.list(actor,scope):mode==='text'?store.searchSemanticText(actor,scope,'shared','model'):store.auditHistory(actor,scope);await assert.rejects(result,/access denied/,mode);active=false;}
+ }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});
