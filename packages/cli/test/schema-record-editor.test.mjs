@@ -147,6 +147,17 @@ test('mixed enum controls apply numeric and string constraints to the relevant c
  }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('mixed enum controls apply bounded combinations and conditions',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const choice={enum:['a','alpha',1,3,false,null],anyOf:[{type:'string',minLength:4},{type:'number',maximum:5},{const:null}],allOf:[{not:{const:'forbidden'}}],if:{type:'number'},then:{minimum:2}},jsonSchema={type:'object',properties:{choice,items:{type:'array',items:choice}},required:['choice','items']},record={choice:'alpha',items:[3,null]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
+  const select=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('choice (required)')).querySelector('select'),texts=[...select.options].map(option=>option.textContent);for(const text of ['alpha (text)','3 (number)'])assert.ok(texts.includes(text));for(const text of ['a (text)','1 (number)','No (boolean)'])assert.ok(!texts.includes(text));select.value=[...select.options].find(option=>option.textContent==='3 (number)').value;select.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,choice:3});
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const bad of [{type:'string',allOf:[{minLength:5}]},{enum:['x',1],anyOf:[]},{enum:['x',1],if:{type:'number'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:bad}}}}),/Unsupported/);}
+ }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('record browser sends typed filters, resets pages and ignores stale responses',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'active',label:'Active',type:'boolean'}]};let resolvePending;
  globalThis.fetch=async(_path,request)=>{const input=JSON.parse(request.body);calls.push(input);if(input.filter?.value==='slow')return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}]}})}));return {ok:true,json:async()=>({result:{items:[{id:'found',revision:1}],nextCursor:'opaque'}})}};
