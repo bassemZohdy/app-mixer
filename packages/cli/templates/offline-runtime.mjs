@@ -14,7 +14,7 @@ export async function createGeneratedOfflineRuntime(config){
   const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{}),...(config.rollbackAnchor!==undefined?{rollbackAnchor:config.rollbackAnchor}:{})});
   let closed=false,closePromise;const panels=new Set();
   class OperationNotAllowed extends Error {}
-  const current=async()=>{const actor=await resolveActor();return !!actor&&actor.tenantId===scope.tenantId&&actor.applicationId===scope.applicationId&&actor.principalId===scope.principalId;};
+  const current=async()=>{const actor=await resolveActor();return !closed&&!!actor&&actor.tenantId===scope.tenantId&&actor.applicationId===scope.applicationId&&actor.principalId===scope.principalId;};
   let worker;
   try{
     worker=new BrowserOfflineWorker(queue,{

@@ -110,6 +110,26 @@ test('optional history retirement handles failures, stale controls and refreshed
  }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('closing the runtime while identity is resolving prevents a later conflict lookup',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-close-check-'));let runtime,dom,release,started,paused=false,lookups=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  const config={enabled:true,databaseName:'close-check',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>true,resolveActor:async()=>{if(paused){started();await gate;}return {...scope};},canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{throw Error('conflict');},classify:()=> 'conflict',onError:()=>{},loadCurrent:()=>{lookups++;return {value:'private'};}};
+  runtime=await createGeneratedOfflineRuntime(config);runtime.start();await runtime.enqueue('items.update','request',{secret:'queued'});await waitFor(async()=>(await runtime.list())[0].status==='conflict');await runtime.stop();
+  dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),panel=runtime.mountConflicts(root);await panel.refresh();const review=[...root.querySelectorAll('button')].find(button=>button.textContent==='Load current data');assert.ok(review);
+  paused=true;review.click();await waiting;await runtime.close();release();await new Promise(resolve=>setImmediate(resolve));assert.equal(lookups,0);assert.equal(root.textContent,'');
+ }finally{release();if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('closing the runtime during identity resolution prevents a later enqueue policy call',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-close-enqueue-'));let runtime,release,started,checks=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'close-enqueue',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:async()=>{started();await gate;return {...scope};},canEnqueue:()=>{checks++;return true;},canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}});
+  const pending=runtime.enqueue('items.update','request',{secret:'queued'});await waiting;await runtime.close();release();await assert.rejects(pending,/not allowed/);assert.equal(checks,0);
+ }finally{release();if(runtime)await runtime.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('a selected previous form request can be reused after a new browser session',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-recovery-'));let dom,runtime;
  try{
