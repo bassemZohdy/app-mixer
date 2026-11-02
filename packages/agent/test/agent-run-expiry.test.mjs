@@ -38,3 +38,10 @@ test('expiry audit failure rolls back transition and invalid evidence fails clos
  const s=setup();let db;try{const run=s.runs.create(scope,'run',conf,0);assert.throws(()=>s.runs.expireDeadline(scope,'run',run.revision,100,{principalId:'',reference:'case'}),/evidence/);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_expiry_audit BEFORE INSERT ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");assert.throws(()=>s.runs.expireDeadline(scope,'run',run.revision,100,{principalId:'operator',reference:'case'}),/audit unavailable/);assert.equal(s.runs.get(scope,'run').status,'queued');assert.equal(s.runs.get(scope,'run').revision,run.revision);db.exec('DROP TRIGGER reject_expiry_audit');assert.equal(s.runs.expireDeadline(scope,'run',run.revision,100,{principalId:'operator',reference:'case'}).status,'failed');
  }finally{db?.close();close(s);}
 });
+
+test('stopping a manual expiry pass prevents a late transition and leaves it for retry',async()=>{
+ const s=setup();let release,started,block=true;const gate=new Promise(r=>release=r),entered=new Promise(r=>started=r);try{
+  s.runs.create(scope,'a',conf,0);const worker=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:5,pollMs:100,clock:()=>100,onError:()=>{},authorize:async()=>{if(block){started();await gate;}return true;}});
+  const pass=worker.runOnce();await entered;const stopping=worker.stop();block=false;release();assert.equal(await pass,0);await stopping;assert.equal(s.runs.get(scope,'a').status,'queued');assert.equal(await worker.runOnce(),1);assert.equal(s.runs.get(scope,'a').status,'failed');
+ }finally{close(s);}
+});
