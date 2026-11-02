@@ -130,6 +130,16 @@ test('closing the runtime during identity resolution prevents a later enqueue po
  }finally{release();if(runtime)await runtime.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('generated runtime can close while a bounded worker policy ignores cancellation',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-bounded-worker-'));let runtime,release,started,signal,blocked=true,calls=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();
+  const config={enabled:true,databaseName:'bounded-worker',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,policyTimeoutMs:1000,maxPendingPolicies:1,isOnline:async currentSignal=>{if(blocked){signal=currentSignal;started();await gate;}return true;},resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>calls++,classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
+  runtime=await createGeneratedOfflineRuntime(config);await runtime.enqueue('items.update','request',{secret:'queued'});runtime.start();await waiting;await runtime.close();assert.equal(signal.aborted,true);assert.equal(calls,0);
+  blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,0);runtime=await createGeneratedOfflineRuntime(config);assert.equal((await runtime.list())[0].status,'pending');runtime.start();await waitFor(async()=>(await runtime.list())[0].status==='succeeded');assert.equal(calls,1);
+ }finally{release();if(runtime)await runtime.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('a selected previous form request can be reused after a new browser session',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-recovery-'));let dom,runtime;
  try{

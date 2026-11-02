@@ -78,3 +78,33 @@ test('stopping before dispatch releases the claim without consuming an attempt',
   const state=await queue.get(item.id);assert.equal(state.status,'pending');assert.equal(state.attempts,0);assert.equal(calls,0);
  }finally{await worker.stop();queue.close();}
 });
+
+test('bounded policy checks stop promptly and retain capacity until late callbacks settle',async()=>{
+ for(const stage of ['online','actor']){
+  const queue=await open(new IDBFactory(),await key());let release,started,blocked=true,signal,calls=0,errors=[];const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+  const blockedPolicy=async currentSignal=>{signal=currentSignal;if(blocked){started();await gate;}return stage==='online'?true:scope;};
+  const options={...config,policyTimeoutMs:1000,maxPendingPolicies:1,isOnline:stage==='online'?blockedPolicy:()=>true,resolveActor:stage==='actor'?blockedPolicy:()=>scope,dispatch:()=>calls++,onError:error=>errors.push(error)};
+  const item=await queue.enqueue('update',`stop-${stage}`,{}),worker=new BrowserOfflineWorker(queue,options);
+  try{
+   worker.start();await waiting;await worker.stop();assert.equal(signal.aborted,true);assert.equal((await queue.get(item.id)).status,'pending');assert.equal(calls,0);assert.deepEqual(errors,[]);
+   worker.start();await waitFor(()=>errors.some(error=>String(error).includes('policy unavailable')));assert.equal(calls,0);
+   blocked=false;release();await waitFor(async()=>(await queue.get(item.id)).status==='succeeded');assert.equal(calls,1);
+  }finally{release();await worker.stop();queue.close();}
+ }
+});
+
+test('timed-out policy decisions fail closed and cannot dispatch when they settle late',async()=>{
+ const queue=await open(new IDBFactory(),await key());let release,started,signal,blocked=true,calls=0,errors=[];const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve),item=await queue.enqueue('update','timeout',{});
+ const worker=new BrowserOfflineWorker(queue,{...config,policyTimeoutMs:100,maxPendingPolicies:1,isOnline:async currentSignal=>{if(blocked){signal=currentSignal;started();await gate;}return true;},dispatch:()=>calls++,onError:error=>errors.push(error)});
+ try{worker.start();await waiting;await waitFor(()=>errors.some(error=>String(error).includes('policy unavailable')));assert.equal(signal.aborted,true);assert.equal((await queue.get(item.id)).status,'pending');assert.equal(calls,0);blocked=false;release();await waitFor(async()=>(await queue.get(item.id)).status==='succeeded');assert.equal(calls,1);}finally{release();await worker.stop();queue.close();}
+});
+
+test('bounded stop releases an already claimed entry before a late policy decision',async()=>{
+ const queue=await open(new IDBFactory(),await key());let checks=0,release,started,signal,calls=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve),item=await queue.enqueue('update','claimed',{});
+ const worker=new BrowserOfflineWorker(queue,{...config,policyTimeoutMs:1000,maxPendingPolicies:1,isOnline:async currentSignal=>{if(++checks===3){signal=currentSignal;started();await gate;}return true;},dispatch:()=>calls++});
+ try{worker.start();await waiting;await worker.stop();const state=await queue.get(item.id);assert.equal(signal.aborted,true);assert.equal(state.status,'pending');assert.equal(state.attempts,0);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,0);}finally{release();await worker.stop();queue.close();}
+});
+
+test('browser worker requires paired bounded policy settings',async()=>{
+ const queue=await open(new IDBFactory(),await key());try{for(const invalid of [{policyTimeoutMs:100},{maxPendingPolicies:1},{policyTimeoutMs:99,maxPendingPolicies:1},{policyTimeoutMs:100,maxPendingPolicies:0},{policyTimeoutMs:30001,maxPendingPolicies:1}])assert.throws(()=>new BrowserOfflineWorker(queue,{...config,...invalid}),/Invalid browser offline worker/);}finally{queue.close();}
+});

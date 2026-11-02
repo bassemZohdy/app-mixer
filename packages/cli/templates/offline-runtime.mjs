@@ -18,7 +18,7 @@ export async function createGeneratedOfflineRuntime(config){
   let worker;
   try{
     worker=new BrowserOfflineWorker(queue,{
-      intervalMs:config.intervalMs,maxPerPass:config.maxPerPass,maxAttempts:config.maxAttempts,isOnline,resolveActor,
+      intervalMs:config.intervalMs,maxPerPass:config.maxPerPass,maxAttempts:config.maxAttempts,isOnline,resolveActor,...(config.policyTimeoutMs!==undefined?{policyTimeoutMs:config.policyTimeoutMs}:{}),...(config.maxPendingPolicies!==undefined?{maxPendingPolicies:config.maxPendingPolicies}:{}),
       dispatch:(operation,input,actor)=>{if(!operations.has(operation))throw new OperationNotAllowed('Offline operation not allowed');return dispatch(operation,input,actor);},
       classify:error=>error instanceof OperationNotAllowed?'uncertain':classify(error),onError
     });
