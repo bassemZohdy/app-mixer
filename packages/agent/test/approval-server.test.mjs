@@ -5,6 +5,10 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {SqliteAgentRuns,SqliteAgentApprovals,createAgentApprovalServer} from '../dist/index.js';
 
+test('review server validates disconnect cancellation configuration',()=>{
+ assert.throws(()=>createAgentApprovalServer({authenticate:()=>undefined,resolve:()=>undefined,abortOnDisconnect:'yes'}),/Invalid approval server/);
+});
+
 test('local review authenticates, scopes and authorizes decisions',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'review-')),path=join(dir,'db'),scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},runs=new SqliteAgentRuns(path);
  let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);
@@ -55,6 +59,31 @@ test('review server applies one deadline across a slow approval listing',async()
   const url=`http://127.0.0.1:${server.address().port}/api/agents/agent/runs/run/approvals`,response=await fetch(url);assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Review unavailable'});
   slow=false;await new Promise(resolve=>setTimeout(resolve,120));const retry=await fetch(url);assert.equal(retry.status,200);assert.equal((await retry.json()).items.length,3);
  }finally{await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('review server can cancel a pending decision when the reviewer disconnects',{timeout:10000},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'review-disconnect-')),path=join(dir,'db'),scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},runs=new SqliteAgentRuns(path);let release,entered,aborted,block=true;
+ const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),cancelled=new Promise(resolve=>aborted=resolve);let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);
+ const approvals=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>10,timeoutMs:1000,maxPending:1,authorize:async(actor,access,_approval,signal)=>{if(actor.principalId==='reviewer'&&access==='decide'&&block){signal.addEventListener('abort',aborted,{once:true});entered();await gate;}return true;}}),observer=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>10,authorize:()=>true});
+ await approvals.request(service,run.leaseToken,'action','pay',{amount:10},90);const options={authenticate:()=>({tenantId:'tenant',principalId:'reviewer'}),resolve:()=>approvals,abortOnDisconnect:true},server=createAgentApprovalServer(options);options.abortOnDisconnect=false;await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const base=`http://127.0.0.1:${server.address().port}`,url=base+'/api/agents/agent/runs/run/approvals/action/decision',controller=new AbortController(),post=signal=>fetch(url,{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({decision:'approved'}),signal});
+  const pending=post(controller.signal).catch(()=>undefined);await ready;controller.abort();await pending;await cancelled;assert.equal((await observer.get(service,'action')).status,'pending');assert.equal((await post()).status,503);
+  block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await observer.get(service,'action')).status,'pending');assert.equal((await post()).status,200);assert.deepEqual((await observer.history(service,'action')).map(event=>event.event),['requested','approved']);
+ }finally{release();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));observer.close();approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('review disconnect fences late authentication and store resolution',{timeout:15000},async()=>{
+ for(const phase of ['authenticate','resolve']){
+  const dir=mkdtempSync(join(tmpdir(),'review-early-disconnect-')),path=join(dir,'db'),scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},runs=new SqliteAgentRuns(path);let release,entered,closed,resolveCalls=0,decisionCalls=0;
+  const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),socketClosed=new Promise(resolve=>closed=resolve);let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);
+  const approvals=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>10,authorize:(_actor,access)=>{if(access==='decide')decisionCalls++;return true;}});await approvals.request(service,run.leaseToken,'action','pay',{amount:10},90);
+  const server=createAgentApprovalServer({abortOnDisconnect:true,authenticate:async req=>{req.socket.once('close',closed);if(phase==='authenticate'){entered();await gate;}return {tenantId:'tenant',principalId:'reviewer'};},resolve:async()=>{resolveCalls++;if(phase==='resolve'){entered();await gate;}return approvals;}});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try{
+   const base=`http://127.0.0.1:${server.address().port}`,controller=new AbortController(),pending=fetch(base+'/api/agents/agent/runs/run/approvals/action/decision',{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({decision:'approved'}),signal:controller.signal}).catch(()=>undefined);
+   await ready;controller.abort();await pending;await socketClosed;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(decisionCalls,0);if(phase==='authenticate')assert.equal(resolveCalls,0);assert.equal((await approvals.get(service,'action')).status,'pending');
+  }finally{release();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+ }
 });
 
 test('review page renders untrusted input as text and keeps the reviewed run bound to its decision',async()=>{

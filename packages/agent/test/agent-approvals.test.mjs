@@ -157,6 +157,27 @@ test('approval policy limits require a valid deadline and capacity together',()=
  const s=setup();try{const base={scope,runId:'run',authorize:()=>true};for(const extra of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:30001,maxPending:1},{timeoutMs:100,maxPending:0},{timeoutMs:100,maxPending:101}])assert.throws(()=>new SqliteAgentApprovals(s.path,{...base,...extra}),/Invalid approval configuration/);}finally{close(s);}
 });
 
+test('caller cancellation fences pending approval decisions, listings and history',async()=>{
+ for(const bounded of [false,true])for(const operation of ['decide','list','history']){
+  const s=setup(),controller=new AbortController();let restricted,release,entered,seen;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  try{
+   await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);
+   restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>s.now,...(bounded?{timeoutMs:1000,maxPending:1}:{}),authorize:async(_actor,access,_approval,signal)=>{if(access===operation){seen=signal;entered();await gate;}return true;}});
+   const pending=operation==='decide'?restricted.decide(human,'action','approved',controller.signal):operation==='list'?restricted.list(human,{},controller.signal):restricted.history(human,'action',controller.signal);
+   await ready;controller.abort();await assert.rejects(pending,/authorization unavailable/);assert.equal(seen.aborted,true);
+   if(bounded)await assert.rejects(restricted.get(human,'action'),/authorization unavailable/);
+   release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await s.approvals.get(human,'action')).status,'pending');assert.deepEqual((await s.approvals.history(human,'action')).map(event=>event.event),['requested']);
+  }finally{release();restricted?.close();close(s);}
+ }
+});
+
+test('approval review methods reject invalid or already-aborted signals',async()=>{
+ const s=setup();try{
+  const controller=new AbortController();controller.abort();
+  for(const signal of [controller.signal,{}])for(const operation of [()=>s.approvals.decide(human,'action','approved',signal),()=>s.approvals.list(human,{},signal),()=>s.approvals.history(human,'action',signal)])await assert.rejects(operation(),/signal|authorization unavailable/);
+ }finally{close(s);}
+});
+
 test('approval listing returns current decision after final scope authorization',async()=>{
  const s=setup();let restricted,entered,release,checks=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);try{await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>10,authorize:async(_actor,action)=>{if(action==='list'&&++checks===2){entered();await gate;}return true;}});const pending=restricted.list(human);await ready;await s.approvals.decide(human,'action','approved');release();assert.equal((await pending).items[0].status,'approved');}finally{release();restricted?.close();close(s);}
 });
