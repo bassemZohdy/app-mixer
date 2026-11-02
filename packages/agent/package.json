@@ -12,6 +12,7 @@
     "@notionhq/client": "5.23.0",
     "@types/node": "^22.15.0",
     "jsdom": "^26.1.0",
+    "tweetnacl": "1.0.3",
     "typescript": "^5.9.3"
   },
   "dependencies": {
