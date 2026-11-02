@@ -210,3 +210,5 @@ export {AgentIngressMetrics} from './agent-ingress-metrics.js';
 export type {AgentIngressMetricsOptions} from './agent-ingress-metrics.js';
 export {SqliteAgentActionRecoveryDiscovery} from './action-recovery-discovery.js';
 export type {AgentActionRecoveryDiscoveryActor,AgentActionRecoveryDiscoveryOptions,AgentActionRecoveryCandidate,AgentActionRecoveryPage} from './action-recovery-discovery.js';
+export {registerActionRecoveryDiscovery} from './action-recovery-discovery-capability.js';
+export type {ActionRecoveryDiscoveryCapabilityOptions} from './action-recovery-discovery-capability.js';

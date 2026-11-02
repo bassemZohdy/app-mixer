@@ -17,6 +17,7 @@ export class SqliteAgentActionRecoveryDiscovery {
   try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA query_only=ON');for(const table of ['agent_runs','agent_action_journal'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Action recovery discovery unavailable');}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
+ isBoundTo(scope:AgentRunScope):boolean{return !!scope&&scope.tenantId===this.scope.tenantId&&scope.agentId===this.scope.agentId;}
  private async permit(actor:Actor):Promise<void>{try{if(await this.authorize({...actor},{...this.scope})===true)return;}catch{}throw Error('Action recovery discovery denied');}
  async list(actor:Actor,options:{after?:string;limit?:number}={}):Promise<AgentActionRecoveryPage>{
   if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId)||!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||(options.after!==undefined&&!id(options.after))||(options.limit!==undefined&&(!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>100)))throw Error('Invalid action recovery discovery request');
