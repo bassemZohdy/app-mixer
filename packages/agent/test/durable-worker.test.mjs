@@ -130,3 +130,11 @@ test('cancellation fences a blocked shared slot check', {timeout:5000}, async()=
 test('an unresolved slot renewal cannot delay settlement or establish success', {timeout:5000}, async()=>{
  const s=setup();let release,finish;try{let entered,released=false;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),done=new Promise(r=>finish=r),shared=new PostgresAgentRunSlots({enabled:true,query:async()=>({rows:[],rowCount:0}),transaction:async fn=>fn(async()=>({rows:[],rowCount:0}))});shared.acquire=async()=> 'slot';shared.release=async()=>{released=true;};shared.renew=async()=>{entered();await gate;return true;};const worker=new DurableAgentWorker({...options(s),sharedSlots:shared,execute:async()=>{await done;return 'succeeded';}}),pending=worker.runOnce(scope,'one');await ready;finish();assert.equal((await pending).status,'uncertain');assert.equal(released,true);release();await new Promise(r=>setImmediate(r));assert.equal(s.runs.get(scope,'one').status,'uncertain');}finally{finish?.();release?.();s.runs.close();s.definitions.close();}
 });
+
+test('worker snapshots validated options without replacing live definition policy',async()=>{
+ const s=setup(),other=setup();try{
+  let selectedCalls=0,replacementCalls=0,authorized=0;const settings={...options(s),authorizeStart:()=>{authorized++;return true;},execute:async()=>{selectedCalls++;return 'succeeded';}};const worker=new DurableAgentWorker(settings);
+  settings.runs=other.runs;settings.definitions=other.definitions;settings.workerId='changed';settings.leaseMs=0;settings.pollMs=0;settings.authorizeStart=()=>false;settings.execute=async()=>{replacementCalls++;return 'failed';};
+  assert.equal(worker.usesRegistry(s.runs),true);assert.equal(worker.usesRegistry(other.runs),false);assert.equal((await worker.runOnce(scope,'one')).status,'succeeded');assert.equal(selectedCalls,1);assert.equal(replacementCalls,0);assert.equal(authorized,2);assert.equal(other.runs.get(scope,'one').status,'queued');
+ }finally{s.runs.close();s.definitions.close();other.runs.close();other.definitions.close();}
+});

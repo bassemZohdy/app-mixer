@@ -18,7 +18,7 @@ export class DurableAgentDispatcher {
   if(keepGoing()&&!page.next)this.cursor=undefined;return processed;
  }
  runOnce():Promise<number>{if(this.active||this.pending)throw Error('Agent dispatcher already running');const generation=this.generation,pending=this.pass(()=>this.generation===generation);this.pending=pending;void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;}).catch(()=>{});return pending;}
- start():void{if(this.active||this.pending)throw Error('Agent dispatcher already running');this.active=true;const loop=()=>{if(!this.active)return;const pending=this.pass(()=>this.active);this.pending=pending;void pending.catch(error=>this.report(error)).finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.active)this.timer=setTimeout(loop,this.options.pollMs);});};loop();}
+ start():void{if(this.active||this.pending)throw Error('Agent dispatcher already running');this.active=true;const generation=++this.generation,loop=()=>{if(!this.active||this.generation!==generation)return;const pending=this.pass(()=>this.active&&this.generation===generation);this.pending=pending;void pending.catch(error=>this.report(error)).finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.active&&this.generation===generation)this.timer=setTimeout(loop,this.options.pollMs);});};loop();}
  async stop():Promise<void>{this.active=false;this.generation++;if(this.timer)clearTimeout(this.timer);this.timer=undefined;const pending=this.pending;if(pending)try{await pending;}catch{}}
 }
 export type {Options as DurableAgentDispatcherOptions};
