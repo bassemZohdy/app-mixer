@@ -20,9 +20,10 @@ test('schema root titles label generated and preview forms with explicit label p
    const jsonSchema={type:'object',title:'Customer <record>',description:'Customer details',properties:{name:{type:'string'}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},editor=factory(options);jsonSchema.title='Changed';
    const view=editor.render({},null,null,document);assert.equal(view.querySelector('h3').textContent,'Customer <record>');assert.equal(view.querySelector('h3').querySelector('record'),null);assert.ok(view.getAttribute('aria-describedby'));
    assert.equal(editor.render({label:'Chosen label'},null,null,document).querySelector('h3').textContent,'Chosen label');
-   const refSchema={$ref:'#/$defs/record',title:'Custom',$defs:{record:{type:'object',title:'Original',properties:{name:{type:'string'}}}}},referenced=factory({...options,jsonSchema:refSchema});assert.equal(referenced.render({},null,null,document).querySelector('h3').textContent,'Custom');assert.equal(createRecordJsonSchemaValidator(refSchema)({name:'Ada'}),true);
+   const refSchema={$schema:'https://json-schema.org/draft/2020-12/schema',$ref:'#/$defs/record',title:'Custom',$defs:{record:{type:'object',title:'Original',properties:{name:{type:'string'}}}}},referenced=factory({...options,jsonSchema:refSchema});assert.equal(referenced.render({},null,null,document).querySelector('h3').textContent,'Custom');assert.equal(createRecordJsonSchemaValidator(refSchema)({name:'Ada'}),true);
    for(const title of [42,'',' '.repeat(2),'x'.repeat(121)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,title}}),/Unsupported/);
    assert.throws(()=>factory({...options,jsonSchema:{$ref:'#/$defs/record',$defs:[]}}),/Unsupported/);
+   assert.throws(()=>factory({...options,jsonSchema:{...refSchema,$schema:'https://json-schema.org/draft/2019-09/schema'}}),/Unsupported/);
   }
  }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });

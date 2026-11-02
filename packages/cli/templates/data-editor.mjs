@@ -67,7 +67,7 @@ function resolveFormSchema(root){
     if(++count>1000||depth>30)throw Error('Unsupported record JSON Schema form');
     if(!object(schema))return schema;
     if(Object.hasOwn(schema,'$ref')){
-      if(Object.keys(schema).some(key=>!['$ref','$defs','title','description'].includes(key))||(schema.$defs!==undefined&&!object(schema.$defs))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
+      if(Object.keys(schema).some(key=>!['$ref','$defs','$schema','title','description'].includes(key))||(schema.$defs!==undefined&&!object(schema.$defs))||(schema.$schema!==undefined&&(depth!==0||schema.$schema!=='https://json-schema.org/draft/2020-12/schema'))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
       const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);
       if(typeof resolved==='boolean'){
         if((schema.title!==undefined&&(typeof schema.title!=='string'||schema.title.length>120))||(schema.description!==undefined&&(typeof schema.description!=='string'||schema.description.length>1024)))throw Error('Unsupported record JSON Schema form');
