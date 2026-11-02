@@ -11,6 +11,8 @@ type WorkerOptions={
  asyncDefinitions?:boolean;
  workerId:string;leaseMs:number;pollMs:number;
  authorizeStart:(run:DurableAgentRun,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
+ authorizeStartWithSignal?:(run:DurableAgentRun,definition:AgentDefinitionVersion,signal:AbortSignal)=>boolean|Promise<boolean>;
+ startupCallbackTimeoutMs?:number;maxPendingStartupCallbacks?:number;
  execute:(run:DurableAgentRun,context:{signal:AbortSignal;assertLease:()=>void;assertLeaseAsync:()=>Promise<void>})=>Promise<Outcome>;
  clock?:()=>number;
  tracing?:{tracer:Tracer;usePersistedParent?:boolean};
@@ -21,11 +23,16 @@ type WorkerOptions={
 };
 /** Execute one explicitly selected run. The host supplies policy, execution and outcome classification. */
 export class DurableAgentWorker {
- private readonly clock:()=>number;private readonly tracer:Tracer|undefined;private readonly usePersistedParent:boolean;private readonly verifySharedSlotAtUse:boolean;
+ private readonly clock:()=>number;private readonly tracer:Tracer|undefined;private readonly usePersistedParent:boolean;private readonly verifySharedSlotAtUse:boolean;private startupCallbacksInFlight=0;
  constructor(private readonly options:WorkerOptions){
-  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(options.asyncDefinitions!==undefined&&typeof options.asyncDefinitions!=='boolean')||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.sharedSlots!==undefined&&!(options.sharedSlots instanceof PostgresAgentRunSlots))||(options.verifySharedSlotAtUse!==undefined&&typeof options.verifySharedSlotAtUse!=='boolean')||(options.verifySharedSlotAtUse===true&&!options.sharedSlots)||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.usePersistedParent!==undefined&&typeof options.tracing.usePersistedParent!=='boolean'))))throw Error('Invalid agent worker');
+  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(options.asyncDefinitions!==undefined&&typeof options.asyncDefinitions!=='boolean')||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||(options.authorizeStartWithSignal!==undefined&&typeof options.authorizeStartWithSignal!=='function')||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.sharedSlots!==undefined&&!(options.sharedSlots instanceof PostgresAgentRunSlots))||(options.verifySharedSlotAtUse!==undefined&&typeof options.verifySharedSlotAtUse!=='boolean')||(options.verifySharedSlotAtUse===true&&!options.sharedSlots)||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.usePersistedParent!==undefined&&typeof options.tracing.usePersistedParent!=='boolean'))))throw Error('Invalid agent worker');
+  if((options.startupCallbackTimeoutMs===undefined)!==(options.maxPendingStartupCallbacks===undefined)||(options.startupCallbackTimeoutMs!==undefined&&(!Number.isInteger(options.startupCallbackTimeoutMs)||options.startupCallbackTimeoutMs<100||options.startupCallbackTimeoutMs>30000))||(options.maxPendingStartupCallbacks!==undefined&&(!Number.isInteger(options.maxPendingStartupCallbacks)||options.maxPendingStartupCallbacks<1||options.maxPendingStartupCallbacks>100)))throw Error('Invalid agent worker');
   this.options={...options,tracing:options.tracing?{...options.tracing}:undefined};
   this.verifySharedSlotAtUse=options.verifySharedSlotAtUse===true;this.clock=options.clock??Date.now;this.tracer=options.tracing?.tracer;this.usePersistedParent=options.tracing?.usePersistedParent===true;
+ }
+ private async startupCallback<T>(operation:(signal:AbortSignal)=>T|Promise<T>,parent:AbortSignal=new AbortController().signal):Promise<T>{
+  const timeout=this.options.startupCallbackTimeoutMs;if(parent.aborted)throw Error('Agent startup callback unavailable');if(timeout===undefined)return await operation(parent);if(this.startupCallbacksInFlight>=this.options.maxPendingStartupCallbacks!)throw Error('Agent startup callback unavailable');
+  const controller=new AbortController(),signal=AbortSignal.any([parent,controller.signal]);this.startupCallbacksInFlight++;const task=Promise.resolve().then(()=>{if(signal.aborted)throw Error('Agent startup callback unavailable');return operation(signal);});void task.then(()=>{this.startupCallbacksInFlight--;},()=>{this.startupCallbacksInFlight--;});let abort=()=>{};const cancelled=new Promise<never>((_resolve,reject)=>{abort=()=>reject(Error('Agent startup callback unavailable'));if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});});const timer=setTimeout(()=>controller.abort(),timeout);try{const value=await Promise.race([task,cancelled]);if(signal.aborted)throw Error('Agent startup callback unavailable');return value;}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
  }
  usesRegistry(runs:SqliteAgentRuns):boolean{return this.options.runs===runs;}
  async runOnce(scope:AgentRunScope,runId:string):Promise<DurableAgentRun>{
@@ -41,13 +48,15 @@ export class DurableAgentWorker {
   const isAsync=this.options.asyncDefinitions===true;
   const lookup=()=>definitions.get(scope.tenantId,scope.agentId);
   const readSync=()=>{const value=lookup();if(value&&typeof (value as Promise<unknown>).then==='function'){void Promise.resolve(value).catch(()=>{});throw Error('Asynchronous definitions require asyncDefinitions');}return value as AgentDefinitionVersion|undefined;};
-  const selected=isAsync?await lookup():readSync();
+  const startupLookup=()=>this.startupCallback(signal=>definitions.getWithSignal?definitions.getWithSignal(scope.tenantId,scope.agentId,signal):lookup());
+  const selected=isAsync?await startupLookup():readSync();
   if(!selected||selected.version!==run.definitionVersion||!selected.manifest.lifecycle.enabled||selected.manifest.tenantId!==scope.tenantId||selected.manifest.agentId!==scope.agentId)throw Error('Agent definition unavailable');
   const definition=structuredClone(selected);
   const matches=(latest:AgentDefinitionVersion|undefined)=>!!latest&&latest.version===run!.definitionVersion&&latest.manifest.lifecycle.enabled&&latest.manifest.tenantId===scope.tenantId&&latest.manifest.agentId===scope.agentId;
   const validDefinition=()=>matches(readSync());
-  if(await authorizeStart(structuredClone(run),structuredClone(definition))!==true)throw Error('Agent run forbidden');
-  if(!(isAsync?matches(await lookup()):validDefinition()))throw Error('Agent definition changed');
+  const startAllowed=(signal:AbortSignal)=>this.options.authorizeStartWithSignal?this.options.authorizeStartWithSignal(structuredClone(run!),structuredClone(definition),signal):authorizeStart(structuredClone(run!),structuredClone(definition));
+  if(await this.startupCallback(startAllowed)!==true)throw Error('Agent run forbidden');
+  if(!(isAsync?matches(await startupLookup()):validDefinition()))throw Error('Agent definition changed');
   const shared=this.options.sharedSlots,verifySharedSlotAtUse=this.verifySharedSlotAtUse,quotas=definition.manifest.quotas;let slot:string|undefined;
   if(shared)slot=await shared.acquire(scope,runId,workerId,leaseMs,{maxConcurrentRuns:quotas.maxConcurrentRuns,maxRunsPerDay:quotas.maxRunsPerDay});
   const releaseSlot=async()=>{if(shared&&slot)try{await shared.release(scope,runId,slot);}catch{}};
@@ -71,7 +80,7 @@ export class DurableAgentWorker {
   };
   const timer=setInterval(()=>{try{assertLocalLease();}catch{lost=true;controller.abort();return;}if(!pulsing)pulsing=pulse().finally(()=>{pulsing=undefined;});},pollMs);let outcome:Outcome='uncertain',started=false;
   try{
-   if(await authorizeStart(structuredClone(run),structuredClone(definition))!==true)throw Error('Agent run forbidden');
+   if(await this.startupCallback(startAllowed,controller.signal)!==true)throw Error('Agent run forbidden');
    await assertLeaseAsync();started=true;
    const result=await execute(structuredClone(run),{signal:controller.signal,assertLease,assertLeaseAsync});
    if(isAsync&&result!=='stopped'&&result!=='uncertain')await assertLeaseAsync();

@@ -138,3 +138,24 @@ test('worker snapshots validated options without replacing live definition polic
   assert.equal(worker.usesRegistry(s.runs),true);assert.equal(worker.usesRegistry(other.runs),false);assert.equal((await worker.runOnce(scope,'one')).status,'succeeded');assert.equal(selectedCalls,1);assert.equal(replacementCalls,0);assert.equal(authorized,2);assert.equal(other.runs.get(scope,'one').status,'queued');
  }finally{s.runs.close();s.definitions.close();other.runs.close();other.definitions.close();}
 });
+
+test('bounded startup policy fences late authorization and limits pending callbacks',async()=>{
+ const s=setup();let release,entered,seenSignal,block=true,executed=0;const gate=new Promise(r=>release=r),ready=new Promise(r=>entered=r);
+ try{
+  const settings={...options(s),startupCallbackTimeoutMs:100,maxPendingStartupCallbacks:1,authorizeStartWithSignal:async(_run,_definition,signal)=>{if(block){seenSignal=signal;entered();await gate;}return true;},execute:async()=>{executed++;return 'succeeded';}},worker=new DurableAgentWorker(settings);const first=worker.runOnce(scope,'one');await ready;await assert.rejects(first,/startup callback unavailable/);assert.equal(seenSignal.aborted,true);assert.equal(s.runs.get(scope,'one').status,'queued');await assert.rejects(worker.runOnce(scope,'one'),/startup callback unavailable/);block=false;release();await new Promise(r=>setImmediate(r));assert.equal(s.runs.get(scope,'one').status,'queued');assert.equal(executed,0);assert.equal((await worker.runOnce(scope,'one')).status,'succeeded');assert.equal(executed,1);
+ }finally{release();s.runs.close();s.definitions.close();}
+});
+
+test('bounded post-claim authorization does not execute a run after a late decision',async()=>{
+ const s=setup();let release,signal,executed=false;const gate=new Promise(r=>release=r);try{
+  const worker=new DurableAgentWorker({...options(s),startupCallbackTimeoutMs:100,maxPendingStartupCallbacks:1,authorizeStartWithSignal:async(run,_definition,provided)=>{if(run.status==='running'){signal=provided;await gate;}return true;},execute:async()=>{executed=true;return 'succeeded';}});const result=await worker.runOnce(scope,'one');assert.equal(result.status,'failed');assert.equal(signal.aborted,true);release();await new Promise(r=>setImmediate(r));assert.equal(executed,false);assert.equal(s.runs.get(scope,'one').status,'failed');
+ }finally{release();s.runs.close();s.definitions.close();}
+});
+
+test('bounded async startup definition lookup uses cancellation and does not claim on timeout',async()=>{
+ const s=setup();let release,signal;const gate=new Promise(r=>release=r);try{
+  const definitions={get:async(...args)=>s.definitions.get(...args),getWithSignal:async(_tenant,_agent,provided)=>{signal=provided;await gate;return s.definitions.get('t','agent');}},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,startupCallbackTimeoutMs:100,maxPendingStartupCallbacks:1,execute:async()=> 'succeeded'});await assert.rejects(worker.runOnce(scope,'one'),/startup callback unavailable/);assert.equal(signal.aborted,true);assert.equal(s.runs.get(scope,'one').status,'queued');release();await new Promise(r=>setImmediate(r));assert.equal(s.runs.get(scope,'one').status,'queued');
+ }finally{release();s.runs.close();s.definitions.close();}
+});
+
+test('startup callback bounds must be paired and valid',()=>{const s=setup();try{for(const limits of [{startupCallbackTimeoutMs:100},{maxPendingStartupCallbacks:1},{startupCallbackTimeoutMs:99,maxPendingStartupCallbacks:1},{startupCallbackTimeoutMs:100,maxPendingStartupCallbacks:101}])assert.throws(()=>new DurableAgentWorker({...options(s),...limits,execute:async()=> 'succeeded'}),/Invalid agent worker/);}finally{s.runs.close();s.definitions.close();}});
