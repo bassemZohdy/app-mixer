@@ -79,6 +79,17 @@ test('record browser filters literal and empty property names',async()=>{
  }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('record browser offers host-approved array membership filters',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'tags',label:'Tags',type:'string'},{field:'state',label:'State',type:'string'}],arrayContainsFilterFields:['tags']};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[]}})};};
+  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const field=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Filter field')).querySelector('select'),operator=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),value=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input'),nullInput=root.querySelector('input[type=checkbox]'),browse=[...root.querySelectorAll('button')].find(button=>button.textContent==='Browse records'),change=control=>control.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+  field.value='tags';change(field);assert.equal([...operator.options].find(option=>option.value==='arrayContains').disabled,false);operator.value='arrayContains';change(operator);value.value='red';browse.click();await wait(()=>calls.length===1&&!browse.disabled);assert.deepEqual(calls[0].filter,{field:'tags',operator:'arrayContains',value:'red'});
+  nullInput.checked=true;change(nullInput);assert.equal(nullInput.disabled,false);browse.click();await wait(()=>calls.length===2&&!browse.disabled);assert.deepEqual(calls[1].filter,{field:'tags',operator:'arrayContains',value:null});field.value='state';change(field);assert.equal([...operator.options].find(option=>option.value==='arrayContains').disabled,true);assert.equal(operator.value,'eq');
+  const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.ok([...preview.querySelectorAll('input,select,button')].every(control=>control.disabled));for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({...options,arrayContainsFilterFields:['unknown']}),/Invalid record filter fields/);
+ }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('record browser sends typed filters, resets pages and ignores stale responses',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'active',label:'Active',type:'boolean'}]};let resolvePending;
  globalThis.fetch=async(_path,request)=>{const input=JSON.parse(request.body);calls.push(input);if(input.filter?.value==='slow')return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}]}})}));return {ok:true,json:async()=>({result:{items:[{id:'found',revision:1}],nextCursor:'opaque'}})}};
