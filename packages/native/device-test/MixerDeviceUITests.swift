@@ -73,5 +73,14 @@ final class MixerDeviceUITests: XCTestCase {
     }
     XCTAssertLessThanOrEqual(elements[0].frame.maxX, elements[1].frame.minX + 1)
     XCTAssertLessThanOrEqual(elements[1].frame.maxX, elements[2].frame.minX + 1)
+    let identity = app.buttons["Check surface identity"]
+    XCTAssertTrue(identity.waitForExistence(timeout: 10))
+    identity.tap()
+    XCTAssertTrue(app.staticTexts.matching(identifier: "Mount 1").firstMatch.waitForExistence(timeout: 10))
+    let replace = app.buttons["Replace test surface"]
+    XCTAssertTrue(replace.waitForExistence(timeout: 10))
+    replace.tap()
+    XCTAssertTrue(app.staticTexts.matching(identifier: "Mount 2").firstMatch.waitForExistence(timeout: 10))
+    XCTAssertFalse(app.staticTexts.matching(identifier: "Mount 1").firstMatch.exists)
   }
 }

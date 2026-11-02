@@ -28,3 +28,5 @@ Array updates reject noncanonical or out-of-range indices, including intermediat
 Repeated references to the same component within a layout receive distinct, stable sibling identities. React Native for Web checks that repeated bound fields stay editable and retain their instances when an unrelated sibling is reordered. Removing an earlier occurrence can change which remaining occurrence retains its local editing state.
 
 Each created surface has a separate rendering identity. Deleting and recreating a surface resets its component state even when both messages are delivered in the same React batch; React Native for Web tests this behavior.
+
+The narrow nested-row scenario passed on the [Android emulator](https://github.com/bassemZohdy/app-mixer/actions/runs/41433985698) and [iOS simulator](https://github.com/bassemZohdy/app-mixer/actions/runs/41441375957). The device fixtures also include a same-batch surface recreation scenario; its device results must be checked separately.

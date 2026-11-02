@@ -30,6 +30,8 @@ try{
  await click('Advance surface');assert.ok(text('Secondary Grace'));
  await click('Check narrow layout');
  for(const label of ['A long nested column label needs to wrap','A long nested card label needs to wrap','A long nested row label needs to wrap'])assert.ok(text(label),`Missing layout label: ${label}`);
+ await click('Check surface identity');assert.ok(text('Mount 1'));
+ await click('Replace test surface');assert.ok(text('Mount 2'));assert.ok(!text('Mount 1'));
  assert.ok(!text('FAIL renderer'));
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}

@@ -1,8 +1,11 @@
 import React, {useCallback, useState} from 'react';
 import {SafeAreaView, Text, TextInput, View, Pressable, Platform} from 'react-native';
-import {APP_MIXER_CATALOG, createReactNativeA2UIComponent} from './app-mixer';
+import {APP_MIXER_CATALOG, createReactNativeA2UIComponent, NativeComponentRegistry} from './app-mixer';
 
-const Renderer = createReactNativeA2UIComponent(React, {View, Text, TextInput, Pressable, Platform});
+let mountCount=0;
+function IdentityProbe(){const [instance]=useState(()=>++mountCount);return <Text>{`Mount ${instance}`}</Text>;}
+const extensions=new NativeComponentRegistry();extensions.register('identity-probe',IdentityProbe,component=>Object.keys(component).every(key=>['id','component'].includes(key)));
+const Renderer = createReactNativeA2UIComponent(React, {View, Text, TextInput, Pressable, Platform},extensions);
 let publish,expectingRejection=false;
 const subscribe = receive => {
   publish=receive;
@@ -33,11 +36,18 @@ const subscribeLayout=receive=>{
     {id:'row',component:'Row',children:['three']},{id:'three',component:'Text',text:layoutLabels[2]}
   ]}});
 };
+let identityReceive;
+const createIdentity=receive=>{
+  receive({version:'v0.9.1',createSurface:{surfaceId:'identity',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'identity',components:[{id:'root',component:'identity-probe'}]}});
+};
+const subscribeIdentity=receive=>{identityReceive=receive;createIdentity(receive);return ()=>{if(identityReceive===receive)identityReceive=undefined;};};
 export default function App(){
   const [result,setResult]=useState('Waiting');
   const [rejection,setRejection]=useState('');
   const [phase,setPhase]=useState(0);
   const [layout,setLayout]=useState(false);
+  const [identity,setIdentity]=useState(false);
   const onAction=useCallback(event=>{const name=event?.action?.context?.name;setResult(event?.action?.name==='save'&&name==='Grace'?'Saved Grace':'FAIL action');},[]);
   const onError=useCallback(()=>{if(expectingRejection)setRejection('Rejected safely');else setResult('FAIL renderer');},[]);
   const update=()=>publish?.({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/profile/name',value:'Lin'}});
@@ -50,6 +60,7 @@ export default function App(){
     publish({version:'v0.9.1',updateComponents:{surfaceId:'secondary',components:[{id:'root',component:'Text',text:{path:'/profile/name'}}]}});
     setPhase(phase===0?1:3);
   };
-  if(layout)return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{width:240}}><Renderer subscribe={subscribeLayout} onError={onError}/></View><Text>{result}</Text></SafeAreaView>;
+  if(identity)return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><Renderer subscribe={subscribeIdentity} onError={onError}/><Pressable accessibilityRole="button" onPress={()=>{if(identityReceive){identityReceive({version:'v0.9.1',deleteSurface:{surfaceId:'identity'}});createIdentity(identityReceive);}}}><Text>Replace test surface</Text></Pressable><Text>{result}</Text></SafeAreaView>;
+  if(layout)return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{width:240}}><Renderer subscribe={subscribeLayout} onError={onError}/></View><Pressable accessibilityRole="button" onPress={()=>setIdentity(true)}><Text>Check surface identity</Text></Pressable><Text>{result}</Text></SafeAreaView>;
   return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{flexDirection:'row',justifyContent:'space-between'}}><Pressable accessibilityRole="button" style={{padding:8}} onPress={update}><Text>Update data</Text></Pressable><Pressable accessibilityRole="button" style={{padding:8}} onPress={reject}><Text>Reject invalid</Text></Pressable></View><Renderer subscribe={subscribe} onError={onError} onAction={result==='Waiting'?onAction:undefined}/><Text>{rejection}</Text><Text>{result}</Text>{result==='Saved Grace'&&phase<3&&<Pressable accessibilityRole="button" style={{padding:8}} onPress={advance}><Text>Advance surface</Text></Pressable>}{phase===3&&<Pressable accessibilityRole="button" style={{padding:8}} onPress={()=>setLayout(true)}><Text>Check narrow layout</Text></Pressable>}</SafeAreaView>;
 }

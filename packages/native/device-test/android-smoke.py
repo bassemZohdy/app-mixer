@@ -133,4 +133,12 @@ for x1, y1, x2, y2 in bounds:
         raise AssertionError('Nested row label is not contained and wrapped: ' + str(bounds))
 if bounds[0][2] > bounds[1][0] + 2 or bounds[1][2] > bounds[2][0] + 2:
     raise AssertionError('Nested row labels overlap: ' + str(bounds))
+identity = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Check surface identity' and n.get('clickable')=='true'), None), 'surface identity button')
+tap(identity)
+wait_for(lambda nodes: find(nodes, text='Mount 1'), 'initial surface instance')
+replace = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Replace test surface' and n.get('clickable')=='true'), None), 'surface replacement button')
+tap(replace)
+wait_for(lambda nodes: find(nodes, text='Mount 2'), 'replacement surface instance')
+if find(list(tree().iter('node')), text='Mount 1'):
+    raise AssertionError('Recreated surface retained the previous instance')
 print('React Native Android device interaction passed')
