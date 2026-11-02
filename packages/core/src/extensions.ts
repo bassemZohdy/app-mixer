@@ -35,7 +35,7 @@ export type ExtensionHost = {
 };
 export type ExtensionRequirements = { components: string[]; tools: string[]; providers: string[] };
 export type SignedExtensionManifest = {formatVersion:1;keyId:string;manifest:ExtensionManifest;signature:string};
-export type ExtensionSigningPolicy = {trustedKeys:Record<string,KeyObject>};
+export type ExtensionSigningPolicy = {trustedKeys:Record<string,KeyObject>;allowedExtensions?:Record<string,ExtensionReference[]>};
 const idPattern = /^[a-z][a-z0-9.-]{0,127}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const integrityPattern = /^sha256-[A-Za-z0-9+/]{43}=$/;
@@ -153,23 +153,36 @@ function signingKeys(input:unknown):Map<string,KeyObject>{
   if(!record(input)||Object.keys(input).length<1||Object.keys(input).length>100)throw Error('Invalid extension signing policy');
   const keys=new Map<string,KeyObject>();for(const [keyId,key] of Object.entries(input)){if(!idPattern.test(keyId)||!(key instanceof KeyObject)||key.type!=='public'||key.asymmetricKeyType!=='ed25519')throw Error('Invalid extension signing policy');keys.set(keyId,key);}return keys;
 }
+type CheckedSigningPolicy={keys:Map<string,KeyObject>;allowed?:Map<string,Set<string>>};
+const signedReference=(ref:ExtensionReference):string=>JSON.stringify([ref.id,ref.version,ref.scope]);
+function checkedSigningPolicy(input:unknown):CheckedSigningPolicy {
+  if(!fields(input,['trustedKeys',...optional(input,['allowedExtensions'])]))throw Error('Invalid extension signing policy');
+  const keys=signingKeys(input.trustedKeys);if(!Object.hasOwn(input,'allowedExtensions'))return {keys};
+  const configured=input.allowedExtensions;if(!record(configured)||Object.keys(configured).length!==keys.size||Object.keys(configured).some(key=>!keys.has(key)))throw Error('Invalid extension signing policy');
+  const fingerprints=new Set<string>();for(const key of keys.values()){const fingerprint=key.export({format:'der',type:'spki'}).toString('base64');if(fingerprints.has(fingerprint))throw Error('Invalid extension signing policy');fingerprints.add(fingerprint);}
+  const allowed=new Map<string,Set<string>>();for(const [keyId,refs] of Object.entries(configured)){
+    if(!Array.isArray(refs)||refs.length<1||refs.length>256||Object.keys(refs).length!==refs.length)throw Error('Invalid extension signing policy');
+    const entries=new Set<string>();for(const ref of refs){if(!fields(ref,['id','version','scope'])||typeof ref.id!=='string'||!idPattern.test(ref.id)||typeof ref.version!=='string'||!versionPattern.test(ref.version)||!scope(ref.scope))throw Error('Invalid extension signing policy');const entry=signedReference(ref as ExtensionReference);if(entries.has(entry))throw Error('Invalid extension signing policy');entries.add(entry);}allowed.set(keyId,entries);
+  }
+  return {keys,allowed};
+}
 /** Sign a validated, digest-bearing manifest with a host-managed Ed25519 private key. */
 export function signExtensionManifest(manifest:ExtensionManifest,keyId:string,privateKey:KeyObject):SignedExtensionManifest {
   if(typeof keyId!=='string'||!idPattern.test(keyId)||!(privateKey instanceof KeyObject)||privateKey.type!=='private'||privateKey.asymmetricKeyType!=='ed25519')throw Error('Invalid extension signing configuration');
   const snapshot=structuredClone(manifest);validateManifest(snapshot);if(!snapshot.integrity)throw Error('Signed extension requires integrity');
   return {formatVersion:1,keyId,manifest:snapshot,signature:sign(null,signingBytes(keyId,snapshot),privateKey).toString('base64url')};
 }
-function verifySigned(input:unknown,keys:Map<string,KeyObject>,packageBytes:Uint8Array):ExtensionManifest {
+function verifySigned(input:unknown,policy:CheckedSigningPolicy,packageBytes:Uint8Array):ExtensionManifest {
   try{
     if(!fields(input,['formatVersion','keyId','manifest','signature'])||input.formatVersion!==1||typeof input.keyId!=='string'||!idPattern.test(input.keyId)||typeof input.signature!=='string'||input.signature.length!==86)throw Error('Invalid envelope');
-    const key=keys.get(input.keyId),signature=Buffer.from(input.signature,'base64url'),snapshot=structuredClone(input.manifest);validateManifest(snapshot);
-    if(!key||signature.length!==64||signature.toString('base64url')!==input.signature||!snapshot.integrity||!verify(null,signingBytes(input.keyId,snapshot),key,signature)||!verifyExtensionIntegrity(snapshot.integrity,packageBytes))throw Error('Invalid signature');
+    const key=policy.keys.get(input.keyId),signature=Buffer.from(input.signature,'base64url'),snapshot=structuredClone(input.manifest);validateManifest(snapshot);
+    if(!key||(policy.allowed&&!policy.allowed.get(input.keyId)?.has(signedReference(snapshot)))||signature.length!==64||signature.toString('base64url')!==input.signature||!snapshot.integrity||!verify(null,signingBytes(input.keyId,snapshot),key,signature)||!verifyExtensionIntegrity(snapshot.integrity,packageBytes))throw Error('Invalid signature');
     return snapshot;
   }catch{throw Error('Invalid signed extension manifest');}
 }
 /** Verify both publisher signature and package digest against host-selected public keys. */
 export function verifySignedExtensionManifest(input:unknown,policy:ExtensionSigningPolicy,packageBytes:Uint8Array):ExtensionManifest {
-  if(!fields(policy,['trustedKeys']))throw Error('Invalid extension signing policy');return verifySigned(input,signingKeys(policy.trustedKeys),packageBytes);
+  return verifySigned(input,checkedSigningPolicy(policy),packageBytes);
 }
 
 /** Check metadata against explicit host approval and required registrations. */
@@ -242,25 +255,25 @@ export class ExtensionRegistry {
     components: new Map(), tools: new Map(), providers: new Map()
   };
   private readonly host: ExtensionHost;
-  readonly #signingKeys?:Map<string,KeyObject>;
+  readonly #signingPolicy?:CheckedSigningPolicy;
   private readonly configurations = new Map<string, ExtensionConfiguration>();
 
   constructor(host: ExtensionHost, policy?:ExtensionSigningPolicy) {
     this.host = structuredClone(host);
     checkExtensionCompatibility([], this.host, {components:[], tools:[], providers:[]});
-    if(policy!==undefined){if(!fields(policy,['trustedKeys']))throw Error('Invalid extension signing policy');this.#signingKeys=signingKeys(policy.trustedKeys);}
+    if(policy!==undefined)this.#signingPolicy=checkedSigningPolicy(policy);
   }
 
   /** When the manifest declares `integrity`, `options.packageBytes` must contain the trusted package bytes with that digest. */
   register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}, options: {packageBytes?: Uint8Array} = {}): void {
-    if(this.#signingKeys)throw Error('Signed extension required');
+    if(this.#signingPolicy)throw Error('Signed extension required');
     this.#install(manifest,bindings,configuration,options);
   }
 
   /** A signing policy requires all registrations to use this verified path. */
   registerSigned(signed:SignedExtensionManifest,bindings:ExtensionBindings,configuration:ExtensionConfiguration,packageBytes:Uint8Array):void {
-    if(!this.#signingKeys)throw Error('Extension signing policy required');
-    const manifest=verifySigned(signed,this.#signingKeys,packageBytes);this.#install(manifest,bindings,configuration,{packageBytes});
+    if(!this.#signingPolicy)throw Error('Extension signing policy required');
+    const manifest=verifySigned(signed,this.#signingPolicy,packageBytes);this.#install(manifest,bindings,configuration,{packageBytes});
   }
 
   #install(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration, options: {packageBytes?: Uint8Array}): void {
