@@ -32,6 +32,12 @@ Future<void> verifySurfaceParity(WidgetTester tester) async {
   send('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Unsupported'}]});
   await tester.pump();
   expect(errors,hasLength(1));expect(display('Grace'),findsOneWidget);
+  send('updateComponents',{'surfaceId':'main','components':[{'id':'label','component':'Row','children':['field']}]});
+  await tester.pump();
+  expect(errors,hasLength(2));expect(display('Grace'),findsOneWidget);expect(find.text('Save'),findsOneWidget);
+  send('updateComponents',{'surfaceId':'main','components':[{'id':'label','component':'Button','child':'display','action':{'event':{'name':'nested'}}}]});
+  await tester.pump();
+  expect(errors,hasLength(3));expect(display('Other'),findsOneWidget);expect(find.text('Save'),findsOneWidget);
   await tester.enterText(find.byType(TextField),'Lin');await tester.pump();
   expect(display('Lin'),findsOneWidget);expect(display('Other'),findsOneWidget);
   await tester.tap(find.byType(TextButton));await tester.pump();
@@ -46,5 +52,5 @@ Future<void> verifySurfaceParity(WidgetTester tester) async {
   expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text,'Lin');
   await tester.tap(find.byType(TextButton));await tester.pump();
   expect((actions.last['action'] as Map)['context'],{'name':'Lin'});expect(actions,hasLength(2));
-  expect(errors,hasLength(1));expect(tester.takeException(),isNull);
+  expect(errors,hasLength(3));expect(tester.takeException(),isNull);
 }
