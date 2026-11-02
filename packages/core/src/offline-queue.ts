@@ -5,7 +5,7 @@ import {CapabilityRegistry,CapabilityOutcomeUncertainError, type InvocationConte
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 
 export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
-export type OfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:OfflineStatus;attempts:number;nextAttemptAt:number};
+export type OfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:OfflineStatus;attempts:number;nextAttemptAt:number;completedAt?:number};
 export type OfflineQueueOptions={enabled:true;maxAttempts:number;retryDelayMs:number};
 export type OfflineFailure='retry'|'conflict'|'uncertain';
 export type OfflineRecoveryCandidate={id:string;status:'running'|'uncertain';attempts:number};
@@ -13,7 +13,7 @@ export type OfflineRecoveryCandidatePage={items:OfflineRecoveryCandidate[];nextA
 export type SqliteOfflineRecoveryEvidence={operatorId:string;reference:string};
 export type SqliteOfflineRecoveryEvent=SqliteOfflineRecoveryEvidence & {id:number;action:'recover'|'applied'|'not_applied';recordedAt:number};
 export type ArchivedOfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;status:'succeeded'|'discarded';operatorId:string;reference:string;recordedAt:number};
-export type OfflineArchiveListingItem={id:string;status:'succeeded'|'discarded';recordedAt?:number};
+export type OfflineArchiveListingItem={id:string;status:'succeeded'|'discarded';recordedAt?:number;completedAt?:number};
 export type OfflineArchiveListingPage={items:OfflineArchiveListingItem[];nextAfter?:string};
 
 /** Local durable queue. The host owns secure storage, access control, and safe retry classification. */
@@ -36,6 +36,12 @@ export class SqliteOfflineQueue {
       );
       CREATE INDEX IF NOT EXISTS offline_operations_recovery ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('running','uncertain');
       CREATE INDEX IF NOT EXISTS offline_operations_archive_candidates ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('succeeded','discarded');
+      CREATE TABLE IF NOT EXISTS offline_terminal_times (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,id TEXT NOT NULL,completed_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,principal_id,id));
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert AFTER INSERT ON offline_operations WHEN NEW.status IN ('succeeded','discarded') BEGIN INSERT INTO offline_terminal_times VALUES(NEW.tenant_id,NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO UPDATE SET completed_at=excluded.completed_at; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert_clear AFTER INSERT ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND id=NEW.id; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_enter AFTER UPDATE OF status ON offline_operations WHEN NEW.status IN ('succeeded','discarded') AND OLD.status<>NEW.status BEGIN INSERT INTO offline_terminal_times VALUES(NEW.tenant_id,NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO UPDATE SET completed_at=excluded.completed_at; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_leave AFTER UPDATE OF status ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') AND OLD.status IN ('succeeded','discarded') BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=OLD.tenant_id AND application_id=OLD.application_id AND principal_id=OLD.principal_id AND id=OLD.id; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_delete AFTER DELETE ON offline_operations BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=OLD.tenant_id AND application_id=OLD.application_id AND principal_id=OLD.principal_id AND id=OLD.id; END;
       CREATE TABLE IF NOT EXISTS offline_archived_operations (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, principal_id TEXT NOT NULL,
         id TEXT NOT NULL, operation_id TEXT NOT NULL, request_key TEXT NOT NULL,
@@ -79,9 +85,10 @@ export class SqliteOfflineQueue {
   }
   get(scope:DataScope,principalId:string,id:string):OfflineOperation|undefined {
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
-    const row=this.db.prepare('SELECT * FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=?').get(scope.tenantId,scope.applicationId,principalId,id);
+    const row=this.db.prepare('SELECT o.*,t.completed_at FROM offline_operations o LEFT JOIN offline_terminal_times t ON t.tenant_id=o.tenant_id AND t.application_id=o.application_id AND t.principal_id=o.principal_id AND t.id=o.id WHERE o.tenant_id=? AND o.application_id=? AND o.principal_id=? AND o.id=?').get(scope.tenantId,scope.applicationId,principalId,id);
     if(!row)return undefined;
-    return {id,operationId:row.operation_id as string,requestKey:row.request_key as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:row.status as OfflineStatus,attempts:Number(row.attempts),nextAttemptAt:Number(row.next_attempt_at)};
+    if(row.completed_at!==null&&row.completed_at!==undefined&&(!Number.isSafeInteger(row.completed_at)||Number(row.completed_at)<0))throw Error('Invalid offline completion time');
+    return {id,operationId:row.operation_id as string,requestKey:row.request_key as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:row.status as OfflineStatus,attempts:Number(row.attempts),nextAttemptAt:Number(row.next_attempt_at),...(row.completed_at===null||row.completed_at===undefined?{}:{completedAt:Number(row.completed_at)})};
   }
   list(scope:DataScope,principalId:string):OfflineOperation[] {
     checkKey(scope,'principal',principalId);
@@ -111,12 +118,12 @@ export class SqliteOfflineQueue {
     return {id,operationId:row.operation_id,requestKey:row.request_key,idempotencyKey:row.idempotency_key,status:row.status,operatorId:row.operator_id,reference:row.reference,recordedAt:Number(row.recorded_at)};
   }
   /** Metadata-only pages; the host must authorize the entire selected scope. */
-  listArchiveRecords(scope:DataScope,principalId:string,operationId:string,kind:'candidates'|'archived',options:{after?:string;limit?:number}={}):OfflineArchiveListingPage {
+  listArchiveRecords(scope:DataScope,principalId:string,operationId:string,kind:'candidates'|'archived',options:{after?:string;limit?:number;completedBefore?:number}={}):OfflineArchiveListingPage {
     checkKey(scope,'principal',principalId);checkKey(scope,'operation',operationId);
-    if((kind!=='candidates'&&kind!=='archived')||!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid offline archive query');if(options.after!==undefined)checkKey(scope,'offline',options.after);
-    const limit=options.limit??50,sql=kind==='candidates'?"SELECT id,status FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND status IN ('succeeded','discarded') AND id>? ORDER BY id LIMIT ?":"SELECT id,status,recorded_at FROM offline_archived_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND id>? ORDER BY id LIMIT ?";
-    const rows=this.db.prepare(sql).all(scope.tenantId,scope.applicationId,principalId,operationId,options.after??'',limit+1);
-    const checked:OfflineArchiveListingItem[]=rows.map(row=>{if(typeof row.id!=='string'||(row.status!=='succeeded'&&row.status!=='discarded')||(kind==='archived'&&(!Number.isSafeInteger(row.recorded_at)||Number(row.recorded_at)<0)))throw Error('Invalid offline archive listing');checkKey(scope,'offline',row.id);return {id:row.id,status:row.status,...(kind==='archived'?{recordedAt:Number(row.recorded_at)}:{})};});const items=checked.slice(0,limit);return {items,...(checked.length>limit?{nextAfter:items[items.length-1]!.id}:{})};
+    if((kind!=='candidates'&&kind!=='archived')||!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>!['after','limit','completedBefore'].includes(key))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100||(options.completedBefore!==undefined&&(kind!=='candidates'||!Number.isSafeInteger(options.completedBefore)||options.completedBefore<0)))throw Error('Invalid offline archive query');if(options.after!==undefined)checkKey(scope,'offline',options.after);
+    const limit=options.limit??50,sql=kind==='candidates'?"SELECT o.id,o.status,t.completed_at FROM offline_operations o LEFT JOIN offline_terminal_times t ON t.tenant_id=o.tenant_id AND t.application_id=o.application_id AND t.principal_id=o.principal_id AND t.id=o.id WHERE o.tenant_id=? AND o.application_id=? AND o.principal_id=? AND o.operation_id=? AND o.status IN ('succeeded','discarded') AND o.id>? AND (? IS NULL OR t.completed_at<?) ORDER BY o.id LIMIT ?":"SELECT id,status,recorded_at FROM offline_archived_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND id>? ORDER BY id LIMIT ?";
+    const parameters=[scope.tenantId,scope.applicationId,principalId,operationId,options.after??''],rows=kind==='candidates'?this.db.prepare(sql).all(...parameters,options.completedBefore??null,options.completedBefore??null,limit+1):this.db.prepare(sql).all(...parameters,limit+1);
+    const checked:OfflineArchiveListingItem[]=rows.map(row=>{if(typeof row.id!=='string'||(row.status!=='succeeded'&&row.status!=='discarded')||(kind==='archived'&&(!Number.isSafeInteger(row.recorded_at)||Number(row.recorded_at)<0))||(row.completed_at!==null&&row.completed_at!==undefined&&(!Number.isSafeInteger(row.completed_at)||Number(row.completed_at)<0)))throw Error('Invalid offline archive listing');checkKey(scope,'offline',row.id);return {id:row.id,status:row.status,...(kind==='archived'?{recordedAt:Number(row.recorded_at)}:row.completed_at===null||row.completed_at===undefined?{}:{completedAt:Number(row.completed_at)})};});const items=checked.slice(0,limit);return {items,...(checked.length>limit?{nextAfter:items[items.length-1]!.id}:{})};
   }
   /** Bounded metadata-only listing; the caller must authorize the entire selected scope. */
   listRecoveryCandidates(scope:DataScope,principalId:string,operationId:string,options:{after?:string;limit?:number}={}):OfflineRecoveryCandidatePage{
