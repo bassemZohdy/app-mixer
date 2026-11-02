@@ -15,7 +15,7 @@ const manifestSchema=z.object({
  instructions:z.string().min(1).max(16000).optional(),
  model:z.object({provider:identifier,model:identifier,credentialRef:identifier.optional()}).strict(),
  allowedCapabilities:z.array(identifier).max(256).refine(unique),
- lifecycle:z.object({enabled:z.boolean(),maxAttempts:z.number().int().min(1).max(100),runTimeoutMs:z.number().int().min(1000).max(86400000)}).strict(),
+ lifecycle:z.object({enabled:z.boolean(),maxAttempts:z.number().int().min(1).max(100),runTimeoutMs:z.number().int().min(1000).max(86400000),maxTurns:z.number().int().min(1).max(10).optional()}).strict(),
  quotas:z.object({maxConcurrentRuns:z.number().int().min(1).max(100),maxTokensPerRun:z.number().int().min(1).max(10000000),maxRunsPerDay:z.number().int().min(1).max(1000000)}).strict()
 }).strict();
 export type PersistentAgentManifest=z.infer<typeof manifestSchema>;

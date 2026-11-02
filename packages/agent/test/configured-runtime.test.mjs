@@ -73,3 +73,12 @@ test('versioned agent instructions reach each model turn without changing capabi
 test('configured runs reject invalid instructions from a custom definition source',async()=>{
  const s=setup();try{const current=s.definitions.get('t','agent');for(const instructions of ['',123,'x'.repeat(16001)]){s.options.definitions={get:()=>({...current,manifest:{...current.manifest,instructions}})};await assert.rejects(createConfiguredAgentRun(s.options),/definition unavailable/);}assert.equal(s.count(),0);}finally{s.definitions.close();}
 });
+
+
+test('versioned model turn limits respect the stricter host ceiling',async()=>{
+ for(const [configured,hostLimit,expectedCalls] of [[1,undefined,0],[2,10,1],[3,2,1],[3,undefined,2],[8,undefined,3],[8,6,5],[undefined,2,1]]){const s=setup();try{const lifecycle={...base.lifecycle,...(configured===undefined?{}:{maxTurns:configured})};s.definitions.save('t',{...base,lifecycle},1);s.options.expectedVersion=2;s.options.maxTurns=hostLimit;let turns=0;s.options.createModel=()=>({async invoke(){turns++;return new AIMessage({content:'',tool_calls:[{id:'call-'+turns,name:'lookup',args:{}}]});}});const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(s.count(),expectedCalls);assert.equal(turns,expectedCalls+1);}finally{s.definitions.close();}}
+});
+
+test('configured runs reject invalid model turn limits before creating a model',async()=>{
+ const s=setup();try{let created=0;s.options.createModel=()=>{created++;return {invoke:async()=>new AIMessage('Done')};};for(const maxTurns of [0,11,1.5,NaN])await assert.rejects(createConfiguredAgentRun({...s.options,maxTurns}),/Invalid configured agent/);const current=s.definitions.get('t','agent');for(const maxTurns of [0,11,1.5]){s.options.definitions={get:()=>({...current,manifest:{...current.manifest,lifecycle:{...current.manifest.lifecycle,maxTurns}}})};await assert.rejects(createConfiguredAgentRun(s.options),/definition unavailable/);}assert.equal(created,0);}finally{s.definitions.close();}
+});
