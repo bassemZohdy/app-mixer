@@ -23,6 +23,8 @@ export class PostgresAgentSharedCost {
   await this.query("CREATE OR REPLACE FUNCTION app_mixer_shared_cost_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Shared cost reconciliation history is immutable'; END $$",[]);
   await this.query('DO $$ BEGIN CREATE TRIGGER app_mixer_shared_cost_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_cost_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_cost_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',[]);
  }
+ binding():Scope{return {...this.scope};}
+ isBoundTo(tenantId:string,currency:string):boolean{return tenantId===this.scope.tenantId&&currency===this.scope.currency;}
  private actor(actor:Actor):Actor{if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId))throw Error('Invalid shared cost actor');return {tenantId:actor.tenantId,principalId:actor.principalId};}
  private call(call:Call):Call{if(!call||!id(call.agentId)||!id(call.runId)||!id(call.callId))throw Error('Invalid shared cost call');return {agentId:call.agentId,runId:call.runId,callId:call.callId};}
  private async permit(actor:Actor,action:Action,call?:Call):Promise<void>{try{if(await this.authorize({...actor},{...this.scope},action,call?{...call}:undefined)===true)return;}catch{}throw Error('Shared cost access denied');}
