@@ -2,8 +2,8 @@ import {AgentSemanticMemory,validSimilarity} from './semantic-memory.js';
 import type {AgentMemoryActor,AgentMemoryScope} from './agent-memory.js';
 
 export type MemoryEvaluationCase={id:string;query:string;relevantIds:string[]};
-export type MemoryEvaluationResult={id:string;retrievedIds:string[];recall:number;precision:number;reciprocalRank:number;exactIds?:string[];exactRecall?:number|null};
-export type MemoryEvaluationReport={mode:'semantic'|'hybrid'|'indexed'|'lexical';limit:number;minSimilarity?:number;maxCandidates?:number;cases:MemoryEvaluationResult[];meanRecall:number;meanPrecision:number;meanReciprocalRank:number;meanExactRecall?:number|null};
+export type MemoryEvaluationResult={id:string;retrievedIds:string[];recall:number;precision:number;reciprocalRank:number;averagePrecision:number;exactIds?:string[];exactRecall?:number|null};
+export type MemoryEvaluationReport={mode:'semantic'|'hybrid'|'indexed'|'lexical';limit:number;minSimilarity?:number;maxCandidates?:number;cases:MemoryEvaluationResult[];meanRecall:number;meanPrecision:number;meanReciprocalRank:number;meanAveragePrecision:number;meanExactRecall?:number|null};
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
 
 /** Evaluate a host-labeled set sequentially using the same scoped and authorized search as production. */
@@ -14,8 +14,9 @@ export async function evaluateAgentMemoryRetrieval(options:{memory:AgentSemantic
  const results:MemoryEvaluationResult[]=[];
  for(const item of cases){
   const comparison=compareExact?await memory.compareIndexed(actor,scope,item.query,limit,maxCandidates,{minSimilarity}):undefined,hits=comparison?comparison.indexed:mode==='indexed'?await memory.searchIndexed(actor,scope,item.query,limit,maxCandidates,{minSimilarity}):mode==='lexical'?await memory.searchLexical(actor,scope,item.query,limit,maxCandidates):mode==='hybrid'?await memory.searchHybrid(actor,scope,item.query,limit,{minSimilarity}):await memory.search(actor,scope,item.query,limit,{minSimilarity}),relevant=new Set(item.relevantIds),retrievedIds=hits.map(hit=>hit.id),matches=retrievedIds.filter(value=>relevant.has(value)),first=retrievedIds.findIndex(value=>relevant.has(value));
-  const exactIds=comparison?.exact.map(hit=>hit.id),exactRecall=exactIds===undefined?undefined:exactIds.length?exactIds.filter(value=>retrievedIds.includes(value)).length/exactIds.length:null;results.push({id:item.id,retrievedIds,recall:matches.length/relevant.size,precision:matches.length/limit,reciprocalRank:first<0?0:1/(first+1),...(exactIds===undefined?{}:{exactIds,exactRecall})});
+  let found=0,precisionSum=0;for(const [index,value] of retrievedIds.entries())if(relevant.has(value)){found++;precisionSum+=found/(index+1);}
+  const exactIds=comparison?.exact.map(hit=>hit.id),exactRecall=exactIds===undefined?undefined:exactIds.length?exactIds.filter(value=>retrievedIds.includes(value)).length/exactIds.length:null;results.push({id:item.id,retrievedIds,recall:matches.length/relevant.size,precision:matches.length/limit,reciprocalRank:first<0?0:1/(first+1),averagePrecision:precisionSum/relevant.size,...(exactIds===undefined?{}:{exactIds,exactRecall})});
  }
- const mean=(key:'recall'|'precision'|'reciprocalRank')=>results.reduce((sum,result)=>sum+result[key],0)/results.length;
- const comparisons=results.map(result=>result.exactRecall).filter((value):value is number=>typeof value==='number');return {mode,limit,...(minSimilarity===undefined?{}:{minSimilarity}),...(['indexed','lexical'].includes(mode)?{maxCandidates}:{}),cases:results,meanRecall:mean('recall'),meanPrecision:mean('precision'),meanReciprocalRank:mean('reciprocalRank'),...(compareExact?{meanExactRecall:comparisons.length?comparisons.reduce((sum,value)=>sum+value,0)/comparisons.length:null}:{})};
+ const mean=(key:'recall'|'precision'|'reciprocalRank'|'averagePrecision')=>results.reduce((sum,result)=>sum+result[key],0)/results.length;
+ const comparisons=results.map(result=>result.exactRecall).filter((value):value is number=>typeof value==='number');return {mode,limit,...(minSimilarity===undefined?{}:{minSimilarity}),...(['indexed','lexical'].includes(mode)?{maxCandidates}:{}),cases:results,meanRecall:mean('recall'),meanPrecision:mean('precision'),meanReciprocalRank:mean('reciprocalRank'),meanAveragePrecision:mean('averagePrecision'),...(compareExact?{meanExactRecall:comparisons.length?comparisons.reduce((sum,value)=>sum+value,0)/comparisons.length:null}:{})};
 }
