@@ -427,6 +427,13 @@ void main() {
     await tester.pump();expect(tester.takeException(),isNull);expect(find.text('Heading'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'Ada');await tester.pump();expect(tester.takeException(),isNull);expect(errors,isEmpty);
   });
+  testWidgets('long text in a row wraps within bounded width', (tester) async {
+    late void Function(Object?) receive;VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[],text='A long label that needs to wrap so the row remains within the available width';
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:180,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Row','children':['label','field']},{'id':'label','component':'Text','text':text},{'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}}]}));
+    await tester.pump();expect(tester.takeException(),isNull);expect(tester.getSize(find.text(text)).width,lessThanOrEqualTo(180));expect(tester.getSize(find.text(text)).height,greaterThan(20));await tester.enterText(find.byType(TextField),'Ada');await tester.pump();expect(tester.takeException(),isNull);expect(errors,isEmpty);
+  });
   testWidgets('default cross-axis alignment stretches column and row children', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

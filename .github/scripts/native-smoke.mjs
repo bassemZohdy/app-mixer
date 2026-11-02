@@ -48,6 +48,8 @@ try{
  assert.deepEqual(variants.map(node=>node.dataset.role??''),['header','header','header','header','header','','','']);
  assert.deepEqual(variants.map(node=>node.dataset.level??''),['','','','','','','','']);
  assert.deepEqual(variants.map(node=>node.dataset.accessible??''),['true','true','true','true','true','','','']);
+ await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Row',children:['direct','column']},{id:'direct',component:'Text',text:'A long row label',variant:'h2'},{id:'column',component:'Column',children:['nestedText']},{id:'nestedText',component:'Text',text:'Column text'}]}}));
+ const [rowLabel,columnText]=document.querySelectorAll('span');assert.equal(rowLabel.style.flexShrink,'1');assert.equal(rowLabel.style.fontSize,'24px');assert.equal(rowLabel.dataset.role,'header');assert.equal(columnText.style.flexShrink,'');
  await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Button',child:'nested',action:{event:{name:'save'}}},{id:'nested',component:'Column',children:['nestedHeading']},{id:'nestedHeading',component:'Text',text:'Button heading',variant:'h2'}]}}));
  assert.equal(document.querySelector('button span').dataset.accessible,undefined);assert.equal(document.querySelector('button span').dataset.role,undefined);assert.equal(document.querySelector('button span').style.fontSize,'24px');assert.equal(document.querySelector('button').textContent,'Button heading');
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
