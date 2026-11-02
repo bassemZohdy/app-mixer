@@ -140,7 +140,7 @@ export type { StagedOperation, StagedOperationSummary, StagedOperationPage, Stag
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
 
-export { registerStagedCapability, registerStagedVerificationCapability, registerStagedEvidenceCapability, registerStagedRecoveryCapability } from './staged-capabilities.js';
+export { registerStagedCapability, registerStagedVerificationCapability, registerStagedEvidenceCapability, registerStagedRecoveryEvidenceCapability, registerStagedRecoveryCapability } from './staged-capabilities.js';
 export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions, StagedEvidenceCapabilityOptions, StagedRecoveryCapabilityOptions } from './staged-capabilities.js';
 
 export { SqliteOfflineQueue } from './offline-queue.js';

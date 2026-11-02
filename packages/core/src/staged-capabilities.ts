@@ -80,13 +80,20 @@ export type StagedEvidenceCapabilityOptions={
  timeoutMs?:number;maxPending?:number;
 };
 export function registerStagedEvidenceCapability(registry:CapabilityRegistry,store:SqliteStagedOperations,options:StagedEvidenceCapabilityOptions):void{
+ registerEvidenceCapability(registry,store,options,'reconciliation');
+}
+/** Host-authorized access to recovery evidence for one staged operation. */
+export function registerStagedRecoveryEvidenceCapability(registry:CapabilityRegistry,store:SqliteStagedOperations,options:StagedEvidenceCapabilityOptions):void{
+ registerEvidenceCapability(registry,store,options,'recovery');
+}
+function registerEvidenceCapability(registry:CapabilityRegistry,store:SqliteStagedOperations,options:StagedEvidenceCapabilityOptions,kind:'reconciliation'|'recovery'):void{
  if(!(registry instanceof CapabilityRegistry)||!(store instanceof SqliteStagedOperations)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function')throw Error('Invalid staged evidence capability');
  const {applicationId,externalOperationId,authorize,authorizeOperation,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');
  const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid staged evidence capability','Staged evidence unavailable');
  registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).every(key=>['id','after','limit'].includes(key))&&Object.hasOwn(input,'id')&&id(input.id)&&(input.after===undefined||(Number.isSafeInteger(input.after)&&Number(input.after)>=0))&&(input.limit===undefined||(Number.isSafeInteger(input.limit)&&Number(input.limit)>=1&&Number(input.limit)<=99)),execute:async(input,context)=>{
   const value=input as {id:string;after?:number;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};
   return runBounded(async signal=>{const active=()=>{if(signal.aborted)throw Error('Staged evidence unavailable');};const permit=async()=>{active();const operation=store.get(scope,value.id);if(!operation||operation.operationId!==externalOperationId)throw Error('Operation not found');const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)throw Error('Capability forbidden');const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),signal);active();if(operationAllowed!==true)throw Error('Capability forbidden');};
-   await permit();active();const limit=value.limit??50,rows=store.listReconciliationEvidence(scope,value.id,{after:value.after,limit:limit+1});await permit();active();const items=rows.slice(0,limit);return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.revision}:{})};
+   await permit();active();const limit=value.limit??50,rows=kind==='recovery'?store.listRecoveryEvidence(scope,value.id,{after:value.after,limit:limit+1}):store.listReconciliationEvidence(scope,value.id,{after:value.after,limit:limit+1});await permit();active();const items=rows.slice(0,limit);return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.revision}:{})};
   });
  }});
 }
