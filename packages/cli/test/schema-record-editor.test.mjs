@@ -39,6 +39,24 @@ test('property name constraints protect preserved properties at every object lev
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('local references in validation rules agree with server validation',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{names:{pattern:'^[a-z]+$'},colors:{enum:['red','blue']},iscompany:{const:'company'},condition:{properties:{kind:{$ref:'#/$defs/iscompany'}},required:['kind']},company:{required:['company']},person:{required:['person']},phone:{required:['phone']}},propertyNames:{$ref:'#/$defs/names',description:'Names use lowercase'},properties:{kind:{type:'string'},company:{type:'string'},person:{type:'string'},email:{type:'string'},phone:{type:'string'},tags:{type:'array',items:{type:'string'},contains:{$ref:'#/$defs/colors'},minContains:1}},if:{$ref:'#/$defs/condition'},then:{$ref:'#/$defs/company'},else:{$ref:'#/$defs/person'},dependentSchemas:{email:{$ref:'#/$defs/phone'}}};
+  const options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={names:{kind:'company',company:'Acme',tags:['red'],Bad:1},contains:{kind:'company',company:'Acme',tags:['green']},condition:{kind:'company',tags:['red']},dependency:{kind:'company',company:'Acme',email:'a',tags:['red']},valid:{kind:'company',company:'Acme',email:'a',phone:'123',tags:['red']},person:{kind:'person',person:'Ada',tags:['blue']}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const [name,error] of [['names',/property name that does not match/],['contains',/required number of matching items/],['condition',/company is required by a condition/],['dependency',/phone is required when email is provided/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  for(const name of ['valid','person']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===(name==='valid'?1:2)&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   assert.doesNotThrow(()=>factory(options));
+   for(const bad of [{$ref:'#/$defs/missing'},{$ref:'#/$defs/loop'},{$ref:'https://example.com/schema'}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,$defs:{...jsonSchema.$defs,loop:{$ref:'#/$defs/loop'}},propertyNames:bad}}),/Unsupported/);
+   assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,propertyNames:{$ref:'#/$defs/names',description:42}}}),/Unsupported/);
+   assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,then:{$ref:'#/$defs/company',additionalProperties:false}}}),/Unsupported/);
+  }
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('object property counts are checked for root, nested objects and array items',async()=>{
  const s=await setup(),originalFetch=globalThis.fetch;let dom;
  try{
