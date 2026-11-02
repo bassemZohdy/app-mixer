@@ -2,9 +2,11 @@ import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../signed_plan_fixture.dart';
+import '../parity_scenario.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('preserves isolated surfaces through updates and recreation', verifySurfaceParity);
   testWidgets('root row uses its bounded width on the web', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

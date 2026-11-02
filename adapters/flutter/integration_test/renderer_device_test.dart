@@ -4,9 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import '../test/signed_plan_fixture.dart';
+import '../test/parity_scenario.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('preserves isolated surfaces through updates and recreation on a mobile device', (tester) async {
+    tester.testTextInput.register();
+    try { await verifySurfaceParity(tester); } finally { tester.testTextInput.unregister(); }
+  });
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
     late void Function(Object?) receive;
