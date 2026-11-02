@@ -233,3 +233,6 @@ export type {BudgetRecoveryDiscoveryCapabilityOptions} from './agent-budget-reco
 
 export {createBudgetHttpsVerifier} from './budget-https-verifier.js';
 export type {BudgetHttpsVerifierOptions,BudgetHttpsLookupContext} from './budget-https-verifier.js';
+
+export {AgentBudgetRecoveryWorker} from './agent-budget-recovery-worker.js';
+export type {AgentBudgetRecoveryWorkerOptions} from './agent-budget-recovery-worker.js';
