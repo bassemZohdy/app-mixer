@@ -22,3 +22,12 @@ test('schema validation is enforced at the capability boundary before writes for
  const options={candidate:{operationId:'save',method:'PUT',path:'/items'},applicationId:'app',collection:'items',operation:'put',authorize:()=>true,validate:()=>{calls++;return true;},jsonSchema:structuredClone(schema)};registerDataCapability(registry,provider,options);options.jsonSchema.required=[];
  try{for(const origin of ['ui','agent']){const context={tenantId:'tenant',principalId:origin,origin};await assert.rejects(registry.invoke('save',{id:origin,expectedRevision:null,value:{...valid,address:{city:'Dubai',zip:'bad'}}},context),/Invalid capability input/);assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items',origin),undefined);await registry.invoke('save',{id:origin,expectedRevision:null,value:valid},context);assert.deepEqual(provider.get({tenantId:'tenant',applicationId:'app'},'items',origin).value,valid);}assert.equal(calls,2);assert.deepEqual(audit,['attempt','invalid','attempt','succeeded','attempt','invalid','attempt','succeeded']);}finally{provider.close();}
 });
+
+
+test('decimal multiples validate without floating-point quotient errors',()=>{
+ for(const [divisor,valid,invalid] of [[0.1,[0,0.3,-0.3,100000000000000000000],[0.31,0.30000000000000004]],[0.01,[4.02,-4.02,1e-2],[4.021,1e-3]],[1e-7,[3e-7,-5e-7],[3.1e-7]],[5e-324,[5e-324,1e-323],[]]]){
+  const validate=createRecordJsonSchemaValidator({type:'object',properties:{value:{type:'number',multipleOf:divisor}},required:['value']});for(const value of valid)assert.equal(validate({value}),true,`${value} / ${divisor}`);for(const value of invalid)assert.equal(validate({value}),false,`${value} / ${divisor}`);
+ }
+ const array=createRecordJsonSchemaValidator({type:'object',properties:{values:{type:'array',items:{type:'number',multipleOf:0.1}}}});assert.equal(array({values:[0.3,-0.3]}),true);assert.equal(array({values:[0.3,0.31]}),false);
+ for(const divisor of [0,-1])assert.throws(()=>createRecordJsonSchemaValidator({type:'object',properties:{value:{type:'number',multipleOf:divisor}}}),/Invalid record JSON Schema/);
+});
