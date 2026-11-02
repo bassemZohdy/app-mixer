@@ -66,23 +66,24 @@ export async function createGeneratedOfflineRuntime(config){
   return runtime;
 }
 
-// Read-only recovery view; host identity and authorization are checked by runtime.list().
+// Host callbacks govern optional recovery and retirement actions.
 export function mountGeneratedOfflineHistory(root,runtime,options={}){
-  if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function'||!options||typeof options!=='object'||(options.onRecover!==undefined&&typeof options.onRecover!=='function'))throw Error('Invalid offline history');
-  const doc=root.ownerDocument;let generation=0,disposed=false;
+  if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function'||!options||typeof options!=='object'||(options.onRecover!==undefined&&typeof options.onRecover!=='function')||(options.onRetire!==undefined&&typeof options.onRetire!=='function'))throw Error('Invalid offline history');
+  const doc=root.ownerDocument,{onRecover,onRetire}=options;let generation=0,disposed=false;
   const node=(tag,text)=>{const result=doc.createElement(tag);if(text!==undefined)result.textContent=text;return result;};
-  return {
+  const panel={
     async refresh(){
       if(disposed)return;const current=++generation,heading=node('h2','Offline operation history'),status=node('p','Loading operations…'),list=node('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');root.replaceChildren(heading,status,list);
       try{
         const items=await runtime.list();if(disposed||current!==generation)return;
         if(!items.length){status.textContent='No offline operations.';return;}
         status.textContent='Review saved operations before creating another request.';
-        for(const item of items){const section=node('section');section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id));if(item.status==='retired')section.appendChild(node('p','Request data removed.'));else{const details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.appendChild(details);}if(options.onRecover&&item.status!=='retired'){const recover=node('button','Use request in form');recover.type='button';recover.addEventListener('click',()=>{recover.disabled=true;void (async()=>{try{await options.onRecover(item.id);if(!disposed&&current===generation)status.textContent='Request loaded into the form. Review it before submitting.';}catch{if(!disposed&&current===generation)status.textContent='Unable to load the request into the form.';}finally{if(!disposed&&current===generation)recover.disabled=false;}})();});section.appendChild(recover);}list.appendChild(section);}
+        for(const item of items){const section=node('section');section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id));if(item.status==='retired')section.appendChild(node('p','Request data removed.'));else{const details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.appendChild(details);}if(onRecover&&item.status!=='retired'){const recover=node('button','Use request in form');recover.type='button';recover.addEventListener('click',()=>{recover.disabled=true;void (async()=>{try{await onRecover(item.id);if(!disposed&&current===generation)status.textContent='Request loaded into the form. Review it before submitting.';}catch{if(!disposed&&current===generation)status.textContent='Unable to load the request into the form.';}finally{if(!disposed&&current===generation)recover.disabled=false;}})();});section.appendChild(recover);}if(onRetire&&['succeeded','discarded'].includes(item.status)){const remove=node('button','Remove request data');remove.type='button';remove.addEventListener('click',()=>{if(disposed||current!==generation||!root.contains(remove))return;remove.disabled=true;void (async()=>{try{await onRetire(item.id,item.version);if(!disposed&&current===generation)await panel.refresh();}catch{if(!disposed&&current===generation)status.textContent='Could not confirm removal. Refresh history to check.';}finally{if(!disposed&&current===generation)remove.disabled=false;}})();});section.appendChild(remove);}list.appendChild(section);}
       }catch{if(!disposed&&current===generation)status.textContent='Unable to load offline operations.';}
     },
     dispose(){disposed=true;generation++;root.replaceChildren();}
   };
+  return panel;
 }
 
 // Optional host-owned cross-session request identities; this store contains no payload.

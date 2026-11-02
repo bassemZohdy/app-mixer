@@ -24,9 +24,10 @@ test('generated offline runtime authorizes retirement and prevents recovery or r
   runtime=await createGeneratedOfflineRuntime(config);config.canRetire=()=>false;runtime.start();const requestKey=webcrypto.randomUUID(),queued=await runtime.enqueue('items.update',requestKey,{secret:'private'});await waitFor(async()=>(await runtime.list())[0].status==='succeeded');const completed=(await runtime.list())[0];
   await assert.rejects(runtime.retire(queued.id,completed.version),/not allowed/);assert.equal((await runtime.list())[0].payload.secret,'private');
   allowed=true;blocked=true;const attempt=runtime.retire(queued.id,completed.version);await waiting;actor={...scope,principalId:'other'};release();await assert.rejects(attempt,/not allowed/);actor={...scope};blocked=false;
-  const retired=await runtime.retire(queued.id,completed.version);assert.equal(retired.status,'retired');assert.deepEqual(retired.payload,{});await assert.rejects(runtime.enqueue('items.update',requestKey,{secret:'private'}),/retired/);
-  dom=new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const form=mountGeneratedOfflineForm(dom.window.document.getElementById('form'),runtime),historyRoot=dom.window.document.getElementById('history'),history=runtime.mountHistory(historyRoot,{onRecover:id=>form.recover(id)});
-  await history.refresh();assert.match(historyRoot.textContent,/Request data removed/);assert.doesNotMatch(historyRoot.textContent,/private/);assert.equal(historyRoot.querySelector('button'),null);await assert.rejects(form.recover(queued.id),/Cannot recover/);history.dispose();form.dispose();
+  dom=new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const form=mountGeneratedOfflineForm(dom.window.document.getElementById('form'),runtime),historyRoot=dom.window.document.getElementById('history'),history=runtime.mountHistory(historyRoot,{onRecover:id=>form.recover(id),onRetire:(id,version)=>runtime.retire(id,version)});
+  await history.refresh();assert.match(historyRoot.textContent,/private/);const remove=[...historyRoot.querySelectorAll('button')].find(button=>button.textContent==='Remove request data');assert.ok(remove);remove.click();await waitFor(()=>historyRoot.textContent.includes('Request data removed.'));
+  const retired=(await runtime.list())[0];assert.equal(retired.status,'retired');assert.deepEqual(retired.payload,{});await assert.rejects(runtime.enqueue('items.update',requestKey,{secret:'private'}),/retired/);
+  assert.doesNotMatch(historyRoot.textContent,/private/);assert.equal(historyRoot.querySelector('button'),null);await assert.rejects(form.recover(queued.id),/Cannot recover/);history.dispose();form.dispose();
   await runtime.close();delete config.canRetire;runtime=await createGeneratedOfflineRuntime(config);await assert.rejects(runtime.retire(queued.id,completed.version),/not allowed/);
  }finally{release?.();if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });
@@ -80,6 +81,16 @@ test('offline history recovers encrypted operations after reopening and clears o
 
 test('offline history ignores stale asynchronous refreshes and disposal',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-race-'));let dom;try{const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let resolve;const panel=mountGeneratedOfflineHistory(root,{list:()=>new Promise(r=>{resolve=r;})}),pending=panel.refresh();panel.dispose();resolve([{operationId:'private',status:'pending',id:'id',payload:{secret:'secret'}}]);await pending;assert.equal(root.textContent,'');}finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('optional history retirement handles failures, stale controls and refreshed data',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retire-view-'));let dom;
+ try{
+  const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let retired=false,fail=true,calls=0;
+  const item={id:'a'.repeat(64),version:3,operationId:'save',status:'succeeded',payload:{secret:'private'}},runtime={list:async()=>[retired?{...item,version:4,status:'retired',payload:{}}:item]},options={onRetire:async(id,version)=>{calls++;assert.equal(id,item.id);assert.equal(version,3);if(fail)throw Error('lost');retired=true;}};
+  const panel=mountGeneratedOfflineHistory(root,runtime,options);options.onRetire=()=>{throw Error('mutated callback');};await panel.refresh();let button=[...root.querySelectorAll('button')].find(x=>x.textContent==='Remove request data');assert.ok(button);button.click();await waitFor(()=>root.textContent.includes('Could not confirm removal'));assert.match(root.textContent,/private/);assert.equal(calls,1);
+  await panel.refresh();button.click();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);button=[...root.querySelectorAll('button')].find(x=>x.textContent==='Remove request data');fail=false;button.click();await waitFor(()=>root.textContent.includes('Request data removed.'));assert.doesNotMatch(root.textContent,/private/);assert.equal(root.querySelector('button'),null);assert.equal(calls,2);panel.dispose();
+ }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });
 
 test('a selected previous form request can be reused after a new browser session',async()=>{
