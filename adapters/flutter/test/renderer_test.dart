@@ -10,6 +10,7 @@ Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1'
 void main() {
   test('literal text limit counts Unicode code points', verifyUnicodeTextLimit);
   test('identifier limit counts Unicode code points', verifyUnicodeIdentifierLimit);
+  test('text and action context support root bindings', verifyRootValueBindings);
   testWidgets('surface lifecycle preserves multiline editing', verifySurfaceParity);
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);

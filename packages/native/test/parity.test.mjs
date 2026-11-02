@@ -228,3 +228,11 @@ test('web and native count Unicode code points in component and action identifie
  for(const renderer of [web,native])assert.throws(()=>renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:identifier,action:{event:{name:tooLong}}}]})));
  assert.equal(native.action('main','root',native.snapshot()[0].revision).action.name,identifier);assert.equal(host.children[0].children[0].children[0].textContent,'Safe');
 });
+
+test('web and native support root value bindings for text and action context',()=>{
+ const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
+ const messages=[message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateDataModel',{surfaceId:'main',value:'Root value'}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'go',context:{root:{path:''}}}}},{id:'label',component:'Text',text:{path:''}}]})];
+ for(const value of messages){web.apply(value);native.apply(value);}
+ assert.equal(native.snapshot()[0].root.children[0].text,'Root value');assert.equal(host.children[0].children[0].children[0].textContent,'Root value');
+ host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.root,'Root value');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.root,'Root value');
+});

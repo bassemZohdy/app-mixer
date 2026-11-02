@@ -158,3 +158,16 @@ void verifyUnicodeIdentifierLimit() {
   expect(()=>store.apply(update('${identifier}x')),throwsFormatException);
   expect((store.action('main','root',store.views().single.revision)['action'] as Map)['name'],identifier);
 }
+
+void verifyRootValueBindings() {
+  final store=FlutterSurfaceStore();
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  store.apply(message('updateDataModel',{'surfaceId':'main','value':'Root value'}));
+  store.apply(message('updateComponents',{'surfaceId':'main','components':[
+    {'id':'root','component':'Button','child':'label','action':{'event':{'name':'go','context':{'root':{'path':''}}}}},
+    {'id':'label','component':'Text','text':{'path':''}}
+  ]}));
+  expect(store.snapshot().single?.children.single.text,'Root value');
+  expect(((store.action('main','root',store.views().single.revision)['action'] as Map)['context'] as Map)['root'],'Root value');
+}

@@ -17,7 +17,14 @@
               "properties": {
                 "path": {
                   "type": "string",
-                  "pattern": "^/"
+                  "anyOf": [
+                    {
+                      "const": ""
+                    },
+                    {
+                      "pattern": "^/"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -205,7 +212,14 @@
                         "properties": {
                           "path": {
                             "type": "string",
-                            "pattern": "^/"
+                            "anyOf": [
+                              {
+                                "const": ""
+                              },
+                              {
+                                "pattern": "^/"
+                              }
+                            ]
                           }
                         },
                         "required": [

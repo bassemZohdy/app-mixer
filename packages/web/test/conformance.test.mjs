@@ -87,3 +87,18 @@ test('catalog identifiers use Unicode code point limits in actual component refe
   assert.throws(()=>renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Card',child:tooLong}]})));
   assert.equal(host.children[0].children[0].children[0].textContent,'Safe');
 });
+
+test('catalog permits root bindings for text and button context', async () => {
+  const catalog=await load('../catalog/v1/catalog.json'),ajv=new Ajv2020({strict:false});
+  const text=ajv.compile(catalog.components.Text),button=ajv.compile(catalog.components.Button);
+  assert.equal(text({text:{path:''}}),true);assert.equal(text({text:{path:'relative'}}),false);
+  const action=path=>({child:'label',action:{event:{name:'go',context:{root:{path}}}}});
+  assert.equal(button(action('')),true);assert.equal(button(action('relative')),false);
+  const doc={createElement:()=>new Element(doc)},host=doc.createElement();let emitted;
+  const renderer=new A2UIRenderer(host,basicRegistry(),event=>{emitted=event;});
+  const message=(kind,payload)=>({version:'v0.9.1',[kind]:payload});
+  renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+  renderer.apply(message('updateDataModel',{surfaceId:'main',value:'Root value'}));
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',...action('')},{id:'label',component:'Text',text:{path:''}}]}));
+  const rendered=host.children[0].children[0];assert.equal(rendered.children[0].textContent,'Root value');rendered.listeners.click();assert.equal(emitted.action.context.root,'Root value');
+});
