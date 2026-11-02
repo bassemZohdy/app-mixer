@@ -29,3 +29,7 @@ test('stopping a manual dispatcher pass waits for the active run and leaves late
   const pass=d.runOnce();await ready;const stopping=d.stop();release();assert.equal(await pass,1);await stopping;assert.equal(s.runs.get(scope,'a').status,'succeeded');assert.equal(s.runs.get(scope,'b').status,'queued');assert.equal(await d.runOnce(),1);assert.equal(s.runs.get(scope,'b').status,'succeeded');
  }finally{close(s);}
 });
+
+test('dispatcher snapshots validated settings and retains its selected worker and error handler',async()=>{
+ const s=setup(),other=setup();try{for(const id of ['a','b'])s.runs.create(scope,id,runConfig,0);const errors=[],executed=[],options={runs:s.runs,worker:worker(s,{authorizeStart:run=>run.runId!=='a',execute:async run=>{executed.push(run.runId);return 'succeeded';}}),scope:{...scope},maxPerPass:1,pollMs:100,onError:(error,id)=>errors.push(id)},d=new DurableAgentDispatcher(options);options.runs=other.runs;options.worker=worker(other);options.scope.tenantId='other';options.maxPerPass=1000;options.pollMs=0;options.onError=()=>{throw Error('replacement called');};assert.equal(await d.runOnce(),0);assert.deepEqual(errors,['a']);assert.equal(await d.runOnce(),1);assert.deepEqual(executed,['b']);assert.equal(s.runs.get(scope,'b').status,'succeeded');}finally{close(s);close(other);}
+});

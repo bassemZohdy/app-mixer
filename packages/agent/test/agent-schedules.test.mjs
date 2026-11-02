@@ -129,3 +129,7 @@ test('stopping a manual schedule pass prevents enqueue during authorization and 
   const pending=worker.runOnce();await ready;const stopped=worker.stop();block=false;release();assert.equal(await pending,0);await stopped;assert.equal(s.runs.list(scope).length,0);assert.equal(await worker.runOnce(),1);assert.equal(s.triggers.get(scope,s.runs.list(scope)[0].runId).payload.scheduleId,'timer');
  }finally{definitions.close();close(s);}
 });
+
+test('schedule worker snapshots validated bounds, scope and policy callback',async()=>{
+ const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');try{definitions.save('tenant',manifest,0);for(const id of ['a','b'])s.schedules.save(scope,id,config,0,0);const originalScope={...scope},options={schedules:s.schedules,scope:originalScope,definitions,authorize:()=>true,maxPending:5,maxPerPass:1,pollMs:100,onError:()=>{},clock:()=>1000},worker=new AgentScheduleWorker(options);options.authorize=()=>false;options.maxPending=0;options.maxPerPass=1000;options.pollMs=0;options.scope.tenantId='other';assert.equal(await worker.runOnce(),1);assert.equal(s.runs.list(scope).length,1);assert.equal(await worker.runOnce(),1);assert.equal(s.runs.list(scope).length,2);}finally{definitions.close();close(s);}
+});
