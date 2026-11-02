@@ -89,7 +89,7 @@ Run claims enforce a per-tenant, per-agent concurrency limit within the same SQL
 
 ## Event enqueue crash recovery
 
-Process-termination tests stop a SQLite enqueue before its trace-context, inbox and receipt inserts, and after commit. Reopening verifies that run, trace, inbox and receipt records either all rolled back or all persisted. Retrying the same event creates one run or returns the committed run, retains the first trace context, rejects changed payloads and leaves another tenant's event intact. These tests exercise one local SQLite database and do not establish remote provider delivery, production node-failure behavior or distributed-store durability.
+Process-termination tests stop a SQLite enqueue before its trace-context, inbox and receipt inserts, and after commit. Reopening verifies that run, trace, inbox and receipt records either all rolled back or all persisted. Retrying the same event creates one run or returns the committed run, retains the first trace context, rejects changed payloads and leaves another tenant's event intact. Additional HTTP tests terminate the authenticated ingress before receipt insertion and after commit but before acknowledgement, then restart it and verify the sender can retry without duplicating the run. These tests exercise one local SQLite database and do not establish remote provider delivery, production node-failure behavior or distributed-store durability.
 
 ## Paddle Billing webhooks
 
