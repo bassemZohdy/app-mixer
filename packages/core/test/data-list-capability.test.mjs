@@ -207,3 +207,17 @@ test('optional page rechecks reject scope or record access revoked during a scan
   }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
  }
 });
+
+test('not-equal filters are host-approved, type-sensitive, authorized and cursor-bound',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),checks=[];
+ try{
+  for(const [id,value] of [['a',{owner:'alice',state:'open'}],['b',{owner:'bob',state:'hidden'}],['c',{owner:'alice',state:null}],['d',{owner:'alice'}],['e',{owner:'alice',state:2}],['f',{owner:'alice',state:['open']}],['g',{owner:'alice',state:false}],['h',{owner:'alice',state:'closed'}]])provider.put(scope,'items',id,value,null);
+  provider.put({...scope,tenantId:'other'},'items','outside',{owner:'alice',state:'open'},null);
+  const base={candidate:{operationId:'not-equal.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','owner'],notEqualFilterFields:['state'],allowAnyFilters:true,authorize:()=>true,authorizeItem:(actor,item)=>{checks.push(item.id);return item.value.owner===actor.principalId;}};registerDataListCapability(registry,provider,base);
+  const filter={field:'state',operator:'neq',value:'closed'},first=await registry.invoke('not-equal.list',{filter,limit:1},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('not-equal.list',{cursor:first.nextCursor,filter:{...filter,value:'open'}},alice),/Invalid capability input/);
+  assert.deepEqual((await registry.invoke('not-equal.list',{filter,limit:20},alice)).items.map(item=>item.id),['a','c','e','g']);assert.ok(checks.includes('b'));assert.equal(checks.includes('outside'),false);
+  const filters=[{field:'state',operator:'neq',value:'open'},{field:'state',operator:'neq',value:null}],page=await registry.invoke('not-equal.list',{filters,limit:1},alice);assert.ok(page.nextCursor);assert.deepEqual((await registry.invoke('not-equal.list',{filters:[...filters].reverse(),cursor:page.nextCursor,limit:20},alice)).items.map(item=>item.id),['e','g','h']);await assert.rejects(registry.invoke('not-equal.list',{filters:[filters[0],filters[0]]},alice),/Invalid capability input/);
+  assert.deepEqual((await registry.invoke('not-equal.list',{filter:{field:'state',operator:'neq',value:2},limit:20},alice)).items.map(item=>item.id),['a','c','g','h']);assert.deepEqual((await registry.invoke('not-equal.list',{filter:{field:'state',operator:'neq',value:'2'},limit:20},alice)).items.map(item=>item.id),['a','c','e','g','h']);
+  await assert.rejects(registry.invoke('not-equal.list',{filter:{field:'owner',operator:'neq',value:'bob'}},alice),/Invalid capability input/);assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...base,notEqualFilterFields:['unknown']}),/Invalid data list capability/);
+ }finally{provider.close();}
+});
