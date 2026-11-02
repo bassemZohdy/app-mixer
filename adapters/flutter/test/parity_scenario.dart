@@ -221,15 +221,17 @@ Future<void> verifyInputComposition(WidgetTester tester) async {
   Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
   late void Function(Object?) receive;
   VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
-  final errors=<Object>[];
-  await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+  final errors=<Object>[], actions=<Map<String,dynamic>>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add,onAction:actions.add)))));
   receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
   receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Ada'}}));
   receive(message('updateComponents',{'surfaceId':'main','components':[
-    {'id':'root','component':'Column','children':['field','mirror','echo']},
+    {'id':'root','component':'Column','children':['field','mirror','echo','button']},
     {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
     {'id':'mirror','component':'TextField','label':'Name copy','value':{'path':'/name'}},
-    {'id':'echo','component':'Text','text':{'path':'/name'}}
+    {'id':'echo','component':'Text','text':{'path':'/name'}},
+    {'id':'button','component':'Button','child':'label','action':{'event':{'name':'save','context':{'name':{'path':'/name'}}}}},
+    {'id':'label','component':'Text','text':'Save'}
   ]}));
   await tester.pump();await tester.showKeyboard(find.byType(TextField).first);
   final state=tester.state<EditableTextState>(find.byType(EditableText).first);
@@ -237,8 +239,12 @@ Future<void> verifyInputComposition(WidgetTester tester) async {
   await tester.pump();expect(state.textEditingValue.composing,const TextRange(start:0,end:2));
   receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'External'}));await tester.pump();
   expect(state.textEditingValue.text,'日本');expect(state.textEditingValue.composing,const TextRange(start:0,end:2));expect(find.text('External'),findsNWidgets(2));
+  tester.widget<TextButton>(find.byType(TextButton)).onPressed!();
+  expect(((actions.last['action'] as Map)['context'] as Map)['name'],'External');
   state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2)));
   await tester.pump();expect(state.textEditingValue.text,'日本');expect(find.text('日本'),findsNWidgets(3));
+  tester.widget<TextButton>(find.byType(TextButton)).onPressed!();
+  expect(((actions.last['action'] as Map)['context'] as Map)['name'],'日本');
   receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'Other'}));await tester.pump();
   state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2)));await tester.pump();
   expect(find.text('日本'),findsNWidgets(3));
