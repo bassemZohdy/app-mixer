@@ -34,3 +34,14 @@ test('operational metrics require authorization and reject invalid clock and lea
  const s=setup();let metrics,db;try{s.runs.create(scope,'run',config,0);let calls=0;metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>++calls===1,includeOperational:true,clock:()=>1500});await assert.rejects(metrics.operational(actor),/access denied/);assert.equal(calls,2);metrics.close();metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,clock:()=>NaN});await assert.rejects(metrics.operational(actor),/clock/);metrics.close();metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,clock:()=>1500});db=new DatabaseSync(s.path);db.prepare("UPDATE agent_runs SET status='running', lease_until=NULL WHERE tenant_id=? AND agent_id=?").run(scope.tenantId,scope.agentId);await assert.rejects(metrics.operational(actor),/Invalid agent metrics data/);
  }finally{db?.close();metrics?.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
 });
+
+test('one metrics scrape keeps state and overdue counts on the same database snapshot',async()=>{
+ const s=setup();let metrics,writer;try{s.runs.create(scope,'queued',config,0);writer=new DatabaseSync(s.path);writer.exec('PRAGMA journal_mode=WAL');let changed=false;metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,includeOperational:true,clock:()=>{if(!changed){changed=true;writer.prepare("UPDATE agent_runs SET status='failed' WHERE tenant_id=? AND agent_id=? AND run_id=?").run(scope.tenantId,scope.agentId,'queued');}return 1500;}});
+  const first=await metrics.render(actor);assert.match(first,/app_mixer_agent_runs\{status="queued",archived="false"\} 1/);assert.match(first,/app_mixer_agent_overdue_runs\{kind="queued"\} 1/);const second=await metrics.render(actor);assert.match(second,/app_mixer_agent_runs\{status="queued",archived="false"\} 0/);assert.match(second,/app_mixer_agent_overdue_runs\{kind="queued"\} 0/);
+ }finally{metrics?.close();writer?.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
+});
+
+test('failed aggregate render rolls back its read transaction and rechecks authorization',async()=>{
+ const s=setup();let metrics;try{s.runs.create(scope,'queued',config,0);let now=NaN,allowed=true,calls=0;metrics=new SqliteAgentRunMetrics(s.path,{scope,includeOperational:true,clock:()=>now,authorize:()=>{calls++;return allowed;}});await assert.rejects(metrics.render(actor),/clock/);now=1500;assert.match(await metrics.render(actor),/app_mixer_agent_overdue_runs\{kind="queued"\} 1/);calls=0;allowed=true;metrics.close();metrics=new SqliteAgentRunMetrics(s.path,{scope,includeOperational:true,clock:()=>1500,authorize:()=>++calls===1});await assert.rejects(metrics.render(actor),/access denied/);assert.equal(calls,2);
+ }finally{metrics?.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
+});
