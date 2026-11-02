@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentScheduleHistory,SqliteAgentDefinitions,AgentScheduleWorker,DurableAgentWorker} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentScheduleHistory,SqliteAgentDefinitions,PostgresAgentDefinitions,AgentScheduleWorker,DurableAgentWorker} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},config={enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},policy={definitionVersion:1,maxAttempts:2,runTimeoutMs:10000,maxPending:10};
 const manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:10000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'app-mixer-schedules-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),schedules=new SqliteAgentSchedules(path);return {dir,path,runs,triggers,schedules};}
@@ -136,4 +136,20 @@ test('schedule worker snapshots validated bounds, scope and policy callback',asy
 
 test('schedule receipts use actual firing time and commit with the occurrence',()=>{
  const s=setup(),db=new DatabaseSync(s.path);try{const schedule=s.schedules.save(scope,'timer',config,0,0);db.exec("CREATE TRIGGER fail_schedule_receipt BEFORE INSERT ON agent_trigger_receipts BEGIN SELECT RAISE(ABORT,'receipt unavailable'); END");assert.throws(()=>s.schedules.fire(scope,'timer',schedule.revision,policy,3000),/receipt unavailable/);assert.equal(s.runs.list(scope).length,0);assert.equal(s.schedules.get(scope,'timer').revision,1);db.exec('DROP TRIGGER fail_schedule_receipt');const result=s.schedules.fire(scope,'timer',schedule.revision,policy,3000);assert.equal(result.scheduledAt,1000);assert.equal(db.prepare('SELECT received_at FROM agent_trigger_receipts WHERE run_id=?').get(result.runId).received_at,3000);}finally{db.close();close(s);}
+});
+
+test('schedule worker signals cancellation during both definition reads and authorization',async()=>{
+ for(const phase of ['first-read','authorize','recheck']){
+  const s=setup(),store=new SqliteAgentDefinitions(':memory:');let started,seen,reads=0,blocking=true;const ready=new Promise(resolve=>started=resolve),errors=[];
+  const pause=async signal=>{assert.ok(signal instanceof AbortSignal);seen=signal;started();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));throw Error('cancelled');};
+  try{store.save('tenant',manifest,0);s.schedules.save(scope,'timer',config,0,0);const definitions={get:()=>{throw Error('signal-aware lookup expected');},getWithSignal:async(tenant,agent,signal)=>{reads++;if(blocking&&(phase==='first-read'&&reads===1||phase==='recheck'&&reads===2))await pause(signal);return store.get(tenant,agent);}},worker=new AgentScheduleWorker({schedules:s.schedules,scope,definitions,authorize:async(_schedule,_definition,signal)=>{if(blocking&&phase==='authorize')await pause(signal);return true;},maxPending:5,maxPerPass:2,pollMs:100,onError:error=>errors.push(error),clock:()=>1000});
+   const pending=worker.runOnce();await ready;await worker.stop();assert.equal(seen.aborted,true,phase);assert.equal(await pending,0);assert.equal(s.runs.list(scope).length,0);assert.deepEqual(errors,[]);blocking=false;assert.equal(await worker.runOnce(),1);assert.equal(s.runs.list(scope).length,1);await worker.stop();
+  }finally{store.close();close(s);}
+ }
+});
+
+
+test('schedule stop aborts a PostgreSQL definition view without enqueueing',async()=>{
+ const s=setup();let entered,seen,blocked=true;const ready=new Promise(resolve=>entered=resolve),row={version:'1',manifest:JSON.stringify(manifest)},store=new PostgresAgentDefinitions({enabled:true,query:async()=>{throw Error('expected cancellable query');},queryWithSignal:async(_sql,_args,signal)=>{if(blocked){seen=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return {rows:[row]};},transaction:async()=>{},authorize:()=>true});
+ try{s.schedules.save(scope,'timer',config,0,0);const worker=new AgentScheduleWorker({schedules:s.schedules,scope,definitions:store.view({tenantId:'tenant',principalId:'admin'}),authorize:()=>true,maxPending:5,maxPerPass:2,pollMs:100,onError:()=>{},clock:()=>1000});const pending=worker.runOnce();await ready;await worker.stop();assert.equal(seen.aborted,true);assert.equal(await pending,0);assert.equal(s.runs.list(scope).length,0);blocked=false;assert.equal(await worker.runOnce(),1);await worker.stop();}finally{close(s);}
 });
