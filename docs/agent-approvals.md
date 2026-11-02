@@ -14,7 +14,7 @@ A configured run emits `AGENT_APPROVAL_REQUIRED` when a request is pending, and 
 
 `decide`, `list`, and `history` accept an optional final `AbortSignal`. Cancellation is passed to their policy callbacks and fences late results, including decisions. With `timeoutMs` and `maxPending` enabled, a callback that ignores cancellation keeps its capacity slot until it settles; without those options there is no built-in concurrency limit. Cancellation cannot interrupt synchronous SQLite work or undo a decision already committed.
 
-Process-termination tests exercise approval decisions after the decision and audit event are written but before commit, and notice acknowledgements after receipt insertion but before commit. They also terminate after each commit, reopen the database, check retry behavior and verify another tenant remains unchanged. These tests cover local SQLite process death; they do not establish production storage or multi-node guarantees.
+Process-termination tests also stop approval creation after its audit event or notice is inserted and after commit; reopening checks that the approval, authority, event and notice roll back or persist together, and retries remain idempotent. Process-termination tests exercise approval decisions after the decision and audit event are written but before commit, and notice acknowledgements after receipt insertion but before commit. They also terminate after each commit, reopen the database, check retry behavior and verify another tenant remains unchanged. These tests cover local SQLite process death; they do not establish production storage or multi-node guarantees.
 
 ## Local review interface
 
