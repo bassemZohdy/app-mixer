@@ -563,6 +563,18 @@ test('structured contains constants use JSON equality and snapshot their values'
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('nested conditional matching agrees with server array validation',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{isA:{type:'object',properties:{kind:{const:'a'}},required:['kind']},a:{type:'object',properties:{score:{type:'number',minimum:10}},required:['score']},b:{type:'object',properties:{confirmed:{const:true}},required:['confirmed']},match:{type:'object',if:{$ref:'#/$defs/isA'},then:{$ref:'#/$defs/a'},else:{$ref:'#/$defs/b'}}},properties:{items:{type:'array',items:{type:'object',properties:{kind:{type:'string'},score:{type:'number'},confirmed:{type:'boolean'}}},contains:{$ref:'#/$defs/match'}}},required:['items']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={low:{items:[{kind:'a',score:9}]},unconfirmed:{items:[{kind:'b',confirmed:false}]},missing:{items:[{}]},validA:{items:[{kind:'a',score:10}]},validB:{items:[{kind:'b',confirmed:true}]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const name of ['low','unconfirmed','missing']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  for(const name of ['validA','validB']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const contains of [{if:true},{then:false},{if:true,then:null},{if:{$ref:'#/$defs/missing'},then:true}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{items:{...jsonSchema.properties.items,contains}}}}),/Unsupported/);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('JSON Schema scalar descriptions are safely associated with controls in runtime and preview',async()=>{
  const s=await setup();let dom;try{
   const jsonSchema={type:'object',properties:{name:{type:'string',description:'Use <strong>plain text</strong>.'},count:{type:'integer',description:'Count of items'},tags:{type:'array',items:{type:'string',description:'Tag help'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
