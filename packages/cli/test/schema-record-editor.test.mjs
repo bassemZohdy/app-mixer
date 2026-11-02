@@ -613,6 +613,17 @@ test('repeated array controls retain clear labels and keyboard focus',async()=>{
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
+
+test('percent-encoded local references match server validation',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{'first name':{type:'string',minLength:2},'café':{type:'integer',minimum:1},'a/b':{type:'boolean'},'%2F':{type:'array',items:{type:'string'},contains:{$ref:'#/$defs/word%20rule'}},'word rule':{type:'string',pattern:'^ok$'}},properties:{name:{$ref:'#/%24defs/first%20name',description:'Name help'},count:{$ref:'#/$defs/caf%C3%A9'},enabled:{$ref:'#/$defs/a%2Fb'},also:{$ref:'#/$defs/a%7E1b'},tags:{$ref:'#/$defs/%252F'}},required:['name','count','enabled','also','tags']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={name:'Ada',count:2,enabled:true,also:false,tags:['ok']},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const name=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('name (')).querySelector('input');assert.equal(document.getElementById(name.getAttribute('aria-describedby')).textContent,'Name help');name.value='A';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();assert.equal(saved.length,0);assert.equal(validate({...record,name:'A'}),false);name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{...record,name:'Grace'});
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){factory(options);for(const ref of ['#/$defs/%','#/$defs/%E0%A4%A','#/$defs/%7E2bad','#/$defs/missing%20name','https://example.com/schema'])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{value:{$ref:ref}}}}),/Unsupported/);const cycle={type:'object',$defs:{self:{$ref:'#/$defs/%73elf'}},properties:{value:{$ref:'#/$defs/self'}}};assert.throws(()=>factory({...options,jsonSchema:cycle}),/Unsupported/);}
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('tuple forms edit positional values without shifting earlier fields',async()=>{
  const s=await setup(),originalFetch=globalThis.fetch;let dom;
  try{

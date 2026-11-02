@@ -63,8 +63,8 @@ function resolveFormSchema(root){
   const object=value=>value&&typeof value==='object'&&!Array.isArray(value);let count=0;
   const pointer=ref=>{
     if(ref==='#')return root;
-    if(typeof ref!=='string'||!ref.startsWith('#/')||ref.includes('%'))throw Error('Unsupported record JSON Schema form');
-    let value=root;for(const raw of ref.slice(2).split('/')){if(/~(?![01])/.test(raw))throw Error('Unsupported record JSON Schema form');const key=raw.replace(/~1/g,'/').replace(/~0/g,'~');if(!object(value)||!Object.hasOwn(value,key))throw Error('Unsupported record JSON Schema form');value=value[key];}return value;
+    if(typeof ref!=='string'||!ref.startsWith('#/'))throw Error('Unsupported record JSON Schema form');
+    let value=root;for(const segment of ref.slice(2).split('/')){let raw;try{raw=decodeURIComponent(segment);}catch{throw Error('Unsupported record JSON Schema form');}if(/~(?![01])/.test(raw))throw Error('Unsupported record JSON Schema form');const key=raw.replace(/~1/g,'/').replace(/~0/g,'~');if(!object(value)||!Object.hasOwn(value,key))throw Error('Unsupported record JSON Schema form');value=value[key];}return value;
   };
   const visit=(schema,stack,depth)=>{
     if(++count>1000||depth>30)throw Error('Unsupported record JSON Schema form');
