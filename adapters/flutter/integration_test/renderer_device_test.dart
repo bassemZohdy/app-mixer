@@ -13,6 +13,7 @@ void main() {
   testWidgets('literal text limit counts Unicode code points on a mobile device', (tester) async {verifyUnicodeTextLimit();});
   testWidgets('identifier limit counts Unicode code points on a mobile device', (tester) async {verifyUnicodeIdentifierLimit();});
   testWidgets('root bindings work on a mobile device', (tester) async {verifyRootValueBindings();});
+  testWidgets('card does not add layout margins or decoration on a mobile device', verifyCardLayoutParity);
 
   testWidgets('preserves isolated surfaces through updates and recreation on a mobile device', (tester) async {
     tester.testTextInput.register();

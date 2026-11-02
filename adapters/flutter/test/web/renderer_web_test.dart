@@ -15,6 +15,7 @@ void main() {
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
+  testWidgets('card does not add layout margins or decoration', verifyCardLayoutParity);
   testWidgets('exposes the correct heading levels to web semantics', (tester) async {
     final semantics=tester.ensureSemantics();
     try {

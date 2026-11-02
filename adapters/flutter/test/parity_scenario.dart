@@ -305,3 +305,22 @@ Future<void> verifyInputComposition(WidgetTester tester) async {
   expect(find.text('日本'),findsNWidgets(3));
   expect(state.widget.focusNode.hasFocus,isTrue);expect(errors,isEmpty);expect(tester.takeException(),isNull);
 }
+
+Future<void> verifyCardLayoutParity(WidgetTester tester) async {
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+  final errors=<Object>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add))));
+  receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  receive(message('updateComponents',{'surfaceId':'main','components':[
+    {'id':'root','component':'Column','children':['outside','box']},
+    {'id':'outside','component':'Text','text':'Outside'},
+    {'id':'box','component':'Card','child':'inside'},
+    {'id':'inside','component':'Text','text':'Inside'},
+  ]}));
+  await tester.pump();
+  final outside=tester.getRect(find.text('Outside')),inside=tester.getRect(find.text('Inside'));
+  expect(inside.left,outside.left);expect(inside.top,outside.bottom);
+  expect(find.byType(Card),findsNothing);expect(errors,isEmpty);
+}
