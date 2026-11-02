@@ -8,6 +8,7 @@ export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
 export type StagedOperationSummary={id:string;status:StagedStatus;stateRevision:number};
 export type StagedOperationPage={items:StagedOperationSummary[];nextAfter?:string};
+export type StagedOperationCounts=Record<StagedStatus,number>;
 export type StagedVerificationOutcome='applied'|'not_applied'|'unknown';
 export type StagedReconciliationEvidence={principalId:string;reference:string};
 export type StagedReconciliationRecord=StagedReconciliationEvidence & {revision:number;outcome:'applied'|'not_applied';recordedAt:number};
@@ -70,6 +71,12 @@ export class SqliteStagedOperations {
     checkKey(scope,operationId,'list');if(!['staged','submitting','uncertain','succeeded'].includes(status)||!options||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid staged listing');if(options.after!==undefined)checkKey(scope,operationId,options.after);
     const limit=options.limit??50,rows=this.db.prepare('SELECT id,status,state_revision FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND operation_id=? AND status=? AND id>? ORDER BY id LIMIT ?').all(scope.tenantId,scope.applicationId,operationId,status,options.after??'',limit+1),items=rows.slice(0,limit).map(row=>{if(typeof row.id!=='string'||!Number.isSafeInteger(row.state_revision)||Number(row.state_revision)<0)throw Error('Invalid staged listing');return {id:row.id,status:row.status as StagedStatus,stateRevision:Number(row.state_revision)};});
     return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.id}:{})};
+  }
+  /** Trusted host-only aggregate; callers must authorize the entire selected scope. */
+  countByStatus(scope:DataScope,operationId:string):StagedOperationCounts {
+    checkKey(scope,operationId,'summary');const counts:StagedOperationCounts={staged:0,submitting:0,uncertain:0,succeeded:0};
+    const rows=this.db.prepare('SELECT status,COUNT(*) AS count FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND operation_id=? GROUP BY status').all(scope.tenantId,scope.applicationId,operationId);
+    for(const row of rows){if(typeof row.status!=='string'||!Object.hasOwn(counts,row.status)||!Number.isSafeInteger(row.count)||Number(row.count)<0)throw Error('Invalid staged summary');counts[row.status as StagedStatus]=Number(row.count);}return counts;
   }
   /** Check a discovery snapshot before returning an authorized summary. */
   matchesListing(scope:DataScope,operationId:string,item:StagedOperationSummary):boolean {
