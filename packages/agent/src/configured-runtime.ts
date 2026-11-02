@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {context as otelContext,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
 import {SqliteAgentTokenBudget} from './agent-token-budget.js';
 import {PostgresAgentSharedCost,type SharedCostActor} from './postgres-agent-shared-cost.js';
 import {AgentApprovalRequired} from './approval-required.js';
@@ -29,13 +30,14 @@ type Options={
  approval?:{store:SqliteAgentApprovals;leaseToken:string;expiresAt:number;required:(identity:AgentIdentity,operationId:string,input:unknown)=>boolean|Promise<boolean>};
  delegation?:DelegationOptions;
  tokenBudget?:{budget:SqliteAgentTokenBudget;maxTokensPerCall:number;maxCostMicrosPerCall?:number;sharedCost?:{ledger:PostgresAgentSharedCost;actor:SharedCostActor}};
- maxTurns?:number;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean};
+ maxTurns?:number;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean};tracing?:{tracer:Tracer};
 };
 
 /** Prepare one host-authorized ephemeral run from the current agent definition. */
 export async function createConfiguredAgentRun(options:Options):Promise<{run:(input:RunInput,options?:{signal?:AbortSignal})=>ReturnType<LangGraphAGUIAdapter['run']>;pendingApproval:()=>{actionId:string}|undefined}> {
  if(!options||!options.definitions||typeof options.definitions.get!=='function'||!options.registry||typeof options.registry.invoke!=='function'||typeof options.authorizeRun!=='function'||typeof options.authorizeCapability!=='function'||typeof options.createModel!=='function'||!Array.isArray(options.bindings)||!Number.isSafeInteger(options.expectedVersion)||options.expectedVersion<1)throw Error('Invalid configured agent');
  const {definitions,registry,authorizeRun,authorizeCapability,createModel,tenantId,agentId,expectedVersion,maxTurns,checkpoint,actionJournal,approval,tokenBudget}=options;
+ if(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'))throw Error('Invalid configured agent tracing');const tracer=options.tracing?.tracer;
  const configuredDelegation=options.delegation;
  if(configuredDelegation&&(!configuredDelegation.grant||typeof configuredDelegation.authorize!=='function'||(configuredDelegation.clock!==undefined&&typeof configuredDelegation.clock!=='function')))throw Error('Invalid delegation');
  const grant=configuredDelegation?structuredClone(configuredDelegation.grant):undefined;
@@ -59,13 +61,14 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
   if(!binding||typeof binding.operationId!=='string'||typeof binding.toolName!=='string'||typeof binding.description!=='string'||bindings.has(binding.operationId)||names.has(binding.toolName))throw Error('Invalid configured tool');
   const entry={operationId:binding.operationId,toolName:binding.toolName,description:binding.description};bindings.set(entry.operationId,entry);names.add(entry.toolName);
  }
+ const traced=async<T>(kind:'model'|'capability',operation:()=>Promise<T>):Promise<T>=>{if(!tracer)return operation();let span;let parent;try{parent=otelContext.active();span=tracer.startSpan(`agent.${kind}`,{kind:SpanKind.INTERNAL},parent);}catch{return operation();}let pending:Promise<T>|undefined;const begin=()=>{if(!pending)pending=Promise.resolve().then(operation);};try{try{otelContext.with(trace.setSpan(parent,span),begin);}catch{}if(!pending)begin();const result=await pending!;try{span.setAttribute('app_mixer.agent.operation.outcome','succeeded');}catch{}return result;}catch(error){try{span.setAttribute('app_mixer.agent.operation.outcome','failed');span.setAttribute('error.type',kind==='model'?'agent_model_failed':'agent_capability_failed');span.setStatus({code:SpanStatusCode.ERROR});}catch{}throw error;}finally{try{span.end();}catch{}}};
  let runSignal:AbortSignal|undefined,pendingActionId:string|undefined,currentRunId:string|undefined;
  const checkActive=async()=>{if(runSignal?.aborted)throw Error('Agent run aborted');await current();if(runSignal?.aborted)throw Error('Agent run aborted');if(grant){const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw new AgentDelegationExpired();}};
  const checkDelegation=async(operationId:string,input:unknown)=>{if(!grant)return;const now=delegationClock();if(!Number.isSafeInteger(now)||now<0||now>=grant.expiresAt)throw new AgentDelegationExpired();if(await delegationAuthorize!({...identity},{...grant},operationId,structuredClone(input))!==true)throw Error('Delegation forbidden');await checkActive();};
  const authority=grant?JSON.stringify([identity.servicePrincipalId,grant.principalId]):undefined;
  const tools=snapshot.manifest.allowedCapabilities.map(operationId=>{
   const binding=bindings.get(operationId);if(!binding)throw Error('Configured capability unavailable');
-  return createCapabilityTool({name:binding.toolName,description:binding.description,invoke:async (input,context)=>{
+  return createCapabilityTool({name:binding.toolName,description:binding.description,invoke:async (input,context)=>traced('capability',async()=>{
    if(!runSignal||runSignal.aborted)throw Error('Agent run aborted');await checkActive();
    if(await authorizeCapability({...identity},operationId,structuredClone(input))!==true)throw Error('Agent capability forbidden');
    if(runSignal?.aborted)throw Error('Agent run aborted');await checkActive();
@@ -76,10 +79,11 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
     await checkDelegation(operationId,input);await checkActive();
     return actionJournal.journal.invoke(context.toolCallId,operationId,input,actionJournal.maxAttempts,async (data,key)=>{await checkActive();await checkDelegation(operationId,data);await checkActive();const mapped=actionJournal.prepareInput(operationId,data,key);return registry.invoke(operationId,mapped,actor);},required,authority);}
    return registry.invoke(operationId,structuredClone(input),actor);
-  }});
+  })});
  });
  const model=await createModel(structuredClone(snapshot),[...tools]);if(!model||typeof model.invoke!=='function')throw Error('Invalid agent model');await current();
  let activeModel:ToolModel=model;if(budgetStore){const limited=model as Partial<LimitedToolModel & CostLimitedToolModel>,cost=budgetStore.hasCostLimit(),currency=cost?budgetStore.costSummary().currency:undefined;if((cost?typeof limited.invokeLimitedCost!=='function':typeof limited.invokeLimited!=='function')||maxTokensPerCall!>snapshot.manifest.quotas.maxTokensPerRun)throw Error('Limited model required');activeModel={invoke:async(messages,options)=>{if(options?.signal?.aborted)throw Error('Agent run aborted');const callId=randomUUID(),reserved=maxTokensPerCall!;budgetStore.reserve(callId,reserved,maxCostMicrosPerCall,sharedLedger?.binding());if(sharedLedger){if(!currentRunId||!sharedActor)throw Error('Shared cost run unavailable');await sharedLedger.reserve(sharedActor,{agentId,runId:currentRunId,callId},maxCostMicrosPerCall!);await checkActive();if(await authorizeRun({...identity})!==true)throw Error('Agent run forbidden');await checkActive();budgetStore.assertLease();if(options?.signal?.aborted||runSignal?.aborted)throw Error('Agent run aborted');}else if(options?.signal?.aborted){budgetStore.settle(callId,0,cost?0:undefined);throw Error('Agent run aborted');}const response=cost?await limited.invokeLimitedCost!(messages,{signal:options?.signal,maxTotalTokens:reserved,maxCostMicros:maxCostMicrosPerCall!,currency:currency!,callId}):await limited.invokeLimited!(messages,{signal:options?.signal,maxTotalTokens:reserved,callId});if(!response||!Number.isSafeInteger(response.usedTokens)||response.usedTokens<0)throw Error('Invalid model token usage');const usedCost=cost?(response as {usedCostMicros?:number}).usedCostMicros:undefined;if(cost&&(!Number.isSafeInteger(usedCost)||usedCost!<0))throw Error('Invalid model cost usage');if(sharedLedger)await sharedLedger.settle(sharedActor!,{agentId,runId:currentRunId!,callId},usedCost!);budgetStore.settle(callId,response.usedTokens,usedCost);if(response.usedTokens>reserved)throw Error('Model token limit exceeded');if(cost&&usedCost!>maxCostMicrosPerCall!)throw Error('Model cost limit exceeded');return response.message;}};}
+ if(tracer){const untraced=activeModel;activeModel={invoke:(messages,options)=>traced('model',()=>untraced.invoke(messages,options))};}
  const adapter=new LangGraphAGUIAdapter(createToolCallingModel(activeModel,tools,{maxTurns,checkpoint}),{direct:!!checkpoint});let used=false;
  return {pendingApproval:()=>pendingActionId?{actionId:pendingActionId}:undefined,async *run(input,runOptions={}){
   if(used)throw Error('Configured agent run already used');if(grant&&grant.runId!==input.runId)throw Error('Delegation run mismatch');if(checkpoint&&checkpoint.threadId!==input.runId)throw Error('Checkpoint run mismatch');if(actionJournal&&!actionJournal.journal.isBoundTo({tenantId,agentId},input.runId))throw Error('Action journal run mismatch');if(approval&&!approval.store.isBoundTo({tenantId,agentId},input.runId))throw Error('Approval run mismatch');if(budgetStore&&!budgetStore.isBoundTo({tenantId,agentId},input.runId,snapshot.manifest.quotas.maxTokensPerRun))throw Error('Token budget run mismatch');used=true;currentRunId=input.runId;await current();
