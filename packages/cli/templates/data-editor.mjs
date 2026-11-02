@@ -67,7 +67,7 @@ function resolveFormSchema(root){
     if(++count>1000||depth>30)throw Error('Unsupported record JSON Schema form');
     if(!object(schema))return schema;
     if(Object.hasOwn(schema,'$ref')){
-      if(Object.keys(schema).some(key=>!['$ref','title','description'].includes(key))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
+      if(Object.keys(schema).some(key=>!['$ref','$defs','title','description'].includes(key))||(schema.$defs!==undefined&&!object(schema.$defs))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
       const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);
       if(typeof resolved==='boolean'){
         if((schema.title!==undefined&&(typeof schema.title!=='string'||schema.title.length>120))||(schema.description!==undefined&&(typeof schema.description!=='string'||schema.description.length>1024)))throw Error('Unsupported record JSON Schema form');
@@ -161,7 +161,7 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
   }
   function visit(node,path,labels,needed,depth){
     if(++context.nodes>200||arrayDepth>3)throw Error('Unsupported record JSON Schema form');
-    if(depth>5||!object(node)||!keys(node,depth===0?['$schema','type','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not']:['type','title','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not','_nullable'])||node.type!=='object'||!object(node.properties)||(node.title!==undefined&&(typeof node.title!=='string'||!node.title.trim()||node.title.length>120))||(node.description!==undefined&&(typeof node.description!=='string'||node.description.length>1024))||(node.additionalProperties!==undefined&&typeof node.additionalProperties!=='boolean'&&!object(node.additionalProperties))||(depth===0&&node.$schema!==undefined&&node.$schema!=='https://json-schema.org/draft/2020-12/schema'))throw Error('Unsupported record JSON Schema form');
+    if(depth>5||!object(node)||!keys(node,depth===0?['$schema','type','title','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not']:['type','title','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not','_nullable'])||node.type!=='object'||!object(node.properties)||(node.title!==undefined&&(typeof node.title!=='string'||!node.title.trim()||node.title.length>120))||(node.description!==undefined&&(typeof node.description!=='string'||node.description.length>1024))||(node.additionalProperties!==undefined&&typeof node.additionalProperties!=='boolean'&&!object(node.additionalProperties))||(depth===0&&node.$schema!==undefined&&node.$schema!=='https://json-schema.org/draft/2020-12/schema'))throw Error('Unsupported record JSON Schema form');
     if((node.minProperties!==undefined&&(!Number.isSafeInteger(node.minProperties)||node.minProperties<0))||(node.maxProperties!==undefined&&(!Number.isSafeInteger(node.maxProperties)||node.maxProperties<0))||(node.minProperties!==undefined&&node.maxProperties!==undefined&&node.minProperties>node.maxProperties))throw Error('Unsupported record JSON Schema form');
     if(node.minProperties!==undefined||node.maxProperties!==undefined)propertyCounts.push({path:[...path],min:node.minProperties,max:node.maxProperties});
     if(node.propertyNames!==undefined)propertyNames.push({path:[...path],rule:compileContains(node.propertyNames,0)});
@@ -272,7 +272,7 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
       if(fields.length>40)throw Error('Unsupported record JSON Schema form');
     }
   }
-  visit(jsonSchema,[],[],true,0);if(!fields.length)throw Error('Unsupported record JSON Schema form');fields.description=jsonSchema.description;fields.groups=groups;fields.dependencies=dependencies;fields.conditions=conditions;fields.propertyCounts=propertyCounts;fields.propertyNames=propertyNames;fields.objectRules=objectRules;return fields;
+  visit(jsonSchema,[],[],true,0);if(!fields.length)throw Error('Unsupported record JSON Schema form');fields.title=jsonSchema.title;fields.description=jsonSchema.description;fields.groups=groups;fields.dependencies=dependencies;fields.conditions=conditions;fields.propertyCounts=propertyCounts;fields.propertyNames=propertyNames;fields.objectRules=objectRules;return fields;
 }
 
 function canonicalFormValue(value){if(Array.isArray(value))return '['+value.map(canonicalFormValue).join(',')+']';if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonicalFormValue(value[key])).join(',')+'}';return JSON.stringify(value);}
@@ -338,7 +338,7 @@ export function createRecordEditor({getOperation,putOperation,listOperation,filt
   };
   const render=(component,_child,_data,document)=>{
     const root=document.createElement('section'),heading=document.createElement('h3'),idLabel=document.createElement('label'),id=document.createElement('input'),valueLabel=document.createElement('label'),value=document.createElement('textarea'),load=document.createElement('button'),save=document.createElement('button'),status=document.createElement('p');
-    heading.textContent=component.label||'Record';idLabel.textContent='Record ID';valueLabel.textContent='Record data (JSON object)';
+    heading.textContent=component.label||schema?.title||'Record';idLabel.textContent='Record ID';valueLabel.textContent='Record data (JSON object)';
     idLabel.appendChild(id);valueLabel.appendChild(value);load.type='button';load.textContent='Load';save.type='button';save.textContent='Save';save.disabled=true;
     status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.textContent='Enter a record ID and load it.';
     const browse=listOperation?document.createElement('button'):null,next=listOperation?document.createElement('button'):null,results=listOperation?document.createElement('ul'):null,listStatus=listOperation?document.createElement('p'):null;let cursor;

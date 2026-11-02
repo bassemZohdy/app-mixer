@@ -12,6 +12,21 @@ const schema=[{key:'name',label:'Name',type:'string',required:true,maxLength:20}
 const wait=async predicate=>{for(let n=0;n<200&&!predicate();n++)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate())};
 async function setup(){const dir=await mkdtemp(join(tmpdir(),'schema-form-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'data-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(RECORD_EDITOR_PREVIEW).toString('base64'));return {dir,runtime,preview};}
 
+test('schema root titles label generated and preview forms with explicit label precedence',async()=>{
+ const s=await setup();let dom;
+ try{
+  dom=new JSDOM('<!doctype html>');const document=dom.window.document;
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   const jsonSchema={type:'object',title:'Customer <record>',description:'Customer details',properties:{name:{type:'string'}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},editor=factory(options);jsonSchema.title='Changed';
+   const view=editor.render({},null,null,document);assert.equal(view.querySelector('h3').textContent,'Customer <record>');assert.equal(view.querySelector('h3').querySelector('record'),null);assert.ok(view.getAttribute('aria-describedby'));
+   assert.equal(editor.render({label:'Chosen label'},null,null,document).querySelector('h3').textContent,'Chosen label');
+   const refSchema={$ref:'#/$defs/record',title:'Custom',$defs:{record:{type:'object',title:'Original',properties:{name:{type:'string'}}}}},referenced=factory({...options,jsonSchema:refSchema});assert.equal(referenced.render({},null,null,document).querySelector('h3').textContent,'Custom');assert.equal(createRecordJsonSchemaValidator(refSchema)({name:'Ada'}),true);
+   for(const title of [42,'',' '.repeat(2),'x'.repeat(121)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,title}}),/Unsupported/);
+   assert.throws(()=>factory({...options,jsonSchema:{$ref:'#/$defs/record',$defs:[]}}),/Unsupported/);
+  }
+ }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('record browser sends typed filters, resets pages and ignores stale responses',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'active',label:'Active',type:'boolean'}]};let resolvePending;
  globalThis.fetch=async(_path,request)=>{const input=JSON.parse(request.body);calls.push(input);if(input.filter?.value==='slow')return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}]}})}));return {ok:true,json:async()=>({result:{items:[{id:'found',revision:1}],nextCursor:'opaque'}})}};
