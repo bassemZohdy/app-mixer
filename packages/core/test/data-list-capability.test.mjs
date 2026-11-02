@@ -221,3 +221,12 @@ test('not-equal filters are host-approved, type-sensitive, authorized and cursor
   await assert.rejects(registry.invoke('not-equal.list',{filter:{field:'owner',operator:'neq',value:'bob'}},alice),/Invalid capability input/);assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...base,notEqualFilterFields:['unknown']}),/Invalid data list capability/);
  }finally{provider.close();}
 });
+
+test('not-equal filters compose with any-mode, scoped cursors and snapshotted policy',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
+  for(const [id,value] of [['a',{owner:'alice',state:'closed',group:'vip'}],['b',{owner:'alice',state:'open',group:'staff'}],['c',{owner:'alice',group:'vip'}],['d',{owner:'bob',state:'open',group:'vip'}]])provider.put(scope,'items',id,value,null);
+  const options={candidate:{operationId:'neq-any.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','group'],notEqualFilterFields:['state'],allowAnyFilters:true,authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner};registerDataListCapability(registry,provider,options);options.notEqualFilterFields.length=0;options.allowAnyFilters=false;
+  const filters=[{field:'state',operator:'neq',value:'closed'},{field:'group',value:'vip'}],first=await registry.invoke('neq-any.list',{filters,filterMode:'any',limit:1},alice);assert.deepEqual(first.items.map(x=>x.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('neq-any.list',{filters,cursor:first.nextCursor},alice),/Invalid capability input/);await assert.rejects(registry.invoke('neq-any.list',{filters,filterMode:'any',cursor:first.nextCursor},bob),/Invalid capability input/);
+  const second=await registry.invoke('neq-any.list',{filters:[...filters].reverse(),filterMode:'any',cursor:first.nextCursor,limit:10},alice);assert.deepEqual(second.items.map(x=>x.id),['b','c']);assert.equal(second.items.some(x=>x.id==='d'),false);assert.deepEqual((await registry.invoke('neq-any.list',{filters,limit:10},alice)).items,[]);
+ }finally{provider.close();}
+});
