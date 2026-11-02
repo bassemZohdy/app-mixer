@@ -541,6 +541,33 @@ void main() {
     expect(state.widget.focusNode.hasFocus,isTrue);expect(state.textEditingValue.selection.baseOffset,2);
     expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
+  testWidgets('surface removal preserves another surface and recreation resets its editing state', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    void create(String id, String value) {
+      receive(message('createSurface',{'surfaceId':id,'catalogId':appMixerCatalog}));
+      receive(message('updateDataModel',{'surfaceId':id,'value':{'name':value}}));
+      receive(message('updateComponents',{'surfaceId':id,'components':[
+        {'id':'root','component':'Column','children':['field']},
+        {'id':'field','component':'TextField','label':id,'value':{'path':'/name'}}
+      ]}));
+    }
+    create('first','Ada');create('second','Grace');await tester.pump();
+    await tester.showKeyboard(find.byType(TextField).last);
+    final state=tester.state<EditableTextState>(find.byType(EditableText).last);
+    state.widget.controller.selection=const TextSelection.collapsed(offset:2);
+    receive(message('deleteSurface',{'surfaceId':'first'}));await tester.pump();
+    expect(tester.state<EditableTextState>(find.byType(EditableText)),same(state));
+    expect(state.widget.focusNode.hasFocus,isTrue);
+    expect(state.widget.controller.selection.baseOffset,2);
+    receive(message('deleteSurface',{'surfaceId':'second'}));create('second','New');await tester.pump();
+    final replacement=tester.state<EditableTextState>(find.byType(EditableText));
+    expect(replacement,isNot(same(state)));expect(replacement.widget.controller.text,'New');
+    expect(replacement.widget.focusNode.hasFocus,isFalse);
+    expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   testWidgets('repeated component references keep distinct widget keys', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

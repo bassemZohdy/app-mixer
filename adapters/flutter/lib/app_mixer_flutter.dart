@@ -197,10 +197,12 @@ class _Surface {
 }
 
 class SurfaceView {
-  const SurfaceView(this.id, this.revision, this.root);
+  const SurfaceView(this.id, this.revision, this.root) : _identity=null;
+  const SurfaceView._(this.id, this.revision, this.root, this._identity);
   final String id;
   final int revision;
   final NativeNode? root;
+  final Object? _identity;
 }
 
 /// Validates a bounded subset and commits component updates atomically.
@@ -260,7 +262,7 @@ class FlutterSurfaceStore {
     }
     return {'version':'v0.9.1','action':{'name':event['name'],'surfaceId':surfaceId,'sourceComponentId':componentId,'timestamp':DateTime.now().toUtc().toIso8601String(),'context':context}};
   }
-  List<SurfaceView> views() => _surfaces.values.map((surface)=>SurfaceView(surface.id,surface.revision,_root(surface.components,surface.data))).toList();
+  List<SurfaceView> views() => _surfaces.values.map((surface)=>SurfaceView._(surface.id,surface.revision,_root(surface.components,surface.data),surface)).toList();
   List<NativeNode?> snapshot() => _surfaces.values.map((surface) => _root(surface.components, surface.data)).toList();
   void _validate(Map<String, dynamic> c) {
     if (!_id(c['id'])) throw FormatException('Invalid component');
@@ -362,9 +364,13 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     final store=_store, generation=_generation;
     return Column(children: store.views().map((surface){
       final root=surface.root;
-      if(root==null) return const SizedBox.shrink();
-      final rendered=_widget(root,surface,store,generation,'root',true,false,false);
-      return ['Column','Row','Card'].contains(root.kind) ? SizedBox(width:double.infinity,child:rendered) : rendered;
+      final Widget content;
+      if(root==null) {content=const SizedBox.shrink();}
+      else {
+        final rendered=_widget(root,surface,store,generation,'root',true,false,false);
+        content=['Column','Row','Card'].contains(root.kind) ? SizedBox(width:double.infinity,child:rendered) : rendered;
+      }
+      return KeyedSubtree(key:ObjectKey(surface._identity),child:content);
     }).toList());
   }
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path, bool tightWidth, bool tightHeight, bool inButton) {
