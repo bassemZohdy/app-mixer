@@ -87,6 +87,10 @@ The host must configure HTTPS, validate event schemas and permissions in `author
 Run claims enforce a per-tenant, per-agent concurrency limit within the same SQLite transaction. The host-driven worker uses the current manifest's `maxConcurrentRuns`; direct registry callers must supply their trusted limit (the default is 1). Running, pause-requested and cancel-requested attempts count until settled or explicitly recovered, including expired leases. This is local SQLite coordination; hosts must not bypass it with old binaries or direct writes and must reconcile an expired worker before retrying. Daily/token quotas and distributed coordination remain open.
 
 
+## Event enqueue crash recovery
+
+Process-termination tests stop a SQLite enqueue before its trace-context, inbox and receipt inserts, and after commit. Reopening verifies that run, trace, inbox and receipt records either all rolled back or all persisted. Retrying the same event creates one run or returns the committed run, retains the first trace context, rejects changed payloads and leaves another tenant's event intact. These tests exercise one local SQLite database and do not establish remote provider delivery, production node-failure behavior or distributed-store durability.
+
 ## Paddle Billing webhooks
 
 `createPaddleWebhookAdapter({identity, agentId, secret, previousSecrets?, clock?, toleranceSeconds?})` supplies authentication, mapping and acknowledgement for `createAgentEventIngress`. Configure one trusted identity and agent per Paddle notification destination, and supply its endpoint secret as a printable string of 16 to 1,024 characters. The adapter implements Paddle's [signature verification](https://developer.paddle.com/webhooks/about/signature-verification/): it verifies HMAC-SHA256 over the timestamp, colon and exact raw body; supports multiple `h1` signatures and up to two distinct previous secrets; rejects duplicate signature headers and timestamps; and checks past and future timestamps against a five-second window by default (configurable up to 3,600 seconds). Keep clocks synchronized and remove retired secrets by replacing the adapter.

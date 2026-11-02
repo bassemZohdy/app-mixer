@@ -1,0 +1,5 @@
+import {writeFileSync} from 'node:fs';
+import {SqliteAgentTriggers} from '../../dist/index.js';
+const [path,barrier,phase]=process.argv.slice(2),scope={tenantId:'tenant',agentId:'agent'},event={sourceId:'source',principalId:'sender',eventId:'evt',eventType:'order.created',payload:{order:'private'}},options={definitionVersion:1,maxAttempts:2,deadline:10000,maxPending:10,traceParent:'00-0123456789abcdef0123456789abcdef-0123456789abcdef-01'};
+const hold=()=>{writeFileSync(barrier,phase);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);};
+try{const triggers=new SqliteAgentTriggers(path);if(phase!=='after'){triggers.db.function('test_enqueue_barrier',()=>{hold();return 0;});const table={trace:'agent_run_trace_context',inbox:'agent_trigger_inbox',receipt:'agent_trigger_receipts'}[phase];triggers.db.exec(`CREATE TRIGGER test_enqueue_crash BEFORE INSERT ON ${table} BEGIN SELECT test_enqueue_barrier(); END`);}triggers.enqueue(scope,event,options,100);if(phase==='after')hold();throw Error('Expected process termination');}catch(error){process.send?.({error:String(error)});process.exitCode=1;}
