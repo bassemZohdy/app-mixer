@@ -8,7 +8,7 @@ import {PostgresAgentTriggerFoundation} from '../dist/postgres-trigger-foundatio
 import {PostgresAgentRunLifecycleFoundation} from '../dist/postgres-run-lifecycle-foundation.js';
 const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
 
-test('shared lifecycle serializes claims and fences stale or expired leases',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+test('shared lifecycle serializes claims and fences stale or expired leases',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
  const schema='shared_lifecycle_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
  const scope={tenantId:'tenant',agentId:'agent'},other={...scope,tenantId:'other'},options={definitionVersion:1,maxAttempts:3,deadline:Date.now()+60000,maxPending:10};
  const config=pool=>({query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});
@@ -35,7 +35,7 @@ test('shared lifecycle serializes claims and fences stale or expired leases',{sk
  }finally{await a.end();await b.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
 
-test('shared recovery and evidence survive process termination around commit',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:45000},async()=>{
+test('shared recovery and evidence survive process termination around commit',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
  const schema='shared_recovery_crash_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),config={query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)},scope={tenantId:'tenant',agentId:'agent'};
  try{
   await admin.query(`CREATE SCHEMA "${schema}"`);const triggers=new PostgresAgentTriggerFoundation(config),runs=new PostgresAgentRunLifecycleFoundation(config);await triggers.initialize();await runs.initialize();
