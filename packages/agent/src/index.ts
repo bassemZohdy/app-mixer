@@ -108,6 +108,8 @@ export {SqliteAgentTriggers} from './agent-triggers.js';
 export type {TriggerRecord,AgentTriggerInput,AgentTriggerEnqueueOptions} from './agent-triggers.js';
 export {SqliteAgentTriggerRetention} from './agent-trigger-retention.js';
 export {AgentTriggerRetentionWorker} from './agent-trigger-retention-worker.js';
+export {SqliteTriggerRetentionMetrics} from './agent-trigger-retention-metrics.js';
+export type {TriggerRetentionMetricsOptions,TriggerRetentionMetricsSnapshot} from './agent-trigger-retention-metrics.js';
 export type {AgentTriggerRetentionWorkerOptions} from './agent-trigger-retention-worker.js';
 export type {AgentTriggerRetentionActor,AgentTriggerRetentionOptions,TriggerRedactionCandidate} from './agent-trigger-retention.js';
 export {createAgentEventIngress} from './event-ingress.js';
