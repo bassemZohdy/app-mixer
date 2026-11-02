@@ -233,6 +233,8 @@ export {registerExtensionApprovalDecision,registerExtensionApprovalStatus,regist
 export type {ExtensionApprovalDecisionCapabilityOptions,ExtensionApprovalReadCapabilityOptions} from './extension-approval-capabilities.js';
 
 export {signFlutterExtensionPlan,signFlutterExtensionPlanFromRegistry} from './signed-flutter-plan.js';
+export {signNativeExtensionPlanFromRegistry} from './signed-native-plan.js';
+export type {SignedNativeExtensionPlan,NativePlanSigningOptions} from './signed-native-plan.js';
 export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signed-flutter-plan.js';
 
 export {registerDataMigrationPreview,registerDataMigrationStatus,registerDataMigrationRehearsal,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
