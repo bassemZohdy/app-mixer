@@ -7,6 +7,8 @@ export type NativeSurface={id:string;revision:number;root?:NativeNode};
 export type ActionMessage={version:'v0.9.1';action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string,unknown>}};
 const obj=(value:unknown):value is Obj=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const id=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=256;
+// JSON Schema maxLength counts Unicode code points, not UTF-16 code units.
+function withinTextLimit(value:string):boolean {if(value.length<=10000)return true;let count=0;for(const _ of value)if(++count>10000)return false;return true;}
 const only=(value:Obj,keys:string[])=>Object.keys(value).every(key=>keys.includes(key));
 const pointer=(path:string):string[]=>{
   if(path===''||path==='/')return [];
@@ -67,7 +69,7 @@ export class NativeComponentRegistry {
 function validate(c:unknown,extensions:Map<string,NativeExtension>):asserts c is Obj {
   if(!obj(c)||!id(c.id)||typeof c.component!=='string')throw Error('Invalid component');
   if(c.component==='Text'){
-    if(!only(c,['id','component','text','variant'])||(!(typeof c.text==='string'&&c.text.length<=10000)&&!(obj(c.text)&&only(c.text,['path'])&&typeof c.text.path==='string'&&pointer(c.text.path)))||(c.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string)))throw Error('Unsupported Text');
+    if(!only(c,['id','component','text','variant'])||(!(typeof c.text==='string'&&withinTextLimit(c.text))&&!(obj(c.text)&&only(c.text,['path'])&&typeof c.text.path==='string'&&pointer(c.text.path)))||(c.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string)))throw Error('Unsupported Text');
   }else if(c.component==='Column'||c.component==='Row'){
     if(!only(c,['id','component','children','justify','align'])||!Array.isArray(c.children)||c.children.length>1000||!c.children.every(id)||(c.justify!==undefined&&!justifies.includes(c.justify as string))||(c.align!==undefined&&!aligns.includes(c.align as string)))throw Error('Unsupported layout');
   }else if(c.component==='TextField'){

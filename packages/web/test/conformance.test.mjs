@@ -60,3 +60,15 @@ test('supported lifecycle and emitted action match pinned upstream A2UI schemas'
   assert.equal(validateServer({version,updateComponents:{surfaceId,components:[]}}),false);
   assert.equal(validateServer({...deletion,unexpected:true}),false);
 });
+
+test('catalog text length follows Unicode code points at the renderer boundary', async () => {
+  const catalog=await load('../catalog/v1/catalog.json');
+  const validate=new Ajv2020({strict:false}).compile(catalog.components.Text);
+  const doc={createElement:()=>new Element(doc)},host=doc.createElement(),renderer=new A2UIRenderer(host);
+  renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+  const limit='\u{1F600}'.repeat(10000),above=limit+'a';
+  assert.equal(validate({text:limit}),true);assert.equal(validate({text:above}),false);
+  const update=text=>({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Text',text}]}});
+  renderer.apply(update(limit));assert.equal(host.children[0].children[0].textContent,limit);
+  assert.throws(()=>renderer.apply(update(above)));assert.equal(host.children[0].children[0].textContent,limit);
+});

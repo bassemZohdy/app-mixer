@@ -10,6 +10,8 @@ import '../test/parity_scenario.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('literal text limit counts Unicode code points on a mobile device', (tester) async {verifyUnicodeTextLimit();});
+
   testWidgets('preserves isolated surfaces through updates and recreation on a mobile device', (tester) async {
     tester.testTextInput.register();
     try { await verifySurfaceParity(tester); } finally { tester.testTextInput.unregister(); }

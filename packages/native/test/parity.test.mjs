@@ -208,3 +208,13 @@ test('web and native reject invalid intermediate array indices for updates and d
  for(const path of ['/items/01/name','/items/-1/name','/items/1/name','/items/length/name'])for(const remove of [false,true]){const invalid=message('updateDataModel',{surfaceId:'main',path,...(remove?{}:{value:'Changed'})});assert.throws(()=>web.apply(invalid),/array index/);assert.throws(()=>native.apply(invalid),/array index/);assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
  apply(message('updateDataModel',{surfaceId:'main',path:'/items/0/missing/leaf'}));assert.equal(native.snapshot()[0].root.text,'Safe');apply(message('updateDataModel',{surfaceId:'main',path:'/items/0/name',value:'Updated'}));assert.equal(host.children[0].children[0].textContent,'Updated');assert.equal(native.snapshot()[0].root.text,'Updated');
 });
+
+test('web and native apply the same Unicode code point limit to literal text atomically',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ for(const renderer of [web,native])renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ const text='\u{1F600}'.repeat(10000),update=value=>message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:value}]});
+ for(const renderer of [web,native])renderer.apply(update(text));
+ assert.equal(host.children[0].children[0].textContent,text);assert.equal(native.snapshot()[0].root.text,text);
+ for(const renderer of [web,native])assert.throws(()=>renderer.apply(update(text+'x')));
+ assert.equal(host.children[0].children[0].textContent,text);assert.equal(native.snapshot()[0].root.text,text);
+});

@@ -4,7 +4,7 @@
 
 | Component | Supported properties (in addition to `id` and `component`) |
 | --- | --- |
-| Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Text is displayed literally, including Markdown syntax. |
+| Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Literal text is limited to 10,000 Unicode code points and displayed literally, including Markdown syntax. |
 | Column, Row | `children`: array of component IDs; optional `justify` and `align` flex alignment. |
 | Card | `child`: component ID. |
 | TextField | Literal `label`, absolute `value.path`, and optional `variant` (`shortText` or `longText`); writes changes to the local model. |

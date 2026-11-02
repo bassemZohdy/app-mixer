@@ -135,3 +135,13 @@ Future<void> verifyAdjacentFieldSemantics(WidgetTester tester) async {
       expect(errors,isEmpty);
     } finally {semantics.dispose();}
 }
+
+void verifyUnicodeTextLimit() {
+  final store=FlutterSurfaceStore();
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  final text=List.filled(10000,'\u{1F600}').join();
+  Map<String,Object?> update(String value)=>message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':value}]});
+  store.apply(update(text));expect(store.snapshot().single?.text,text);
+  expect(()=>store.apply(update('${text}x')),throwsFormatException);expect(store.snapshot().single?.text,text);
+}

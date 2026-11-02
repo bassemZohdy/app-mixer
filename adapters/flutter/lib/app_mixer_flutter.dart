@@ -266,7 +266,7 @@ class FlutterSurfaceStore {
     final type = c['component'];
     if (type == 'Text') {
       final text = c['text'];
-      var validText = text is String && text.length <= 10000;
+      var validText = text is String && (text.length <= 10000 || text.runes.take(10001).length <= 10000);
       if (text is Map && _only(_object(text), ['path']) && text['path'] is String) {_pointer(text['path'] as String); validText = true;}
       if (!_only(c, ['id','component','text','variant']) || !validText || (c.containsKey('variant') && !['h1','h2','h3','h4','h5','body','caption'].contains(c['variant']))) throw FormatException('Unsupported Text');
     } else if (type == 'Column' || type == 'Row') {
