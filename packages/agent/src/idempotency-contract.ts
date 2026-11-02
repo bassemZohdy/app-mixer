@@ -20,6 +20,8 @@ export type IdempotencyContractFinding={check:'sequential-replay'|'concurrent-re
 export type IdempotencyContractReport={passed:boolean;findings:IdempotencyContractFinding[];keys:{replay:string;concurrent:string;fresh:string}};
 
 const record=(x:unknown):x is Record<string,unknown>=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+class UncloneableContractResult extends Error {constructor(cause:unknown){super('Provider result cannot be copied',{cause});}}
+
 export class IdempotencyContractInterruptedError extends Error {
  readonly keys:IdempotencyContractReport['keys'];
  constructor(reason:'timeout'|'cancelled',keys:IdempotencyContractReport['keys']){super(reason==='timeout'?'Idempotency contract timed out':'Idempotency contract cancelled');this.name='IdempotencyContractInterruptedError';this.keys={...keys};}
@@ -42,9 +44,9 @@ export async function checkIdempotencyContract(options:IdempotencyContractOption
  const timer=timeoutMs===undefined?undefined:setTimeout(()=>{if(!controller.signal.aborted){reason='timeout';controller.abort();}},timeoutMs);
  const interrupted=()=>new IdempotencyContractInterruptedError(reason,keys);
  const invoke=async<T>(work:()=>Promise<T>):Promise<T>=>{if(controller.signal.aborted)throw interrupted();let onAbort:()=>void=()=>{};const stopped=new Promise<never>((_,reject)=>{onAbort=()=>reject(interrupted());controller.signal.addEventListener('abort',onAbort,{once:true});});try{return await Promise.race([Promise.resolve().then(()=>{if(controller.signal.aborted)throw interrupted();return work();}),stopped]);}finally{controller.signal.removeEventListener('abort',onAbort);}};
- const dispatch=(input:Record<string,unknown>,key:string)=>invoke(async()=>structuredClone(await hostDispatch(input,key,controller.signal)));
+ const dispatch=(input:Record<string,unknown>,key:string)=>invoke(async()=>{const result=await hostDispatch(input,key,controller.signal);if(controller.signal.aborted)throw interrupted();try{return structuredClone(result);}catch(error){throw new UncloneableContractResult(error);}});
  const countEffects=(key:string)=>invoke(()=>hostCountEffects(key,controller.signal));
- const settle=async(work:()=>Promise<unknown>)=>{try{return {ok:true as const,value:await work()};}catch(error){if(error instanceof IdempotencyContractInterruptedError)throw error;return {ok:false as const,error};}};
+ const settle=async(work:()=>Promise<unknown>)=>{try{return {ok:true as const,value:await work()};}catch(error){if(error instanceof IdempotencyContractInterruptedError||error instanceof UncloneableContractResult)throw error;return {ok:false as const,error};}};
  try {
  const findings:IdempotencyContractFinding[]=[],input=()=>structuredClone(fixedInput);
  const effects=async(key:string)=>{const count=await countEffects(key);if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid effect count');return count;};
@@ -67,6 +69,6 @@ export async function checkIdempotencyContract(options:IdempotencyContractOption
 
  await dispatch(input(),keys.fresh);const fresh=await effects(keys.fresh);if(fresh!==1)findings.push({check:'fresh-key',problem:`expected 1 effect for a new key, observed ${fresh}`});
  return {passed:findings.length===0,findings,keys};
- } catch(error) {if(error instanceof IdempotencyContractInterruptedError)throw error;throw new IdempotencyContractExecutionError(keys,error);
+ } catch(error) {if(error instanceof IdempotencyContractInterruptedError)throw error;if(!controller.signal.aborted)controller.abort();throw new IdempotencyContractExecutionError(keys,error instanceof UncloneableContractResult?error.cause:error);
  } finally {if(timer!==undefined)clearTimeout(timer);callerSignal?.removeEventListener('abort',cancel);}
 }

@@ -80,3 +80,15 @@ test('replay comparison snapshots returned objects before a provider can mutate 
 test('uncloneable provider results fail the check with retained investigation keys',async()=>{
  let n=0;await assert.rejects(checkIdempotencyContract({input:{a:1},conflictingInput:{a:2},newKey:()=>`bad-result-${++n}`,dispatch:async()=>({bad:()=>{}}),countEffects:async()=>1}),error=>error.name==='IdempotencyContractExecutionError'&&error.keys.replay==='bad-result-1'&&error.cause?.name==='DataCloneError');
 });
+
+test('an uncloneable concurrent result cannot be mistaken for a temporary provider rejection',async()=>{
+ const effects=new Map();let count=0;await assert.rejects(checkIdempotencyContract({input:{amount:1},conflictingInput:{amount:2},concurrency:3,newKey:(()=>{let n=0;return()=>`parallel-${++n}`;})(),countEffects:async key=>effects.has(key)?1:0,dispatch:async(input,key)=>{if(input.amount===2)throw Error('conflict');const result=effects.get(key)??{ok:true};effects.set(key,result);if(key==='parallel-2'&&++count===2)return {uncloneable:()=>{}};return result;}}),error=>error.name==='IdempotencyContractExecutionError'&&error.cause?.name==='DataCloneError'&&error.keys.concurrent==='parallel-2');
+});
+
+test('a late provider response is not inspected after cancellation',async()=>{
+ let entered,release,reads=0;const waiting=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController();const result=checkIdempotencyContract({input:{a:1},conflictingInput:{a:2},signal:controller.signal,countEffects:async()=>1,dispatch:async()=>{entered();await gate;return {get late(){reads++;return 1;}};}});await waiting;controller.abort();await assert.rejects(result,/cancelled/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,0);
+});
+
+test('fatal concurrent result signals outstanding attempts and does not start a replay',async()=>{
+ let release,started,dispatches=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>started=resolve),signals=[];const result=checkIdempotencyContract({input:{a:1},conflictingInput:{a:2},concurrency:3,countEffects:async()=>1,dispatch:async(_input,_key,signal)=>{dispatches++;if(dispatches<=2)return {ok:true};signals.push(signal);if(signals.length===3){started();return {bad:()=>{}};}await gate;return {ok:true};}});await ready;await assert.rejects(result,error=>error.name==='IdempotencyContractExecutionError'&&error.cause?.name==='DataCloneError');assert.equal(signals.length,3);assert.ok(signals.every(signal=>signal.aborted));release();await new Promise(resolve=>setImmediate(resolve));assert.equal(dispatches,5);
+});
