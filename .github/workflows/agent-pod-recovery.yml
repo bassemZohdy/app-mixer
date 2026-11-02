@@ -74,6 +74,28 @@ jobs:
             kubectl wait -n "$ns" --for=condition=Ready pod/agent-test-manager --timeout=120s
             kubectl exec -n "$ns" agent-test-manager -- node "$script" verify "$phase"
           done
+      - name: Verify budget reconciliation after deleting worker pods
+        run: |
+          set -eu
+          ns=agent-recovery-test
+          script=deploy/kubernetes/test-support/agent-recovery/budget-recovery.mjs
+          for phase in during after; do
+            kubectl exec -n "$ns" agent-test-manager -- node "$script" setup "$phase"
+            sed "s/PHASE/$phase/g" deploy/kubernetes/test-support/agent-recovery/budget-recovery-worker.yaml | kubectl apply -n "$ns" -f -
+            kubectl wait -n "$ns" --for=condition=Ready pod/agent-budget-recovery-worker --timeout=120s
+            marker="BUDGET_$(echo "$phase" | tr '[:lower:]' '[:upper:]')"
+            observed=false
+            for i in $(seq 1 60); do
+              if kubectl logs -n "$ns" agent-budget-recovery-worker | grep -Fq "$marker"; then observed=true; break; fi
+              sleep 1
+            done
+            [ "$observed" = true ]
+            kubectl delete -n "$ns" pod/agent-budget-recovery-worker --grace-period=0 --force --wait=true --timeout=90s
+            kubectl delete -n "$ns" pod/agent-test-manager --grace-period=0 --force --wait=true --timeout=90s
+            kubectl apply -n "$ns" -f deploy/kubernetes/test-support/agent-recovery/environment.yaml
+            kubectl wait -n "$ns" --for=condition=Ready pod/agent-test-manager --timeout=120s
+            kubectl exec -n "$ns" agent-test-manager -- node "$script" verify "$phase"
+          done
       - name: Verify shared memory after terminating worker pods
         run: |
           set -eu
