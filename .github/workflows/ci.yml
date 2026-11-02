@@ -72,4 +72,5 @@ jobs:
           node .github/scripts/browser-smoke.mjs
           node .github/scripts/browser-offline-smoke.mjs
           node .github/scripts/browser-record-filter-smoke.mjs
+          node .github/scripts/browser-agent-lease-recovery-smoke.mjs
           node .github/scripts/browser-shell-smoke.mjs
