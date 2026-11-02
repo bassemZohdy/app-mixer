@@ -181,7 +181,9 @@ export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';
 
 export {AgentRunLeaseRecoveryWorker} from './agent-run-lease-recovery.js';
 export type {AgentRunLeaseRecoveryWorkerOptions} from './agent-run-lease-recovery.js';
-export type {ExpiredAgentLease} from './durable-runs.js';
+export type {ExpiredAgentLease,AgentRunLeaseRecoveryEvidence} from './durable-runs.js';
+export {SqliteAgentLeaseRecoveryHistory} from './agent-run-lease-recovery-history.js';
+export type {AgentRunLeaseRecoveryEvent,AgentRunLeaseRecoveryHistoryOptions,AgentRunLeaseRecoveryHistoryActor} from './agent-run-lease-recovery-history.js';
 export {AgentRunExpiryWorker} from './agent-run-expiry.js';
 export type {AgentRunExpiryWorkerOptions,AgentRunExpiryObservation} from './agent-run-expiry.js';
 export {AgentRunExpiryMetrics} from './agent-run-expiry-metrics.js';

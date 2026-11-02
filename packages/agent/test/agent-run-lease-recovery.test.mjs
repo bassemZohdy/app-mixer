@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {SqliteAgentRuns,AgentRunLeaseRecoveryWorker} from '../dist/index.js';
+import {DatabaseSync} from 'node:sqlite';
+import {SqliteAgentRuns,AgentRunLeaseRecoveryWorker,SqliteAgentLeaseRecoveryHistory} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},config={definitionVersion:1,maxAttempts:2,deadline:1000};
 function claim(runs,id,target=scope,leaseMs=50){const run=runs.create(target,id,config,0);return runs.claim(target,id,run.revision,'worker',leaseMs,10,10);}
 const worker=(runs,overrides={})=>new AgentRunLeaseRecoveryWorker({runs,scope,maxPerPass:2,pollMs:100,clock:()=>100,authorize:()=>true,onError:()=>{},...overrides});
@@ -47,4 +48,20 @@ test('uncertain recovery persists across reopening and requires explicit reconci
  const dir=mkdtempSync(join(tmpdir(),'lease-recovery-')),path=join(dir,'runs.sqlite');let runs=new SqliteAgentRuns(path);try{
   const a=claim(runs,'a');claim(runs,'outside',{...scope,tenantId:'other'});const w=worker(runs);assert.equal(await w.runOnce(),1);await w.stop();runs.close();runs=new SqliteAgentRuns(path);const recovered=runs.get(scope,'a');assert.equal(recovered.status,'uncertain');assert.equal(recovered.leaseToken,null);assert.equal(recovered.attempts,a.attempts);assert.deepEqual(runs.expiredLeasePage(scope,100).items,[]);assert.equal(runs.get({...scope,tenantId:'other'},'outside').status,'running');assert.equal(runs.reconcile(scope,'a',recovered.revision,'retry',100).status,'queued');
  }finally{runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('lease recovery evidence commits atomically, remains scoped and rechecks access',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'lease-recovery-audit-')),path=join(dir,'runs.sqlite');let runs=new SqliteAgentRuns(path),history,foreign,db;try{
+  const a=claim(runs,'a');claim(runs,'b');const other={...scope,tenantId:'other'},outside=claim(runs,'outside',other);runs.recoverExpired(scope,'a',a.revision,100,{principalId:'operator',reference:'ticket-1'});runs.recoverExpired(other,'outside',outside.revision,100,{principalId:'foreign',reference:'ticket-2'});
+  const opts={evidence:{principalId:'worker',reference:'batch-1'}},w=worker(runs,opts);opts.evidence.principalId='changed';assert.equal(await w.runOnce(),1);assert.equal(runs.get(scope,'b').status,'uncertain');runs.close();runs=new SqliteAgentRuns(path);
+  const actor={tenantId:'tenant',principalId:'auditor'};history=new SqliteAgentLeaseRecoveryHistory(path,{scope,authorize:()=>true});const first=await history.list(actor,{limit:1}),second=await history.list(actor,{limit:1,after:first.nextAfter});assert.deepEqual(first.items.map(x=>[x.runId,x.previousStatus,x.leaseUntil,x.principalId,x.reference,x.observedAt]),[['a','running',60,'operator','ticket-1',100]]);assert.deepEqual(second.items.map(x=>[x.runId,x.principalId,x.reference]),[['b','worker','batch-1']]);assert.equal(first.items[0].id,1);assert.equal(second.items[0].id,2);await assert.rejects(history.list({...actor,tenantId:'other'}),/actor/);
+  foreign=new SqliteAgentLeaseRecoveryHistory(path,{scope:other,authorize:()=>true});assert.deepEqual((await foreign.list({...actor,tenantId:'other'})).items.map(x=>x.runId),['outside']);assert.equal((await foreign.list({...actor,tenantId:'other'})).items[0].id,1);
+  db=new DatabaseSync(path);assert.throws(()=>db.exec("UPDATE agent_run_lease_recovery_audit SET reference='changed'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_run_lease_recovery_audit'),/immutable/);assert.throws(()=>db.exec("INSERT OR REPLACE INTO agent_run_lease_recovery_audit SELECT * FROM agent_run_lease_recovery_audit WHERE run_id='a'"),/immutable/);db.close();db=undefined;
+  history.close();let reads=0;history=new SqliteAgentLeaseRecoveryHistory(path,{scope,authorize:(_actor,action)=>action==='list'||++reads===1});await assert.rejects(history.list(actor,{limit:1}),/access denied/);
+ }finally{db?.close();history?.close();foreign?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('failed lease recovery audit leaves the run unchanged',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'lease-recovery-audit-fail-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),db=new DatabaseSync(path);try{const run=claim(runs,'a');assert.throws(()=>runs.recoverExpired(scope,'a',run.revision,100,{principalId:'',reference:'case'}),/evidence/);db.exec("CREATE TRIGGER test_lease_audit_fail BEFORE INSERT ON agent_run_lease_recovery_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");assert.throws(()=>runs.recoverExpired(scope,'a',run.revision,100,{principalId:'operator',reference:'case'}),/audit unavailable/);const current=runs.get(scope,'a');assert.equal(current.status,'running');assert.equal(current.revision,run.revision);assert.equal(current.leaseToken,run.leaseToken);db.exec('DROP TRIGGER test_lease_audit_fail');assert.equal(runs.recoverExpired(scope,'a',run.revision,100,{principalId:'operator',reference:'case'}).status,'uncertain');}finally{db.close();runs.close();rmSync(dir,{recursive:true,force:true});}
 });
