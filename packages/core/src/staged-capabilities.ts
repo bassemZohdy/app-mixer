@@ -1,6 +1,6 @@
 import {CapabilityRegistry, type CapabilityCandidate} from './capabilities.js';
 import {checkKey} from './data-provider.js';
-import {SqliteStagedOperations} from './staged-operations.js';
+import {SqliteStagedOperations,type StagedOperation,type StagedVerificationOutcome} from './staged-operations.js';
 
 type PolicyContext={tenantId:string;principalId:string};
 export type StagedCapabilityOptions={
@@ -40,4 +40,28 @@ export function registerStagedCapability(registry:CapabilityRegistry, external:C
       return store.submit(scope,value.id,external,{...context,origin:'service'});
     }
   });
+}
+
+/** Host-fixed provider verification with authenticated, evidence-bearing reconciliation. */
+export type StagedVerificationCapabilityOptions={
+ candidate:CapabilityCandidate;applicationId:string;externalOperationId:string;
+ authorize:(actor:PolicyContext)=>boolean|Promise<boolean>;
+ authorizeOperation:(actor:PolicyContext,operation:StagedOperation,reference:string)=>boolean|Promise<boolean>;
+ verify:(actor:PolicyContext,operation:StagedOperation)=>StagedVerificationOutcome|Promise<StagedVerificationOutcome>;
+};
+export function registerStagedVerificationCapability(registry:CapabilityRegistry,store:SqliteStagedOperations,options:StagedVerificationCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(store instanceof SqliteStagedOperations)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function'||typeof options.verify!=='function')throw Error('Invalid staged verification capability');
+ const {applicationId,externalOperationId,authorize,authorizeOperation,verify}=options;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');
+ registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).length===2&&Object.hasOwn(input,'id')&&Object.hasOwn(input,'reference')&&id(input.id)&&id(input.reference),execute:async(input,context)=>{
+  const value=input as {id:string;reference:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId},staged=store.get(scope,value.id);
+  if(!staged||staged.operationId!==externalOperationId)throw Error('Operation not found');
+  const permitted=async(operation:StagedOperation)=>await authorize({...actor})===true&&await authorizeOperation({...actor},structuredClone(operation),value.reference)===true;
+  if(!await permitted(staged))throw Error('Capability forbidden');
+  const outcome=await store.verifyAndReconcile(scope,value.id,async(_scope,operation)=>{
+   if(operation.operationId!==externalOperationId||!await permitted(operation))throw Error('Capability forbidden');
+   const result=await verify({...actor},structuredClone(operation));
+   if(!await permitted(operation))throw Error('Capability forbidden');return result;
+  },{principalId:actor.principalId,reference:value.reference});
+  return {outcome};
+ }});
 }
