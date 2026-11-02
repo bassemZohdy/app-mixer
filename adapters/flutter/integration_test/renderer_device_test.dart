@@ -90,7 +90,7 @@ void main() {
     final field = tester.getSemantics(find.byType(EditableText)).getSemanticsData();
     expect(field.flagsCollection.isTextField, isTrue);expect(field.label, 'Name');expect(field.value, 'Ada');
     final enabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
-    expect(enabled.flagsCollection.isButton, isTrue);expect(enabled.flagsCollection.isEnabled, isTrue);expect(enabled.label, 'Save');
+    expect(enabled.flagsCollection.isButton, isTrue);expect(enabled.flagsCollection.toStrings(), containsAll(['hasEnabledState', 'isEnabled']));expect(enabled.label, 'Save');
     await tester.enterText(find.byType(TextField), 'Grace');
     await tester.pumpAndSettle();
     expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Grace'), findsOneWidget);
@@ -104,7 +104,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
     await tester.pumpAndSettle();
     final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
-    expect(disabled.flagsCollection.isButton, isTrue);expect(disabled.flagsCollection.hasEnabledState, isTrue);expect(disabled.flagsCollection.isEnabled, isFalse);expect(disabled.label, 'Save');
+    expect(disabled.flagsCollection.isButton, isTrue);expect(disabled.flagsCollection.toStrings(), contains('hasEnabledState'));expect(disabled.flagsCollection.toStrings(), isNot(contains('isEnabled')));expect(disabled.label, 'Save');
     expect(errors, isEmpty);
     expect(tester.takeException(), isNull);
     } finally {tester.testTextInput.unregister();semantics.dispose();}

@@ -291,6 +291,8 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());expect(secondStops,1);second({'version':'invalid'});expect(errors,hasLength(1));
   });
   testWidgets('disables buttons without an action handler', (tester) async {
+    final semantics=tester.ensureSemantics();
+    try {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:(_){ }))));
@@ -300,6 +302,9 @@ void main() {
       {'id':'label','component':'Text','text':'Save'}
     ]}));
     await tester.pump();expect(tester.widget<TextButton>(find.byType(TextButton)).onPressed,isNull);
+    final flags=tester.getSemantics(find.byType(TextButton)).getSemanticsData().flagsCollection.toStrings();
+    expect(flags,contains('hasEnabledState'));expect(flags,isNot(contains('isEnabled')));
+    } finally {semantics.dispose();}
   });
 
   test('shared invalid messages leave Flutter surface unchanged', () {
