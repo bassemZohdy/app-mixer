@@ -222,3 +222,6 @@ export type {PaddleWebhookOptions} from './paddle-webhook.js';
 
 export {AgentBudgetRecovery} from './agent-budget-recovery.js';
 export type {AgentBudgetRecoveryActor,AgentBudgetRecoveryTarget,AgentBudgetVerifiedUsage,AgentBudgetRecoveryOptions} from './agent-budget-recovery.js';
+
+export {registerBudgetRecovery,registerBudgetRecoveryHistory} from './agent-budget-recovery-capability.js';
+export type {BudgetRecoveryCapabilityOptions,BudgetRecoveryHistoryCapabilityOptions} from './agent-budget-recovery-capability.js';
