@@ -26,6 +26,14 @@ try {
     const nativeSubscribe=receive=>messages.forEach(receive);createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
     const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));comparisons.push({mode,index,nativeHost,webHost});
   }
+  const alignmentComparisons=[];
+  for(const [index,align] of ['start','center','end','stretch'].entries()){
+    const components=[{id:'root',component:'Row',align,children:['tall','short']},{id:'tall',component:'Text',variant:'h1',text:`Tall ${index}`},{id:'short',component:'Text',variant:'caption',text:`Short ${index}`}];
+    const messages=[{version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}},{version:'v0.9.1',updateComponents:{surfaceId:'main',components}}];
+    const nativeHost=document.createElement('div'),webHost=document.createElement('div');nativeHost.style.width=webHost.style.width='240px';document.body.append(nativeHost,webHost);
+    const nativeSubscribe=receive=>messages.forEach(receive);createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
+    const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));for(const text of webHost.querySelectorAll('h1,small'))text.style.margin='0';alignmentComparisons.push({align,index,nativeHost,webHost});
+  }
   const check=()=>{
     try {
       const host=document.getElementById('host'), bounds=host.getBoundingClientRect();
@@ -43,6 +51,15 @@ try {
           const expectedLeft=mode==='center'?remaining/2:mode==='end'?remaining:mode==='spaceAround'?remaining/4:mode==='spaceEvenly'?remaining/3:0;
           const expectedGap=mode==='spaceBetween'?remaining:mode==='spaceAround'?remaining/2:mode==='spaceEvenly'?remaining/3:0;
           if(Math.abs(left.left-bounds.left-expectedLeft)>1||Math.abs(right.left-left.right-expectedGap)>1)throw Error(`${name} ${mode} row spacing mismatch`);
+        }
+      }
+      for(const {align,index,nativeHost,webHost} of alignmentComparisons){
+        for(const [name,host] of [['native',nativeHost],['web',webHost]]){
+          const leaf=label=>[...host.querySelectorAll('*')].find(element=>element.childElementCount===0&&element.textContent===label),tall=leaf(`Tall ${index}`),short=leaf(`Short ${index}`);
+          if(!tall||!short){requestAnimationFrame(check);return;}
+          const row=tall.parentElement.getBoundingClientRect(),small=short.getBoundingClientRect(),free=row.height-small.height;
+          const expected=align==='center'?free/2:align==='end'?free:0;
+          if(Math.abs(small.top-row.top-expected)>1||(align==='stretch'&&Math.abs(small.height-row.height)>1))throw Error(`${name} ${align} row alignment mismatch`);
         }
       }
       document.body.dataset.result='pass';

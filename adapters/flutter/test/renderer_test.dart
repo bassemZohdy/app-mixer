@@ -16,6 +16,7 @@ void main() {
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
   testWidgets('row spacing modes place children consistently', verifyRowSpacing);
+  testWidgets('row cross-axis alignment places children consistently', verifyRowAlignment);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
   test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};

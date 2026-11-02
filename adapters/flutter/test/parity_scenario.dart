@@ -21,6 +21,24 @@ Future<void> verifyRowSpacing(WidgetTester tester) async {
   expect(errors,isEmpty);expect(tester.takeException(),isNull);
 }
 
+Future<void> verifyRowAlignment(WidgetTester tester) async {
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+  final errors=<Object>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+  receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'tall','component':'Text','variant':'h1','text':'Tall'},{'id':'short','component':'Text','variant':'caption','text':'Short'}]}));
+  for(final align in ['start','center','end','stretch']){
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Row','align':align,'children':['tall','short']}]}));await tester.pump();
+    final row=tester.getRect(find.ancestor(of:find.text('Tall'),matching:find.byType(Row)).first),small=tester.getRect(find.text('Short')),free=row.height-small.height;
+    final expected=align=='center'?free/2:align=='end'?free:0.0;
+    expect(small.top-row.top,closeTo(expected,1.0),reason:align);
+    if(align=='stretch')expect(small.height,closeTo(row.height,1.0),reason:align);
+  }
+  expect(errors,isEmpty);expect(tester.takeException(),isNull);
+}
+
 Future<void> verifySurfaceEditingIdentity(WidgetTester tester) async {
   Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
   late void Function(Object?) receive;

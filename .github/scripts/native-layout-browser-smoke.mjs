@@ -13,6 +13,7 @@ const esbuild=require('esbuild'),dir=await mkdtemp(join(tmpdir(),'app-mixer-nati
 try{
   await esbuild.build({entryPoints:['.github/scripts/native-layout-browser-fixture.mjs'],bundle:true,platform:'browser',format:'iife',outfile:join(dir,'fixture.js'),nodePaths:[join(deps,'node_modules')],logLevel:'silent'});
   await writeFile(join(dir,'index.html'),'<html><body><div id="host" style="width:240px"></div><script src="fixture.js"></script></body></html>');
-  const {stdout}=await promisify(execFile)(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--virtual-time-budget=5000','--dump-dom',pathToFileURL(join(dir,'index.html')).href],{timeout:30000,maxBuffer:1024*1024});
-  assert.match(stdout,/data-result="pass"/,`React Native browser layout check failed: ${stdout}`);
+  const {stdout}=await promisify(execFile)(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--virtual-time-budget=10000','--dump-dom',pathToFileURL(join(dir,'index.html')).href],{timeout:30000,maxBuffer:1024*1024});
+  const result=stdout.match(/data-result="([^"]+)"/)?.[1],detail=stdout.match(/data-error="([^"]+)"/)?.[1];
+  assert.equal(result,'pass',`React Native browser layout check failed: ${detail??'no result before the browser stopped'}`);
 }finally{await rm(dir,{recursive:true,force:true});}
