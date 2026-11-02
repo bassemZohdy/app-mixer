@@ -1,0 +1,43 @@
+name: Kubernetes node recovery
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile.data-plane'
+      - '.dockerignore'
+      - 'deploy/kubernetes/**'
+      - 'packages/core/**'
+      - 'packages/web/**'
+      - 'package*.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/kubernetes-node-recovery.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  node-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+      - name: Install verified kind
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  '"$RUNNER_TEMP/kind" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Create two-worker cluster and load Data Plane image
+        run: |
+          kind create cluster --name app-mixer-nodes --config deploy/kubernetes/test-support/multi-node-kind.yaml --wait 180s
+          docker build -f Dockerfile.data-plane -t app-mixer-node-recovery-test:local .
+          kind load docker-image app-mixer-node-recovery-test:local --name app-mixer-nodes
+      - name: Verify node failure and recovery
+        run: node deploy/kubernetes/test-support/node-failure-test.mjs
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get all -n app-mixer-node-test -o wide || true
+          kubectl describe pods -n app-mixer-node-test || true
