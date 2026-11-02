@@ -1,0 +1,39 @@
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {createServer} from 'node:http';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import pg from 'pg';
+import {createProject} from '../../packages/cli/dist/index.js';
+import {CapabilityRegistry,createCapabilityServer} from '../../packages/core/dist/index.js';
+import {PostgresAgentDefinitions,registerAgentDefinitionStatus,registerAgentDefinitionControl,registerAgentDefinitionHistory} from '../../packages/agent/dist/index.js';
+
+const url=process.env.APP_MIXER_TEST_POSTGRES_URL;if(!url)throw Error('PostgreSQL test connection is required');
+const dir=await mkdtemp(join(tmpdir(),'app-mixer-definition-browser-')),schema='definition_browser_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'},token='capability-secret-at-least-thirty-two-characters',registry=new CapabilityRegistry(()=>{});
+const transaction=async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+let upstream,app,browser,timer,results,resolveResult,rejectResult;
+const result=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;});
+try{
+ await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction,authorize:()=>true,clock:()=>100});await definitions.initialize();const manifest=tenantId=>({manifestVersion:1,tenantId,agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',instructions:'private instructions',model:{provider:'local',model:'model'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}});await definitions.save(actor,manifest('tenant'),0);await definitions.save({...actor,tenantId:'other'},manifest('other'),0);
+ registerAgentDefinitionStatus(registry,{definitions,scope,operationId:'status',path:'/status',authorize:()=>true});registerAgentDefinitionControl(registry,{definitions,scope,operationId:'control',path:'/control',authorize:()=>true});registerAgentDefinitionHistory(registry,{definitions,scope,operationId:'history',path:'/history',limit:1,authorize:()=>true});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
+ results=createServer(async(req,res)=>{const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));});results.listen(0,'127.0.0.1');await once(results,'listening');
+ const target=await createProject('definition-browser',dir);
+ const fixture=`<!doctype html><body><main></main><script type="module">
+ import {mountAgentDefinitionControl} from '/offline-runtime.mjs';
+ const report=message=>fetch('http://127.0.0.1:${results.address().port}/result',{method:'POST',mode:'no-cors',body:message});
+ const wait=async predicate=>{for(let i=0;i<500;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,20));}throw Error('Timed out: '+document.body.textContent);};
+ try{
+  const original=window.fetch;let lose=true;window.fetch=async(...args)=>{const response=await original(...args);if(lose&&String(args[0]).endsWith('/control')){lose=false;if(response.status!==200)throw Error('Control returned '+response.status);throw Error('response lost');}return response;};
+  const root=document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text),check=(value,message)=>{if(!value)throw Error(message);};mountAgentDefinitionControl(root,{statusOperation:'status',controlOperation:'control',historyOperation:'history',agentId:'agent'});
+  check(button('Suspend agent').disabled,'Control initially enabled');button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent enabled, definition version 1'));button('Suspend agent').click();await wait(()=>root.textContent.includes('Control outcome unknown'));check(button('Enable agent').disabled,'Control enabled after lost response');check(button('I reviewed the status and history').disabled,'Review enabled too early');button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent suspended, definition version 2'));button('View definition history').click();await wait(()=>root.textContent.includes('Continue to the last page'));check(button('I reviewed the status and history').disabled,'Incomplete history accepted');button('Next history page').click();await wait(()=>root.textContent.includes('Version 2'));check(!button('I reviewed the status and history').disabled,'Review unavailable');button('I reviewed the status and history').click();check(button('Enable agent').disabled,'Fresh inspection not required');button('Inspect agent').click();await wait(()=>!button('Enable agent').disabled);button('Enable agent').click();await wait(()=>root.textContent.includes('Agent enabled. Inspect'));check(!root.textContent.includes('private instructions'),'Private instructions exposed');await report('pass');
+ }catch(error){await report('fail:'+String(error));}
+ </script></body>`;
+ await writeFile(join(target,'index.html'),fixture);app=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});
+ const appUrl=await new Promise((resolve,reject)=>{let output='',errors='';app.stderr.on('data',chunk=>errors+=chunk);app.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});app.once('error',reject);app.once('exit',code=>reject(Error(`Server exited ${code}: ${errors}`)));});browser=spawn(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',`--user-data-dir=${join(dir,'profile')}`,appUrl],{stdio:['ignore','ignore','pipe']});browser.stderr.resume();browser.once('error',rejectResult);browser.once('exit',code=>rejectResult(Error(`Browser exited before reporting: ${code}`)));timer=setTimeout(()=>rejectResult(Error('Definition control browser test timed out')),30000);
+ assert.equal(await result,'pass');const current=await definitions.get(actor,'agent');assert.equal(current.version,3);assert.equal(current.manifest.lifecycle.enabled,true);assert.equal((await definitions.get({...actor,tenantId:'other'},'agent')).version,1);assert.deepEqual((await definitions.history(actor,'agent')).items.map(item=>item.principalId),['operator','operator','operator']);
+}finally{
+ clearTimeout(timer);for(const process of [browser,app])if(process&&process.exitCode===null&&process.signalCode===null){const stopped=once(process,'exit');process.kill();await stopped;}for(const server of [results,upstream])if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();await rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});
+}
