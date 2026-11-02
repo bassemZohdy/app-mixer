@@ -1,0 +1,4 @@
+import {writeFileSync} from 'node:fs';
+import {SqliteApplicationStore} from '../../dist/index.js';
+const [path,barrier,direction,phase]=process.argv.slice(2),initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',title:'Home',route:'/',components:[]}]},store=new SqliteApplicationStore(path,initial),hold=()=>{writeFileSync(barrier,phase);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);};
+try{if(phase==='during'){store.db.function('test_definition_migration_barrier',()=>{hold();return 0;});store.db.exec("CREATE TRIGGER test_definition_migration_crash AFTER UPDATE ON application_drafts WHEN NEW.app_id='demo' BEGIN SELECT test_definition_migration_barrier(); END");}store.migrateDraft(direction==='forward'?0:1,direction==='forward'?2:1);if(phase==='after')hold();throw Error('Expected process termination');}catch(error){process.send?.({error:String(error)});process.exitCode=1;}finally{store.close();}
