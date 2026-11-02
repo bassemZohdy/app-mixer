@@ -65,3 +65,21 @@ test('lease recovery evidence commits atomically, remains scoped and rechecks ac
 test('failed lease recovery audit leaves the run unchanged',()=>{
  const dir=mkdtempSync(join(tmpdir(),'lease-recovery-audit-fail-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),db=new DatabaseSync(path);try{const run=claim(runs,'a');assert.throws(()=>runs.recoverExpired(scope,'a',run.revision,100,{principalId:'',reference:'case'}),/evidence/);db.exec("CREATE TRIGGER test_lease_audit_fail BEFORE INSERT ON agent_run_lease_recovery_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");assert.throws(()=>runs.recoverExpired(scope,'a',run.revision,100,{principalId:'operator',reference:'case'}),/audit unavailable/);const current=runs.get(scope,'a');assert.equal(current.status,'running');assert.equal(current.revision,run.revision);assert.equal(current.leaseToken,run.leaseToken);db.exec('DROP TRIGGER test_lease_audit_fail');assert.equal(runs.recoverExpired(scope,'a',run.revision,100,{principalId:'operator',reference:'case'}).status,'uncertain');}finally{db.close();runs.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('bounded history authorization aborts, fences late decisions and retains capacity',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'lease-history-timeout-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let history,release,entered,seen,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),actor={tenantId:'tenant',principalId:'auditor'};
+ try{const run=claim(runs,'a');runs.recoverExpired(scope,'a',run.revision,100,{principalId:'operator',reference:'case'});history=new SqliteAgentLeaseRecoveryHistory(path,{scope,authorizationTimeoutMs:100,maxPendingAuthorizations:1,authorize:()=>{throw Error('legacy policy must not run');},authorizeWithSignal:async(_actor,_action,_event,signal)=>{if(block){seen=signal;entered();await gate;}return true;}});const pending=history.list(actor);await ready;await assert.rejects(pending,/unavailable/);assert.equal(seen.aborted,true);await assert.rejects(history.list(actor),/unavailable/);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await history.list(actor)).items.map(x=>x.runId),['a']);
+ }finally{release();history?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('cancelled history authorization cannot return partial results',async()=>{
+ for(const phase of [2,4]){
+  const dir=mkdtempSync(join(tmpdir(),'lease-history-cancel-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let history,release,entered,seen,calls=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),controller=new AbortController();
+  try{const run=claim(runs,'a');runs.recoverExpired(scope,'a',run.revision,100,{principalId:'operator',reference:'case'});history=new SqliteAgentLeaseRecoveryHistory(path,{scope,authorizationTimeoutMs:1000,maxPendingAuthorizations:1,authorize:()=>true,authorizeWithSignal:async(_actor,_action,_event,signal)=>{if(++calls===phase){seen=signal;entered();await gate;}return true;}});const pending=history.listWithSignal({tenantId:'tenant',principalId:'auditor'},{},controller.signal);await ready;controller.abort();await assert.rejects(pending,/unavailable/);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,phase);await assert.rejects(history.listWithSignal({tenantId:'tenant',principalId:'auditor'},{},AbortSignal.abort()),/unavailable/);
+  }finally{release();history?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
+
+test('history policy bounds must be paired and valid',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'lease-history-options-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);try{const options={scope,authorize:()=>true};for(const limits of [{authorizationTimeoutMs:100},{maxPendingAuthorizations:1},{authorizationTimeoutMs:99,maxPendingAuthorizations:1},{authorizationTimeoutMs:100,maxPendingAuthorizations:101},{authorizeWithSignal:true}])assert.throws(()=>new SqliteAgentLeaseRecoveryHistory(path,{...options,...limits}),/Invalid lease recovery history/);}finally{runs.close();rmSync(dir,{recursive:true,force:true});}
+});
