@@ -29,6 +29,9 @@ export class SqliteStagedOperations {
         if(!columns.some(column=>column.name==='request_key'))this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN request_key TEXT');
         if(!columns.some(column=>column.name==='state_revision'))this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN state_revision INTEGER NOT NULL DEFAULT 0');
         this.db.exec(`CREATE TABLE IF NOT EXISTS staged_reconciliation_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN ('applied','not_applied')),recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));`);
+        this.db.exec(`CREATE TRIGGER IF NOT EXISTS staged_evidence_no_update BEFORE UPDATE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS staged_evidence_no_delete BEFORE DELETE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS staged_evidence_no_replace BEFORE INSERT ON staged_reconciliation_evidence WHEN EXISTS(SELECT 1 FROM staged_reconciliation_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;`);
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
         this.db.exec('COMMIT');
       } catch(error){this.db.exec('ROLLBACK');throw error;}
