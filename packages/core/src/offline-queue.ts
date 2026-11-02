@@ -8,6 +8,8 @@ export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'
 export type OfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:OfflineStatus;attempts:number;nextAttemptAt:number};
 export type OfflineQueueOptions={enabled:true;maxAttempts:number;retryDelayMs:number};
 export type OfflineFailure='retry'|'conflict'|'uncertain';
+export type OfflineRecoveryCandidate={id:string;status:'running'|'uncertain';attempts:number};
+export type OfflineRecoveryCandidatePage={items:OfflineRecoveryCandidate[];nextAfter?:string};
 export type SqliteOfflineRecoveryEvidence={operatorId:string;reference:string};
 export type SqliteOfflineRecoveryEvent=SqliteOfflineRecoveryEvidence & {id:number;action:'recover'|'applied'|'not_applied';recordedAt:number};
 
@@ -29,6 +31,7 @@ export class SqliteOfflineQueue {
         PRIMARY KEY(tenant_id,application_id,principal_id,id),
         UNIQUE(tenant_id,application_id,principal_id,request_key)
       );
+      CREATE INDEX IF NOT EXISTS offline_operations_recovery ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('running','uncertain');
       CREATE TABLE IF NOT EXISTS offline_recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,queue_id TEXT NOT NULL,operator_id TEXT NOT NULL,reference TEXT NOT NULL,action TEXT NOT NULL,recorded_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS offline_recovery_events_scope ON offline_recovery_events(tenant_id,application_id,principal_id,queue_id,id);
       CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_replace BEFORE INSERT ON offline_recovery_events WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM offline_recovery_events WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
@@ -65,6 +68,12 @@ export class SqliteOfflineQueue {
     checkKey(scope,'principal',principalId);
     const ids=this.db.prepare('SELECT id FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? ORDER BY rowid').all(scope.tenantId,scope.applicationId,principalId);
     return ids.map(row=>this.get(scope,principalId,row.id as string)!);
+  }
+  /** Bounded metadata-only listing; the caller must authorize the entire selected scope. */
+  listRecoveryCandidates(scope:DataScope,principalId:string,operationId:string,options:{after?:string;limit?:number}={}):OfflineRecoveryCandidatePage{
+    checkKey(scope,'principal',principalId);checkKey(scope,'operation',operationId);if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid offline recovery query');if(options.after!==undefined)checkKey(scope,'offline',options.after);
+    const limit=options.limit??50,rows=this.db.prepare("SELECT id,status,attempts FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND status IN ('running','uncertain') AND id>? ORDER BY id LIMIT ?").all(scope.tenantId,scope.applicationId,principalId,operationId,options.after??'',limit+1);
+    const checked:OfflineRecoveryCandidate[]=rows.map(row=>{if(typeof row.id!=='string'||(row.status!=='running'&&row.status!=='uncertain')||!Number.isSafeInteger(row.attempts)||Number(row.attempts)<1)throw Error('Invalid offline recovery candidate');checkKey(scope,'offline',row.id);return {id:row.id,status:row.status,attempts:Number(row.attempts)};});const items=checked.slice(0,limit);return {items,...(checked.length>limit?{nextAfter:items[items.length-1]!.id}:{})};
   }
   /** Process one due item; only a host-confirmed pre-effect failure may be retried automatically. */
   async processOne(scope:DataScope,context:InvocationContext,registry:CapabilityRegistry,classify:(error:unknown)=>OfflineFailure,now=Date.now()):Promise<OfflineOperation|undefined> {

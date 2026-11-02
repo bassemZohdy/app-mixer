@@ -46,3 +46,16 @@ export function registerOfflineRecoveryEvidenceCapability(registry:CapabilityReg
   });
  }});
 }
+
+
+export type OfflineRecoveryListCapabilityOptions={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeListing:(actor:Actor,selection:{tenantId:string;applicationId:string;principalId:string;operationId:string},signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
+/** List metadata for the entire fixed owner and operation only with aggregate authorization. */
+export function registerOfflineRecoveryListCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineRecoveryListCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeListing!=='function')throw Error('Invalid offline recovery listing capability');const {candidate,applicationId,queuePrincipalId,targetOperationId,authorize,authorizeListing,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline recovery listing capability','Offline listing unavailable');
+ registry.register(candidate,{authorize,validate:input=>{if(!input||typeof input!=='object'||Array.isArray(input))return false;const value=input as Record<string,unknown>;return Object.keys(value).every(key=>['after','limit'].includes(key))&&(value.after===undefined||id(value.after))&&(value.limit===undefined||(Number.isSafeInteger(value.limit)&&Number(value.limit)>=1&&Number(value.limit)<=100));},execute:async(input,context)=>{
+  const value=input as {after?:string;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:context.tenantId,applicationId},selection={...scope,principalId:queuePrincipalId,operationId:targetOperationId};return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Offline listing unavailable');};const permit=async()=>{active();if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();if(await authorizeListing({...actor},{...selection},signal)!==true)throw Error('Capability forbidden');active();};
+   await permit();const page=queue.listRecoveryCandidates(scope,queuePrincipalId,targetOperationId,value);await permit();active();return page;
+  });
+ }});
+}

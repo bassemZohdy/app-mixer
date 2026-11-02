@@ -156,7 +156,7 @@ export {PostgresOfflineRecovery} from './postgres-offline-recovery.js';
 export type {PostgresOfflineRecoveryOptions,OfflineRecoveryActor,OfflineRecoveryTarget,OfflineRecoveryAction,OfflineRecoveryEvent} from './postgres-offline-recovery.js';
 export {registerSharedOfflineAllocation,registerSharedOfflineDispatch} from './shared-offline-capabilities.js';
 export type {SharedOfflineCapabilityOptions} from './shared-offline-capabilities.js';
-export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure, SqliteOfflineRecoveryEvidence, SqliteOfflineRecoveryEvent } from './offline-queue.js';
+export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure, SqliteOfflineRecoveryEvidence, SqliteOfflineRecoveryEvent, OfflineRecoveryCandidate, OfflineRecoveryCandidatePage } from './offline-queue.js';
 
 export { OfflineSyncWorker } from './offline-worker.js';
 export type { OfflineWorkerOptions } from './offline-worker.js';
@@ -225,5 +225,5 @@ export type { StagedListCapabilityOptions } from './staged-list-capability.js';
 
 export { registerStagedSummaryCapability } from './staged-summary-capability.js';
 export type { StagedSummaryCapabilityOptions } from './staged-summary-capability.js';
-export {registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability} from './offline-recovery-capabilities.js';
-export type {OfflineAbandonedRecoveryCapabilityOptions,OfflineVerificationCapabilityOptions,OfflineRecoveryEvidenceCapabilityOptions} from './offline-recovery-capabilities.js';
+export {registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability,registerOfflineRecoveryListCapability} from './offline-recovery-capabilities.js';
+export type {OfflineAbandonedRecoveryCapabilityOptions,OfflineVerificationCapabilityOptions,OfflineRecoveryEvidenceCapabilityOptions,OfflineRecoveryListCapabilityOptions} from './offline-recovery-capabilities.js';
