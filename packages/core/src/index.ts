@@ -111,7 +111,7 @@ export { SqliteRemoteRollout } from './remote-rollout.js';
 export type { RemoteRolloutScope, RemoteRolloutRecoveryEvidence, RemoteRolloutRecoveryEvent } from './remote-rollout.js';
 export { registerRemoteRolloutStatusCapability } from './remote-rollout-status-capability.js';
 export {RemoteRolloutMetrics} from './remote-rollout-metrics.js';
-export type {RemoteRolloutMetricsActor,RemoteRolloutMetricsOptions,RemoteRolloutMetricPhase} from './remote-rollout-metrics.js';
+export type {RemoteRolloutMetricsActor,RemoteRolloutMetricsOptions,RemoteRolloutMetricsSnapshot,RemoteRolloutMetricPhase} from './remote-rollout-metrics.js';
 export { registerRemoteRolloutRecoveryCapability } from './remote-rollout-recovery-capability.js';
 export { registerRemoteRolloutEvidenceCapability } from './remote-rollout-evidence-capability.js';
 export type { RemoteRolloutEvidenceCapabilityOptions } from './remote-rollout-evidence-capability.js';
@@ -122,7 +122,7 @@ export type { PostgresRemoteRolloutOptions, PostgresRemoteRolloutState } from '.
 export { PostgresPromotionTarget } from './postgres-promotion-target.js';
 export type { PostgresPromotionTargetOptions } from './postgres-promotion-target.js';
 export { RemoteRolloutPoller } from './remote-rollout-poller.js';
-export type { RemoteRolloutPollerOptions, RemoteRolloutResult } from './remote-rollout-poller.js';
+export type { RemoteRolloutPollerOptions, RemoteRolloutResult, RemoteRolloutPollerStatus } from './remote-rollout-poller.js';
 export { createControlPlane, createDataPlane, createDataPlaneHttps, createProposalPlane, createDevelopmentPlanes } from './planes.js';
 export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationRepository, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
 
