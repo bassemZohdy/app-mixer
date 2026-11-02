@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {writeSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentTriggerRetention,AgentTriggerRetentionWorker} from '../../../../packages/agent/dist/index.js';
+
+const [command,phase]=process.argv.slice(2),path=`/data/trigger-retention-${phase}.sqlite`,scope={tenantId:'tenant',agentId:'agent'},other={tenantId:'other',agentId:'agent'},actor={tenantId:'tenant',principalId:'cleaner'},event={sourceId:'source',principalId:'sender',eventId:'event',eventType:'order',payload:{private:'payload'}},settings={definitionVersion:1,maxAttempts:2,deadline:10000,maxPending:10};
+if(!['setup','hold','verify'].includes(command)||!['during','after'].includes(phase))throw Error('Invalid test command');
+const hold=()=>{writeSync(1,`RETENTION_${phase.toUpperCase()}\n`);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);};
+if(command==='setup'){
+ const runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path);try{const item=triggers.enqueue(scope,event,settings,1);triggers.enqueue(other,event,settings,1);const run=runs.get(scope,item.runId);runs.request(scope,item.runId,run.revision,'cancel',2);}finally{triggers.close();runs.close();}
+}else if(command==='hold'){
+ const retention=new SqliteAgentTriggerRetention(path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});if(phase==='during'){retention.db.function('test_crash_barrier',()=>{hold();return 0;});retention.db.exec('CREATE TRIGGER test_crash_retention BEFORE INSERT ON agent_trigger_redactions BEGIN SELECT test_crash_barrier(); END');}
+ const worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:20,maxPerPass:5,pollMs:100,clock:()=>100,authorize:()=>true,onError:error=>{throw error;}});assert.equal(await worker.runOnce(),1);if(phase==='after')hold();throw Error('Expected pod termination');
+}else{
+ const db=new DatabaseSync(path);db.exec('DROP TRIGGER IF EXISTS test_crash_retention');db.close();const runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),retention=new SqliteAgentTriggerRetention(path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});try{const item=runs.list(scope)[0],foreign=runs.list(other)[0];assert.ok(item&&foreign);assert.equal(triggers.get(scope,item.runId).payloadRedacted,phase==='after'?true:undefined);assert.deepEqual(await retention.getRedaction(actor,item.runId),phase==='after'?{actorId:'cleaner',redactedAt:100}:undefined);assert.deepEqual(triggers.get(other,foreign.runId).payload,event.payload);const worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:20,maxPerPass:5,pollMs:100,clock:()=>100,authorize:()=>true,onError:()=>{}});assert.equal(await worker.runOnce(),phase==='after'?0:1);assert.equal(await worker.runOnce(),0);assert.deepEqual(await retention.getRedaction(actor,item.runId),{actorId:'cleaner',redactedAt:100});assert.deepEqual(triggers.enqueue(scope,event,settings,3),{runId:item.runId,duplicate:true});assert.throws(()=>triggers.enqueue(scope,{...event,payload:{private:'different'}},settings,3),/identity conflict/);assert.deepEqual(triggers.get(other,foreign.runId).payload,event.payload);await worker.stop();console.log(`Retention recovery verified: ${phase}`);}finally{retention.close();triggers.close();runs.close();}
+}
