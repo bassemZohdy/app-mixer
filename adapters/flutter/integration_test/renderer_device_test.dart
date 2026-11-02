@@ -39,6 +39,7 @@ void main() {
   testWidgets('narrow nested row remains usable on a mobile device', verifyNarrowNestedRowParity);
   testWidgets('row spacing modes place children consistently on a mobile device', verifyRowSpacing);
   testWidgets('row cross-axis alignment places children consistently on a mobile device', verifyRowAlignment);
+  testWidgets('column cross-axis alignment places children consistently on a mobile device', verifyColumnAlignment);
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
     late void Function(Object?) receive;

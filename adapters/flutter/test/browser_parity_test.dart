@@ -16,5 +16,6 @@ void main() {
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
   testWidgets('row spacing modes place children consistently', verifyRowSpacing);
   testWidgets('row cross-axis alignment places children consistently', verifyRowAlignment);
+  testWidgets('column cross-axis alignment places children consistently', verifyColumnAlignment);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
 }

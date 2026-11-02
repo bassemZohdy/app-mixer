@@ -15,7 +15,8 @@ const subscribe=receive=>{
     {id:'row',component:'Row',children:['three']}, {id:'three',component:'Text',text:labels[2]}
   ]}});
 };
-const fail=error=>{document.body.dataset.error=String(error?.stack??error);document.body.dataset.result='fail';};
+const report=(result,detail='')=>{if(document.body.dataset.result)return;document.body.dataset.result=result;document.body.dataset.error=detail;void fetch('/result',{method:'POST',headers:{'content-type':'text/plain'},body:result+':'+detail});};
+const fail=error=>report('fail',String(error?.stack??error));
 try {
   createRoot(document.getElementById('host')).render(React.createElement(Renderer,{subscribe,onError:fail}));
   const modes=['start','center','end','spaceBetween','spaceAround','spaceEvenly'],comparisons=[];
@@ -33,6 +34,14 @@ try {
     const nativeHost=document.createElement('div'),webHost=document.createElement('div');nativeHost.style.width=webHost.style.width='240px';document.body.append(nativeHost,webHost);
     const nativeSubscribe=receive=>messages.forEach(receive);createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
     const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));for(const text of webHost.querySelectorAll('h1,small'))text.style.margin='0';alignmentComparisons.push({align,index,nativeHost,webHost});
+  }
+  const columnComparisons=[];
+  for(const [index,align] of ['start','center','end','stretch'].entries()){
+    const components=[{id:'root',component:'Column',align,children:['first','second']},{id:'first',component:'Text',text:`First ${index}`},{id:'second',component:'Text',text:`Second ${index}`}];
+    const messages=[{version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}},{version:'v0.9.1',updateComponents:{surfaceId:'main',components}}];
+    const nativeHost=document.createElement('div'),webHost=document.createElement('div');nativeHost.style.width=webHost.style.width='240px';document.body.append(nativeHost,webHost);
+    const nativeSubscribe=receive=>messages.forEach(receive);createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
+    const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));columnComparisons.push({align,index,nativeHost,webHost});
   }
   const check=()=>{
     try {
@@ -62,7 +71,16 @@ try {
           if(Math.abs(small.top-row.top-expected)>1||(align==='stretch'&&Math.abs(small.height-row.height)>1))throw Error(`${name} ${align} row alignment mismatch`);
         }
       }
-      document.body.dataset.result='pass';
+      for(const {align,index,nativeHost,webHost} of columnComparisons){
+        for(const [name,host] of [['native',nativeHost],['web',webHost]]){
+          const child=[...host.querySelectorAll('*')].find(element=>element.childElementCount===0&&element.textContent===`First ${index}`);
+          if(!child){requestAnimationFrame(check);return;}
+          const column=child.parentElement.getBoundingClientRect(),box=child.getBoundingClientRect(),free=column.width-box.width;
+          const expected=align==='center'?free/2:align==='end'?free:0;
+          if(Math.abs(column.width-240)>1||box.width<=0||Math.abs(box.left-column.left-expected)>1||(align==='stretch'&&Math.abs(box.width-column.width)>1))throw Error(`${name} ${align} column alignment mismatch`);
+        }
+      }
+      report('pass');
     }catch(error){fail(error);}
   };
   requestAnimationFrame(check);
