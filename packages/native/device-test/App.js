@@ -23,10 +23,21 @@ const subscribe = receive => {
   ]}});
   return ()=>{if(publish===receive)publish=undefined;};
 };
+const layoutLabels=['A long nested column label needs to wrap','A long nested card label needs to wrap','A long nested row label needs to wrap'];
+const subscribeLayout=receive=>{
+  receive({version:'v0.9.1',createSurface:{surfaceId:'layout',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'layout',components:[
+    {id:'root',component:'Row',children:['column','card','row']},
+    {id:'column',component:'Column',children:['one']},{id:'one',component:'Text',text:layoutLabels[0]},
+    {id:'card',component:'Card',child:'two'},{id:'two',component:'Text',text:layoutLabels[1]},
+    {id:'row',component:'Row',children:['three']},{id:'three',component:'Text',text:layoutLabels[2]}
+  ]}});
+};
 export default function App(){
   const [result,setResult]=useState('Waiting');
   const [rejection,setRejection]=useState('');
   const [phase,setPhase]=useState(0);
+  const [layout,setLayout]=useState(false);
   const onAction=useCallback(event=>{const name=event?.action?.context?.name;setResult(event?.action?.name==='save'&&name==='Grace'?'Saved Grace':'FAIL action');},[]);
   const onError=useCallback(()=>{if(expectingRejection)setRejection('Rejected safely');else setResult('FAIL renderer');},[]);
   const update=()=>publish?.({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/profile/name',value:'Lin'}});
@@ -39,5 +50,6 @@ export default function App(){
     publish({version:'v0.9.1',updateComponents:{surfaceId:'secondary',components:[{id:'root',component:'Text',text:{path:'/profile/name'}}]}});
     setPhase(phase===0?1:3);
   };
-  return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{flexDirection:'row',justifyContent:'space-between'}}><Pressable accessibilityRole="button" style={{padding:8}} onPress={update}><Text>Update data</Text></Pressable><Pressable accessibilityRole="button" style={{padding:8}} onPress={reject}><Text>Reject invalid</Text></Pressable></View><Renderer subscribe={subscribe} onError={onError} onAction={result==='Waiting'?onAction:undefined}/><Text>{rejection}</Text><Text>{result}</Text>{result==='Saved Grace'&&phase<3&&<Pressable accessibilityRole="button" style={{padding:8}} onPress={advance}><Text>Advance surface</Text></Pressable>}</SafeAreaView>;
+  if(layout)return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{width:240}}><Renderer subscribe={subscribeLayout} onError={onError}/></View><Text>{result}</Text></SafeAreaView>;
+  return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{flexDirection:'row',justifyContent:'space-between'}}><Pressable accessibilityRole="button" style={{padding:8}} onPress={update}><Text>Update data</Text></Pressable><Pressable accessibilityRole="button" style={{padding:8}} onPress={reject}><Text>Reject invalid</Text></Pressable></View><Renderer subscribe={subscribe} onError={onError} onAction={result==='Waiting'?onAction:undefined}/><Text>{rejection}</Text><Text>{result}</Text>{result==='Saved Grace'&&phase<3&&<Pressable accessibilityRole="button" style={{padding:8}} onPress={advance}><Text>Advance surface</Text></Pressable>}{phase===3&&<Pressable accessibilityRole="button" style={{padding:8}} onPress={()=>setLayout(true)}><Text>Check narrow layout</Text></Pressable>}</SafeAreaView>;
 }

@@ -54,5 +54,20 @@ final class MixerDeviceUITests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Secondary Grace"].waitForExistence(timeout: 10))
     XCTAssertFalse(app.staticTexts["Secondary Ada"].exists)
     XCTAssertEqual(field.value as? String, "Grace")
+    let layout = app.buttons["Check narrow layout"]
+    XCTAssertTrue(layout.waitForExistence(timeout: 10))
+    layout.tap()
+    let labels = ["A long nested column label needs to wrap", "A long nested card label needs to wrap", "A long nested row label needs to wrap"]
+    let elements = labels.map { app.staticTexts[$0] }
+    for element in elements { XCTAssertTrue(element.waitForExistence(timeout: 10)) }
+    let left = elements[0].frame.minX
+    for element in elements {
+      XCTAssertGreaterThan(element.frame.width, 0)
+      XCTAssertGreaterThan(element.frame.height, 20)
+      XCTAssertGreaterThanOrEqual(element.frame.minX, left - 1)
+      XCTAssertLessThanOrEqual(element.frame.maxX, left + 241)
+    }
+    XCTAssertLessThanOrEqual(elements[0].frame.maxX, elements[1].frame.minX + 1)
+    XCTAssertLessThanOrEqual(elements[1].frame.maxX, elements[2].frame.minX + 1)
   }
 }

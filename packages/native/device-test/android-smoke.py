@@ -112,4 +112,25 @@ wait_for(lambda nodes: find(nodes, text='Secondary Grace'), 'recreated surface w
 if find(list(tree().iter('node')), text='Secondary Ada'):
     raise AssertionError('Recreated surface retained old data')
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Grace'}), 'main surface after recreation')
+layout = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Check narrow layout' and n.get('clickable')=='true'), None), 'narrow layout button')
+tap(layout)
+labels = ['A long nested column label needs to wrap', 'A long nested card label needs to wrap', 'A long nested row label needs to wrap']
+elements = [wait_for(lambda nodes, label=label: find(nodes, text=label), 'nested row label') for label in labels]
+density_output = adb('shell', 'wm', 'density')
+densities = re.findall(r'(?:Physical|Override) density:\s*(\d+)', density_output)
+if not densities:
+    raise AssertionError('Could not determine Android display density')
+scale = int(densities[-1]) / 160
+bounds = []
+for element in elements:
+    match = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', element.get('bounds', ''))
+    if not match:
+        raise AssertionError('Invalid nested label bounds')
+    bounds.append(tuple(map(int, match.groups())))
+left = bounds[0][0]
+for x1, y1, x2, y2 in bounds:
+    if x2 <= x1 or y2 - y1 <= 20 * scale or x1 < left - 2 or x2 > left + 240 * scale + 2:
+        raise AssertionError('Nested row label is not contained and wrapped: ' + str(bounds))
+if bounds[0][2] > bounds[1][0] + 2 or bounds[1][2] > bounds[2][0] + 2:
+    raise AssertionError('Nested row labels overlap: ' + str(bounds))
 print('React Native Android device interaction passed')
