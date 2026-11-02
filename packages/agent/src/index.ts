@@ -321,3 +321,6 @@ export type {AgentMemoryScopeEraseOptions} from './agent-memory-erase-capability
 
 export {registerAgentMemoryErasureEvidence} from './agent-memory-erasure-evidence-capability.js';
 export type {AgentMemoryErasureEvidenceOptions} from './agent-memory-erasure-evidence-capability.js';
+
+export {createSquareWebhookAdapter} from './square-webhook.js';
+export type {SquareWebhookOptions} from './square-webhook.js';
