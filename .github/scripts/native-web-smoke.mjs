@@ -34,6 +34,12 @@ try{
  assert.equal(document.querySelector('input').value,'Grace');
  await React.act(()=>document.querySelector('[role="button"]').click());
  assert.equal(actions.length,1);assert.deepEqual(actions[0].action.context,{name:'Grace'});assert.deepEqual(errors,[]);
+ const retainedInput=document.querySelector('input'),retainedButton=document.querySelector('[role="button"]');
+ for(const invalid of [{id:'label',component:'Row',children:['field']},{id:'label',component:'Button',child:'title',action:{event:{name:'nested'}}}]){
+  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[invalid]}}));
+  assert.match(String(errors.at(-1)),/Interactive component inside button/);assert.equal(document.querySelector('input'),retainedInput);assert.equal(document.querySelector('[role="button"]'),retainedButton);assert.equal(retainedInput.value,'Grace');
+ }
+ assert.equal(errors.length,2);errors.length=0;await React.act(()=>retainedButton.click());assert.equal(actions.length,2);assert.deepEqual(actions[1].action.context,{name:'Grace'});actions.pop();
  await React.act(()=>root.render(React.createElement(Component,{subscribe,onError:error=>errors.push(error)})));
  const disabled=document.querySelector('[role="button"]');assert.equal(disabled.getAttribute('aria-disabled'),'true');
  await React.act(()=>disabled.click());assert.equal(actions.length,1);

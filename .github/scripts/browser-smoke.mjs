@@ -70,6 +70,12 @@ try {
       if(document.activeElement!==updated || updated.selectionStart!==5 || document.querySelector('p').textContent!=='Grace') throw Error('Binding or focus failed');
       document.querySelector('button').click();
       if(event.action.context.name!=='Grace' || Object.hasOwn(event.action.context,'secret')) throw Error('Action context failed');
+      const originalInput=document.querySelector('input'),originalButton=document.querySelector('button');
+      for(const invalid of [{id:'label',component:'Row',children:['field']},{id:'label',component:'Button',child:'display',action:{event:{name:'nested'}}}]){
+        let rejected=false;try{renderer.apply({version,updateComponents:{surfaceId,components:[invalid]}});}catch(error){rejected=String(error).includes('Interactive component inside button');}
+        if(!rejected || document.querySelector('input')!==originalInput || document.querySelector('button')!==originalButton || originalInput.value!=='Grace') throw Error('Invalid button subtree changed the surface');
+      }
+      event=undefined;originalButton.click();if(event?.action.name!=='save' || event.action.context.name!=='Grace') throw Error('Button action changed after rejection');
       document.body.dataset.result='pass';
     } catch(error) {document.body.dataset.result='fail'; document.body.append(String(error));}
   </script></body></html>`;
