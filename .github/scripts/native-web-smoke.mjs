@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
-import {createReactNativeA2UIComponent,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
+import {createReactNativeA2UIComponent,NativeComponentRegistry,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
+import {ExtensionRegistry,createNativeExtensionPlanFromRegistry} from '../../packages/core/dist/index.js';
 if(!process.env.REACT_SMOKE_DEPS)throw Error('REACT_SMOKE_DEPS is required');
 const require=createRequire(resolve(process.env.REACT_SMOKE_DEPS,'package.json'));
 const {JSDOM}=require('jsdom');const dom=new JSDOM('<!doctype html><div id="app"></div>',{url:'http://localhost/',pretendToBeVisual:true});
@@ -140,4 +141,7 @@ try{
  const replacementField=document.querySelector('[aria-label="Repeated"]');
  assert.notEqual(replacementField,oldField);assert.equal(replacementField.value,'New');assert.notEqual(document.activeElement,replacementField);assert.deepEqual(errors,[]);
  await React.act(()=>root.unmount());
+ const reference={id:'example.chart',version:'1.0.0',scope:'application'},manifest={manifestVersion:1,...reference,runtimeVersions:['0.1.0'],renderers:['react-native'],components:['chart'],tools:[],providers:[],permissions:[]},extension=props=>React.createElement(Text,null,props.label),validator=component=>typeof component.label==='string',extensions=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react-native',approved:[{...reference,permissions:[]}]});
+ extensions.register(manifest,{components:{chart:extension},tools:{},providers:{}});const application={id:'demo',schemaVersion:1,revision:1,extensions:[reference],pages:[{id:'home',title:'Home',route:'/',components:[{id:'c',type:'Extension',extensionId:reference.id,name:'chart'}]}]},plan=createNativeExtensionPlanFromRegistry(application,extensions),nativeRegistry=NativeComponentRegistry.fromPlan(plan,[{...reference,components:{chart:{render:extension,validate:validator}}}],{applicationId:'demo',revision:1}),NativeWithExtensions=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform},nativeRegistry),extensionRoot=createRoot(document.getElementById('app')),extensionErrors=[];let receiveExtension;
+ await React.act(()=>extensionRoot.render(React.createElement(NativeWithExtensions,{subscribe:callback=>{receiveExtension=callback;},onError:error=>extensionErrors.push(error)})));await React.act(()=>{receiveExtension({version:'v0.9.1',createSurface:{surfaceId:'extension',catalogId:APP_MIXER_CATALOG}});receiveExtension({version:'v0.9.1',updateComponents:{surfaceId:'extension',components:[{id:'root',component:'chart',label:'Native sales'}]}});});assert.match(document.getElementById('app').textContent,/Native sales/);await React.act(()=>receiveExtension({version:'v0.9.1',updateComponents:{surfaceId:'extension',components:[{id:'root',component:'chart',label:42}]}}));assert.equal(extensionErrors.length,1);assert.match(document.getElementById('app').textContent,/Native sales/);await React.act(()=>extensionRoot.unmount());
 }finally{dom.window.close();}

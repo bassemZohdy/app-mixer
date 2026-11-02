@@ -98,6 +98,16 @@ export function createExtensionRuntime(application:ApplicationDefinition, extens
 }
 
 export type FlutterExtensionPlan = {version:1; applicationId:string; revision:number; components:({name:string} & ExtensionReference)[]};
+export type NativeExtensionPlan = FlutterExtensionPlan & {renderer:'react-native'};
+
+/** Build a checked React Native plan without distributing executable code. */
+export function createNativeExtensionPlanFromRegistry(application:ApplicationDefinition,registry:ExtensionRegistry):NativeExtensionPlan {
+  const snapshot=structuredClone(application);validate(snapshot);
+  if(snapshot.id.length>256||/[\u0000-\u001f\u007f]/.test(snapshot.id))throw Error('Invalid native application ID');
+  if(!(registry instanceof ExtensionRegistry)||registry.getTarget().renderer!=='react-native')throw Error('React Native host required');
+  registry.createPublicationGuard(()=>({components:[],tools:[],providers:[]}))(snapshot);
+  return {...checkedFlutterPlan(snapshot),renderer:'react-native'};
+}
 
 /** Produce metadata only; the host must select a published definition and authenticate delivery. */
 export function createFlutterExtensionPlan(application:ApplicationDefinition, manifests:ExtensionManifest[], host:ExtensionHost):FlutterExtensionPlan {
