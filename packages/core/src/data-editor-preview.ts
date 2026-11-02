@@ -1,6 +1,41 @@
 /** Inert control-plane counterpart to the generated host-owned record editor. */
 export const RECORD_EDITOR_PREVIEW = `
 
+function decimalMultiple(value,divisor){
+  const parts=number=>{const [mantissa,exp='0']=number.toString().split('e'),[whole,fraction='']=mantissa.split('.');return [BigInt(whole+fraction),Number(exp)-fraction.length];};
+  const [numerator,numeratorExponent]=parts(value),[denominator,denominatorExponent]=parts(divisor),difference=numeratorExponent-denominatorExponent;
+  return difference>=0?(numerator*10n**BigInt(difference))%denominator===0n:numerator%(denominator*10n**BigInt(-difference))===0n;
+}
+function matchesContains(rule,value){
+  if(rule.choices&&!rule.choices.includes(canonicalFormValue(value)))return false;
+  if(rule.type!==undefined){
+    const matches=rule.type==='null'?value===null:rule.type==='array'?Array.isArray(value):rule.type==='object'?value!==null&&typeof value==='object'&&!Array.isArray(value):rule.type==='integer'?typeof value==='number'&&Number.isInteger(value):typeof value===rule.type;
+    if(!matches)return false;
+  }
+  if(typeof value==='number'){
+    if(rule.minimum!==undefined&&value<rule.minimum||rule.maximum!==undefined&&value>rule.maximum||rule.exclusiveMinimum!==undefined&&value<=rule.exclusiveMinimum||rule.exclusiveMaximum!==undefined&&value>=rule.exclusiveMaximum||rule.multipleOf!==undefined&&!decimalMultiple(value,rule.multipleOf))return false;
+  }
+  if(typeof value==='string'){
+    const length=Array.from(value).length;
+    if(rule.minLength!==undefined&&length<rule.minLength||rule.maxLength!==undefined&&length>rule.maxLength||rule.pattern&&!rule.pattern.test(value))return false;
+  }
+  if(Array.isArray(value)){
+    if(rule.minItems!==undefined&&value.length<rule.minItems||rule.maxItems!==undefined&&value.length>rule.maxItems)return false;
+    if(rule.uniqueItems&&new Set(value.map(canonicalFormValue)).size!==value.length)return false;
+    if(rule.items&&!value.every(item=>matchesContains(rule.items,item)))return false;
+    if(rule.contains){const count=value.filter(item=>matchesContains(rule.contains,item)).length;if(count<rule.contains.min||(rule.contains.max!==undefined&&count>rule.contains.max))return false;}
+  }
+  if(value!==null&&typeof value==='object'&&!Array.isArray(value)){
+    if(rule.required.some(key=>!Object.hasOwn(value,key)))return false;
+    for(const [key,child] of Object.entries(value)){
+      if(Object.hasOwn(rule.properties,key)){if(!matchesContains(rule.properties[key],child))return false;}
+      else if(rule.additionalProperties===false)return false;
+    }
+  }
+  return true;
+}
+function canonicalFormValue(value){if(Array.isArray(value))return '['+value.map(canonicalFormValue).join(',')+']';if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonicalFormValue(value[key])).join(',')+'}';return JSON.stringify(value);}
+
 function normalizeFields(fields) {
   if(fields===undefined)return undefined;
   if(!Array.isArray(fields)||fields.length<1||fields.length>40)throw Error('Invalid record fields');
@@ -95,9 +130,9 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     if(node.dependentRequired!==undefined){if(!object(node.dependentRequired)||Object.keys(node.dependentRequired).length>40)throw Error('Unsupported record JSON Schema form');for(const [trigger,requiredKeys] of Object.entries(node.dependentRequired)){if(!Object.hasOwn(node.properties,trigger)||!Array.isArray(requiredKeys)||requiredKeys.length>40||requiredKeys.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(requiredKeys).size!==requiredKeys.length)throw Error('Unsupported record JSON Schema form');dependencies.push({path:[...path],trigger,required:[...requiredKeys]});if(dependencies.length>40)throw Error('Unsupported record JSON Schema form');}}
     if(node.dependentSchemas!==undefined){if(!object(node.dependentSchemas)||Object.keys(node.dependentSchemas).length>40)throw Error('Unsupported record JSON Schema form');for(const [trigger,schema] of Object.entries(node.dependentSchemas)){if(!Object.hasOwn(node.properties,trigger)||!object(schema)||!ruleKeys(schema,['required'])||!Array.isArray(schema.required)||schema.required.length>40||schema.required.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(schema.required).size!==schema.required.length)throw Error('Unsupported record JSON Schema form');dependencies.push({path:[...path],trigger,required:[...schema.required]});if(dependencies.length>40)throw Error('Unsupported record JSON Schema form');}}
     if(node.if!==undefined||node.then!==undefined||node.else!==undefined){
-      const condition=node.if,validNames=names=>Array.isArray(names)&&names.length<=40&&names.every(key=>typeof key==='string'&&Object.hasOwn(node.properties,key))&&new Set(names).size===names.length,primitive=value=>value===null||typeof value==='string'||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value));
+      const condition=node.if,validNames=names=>Array.isArray(names)&&names.length<=40&&names.every(key=>typeof key==='string'&&Object.hasOwn(node.properties,key))&&new Set(names).size===names.length;
       if(!object(condition)||!ruleKeys(condition,['properties','required'])||(!Object.hasOwn(condition,'properties')&&!Object.hasOwn(condition,'required'))||(node.then===undefined&&node.else===undefined)||(condition.required!==undefined&&!validNames(condition.required))||(condition.properties!==undefined&&(!object(condition.properties)||Object.keys(condition.properties).length>40)))throw Error('Unsupported record JSON Schema form');
-      const predicates=[];for(const [key,test] of Object.entries(condition.properties??{})){if(!Object.hasOwn(node.properties,key)||!object(test)||!ruleKeys(test,['const','enum'])||(Object.hasOwn(test,'const')===Object.hasOwn(test,'enum')))throw Error('Unsupported record JSON Schema form');const choices=Object.hasOwn(test,'const')?[test.const]:test.enum;if(!Array.isArray(choices)||!choices.length||choices.length>100||!choices.every(primitive)||new Set(choices).size!==choices.length)throw Error('Unsupported record JSON Schema form');predicates.push({key,choices:[...choices]});}
+      const predicates=[];for(const [key,test] of Object.entries(condition.properties??{})){if(!Object.hasOwn(node.properties,key))throw Error('Unsupported record JSON Schema form');predicates.push({key,rule:compileContains(test,0)});}
       const branch=value=>{if(value===undefined)return [];if(!object(value)||!ruleKeys(value,['required'])||!validNames(value.required))throw Error('Unsupported record JSON Schema form');return [...value.required];};
       conditions.push({path:[...path],predicates,required:[...(condition.required??[])],then:branch(node.then),else:branch(node.else)});if(conditions.length>40)throw Error('Unsupported record JSON Schema form');
     }
@@ -147,7 +182,7 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
 
 function pathValue(value,path){for(const key of path){if(!value||typeof value!=='object'||Array.isArray(value)||!Object.hasOwn(value,key))return undefined;value=value[key];}return value;}
 function validateFormDependencies(dependencies,value){for(const rule of dependencies??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;if(Object.hasOwn(current,rule.trigger))for(const required of rule.required)if(!Object.hasOwn(current,required))throw Error((rule.path.length?rule.path.join(' / ')+' / ':'')+required+' is required when '+rule.trigger+' is provided.');}}
-function validateFormConditions(conditions,value){for(const rule of conditions??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;const matched=rule.required.every(key=>Object.hasOwn(current,key))&&rule.predicates.every(test=>!Object.hasOwn(current,test.key)||test.choices.includes(current[test.key]));for(const required of matched?rule.then:rule.else)if(!Object.hasOwn(current,required))throw Error((rule.path.length?rule.path.join(' / ')+' / ':'')+required+' is required by a condition.');}}
+function validateFormConditions(conditions,value){for(const rule of conditions??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;const matched=rule.required.every(key=>Object.hasOwn(current,key))&&rule.predicates.every(test=>!Object.hasOwn(current,test.key)||matchesContains(test.rule,current[test.key]));for(const required of matched?rule.then:rule.else)if(!Object.hasOwn(current,required))throw Error((rule.path.length?rule.path.join(' / ')+' / ':'')+required+' is required by a condition.');}}
 function pathParent(value,path){for(const key of path.slice(0,-1))value=value[key];return value;}
 function pathActive(groups,path){return groups.filter(group=>group.path.length<path.length&&group.path.every((key,i)=>key===path[i])).every(group=>group.control.checked&&!(group.nullToggle&&group.nullToggle.checked));}
 
