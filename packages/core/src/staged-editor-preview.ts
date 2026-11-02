@@ -1,8 +1,8 @@
 /** Inert preview counterpart to the generated staged-transaction editor. */
 export const STAGED_EDITOR_PREVIEW = `
-export function createStagedEditor({stageOperation,getOperation,submitOperation}) {
+export function createStagedEditor({stageOperation,getOperation,submitOperation,verifyOperation}) {
   const valid=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
-  if(![stageOperation,getOperation,submitOperation].every(valid))throw Error('Invalid staged editor capabilities');
+  if(![stageOperation,getOperation,submitOperation].every(valid)||(verifyOperation!==undefined&&!valid(verifyOperation)))throw Error('Invalid staged editor capabilities');
   const validate=component=>{
     if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
        (component.label!==undefined&&(typeof component.label!=='string'||component.label.length>120)))throw Error('Invalid staged editor');
@@ -12,7 +12,7 @@ export function createStagedEditor({stageOperation,getOperation,submitOperation}
     heading.textContent=component.label||'Staged transaction';payloadLabel.textContent='Transaction data (JSON object)';payload.value='{}';payload.disabled=true;payloadLabel.appendChild(payload);
     stage.type='button';stage.textContent='Stage';stage.disabled=true;newTransaction.type='button';newTransaction.textContent='New transaction';newTransaction.disabled=true;idLabel.textContent='Staged operation ID';id.disabled=true;idLabel.appendChild(id);check.type='button';check.textContent='Check status';check.disabled=true;submit.type='button';submit.textContent='Submit';submit.disabled=true;
     status.setAttribute('role','status');status.textContent='Preview only. Transactions are disabled.';
-    root.append(heading,payloadLabel,stage,newTransaction,idLabel,check,submit,status);return root;
+    root.append(heading,payloadLabel,stage,newTransaction,idLabel,check,submit);if(verifyOperation){const referenceLabel=document.createElement('label'),reference=document.createElement('input'),verify=document.createElement('button');referenceLabel.textContent='Evidence reference';reference.disabled=true;reference.maxLength=256;referenceLabel.appendChild(reference);verify.type='button';verify.textContent='Verify outcome';verify.disabled=true;root.append(referenceLabel,verify);}root.appendChild(status);return root;
   };
   return {render,validate};
 }
