@@ -19,6 +19,11 @@ void main() {
     try { await verifySurfaceParity(tester); } finally { tester.testTextInput.unregister(); }
   });
 
+  testWidgets('surface removal and recreation preserve editing isolation on a mobile device', (tester) async {
+    tester.testTextInput.register();
+    try { await verifySurfaceEditingIdentity(tester); } finally { tester.testTextInput.unregister(); }
+  });
+
   testWidgets('narrow row remains usable on a mobile device', (tester) async {
     tester.testTextInput.register();
     try { await verifyNarrowRowParity(tester); } finally { tester.testTextInput.unregister(); }
