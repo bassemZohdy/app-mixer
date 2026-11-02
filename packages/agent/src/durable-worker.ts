@@ -7,7 +7,7 @@ import {PostgresAgentRunSlots} from './postgres-run-slots.js';
 type Outcome='succeeded'|'failed'|'stopped'|'uncertain'|{status:'delegation_expired';grantId:string;revision:number}|{status:'approval_required';actionId:string};
 type WorkerOptions={
  runs:SqliteAgentRuns;
- definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};
+ definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>;getWithSignal?:(tenantId:string,agentId:string,signal:AbortSignal)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};
  asyncDefinitions?:boolean;
  workerId:string;leaseMs:number;pollMs:number;
  authorizeStart:(run:DurableAgentRun,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
@@ -21,7 +21,7 @@ type WorkerOptions={
 export class DurableAgentWorker {
  private readonly clock:()=>number;private readonly tracer:Tracer|undefined;private readonly usePersistedParent:boolean;
  constructor(private readonly options:WorkerOptions){
-  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||(options.asyncDefinitions!==undefined&&typeof options.asyncDefinitions!=='boolean')||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.sharedSlots!==undefined&&!(options.sharedSlots instanceof PostgresAgentRunSlots))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.usePersistedParent!==undefined&&typeof options.tracing.usePersistedParent!=='boolean'))))throw Error('Invalid agent worker');
+  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(options.asyncDefinitions!==undefined&&typeof options.asyncDefinitions!=='boolean')||typeof options.workerId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.workerId)||!Number.isSafeInteger(options.leaseMs)||options.leaseMs<100||options.leaseMs>3600000||!Number.isSafeInteger(options.pollMs)||options.pollMs<10||options.pollMs*3>options.leaseMs||typeof options.authorizeStart!=='function'||typeof options.execute!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.sharedSlots!==undefined&&!(options.sharedSlots instanceof PostgresAgentRunSlots))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.usePersistedParent!==undefined&&typeof options.tracing.usePersistedParent!=='boolean'))))throw Error('Invalid agent worker');
   this.clock=options.clock??Date.now;this.tracer=options.tracing?.tracer;this.usePersistedParent=options.tracing?.usePersistedParent===true;
  }
  usesRegistry(runs:SqliteAgentRuns):boolean{return this.options.runs===runs;}
@@ -56,13 +56,15 @@ export class DurableAgentWorker {
    if(controller.signal.aborted||!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.status!=='running'||current.leaseUntil===null||!Number.isSafeInteger(now)||now>=current.leaseUntil)throw Error('Agent run lease unavailable');
   };
   const assertLease=()=>{assertLocalLease();if(isAsync||!validDefinition())throw Error('Agent run lease unavailable');};
-  const assertLeaseAsync=async()=>{assertLocalLease();if(!(isAsync?matches(await lookup()):validDefinition()))throw Error('Agent run lease unavailable');assertLocalLease();};
-  let pulsing:Promise<void>|undefined;
+  const activeLookup=async(signal:AbortSignal)=>{if(signal.aborted)throw Error('Agent run lease unavailable');return new Promise<AgentDefinitionVersion|undefined>((resolve,reject)=>{const aborted=()=>{cleanup();reject(Error('Agent run lease unavailable'));},cleanup=()=>signal.removeEventListener('abort',aborted);signal.addEventListener('abort',aborted,{once:true});Promise.resolve().then(()=>{if(signal.aborted)throw Error('Agent run lease unavailable');return definitions.getWithSignal?definitions.getWithSignal(scope.tenantId,scope.agentId,signal):lookup();}).then(value=>{cleanup();if(signal.aborted)reject(Error('Agent run lease unavailable'));else resolve(value);},error=>{cleanup();reject(error);});});};
+  const validateLease=async(signal:AbortSignal)=>{assertLocalLease();if(!(isAsync?matches(await activeLookup(signal)):validDefinition()))throw Error('Agent run lease unavailable');if(signal.aborted)throw Error('Agent run lease unavailable');assertLocalLease();};
+  const assertLeaseAsync=()=>validateLease(controller.signal);
+  let pulsing:Promise<void>|undefined;const pulseStop=new AbortController(),pulseSignal=AbortSignal.any([controller.signal,pulseStop.signal]);
   const pulse=async()=>{
-   try{await assertLeaseAsync();const current=runs.get(scope,runId)!;run=runs.renew(scope,runId,current.revision,token,leaseMs,this.clock());if(shared&&slot&&!(await shared.renew(scope,runId,slot,leaseMs)))throw Error('Agent run slot lost');}
-   catch{lost=true;controller.abort();}
+   try{await validateLease(pulseSignal);const current=runs.get(scope,runId)!;run=runs.renew(scope,runId,current.revision,token,leaseMs,this.clock());if(shared&&slot&&!(await shared.renew(scope,runId,slot,leaseMs)))throw Error('Agent run slot lost');}
+   catch{if(!pulseStop.signal.aborted){lost=true;controller.abort();}}
   };
-  const timer=setInterval(()=>{if(!pulsing)pulsing=pulse().finally(()=>{pulsing=undefined;});},pollMs);let outcome:Outcome='uncertain',started=false;
+  const timer=setInterval(()=>{try{assertLocalLease();}catch{lost=true;controller.abort();return;}if(!pulsing)pulsing=pulse().finally(()=>{pulsing=undefined;});},pollMs);let outcome:Outcome='uncertain',started=false;
   try{
    if(await authorizeStart(structuredClone(run),structuredClone(definition))!==true)throw Error('Agent run forbidden');
    await assertLeaseAsync();started=true;
@@ -70,7 +72,7 @@ export class DurableAgentWorker {
    if(isAsync&&result!=='stopped'&&result!=='uncertain')await assertLeaseAsync();
    if(typeof result==='string'&&['succeeded','failed','stopped','uncertain'].includes(result))outcome=result;else if(result&&typeof result==='object'&&result.status==='delegation_expired')outcome={status:'delegation_expired',grantId:result.grantId,revision:result.revision};else if(result&&typeof result==='object'&&result.status==='approval_required')outcome={status:'approval_required',actionId:result.actionId};
   }catch{if(!started)outcome='failed';}
-  finally{clearInterval(timer);if(pulsing)await pulsing;}
+  finally{clearInterval(timer);pulseStop.abort();if(pulsing)await pulsing;}
   try{
   const current=runs.get(scope,runId);
   if(!current||current.leaseToken!==token||current.leaseOwner!==workerId||current.leaseUntil===null||this.clock()>=current.leaseUntil)throw Error('Agent run lease lost');
