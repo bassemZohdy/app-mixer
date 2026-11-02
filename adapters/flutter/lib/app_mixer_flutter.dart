@@ -362,12 +362,12 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     return Column(children: store.views().map((surface){
       final root=surface.root;
       if(root==null) return const SizedBox.shrink();
-      final rendered=_widget(root,surface,store,generation,'root',true,false);
+      final rendered=_widget(root,surface,store,generation,'root',true,false,false);
       return ['Column','Row','Card'].contains(root.kind) ? SizedBox(width:double.infinity,child:rendered) : rendered;
     }).toList());
   }
   bool _containsTextField(NativeNode node) => node.kind=='TextField' || node.children.any(_containsTextField);
-  Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path, bool tightWidth, bool tightHeight) {
+  Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path, bool tightWidth, bool tightHeight, bool inButton) {
     final extension=store._extensions[node.kind];
     if (extension!=null) return extension.builder(context, _object(_copy(node.extensionProps)));
     if (node.kind == 'Text') {
@@ -383,7 +383,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       };
       final headingLevel = switch (node.variant) {'h1'=>1,'h2'=>2,'h3'=>3,'h4'=>4,'h5'=>5,_=>null};
       final style = (theme.bodyMedium ?? const TextStyle()).copyWith(fontSize: size, fontWeight: headingLevel != null ? FontWeight.bold : null);
-      return Semantics(header: headingLevel != null, headingLevel:headingLevel, child: Text(node.text ?? '', style: style));
+      return Semantics(header: headingLevel != null && !inButton, headingLevel:inButton ? null : headingLevel, child: Text(node.text ?? '', style: style));
     }
     final stretch=(node.kind=='Column'||node.kind=='Row')&&(node.align==null||node.align=='stretch');
     final childTightWidth=node.kind=='Column'&&stretch, childTightHeight=node.kind=='Row'&&stretch;
@@ -391,7 +391,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     for (final child in node.children) {
       final occurrence=occurrences.update(child.id,(value)=>value+1,ifAbsent:()=>0);
       final childPath='$path${child.id.length}:${child.id}:$occurrence;';
-      final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight);
+      final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight,inButton || node.kind=='Button');
       // Row gives non-flex children unbounded width. Material text inputs require a finite width.
       final layoutChild=node.kind=='Row' && _containsTextField(child) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
       // Preserve child state when another referenced component arrives or the order changes.

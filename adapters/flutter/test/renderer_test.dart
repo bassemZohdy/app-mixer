@@ -373,6 +373,27 @@ void main() {
     expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
 
+  testWidgets('heading-styled button labels do not expose a heading', (tester) async {
+    final semantics=tester.ensureSemantics();
+    try {
+      late void Function(Object?) receive;final errors=<Object>[],actions=<Map<String,dynamic>>[];
+      VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+      await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add,onAction:actions.add))));
+      receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+      receive(message('updateComponents',{'surfaceId':'main','components':[
+        {'id':'root','component':'Button','child':'nested','action':{'event':{'name':'go'}}},
+        {'id':'nested','component':'Column','children':['heading']},
+        {'id':'heading','component':'Text','text':'Continue','variant':'h2'}
+      ]}));
+      await tester.pump();final label=find.text('Continue');
+      final widget=tester.widget<Text>(label);expect(widget.style?.fontSize,24);expect(widget.style?.fontWeight,FontWeight.bold);
+      final labelSemantics=tester.widget<Semantics>(find.ancestor(of:label,matching:find.byType(Semantics)).first);
+      expect(labelSemantics.properties.header,isFalse);expect(labelSemantics.properties.headingLevel,isNull);
+      final button=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(button.flagsCollection.isButton,isTrue);expect(button.flagsCollection.isHeader,isFalse);expect(button.label,'Continue');
+      await tester.tap(find.byType(TextButton));await tester.pump();expect((actions.single['action'] as Map)['name'],'go');expect(errors,isEmpty);
+    } finally {semantics.dispose();}
+  });
+
   testWidgets('text retains host font and color and respects text scaling', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

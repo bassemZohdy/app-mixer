@@ -77,6 +77,10 @@ void main() {
     await tester.enterText(find.byType(TextField),'Grace');await tester.pump();expect(find.byWidgetPredicate((w)=>w is Text && w.data=='Grace'),findsOneWidget);
     await tester.tap(find.byType(TextButton));await tester.pump();
     expect((actions.single['action'] as Map)['context'],{'name':'Grace'});expect(errors,isEmpty);
+    receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[{'id':'label','component':'Text','text':'Save','variant':'h2'}]}});
+    await tester.pump();final styled=tester.widget<Semantics>(find.ancestor(of:find.text('Save'),matching:find.byType(Semantics)).first);
+    expect(styled.properties.header,isFalse);expect(styled.properties.headingLevel,isNull);
+    final styledButton=tester.getSemantics(find.byType(TextButton)).getSemanticsData();expect(styledButton.flagsCollection.isButton,isTrue);expect(styledButton.flagsCollection.isHeader,isFalse);expect(styledButton.label,'Save');
     } finally {semantics.dispose();}
   });
 }

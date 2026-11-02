@@ -101,6 +101,12 @@ void main() {
     expect((actions.single['action'] as Map)['context'], {'name': 'Grace'});
     expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, 'Grace', reason: 'Submitted field must retain the edited value');
     expect(tester.getSemantics(find.byType(EditableText)).getSemanticsData().value, 'Grace', reason: 'Edited value must remain accessible after submit');
+    receive({'version': 'v0.9.1', 'updateComponents': {'surfaceId': 'main', 'components': [{'id': 'label', 'component': 'Text', 'text': 'Save', 'variant': 'h2'}]}});
+    await tester.pumpAndSettle();
+    final styled = tester.widget<Semantics>(find.ancestor(of: find.text('Save'), matching: find.byType(Semantics)).first);
+    expect(styled.properties.header, isFalse);expect(styled.properties.headingLevel, isNull);
+    final styledButton = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
+    expect(styledButton.flagsCollection.isButton, isTrue);expect(styledButton.flagsCollection.isHeader, isFalse);expect(styledButton.label, 'Save');
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AppMixerA2UI(subscribe: subscribe, onError: errors.add))));
     await tester.pumpAndSettle();
     final disabled = tester.getSemantics(find.byType(TextButton)).getSemanticsData();
