@@ -5,10 +5,25 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentRunHistory,SqliteAgentSchedules,SqliteAgentWakeupRetention} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentRunHistory,SqliteAgentSchedules,SqliteAgentWakeupRetention,AgentWakeupRetentionWorker} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},other={...scope,tenantId:'other'},event={sourceId:'webhook',principalId:'sender',eventId:'event-1',eventType:'message',payload:{text:'hello',count:1}},config={definitionVersion:1,maxAttempts:3,deadline:1000},triggerConfig={...config,maxPending:10};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'agent-wakeup-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path);return {dir,path,runs,triggers};}
 function close(s){s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
+
+test('wakeup retention worker enforces age again at redaction and retries denied candidates',async()=>{
+ const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention;try{
+  let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;run=s.runs.request(scope,'run',run.revision,'pause',4);run=s.runs.resumeWithTrigger(scope,'run',run.revision,{...event,eventId:'event-2'},5).run;s.runs.request(scope,'run',run.revision,'cancel',7);
+  retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>true});let now=20,allow=false;const errors=[];const worker=new AgentWakeupRetentionWorker({retention,actor,minAgeMs:10,maxPerPass:1,pollMs:100,clock:()=>now,authorize:()=>allow,onError:e=>errors.push(e)});
+  assert.equal(await worker.runOnce(),0);assert.equal(await worker.runOnce(),0);allow=true;assert.equal(await worker.runOnce(),1);assert.equal(await worker.runOnce(),1);assert.equal(errors.length,0);
+  let next=s.runs.create(scope,'next',config,1);next=s.runs.request(scope,'next',next.revision,'pause',2);next=s.runs.resumeWithTrigger(scope,'next',next.revision,{...event,eventId:'next'},10).run;s.runs.request(scope,'next',next.revision,'cancel',11);now=30;
+  const rollback=new AgentWakeupRetentionWorker({retention,actor,minAgeMs:10,maxPerPass:10,pollMs:100,clock:()=>now,authorize:()=>{now=20;return true;},onError:e=>errors.push(e)});assert.equal(await rollback.runOnce(),0);assert.deepEqual(s.runs.getWakeup(scope,'webhook','next').payload,event.payload);
+  assert.equal(await retention.redact(actor,'webhook','next',30,undefined,{minAgeMs:10,clock:()=>20}),false);assert.equal(await retention.redact(actor,'webhook','next',30,undefined,{minAgeMs:10,clock:()=>21,basis:'completion'}),false);assert.equal(await retention.redact(actor,'webhook','next',30,undefined,{minAgeMs:10,clock:()=>22,basis:'completion'}),true);
+ }finally{retention?.close();close(s);}
+});
+
+test('stopping a wakeup retention worker fences late authorization',async()=>{
+ const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>true});let release,entered;const waiting=new Promise(resolve=>entered=resolve),decision=new Promise(resolve=>release=resolve);const worker=new AgentWakeupRetentionWorker({retention,actor,minAgeMs:1,maxPerPass:1,pollMs:100,clock:()=>10,authorize:()=>{entered();return decision;},onError:()=>{}});const pending=worker.runOnce();await waiting;const stopping=worker.stop();release(true);await stopping;assert.equal(await pending,0);assert.deepEqual(s.runs.getWakeup(scope,'webhook','event-1').payload,event.payload);}finally{retention?.close();close(s);}
+});
 
 test('wakeup discovery requires separate permission and lists only eligible scoped records',async()=>{
  const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,denied;try{
