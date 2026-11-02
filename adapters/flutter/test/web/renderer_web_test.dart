@@ -7,6 +7,31 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('preserves isolated surfaces through updates and recreation', verifySurfaceParity);
+  testWidgets('exposes the correct heading levels to web semantics', (tester) async {
+    final semantics=tester.ensureSemantics();
+    try {
+      late void Function(Object?) receive;
+      VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+      final errors=<Object>[];
+      await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add))));
+      receive({'version':'v0.9.1','createSurface':{'surfaceId':'main','catalogId':appMixerCatalog}});
+      receive({'version':'v0.9.1','updateComponents':{'surfaceId':'main','components':[
+        {'id':'root','component':'Column','children':['h1','h2','h3','h4','h5','body','caption']},
+        for(final variant in ['h1','h2','h3','h4','h5','body','caption'])
+          {'id':variant,'component':'Text','text':'Text $variant','variant':variant}
+      ]}});
+      await tester.pump();
+      for(var level=1;level<=5;level++) {
+        final data=tester.getSemantics(find.text('Text h$level')).getSemanticsData();
+        expect(data.flagsCollection.isHeader,isTrue);expect(data.headingLevel,level);
+      }
+      for(final variant in ['body','caption']) {
+        final data=tester.getSemantics(find.text('Text $variant')).getSemanticsData();
+        expect(data.flagsCollection.isHeader,isFalse);expect(data.headingLevel,0);
+      }
+      expect(errors,isEmpty);expect(tester.takeException(),isNull);
+    } finally {semantics.dispose();}
+  });
   testWidgets('root row uses its bounded width on the web', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

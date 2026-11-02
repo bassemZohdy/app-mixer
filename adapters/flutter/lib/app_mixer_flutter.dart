@@ -380,8 +380,9 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
         'caption' => 13.33,
         _ => 16.0,
       };
-      final style = (theme.bodyMedium ?? const TextStyle()).copyWith(fontSize: size, fontWeight: node.variant?.startsWith('h') == true ? FontWeight.bold : null);
-      return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? '', style: style));
+      final headingLevel = switch (node.variant) {'h1'=>1,'h2'=>2,'h3'=>3,'h4'=>4,'h5'=>5,_=>null};
+      final style = (theme.bodyMedium ?? const TextStyle()).copyWith(fontSize: size, fontWeight: headingLevel != null ? FontWeight.bold : null);
+      return Semantics(header: headingLevel != null, headingLevel:headingLevel, child: Text(node.text ?? '', style: style));
     }
     final stretch=(node.kind=='Column'||node.kind=='Row')&&(node.align==null||node.align=='stretch');
     final childTightWidth=node.kind=='Column'&&stretch, childTightHeight=node.kind=='Row'&&stretch;
