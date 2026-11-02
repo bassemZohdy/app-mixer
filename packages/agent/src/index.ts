@@ -223,8 +223,8 @@ export type {PaddleWebhookOptions} from './paddle-webhook.js';
 export {AgentBudgetRecovery} from './agent-budget-recovery.js';
 export type {AgentBudgetRecoveryActor,AgentBudgetRecoveryTarget,AgentBudgetVerifiedUsage,AgentBudgetRecoveryOptions} from './agent-budget-recovery.js';
 
-export {registerBudgetRecovery,registerBudgetRecoveryHistory} from './agent-budget-recovery-capability.js';
-export type {BudgetRecoveryCapabilityOptions,BudgetRecoveryHistoryCapabilityOptions} from './agent-budget-recovery-capability.js';
+export {registerBudgetRecovery,registerBudgetRecoveryHistory,registerBudgetRecoveryPending} from './agent-budget-recovery-capability.js';
+export type {BudgetRecoveryCapabilityOptions,BudgetRecoveryHistoryCapabilityOptions,BudgetRecoveryPendingCapabilityOptions} from './agent-budget-recovery-capability.js';
 
 export {SqliteAgentBudgetRecoveryDiscovery} from './agent-budget-recovery-discovery.js';
 export type {AgentBudgetRecoveryCandidate,AgentBudgetRecoveryPage,AgentBudgetRecoveryDiscoveryActor,AgentBudgetRecoveryDiscoveryOptions} from './agent-budget-recovery-discovery.js';
