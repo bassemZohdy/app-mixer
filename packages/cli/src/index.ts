@@ -133,7 +133,7 @@ createServer(async(req,res)=>{
     catch(error){if(!res.destroyed){if(error?.message==='UPLOAD_TIMEOUT'||error?.message==='TOO_LARGE')res.setHeader('Connection','close');json(res,error?.message==='UPLOAD_TIMEOUT'?408:error?.message==='TOO_LARGE'?413:400,{error:error?.message==='UPLOAD_TIMEOUT'?'Request timed out':error?.message==='TOO_LARGE'?'Request too large':'Invalid request'});}return;}
     try {
       await tracing.upstream('POST','/capabilities/{operationId}/invoke',async(traceHeaders,report)=>{const upstream=await fetch(new URL(capabilityMatch[1]+'/invoke',capabilityURL),{method:'POST',headers:{...traceHeaders,'Content-Type':'application/json','Authorization':'Bearer '+process.env.CAPABILITY_TOKEN},body:JSON.stringify({origin:'ui',input}),redirect:'error',signal:AbortSignal.timeout(capabilityTimeoutMs)});report(upstream.status);
-      if(![200,400,401,403,404,409,413,415,500,503].includes(upstream.status)||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||'')||!upstream.body)throw Error('Invalid capability response');
+      if(![200,400,401,403,404,409,413,415,429,500,503].includes(upstream.status)||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||'')||!upstream.body)throw Error('Invalid capability response');
       const chunks=[];let length=0;for await(const chunk of upstream.body){length+=chunk.length;if(length>capabilityResponseLimit)throw Error('Capability response too large');chunks.push(chunk);}
       const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));json(res,upstream.status,result);},capabilityPropagation);
     }catch{if(!res.destroyed)json(res,502,{error:'Capability service unavailable'});}
