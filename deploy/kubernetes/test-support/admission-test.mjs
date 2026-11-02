@@ -13,7 +13,7 @@ const env=(c,name)=>c.env.find(e=>e.name===name);
 // be denied before asserting individual rejection cases.
 const unsigned=structuredClone(original);env(unsigned.spec.template.spec.containers[0],'APP_MIXER_PUBLICATION_MODE').value='unsigned';
 let enforced;for(let i=0;i<30;i++){enforced=apply(unsigned);if(enforced.status!==0&&enforced.stderr.includes('app-mixer-data-plane-security'))break;await delay(1000);}if(enforced.status===0||!enforced.stderr.includes('app-mixer-data-plane-security'))throw Error('Admission policy did not become active: '+enforced.stderr);
-// The optional TLS reload interval is the only variable beyond the approved set; it must be unique and one of the approved values.
+// The optional TLS reload interval must be unique and one of the approved values.
 const reload=structuredClone(original);reload.spec.template.spec.containers[0].env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'});const accepted=apply(reload);if(accepted.status!==0){const live=spawnSync('kubectl',['get','validatingadmissionpolicy','app-mixer-data-plane-security','-o','jsonpath={.status}'],{encoding:'utf8'}).stdout;const e0=reload.spec.template.spec.containers[0].env;throw Error('Expected TLS reload interval to pass: '+accepted.stderr+' env='+e0.length+' names='+e0.map(e=>e.name).join(',')+' status='+live);}
 changed('unlisted TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'1000'}));
 changed('non-numeric TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'soon'}));
@@ -23,6 +23,9 @@ const withMetrics=value=>{const object=structuredClone(metrics);object.spec.temp
 for(const value of ['39092','65535']){const result=apply(withMetrics(value));if(result.status!==0)throw Error('Expected metrics port '+value+' to pass: '+result.stderr);}
 for(const value of ['abc','0','65536','3002','070']){const result=apply(withMetrics(value));if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('Metrics port '+value+' was not denied: '+result.stderr);}
 changed('duplicate metrics port',(_,c)=>c.env.push({name:'APP_MIXER_METRICS_PORT',value:'39093'}));
+for(const [name,values] of [['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS',['100','5000','30000']],['APP_MIXER_PUBLICATION_AUTH_MAX_PENDING',['1','20','100']]])for(const value of values){const object=structuredClone(original);object.spec.template.spec.containers[0].env.push({name,value});const result=apply(object);if(result.status!==0)throw Error('Expected '+name+'='+value+' to pass: '+result.stderr);}
+for(const [name,values] of [['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS',['0','99','30001','0100','1.5','invalid']],['APP_MIXER_PUBLICATION_AUTH_MAX_PENDING',['0','101','01','1.5','invalid']]])for(const value of values)changed('invalid '+name+'='+value,(_,c)=>c.env.push({name,value}));
+for(const name of ['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS','APP_MIXER_PUBLICATION_AUTH_MAX_PENDING'])changed('duplicate '+name,(_,c)=>c.env.push({name,value:name.endsWith('TIMEOUT_MS')?'5000':'20'},{name,value:name.endsWith('TIMEOUT_MS')?'5000':'20'}));
 changed('unapproved extra variable',(_,c)=>c.env.push({name:'APP_MIXER_DEBUG',value:'1'}));
 changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value='unsigned');
 changed('public access',(_,c)=>env(c,'APP_MIXER_ACCESS_MODE').value='public');
