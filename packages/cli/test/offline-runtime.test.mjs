@@ -15,6 +15,23 @@ import {DatabaseSync} from 'node:sqlite';
 const token='capability-secret-at-least-thirty-two-characters',scope={tenantId:'tenant',applicationId:'demo-app',principalId:'local'};
 const waitFor=async condition=>{for(let i=0;i<250;i++){if(await condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for offline integration');};
 
+test('generated browser recovery requires host confirmation and verified outcomes',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-browser-recovery-'));let runtime,queue,release;
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),{EncryptedBrowserQueue}=await import(pathToFileURL(join(target,'offline.js')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();
+  let actor={...scope},confirmed=false,outcome='unknown',pause=false,started,verifyGate,verifyStarted;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+  const config={enabled:true,databaseName:'browser-recovery',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,confirmAbandoned:async item=>{item.payload.value='mutated';if(pause){started();await gate;}return confirmed;},verifyOutcome:async()=>{if(verifyGate){verifyStarted();await verifyGate;}return outcome;},dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
+  queue=await EncryptedBrowserQueue.open(config);let item=await queue.enqueue('items.update','recover',{value:'original'});item=await queue.transition(item.id,item.version,'claim');runtime=await createGeneratedOfflineRuntime(config);
+  await assert.rejects(runtime.recoverAbandoned(item.id,item.version),/not allowed/);assert.equal((await queue.get(item.id)).status,'running');
+  confirmed=true;pause=true;const pending=runtime.recoverAbandoned(item.id,item.version);await waiting;actor={...scope,principalId:'other'};release();await assert.rejects(pending,/not allowed/);actor={...scope};pause=false;
+  item=await runtime.recoverAbandoned(item.id,item.version);assert.equal(item.status,'uncertain');assert.equal(item.payload.value,'original');assert.equal((await runtime.verifyUncertain(item.id,item.version)).status,'uncertain');
+  outcome='invalid';await assert.rejects(runtime.verifyUncertain(item.id,item.version),/Invalid offline verification/);outcome='not_applied';const stale=item;item=await runtime.verifyUncertain(item.id,item.version);assert.equal(item.status,'pending');await assert.rejects(runtime.verifyUncertain(stale.id,stale.version),/not allowed/);
+  item=await queue.transition(item.id,item.version,'claim');item=await queue.transition(item.id,item.version,'uncertain');outcome='applied';item=await runtime.verifyUncertain(item.id,item.version);assert.equal(item.status,'succeeded');await runtime.close();runtime=undefined;
+  let other=await queue.enqueue('items.update','competing',{value:'other'});other=await queue.transition(other.id,other.version,'claim');other=await queue.transition(other.id,other.version,'uncertain');runtime=await createGeneratedOfflineRuntime(config);let releaseVerify;verifyGate=new Promise(resolve=>releaseVerify=resolve);const verifyWaiting=new Promise(resolve=>verifyStarted=resolve),verifying=runtime.verifyUncertain(other.id,other.version);await verifyWaiting;await queue.transition(other.id,other.version,'reconcileNotApplied');releaseVerify();await assert.rejects(verifying,/version conflict/);verifyGate=undefined;assert.equal((await queue.get(other.id)).status,'pending');await runtime.close();runtime=undefined;
+  delete config.confirmAbandoned;delete config.verifyOutcome;runtime=await createGeneratedOfflineRuntime(config);await assert.rejects(runtime.recoverAbandoned(item.id,item.version),/not allowed/);await assert.rejects(runtime.verifyUncertain(item.id,item.version),/not allowed/);
+ }finally{release?.();if(runtime)await runtime.close();queue?.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('generated offline runtime applies and synchronizes a host rollback anchor',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-runtime-anchor-'));let runtime,db;
  try{

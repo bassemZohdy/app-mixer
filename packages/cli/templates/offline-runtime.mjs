@@ -3,13 +3,13 @@ import {invokeCapability} from './capabilities.mjs';
 
 // Trusted host code supplies an unlocked key, current identity and authorized transport.
 export async function createGeneratedOfflineRuntime(config){
-  if(!config||config.enabled!==true||!Array.isArray(config.operations)||!config.operations.length||config.operations.length>100||typeof config.canEnqueue!=='function'||typeof config.canDiscard!=='function'||(config.canRetire!==undefined&&typeof config.canRetire!=='function')||typeof config.isOnline!=='function'||typeof config.resolveActor!=='function'||typeof config.dispatch!=='function'||typeof config.classify!=='function'||typeof config.onError!=='function'||typeof config.loadCurrent!=='function')throw Error('Invalid offline runtime configuration');
+  if(!config||config.enabled!==true||!Array.isArray(config.operations)||!config.operations.length||config.operations.length>100||typeof config.canEnqueue!=='function'||typeof config.canDiscard!=='function'||(config.canRetire!==undefined&&typeof config.canRetire!=='function')||(config.confirmAbandoned!==undefined&&typeof config.confirmAbandoned!=='function')||(config.verifyOutcome!==undefined&&typeof config.verifyOutcome!=='function')||typeof config.isOnline!=='function'||typeof config.resolveActor!=='function'||typeof config.dispatch!=='function'||typeof config.classify!=='function'||typeof config.onError!=='function'||typeof config.loadCurrent!=='function')throw Error('Invalid offline runtime configuration');
   const pattern=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,operations=new Map();
   for(const operation of config.operations){
     if(!operation||typeof operation.id!=='string'||!pattern.test(operation.id)||typeof operation.label!=='string'||!operation.label.trim()||operation.label.length>120||operations.has(operation.id))throw Error('Invalid offline operation');
     operations.set(operation.id,operation.label);
   }
-  const {canEnqueue,canDiscard,canRetire,isOnline,resolveActor,dispatch,classify,onError,loadCurrent}=config;
+  const {canEnqueue,canDiscard,canRetire,confirmAbandoned,verifyOutcome,isOnline,resolveActor,dispatch,classify,onError,loadCurrent}=config;
   const scope={tenantId:config.scope?.tenantId,applicationId:config.scope?.applicationId,principalId:config.scope?.principalId};
   const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{}),...(config.rollbackAnchor!==undefined?{rollbackAnchor:config.rollbackAnchor}:{})});
   let closed=false,closePromise;const panels=new Set();
@@ -35,6 +35,20 @@ export async function createGeneratedOfflineRuntime(config){
       ensureOpen();if(!canRetire||!await current())throw Error('Offline operation not allowed');
       const item=await queue.get(id);if(!item||!operations.has(item.operationId)||!['succeeded','discarded','retired'].includes(item.status)||await canRetire(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
       return queue.retire(id,expectedVersion);
+    },
+    async recoverAbandoned(id,expectedVersion){
+      ensureOpen();if(!confirmAbandoned||!await current())throw Error('Offline operation not allowed');
+      const item=await queue.get(id);if(!item||item.version!==expectedVersion||item.status!=='running'||!operations.has(item.operationId)||closed||!await current())throw Error('Offline operation not allowed');
+      if(await confirmAbandoned(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
+      return queue.transition(id,expectedVersion,'uncertain');
+    },
+    async verifyUncertain(id,expectedVersion){
+      ensureOpen();if(!verifyOutcome||!await current())throw Error('Offline operation not allowed');
+      const item=await queue.get(id);if(!item||item.version!==expectedVersion||item.status!=='uncertain'||!operations.has(item.operationId)||closed||!await current())throw Error('Offline operation not allowed');
+      const outcome=await verifyOutcome(structuredClone(item),{...scope});if(closed||!await current())throw Error('Offline operation not allowed');
+      if(outcome==='unknown'){const latest=await queue.get(id);if(closed||!await current()||!latest||latest.version!==expectedVersion||latest.status!=='uncertain')throw Error('Offline version conflict');return latest;}
+      if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid offline verification outcome');
+      return queue.transition(id,expectedVersion,outcome==='applied'?'reconcileApplied':'reconcileNotApplied');
     },
     mountConflicts(root){
       ensureOpen();const panel=mountOfflineConflictPanel(root,queue,{
