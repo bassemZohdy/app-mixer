@@ -53,7 +53,7 @@ function normalizeFields(fields,schemaKeys=false) {
   if(fields===undefined)return undefined;
   if(!Array.isArray(fields)||fields.length<1||fields.length>40)throw Error('Invalid record fields');
   const seen=new Set();return fields.map(field=>{
-    if(!field||typeof field!=='object'||Array.isArray(field)||Object.keys(field).some(key=>!['key','label','type','required','min','max','maxLength','options'].includes(key))||typeof field.key!=='string'||(schemaKeys?(!field.key.length||field.key.length>64||/[\\x00-\\x1f\\x7f]/.test(field.key)):!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(field.key))||['constructor','prototype','__proto__'].includes(field.key)||seen.has(field.key)||typeof field.label!=='string'||!field.label.trim()||field.label.length>120||!['string','number','integer','boolean'].includes(field.type)||(field.required!==undefined&&typeof field.required!=='boolean'))throw Error('Invalid record fields');
+    if(!field||typeof field!=='object'||Array.isArray(field)||Object.keys(field).some(key=>!['key','label','type','required','min','max','maxLength','options'].includes(key))||typeof field.key!=='string'||(schemaKeys?(field.key.length>64||/[\\x00-\\x1f\\x7f]/.test(field.key)):!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(field.key))||['constructor','prototype','__proto__'].includes(field.key)||seen.has(field.key)||typeof field.label!=='string'||!field.label.trim()||field.label.length>120||!['string','number','integer','boolean'].includes(field.type)||(field.required!==undefined&&typeof field.required!=='boolean'))throw Error('Invalid record fields');
     seen.add(field.key);const numeric=field.type==='number'||field.type==='integer';
     if((field.min!==undefined&&(!numeric||!Number.isFinite(field.min)))||(field.max!==undefined&&(!numeric||!Number.isFinite(field.max)))||(field.min!==undefined&&field.max!==undefined&&field.min>field.max)||(field.maxLength!==undefined&&(field.type!=='string'||!Number.isSafeInteger(field.maxLength)||field.maxLength<1||field.maxLength>4096))||(field.options!==undefined&&(field.type!=='string'||!Array.isArray(field.options)||field.options.length<1||field.options.length>100||field.options.some(value=>typeof value!=='string'||!value||value.length>120)||new Set(field.options).size!==field.options.length)))throw Error('Invalid record fields');
     return {key:field.key,label:field.label,type:field.type,required:field.required===true,...(field.min===undefined?{}:{min:field.min}),...(field.max===undefined?{}:{max:field.max}),...(field.maxLength===undefined?{}:{maxLength:field.maxLength}),...(field.options===undefined?{}:{options:[...field.options]})};
@@ -224,8 +224,8 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     for(const [key,originalProperty] of Object.entries(node.properties)){
       const property=object(originalProperty)?schemaScalar(originalProperty):originalProperty;
       if(++context.nodes>200)throw Error('Unsupported record JSON Schema form');
-      if(!key.length||key.length>64||/[\\x00-\\x1f\\x7f]/.test(key)||['constructor','prototype','__proto__'].includes(key)||!object(property))throw Error('Unsupported record JSON Schema form');
-      const next=[...path,key],name=property.title??key,requiredField=required.includes(key);
+      if(key.length>64||/[\\x00-\\x1f\\x7f]/.test(key)||['constructor','prototype','__proto__'].includes(key)||!object(property))throw Error('Unsupported record JSON Schema form');
+      const next=[...path,key],name=property.title??(key||'(empty property name)'),requiredField=required.includes(key);
       if(property.type==='object'){visit(property,next,[...labels,name],requiredField,depth+1);continue;}
       if(property.type==='array'){
         if(property.description!==undefined&&(typeof property.description!=='string'||property.description.length>1024))throw Error('Unsupported record JSON Schema form');
