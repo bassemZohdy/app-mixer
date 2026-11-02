@@ -11,7 +11,7 @@ const React=require('react');const {createRoot}=require('react-dom/client');
 const View=({children,style})=>React.createElement('div',{style},children);
 const Text=({children,accessibilityRole,accessible,style,'aria-level':level})=>React.createElement('span',{'data-role':accessibilityRole,'data-accessible':accessible,'data-level':level,style},children);
 let change;const TextInput=props=>{change=props.onChangeText;return React.createElement('input',{value:props.value,readOnly:true});};
-const Pressable=({children,onPress,disabled})=>React.createElement('button',{onClick:onPress,disabled},children);
+const Pressable=({children,onPress,disabled,style})=>React.createElement('button',{onClick:onPress,disabled,style},children);
 const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform:{OS:'android'}});const root=createRoot(document.getElementById('app'));
 let receive,unsubscribed=0;const errors=[],actions=[];
 const subscribe=callback=>{receive=callback;return ()=>{unsubscribed++;};};
@@ -50,6 +50,9 @@ try{
  assert.deepEqual(variants.map(node=>node.dataset.accessible??''),['true','true','true','true','true','','','']);
  await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Row',children:['direct','column']},{id:'direct',component:'Text',text:'A long row label',variant:'h2'},{id:'column',component:'Column',children:['nestedText']},{id:'nestedText',component:'Text',text:'Column text'}]}}));
  const [rowLabel,columnText]=document.querySelectorAll('span');assert.equal(rowLabel.style.flexShrink,'1');assert.equal(rowLabel.style.fontSize,'24px');assert.equal(rowLabel.dataset.role,'header');assert.equal(columnText.style.flexShrink,'');
+ await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Row',children:['field','rowButton']},{id:'field',component:'TextField',label:'Row field',value:{path:'/row'}},{id:'rowButton',component:'Button',child:'rowLabel',action:{event:{name:'row'}}},{id:'rowLabel',component:'Text',text:'A long button label'}]}}));
+ const rowInput=document.querySelector('input'),rowButton=document.querySelector('button');assert.equal(rowInput.parentElement.style.flexShrink,'1');assert.equal(rowInput.parentElement.style.flexGrow,'1');assert.equal(rowInput.parentElement.style.minWidth,'0');assert.equal(rowButton.style.flexShrink,'1');assert.equal(rowButton.style.minWidth,'0');
+
  await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Button',child:'nested',action:{event:{name:'save'}}},{id:'nested',component:'Column',children:['nestedHeading']},{id:'nestedHeading',component:'Text',text:'Button heading',variant:'h2'}]}}));
  assert.equal(document.querySelector('button span').dataset.accessible,undefined);assert.equal(document.querySelector('button span').dataset.role,undefined);assert.equal(document.querySelector('button span').style.fontSize,'24px');assert.equal(document.querySelector('button').textContent,'Button heading');
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);

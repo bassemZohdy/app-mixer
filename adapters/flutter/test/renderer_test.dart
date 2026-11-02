@@ -434,6 +434,13 @@ void main() {
     receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Row','children':['label','field']},{'id':'label','component':'Text','text':text},{'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}}]}));
     await tester.pump();expect(tester.takeException(),isNull);expect(tester.getSize(find.text(text)).width,lessThanOrEqualTo(180));expect(tester.getSize(find.text(text)).height,greaterThan(20));await tester.enterText(find.byType(TextField),'Ada');await tester.pump();expect(tester.takeException(),isNull);expect(errors,isEmpty);
   });
+  testWidgets('long row buttons remain within bounds and dispatch actions', (tester) async {
+    late void Function(Object?) receive;VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[],actions=<Map<String,dynamic>>[],label='A long button label that wraps in a narrow row';
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:240,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add,onAction:actions.add))))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Row','children':['field','button']},{'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},{'id':'button','component':'Button','child':'label','action':{'event':{'name':'save','context':{'name':{'path':'/name'}}}}},{'id':'label','component':'Text','text':label}]}));
+    await tester.pump();expect(tester.takeException(),isNull);await tester.enterText(find.byType(TextField),'Ada');await tester.pump();await tester.tap(find.byType(TextButton));await tester.pump();expect(tester.takeException(),isNull);expect(actions.length,1);expect((actions.single['action'] as Map)['context'],{'name':'Ada'});expect(errors,isEmpty);
+  });
   testWidgets('default cross-axis alignment stretches column and row children', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

@@ -192,11 +192,11 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
       if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:inRow?{...textStyles[node.variant??'body'],flexShrink:1}:textStyles[node.variant??'body']},node.text);
-      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
+      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',...(inRow?{style:{flexShrink:1,minWidth:0}}:{}),disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
       }},...node.children.map(child=>render(child,surface,true)));
-      if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id},
+      if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id,...(inRow?{style:{flexShrink:1,flexGrow:1,minWidth:0}}:{})},
         React.createElement(primitives.Text,null,node.label),
         React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{
           if(!store||storeRef.current!==store)return;

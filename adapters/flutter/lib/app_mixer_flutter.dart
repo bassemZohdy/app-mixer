@@ -392,8 +392,8 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       final occurrence=occurrences.update(child.id,(value)=>value+1,ifAbsent:()=>0);
       final childPath='$path${child.id.length}:${child.id}:$occurrence;';
       final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight,inButton || node.kind=='Button');
-      // Row children containing text inputs and direct text need bounded width to avoid overflow.
-      final layoutChild=node.kind=='Row' && (child.kind=='Text' || _containsTextField(child)) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
+      // Direct text and buttons, and subtrees containing text inputs, need bounded row width.
+      final layoutChild=node.kind=='Row' && (child.kind=='Text' || child.kind=='Button' || _containsTextField(child)) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
       // Preserve child state when another referenced component arrives or the order changes.
       children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }
