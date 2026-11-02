@@ -35,3 +35,19 @@ test('extension-sign creates a verifiable package-bound manifest without overwri
   await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher']));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('extension-check-set verifies trusted packages and detects conflicts across extensions',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'mixer-extension-set-'));
+ try{
+  const keys=generateKeyPairSync('ed25519'),bytes=Buffer.from('approved package'),digest=computeExtensionIntegrity(bytes),base={manifestVersion:1,version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],tools:[],providers:[],permissions:[]};
+  await writeFile(join(dir,'key.pem'),keys.privateKey.export({format:'pem',type:'pkcs8'}));await writeFile(join(dir,'public.pem'),keys.publicKey.export({format:'pem',type:'spki'}));await writeFile(join(dir,'package.bin'),bytes);
+  const sign=async(id,component,filename)=>{const manifest={...base,id,components:[component]},source=join(dir,'source.json');await writeFile(source,JSON.stringify(manifest));await run(process.execPath,[cli,'extension-sign',source,join(dir,'package.bin'),join(dir,'key.pem'),'publisher',join(dir,filename)]);};
+  await sign('example.first','chart','first.json');await sign('example.second','chart2','second.json');
+  const artifacts=[{manifest:'first.json',package:'package.bin',keyId:'publisher'},{manifest:'second.json',package:'package.bin',keyId:'publisher'}],set={trustedKeys:{publisher:'public.pem'},artifacts},host={runtimeVersion:'0.1.0',renderer:'react',requireIntegrityPins:true,approved:['example.first','example.second'].map(id=>({id,version:'1.0.0',scope:'application',permissions:[],integrity:digest}))},requirements={components:['chart','chart2'],tools:[],providers:[]};
+  const config=join(dir,'set.json'),hostPath=join(dir,'host.json'),requirementsPath=join(dir,'requirements.json');await writeFile(config,JSON.stringify(set));await writeFile(hostPath,JSON.stringify(host));await writeFile(requirementsPath,JSON.stringify(requirements));const args=[cli,'extension-check-set',config,hostPath,requirementsPath];assert.match((await run(process.execPath,args,{cwd:tmpdir()})).stdout,/Compatible extensions: 2/);
+  await writeFile(config,JSON.stringify({...set,artifacts:[...artifacts,{...artifacts[0]}]}));await assert.rejects(run(process.execPath,args),/Duplicate extension/);
+  await writeFile(config,JSON.stringify({...set,artifacts:[artifacts[0],{...artifacts[1],keyId:'unknown'}]}));await assert.rejects(run(process.execPath,args),/Invalid extension artifact set/);
+  await sign('example.second','chart','collision.json');await writeFile(config,JSON.stringify({...set,artifacts:[artifacts[0],{...artifacts[1],manifest:'collision.json'}]}));await writeFile(requirementsPath,JSON.stringify({...requirements,components:['chart']}));await assert.rejects(run(process.execPath,args),/Duplicate components/);
+  await writeFile(config,JSON.stringify(set));await writeFile(join(dir,'package.bin'),Buffer.from('tampered'));await assert.rejects(run(process.execPath,args),/Invalid signed extension manifest/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
