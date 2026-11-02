@@ -33,3 +33,13 @@ test('stopping a manual dispatcher pass waits for the active run and leaves late
 test('dispatcher snapshots validated settings and retains its selected worker and error handler',async()=>{
  const s=setup(),other=setup();try{for(const id of ['a','b'])s.runs.create(scope,id,runConfig,0);const errors=[],executed=[],options={runs:s.runs,worker:worker(s,{authorizeStart:run=>run.runId!=='a',execute:async run=>{executed.push(run.runId);return 'succeeded';}}),scope:{...scope},maxPerPass:1,pollMs:100,onError:(error,id)=>errors.push(id)},d=new DurableAgentDispatcher(options);options.runs=other.runs;options.worker=worker(other);options.scope.tenantId='other';options.maxPerPass=1000;options.pollMs=0;options.onError=()=>{throw Error('replacement called');};assert.equal(await d.runOnce(),0);assert.deepEqual(errors,['a']);assert.equal(await d.runOnce(),1);assert.deepEqual(executed,['b']);assert.equal(s.runs.get(scope,'b').status,'succeeded');}finally{close(s);close(other);}
 });
+
+test('restarting a dispatcher does not revive an earlier polling loop',async()=>{
+ const s=setup(),originalSetTimeout=globalThis.setTimeout,originalClearTimeout=globalThis.clearTimeout,scheduled=new Set();let entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ try{
+  s.runs.create(scope,'a',runConfig,0);const w=worker(s,{execute:async()=>{entered();await gate;return 'succeeded';}}),d=dispatcher(s,w);
+  globalThis.setTimeout=(callback,delay,...args)=>{if(delay!==100)return originalSetTimeout(callback,delay,...args);const handle={callback,args};scheduled.add(handle);return handle;};
+  globalThis.clearTimeout=handle=>{if(scheduled.has(handle))scheduled.delete(handle);else originalClearTimeout(handle);};
+  d.start();await ready;const stopping=d.stop();release();await stopping;d.start();await new Promise(resolve=>setImmediate(resolve));assert.equal(scheduled.size,1);assert.equal(s.runs.get(scope,'a').status,'succeeded');await d.stop();assert.equal(scheduled.size,0);
+ }finally{release();globalThis.setTimeout=originalSetTimeout;globalThis.clearTimeout=originalClearTimeout;close(s);}
+});
