@@ -22,3 +22,14 @@ spec:
   matchResources:
     namespaceSelector:
       matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-mixer-data-plane-disruption-budget
+spec:
+  policyName: app-mixer-data-plane-disruption-budget
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}

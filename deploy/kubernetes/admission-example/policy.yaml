@@ -155,3 +155,28 @@ spec:
   validations:
     - message: Keep at least two Data Plane replicas when scaling.
       expression: "object.spec.replicas >= 2"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-data-plane-disruption-budget
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [policy]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [poddisruptionbudgets]
+  matchConditions:
+    - name: data-plane-name
+      expression: "request.operation == 'DELETE' ? oldObject.metadata.name == 'app-mixer-data-plane' : object.metadata.name == 'app-mixer-data-plane'"
+  validations:
+    - message: Preserve the Data Plane disruption budget and its exact selector.
+      expression: >-
+        request.operation != 'DELETE' && has(object.spec) && has(object.spec.minAvailable) && object.spec.minAvailable == 1 &&
+        !has(object.spec.maxUnavailable) && has(object.spec.selector) && has(object.spec.selector.matchLabels) &&
+        object.spec.selector.matchLabels.size() == 2 &&
+        'app.kubernetes.io/name' in object.spec.selector.matchLabels && object.spec.selector.matchLabels['app.kubernetes.io/name'] == 'app-mixer' &&
+        'app.kubernetes.io/component' in object.spec.selector.matchLabels && object.spec.selector.matchLabels['app.kubernetes.io/component'] == 'data-plane' &&
+        (!has(object.spec.selector.matchExpressions) || object.spec.selector.matchExpressions.size() == 0)
