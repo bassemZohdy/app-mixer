@@ -6,7 +6,7 @@ import {checkIdempotencyContract} from '../dist/index.js';
 
 // A small HTTP payment double whose idempotency behavior is selected per test.
 async function service(mode){
- const byKey=new Map(),effects=new Map();let sequence=0;
+ const concurrency=5,byKey=new Map(),effects=new Map();let sequence=0,countChecks=0,arrivals=0,release;const concurrentGate=new Promise(resolve=>release=resolve);
  const server=createServer(async(req,res)=>{
   const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString()),key=req.headers['idempotency-key'];
   const reply=(status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
@@ -14,17 +14,18 @@ async function service(mode){
   if(mode==='ignores-key')return reply(201,apply());
   const existing=byKey.get(key);
   if(existing){if(mode!=='accepts-conflict'&&JSON.stringify(existing.body)!==JSON.stringify(body))return reply(422,{error:'key reused'});return reply(200,existing.result);}
-  if(mode==='racy')await new Promise(resolve=>setTimeout(resolve,20));
+  // Hold every concurrent request after its first lookup until all have arrived.
+  if(mode==='racy'&&countChecks===1){if(++arrivals===concurrency)release();await concurrentGate;}
   const again=byKey.get(key);if(again&&mode!=='racy')return reply(200,again.result);
   const result=apply();byKey.set(key,{body,result});reply(201,result);
  });
  server.listen(0,'127.0.0.1');await once(server,'listening');const url=`http://127.0.0.1:${server.address().port}`;
- return {server,options:{input:{amount:100},conflictingInput:{amount:999},countEffects:async key=>effects.get(key)??0,dispatch:async(input,key)=>{const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','idempotency-key':key},body:JSON.stringify(input)});const value=await response.json();if(!response.ok)throw Error(value.error);return value;}}};
+ return {server,options:{concurrency,input:{amount:100},conflictingInput:{amount:999},countEffects:async key=>{countChecks++;return effects.get(key)??0;},dispatch:async(input,key)=>{const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','idempotency-key':key},body:JSON.stringify(input)});const value=await response.json();if(!response.ok)throw Error(value.error);return value;}}};
 }
 
-test('idempotency contract passes a conforming service and reports each class of defect',async()=>{
+test('idempotency contract passes a conforming service and reports each class of defect',{timeout:15000},async()=>{
  const expect={correct:[],'ignores-key':['sequential-replay','sequential-replay','concurrent-replay','concurrent-replay','conflicting-input','conflicting-input'],racy:['concurrent-replay','concurrent-replay'],'accepts-conflict':['conflicting-input']};
- for(const [mode,checks] of Object.entries(expect)){const {server,options}=await service(mode);try{const report=await checkIdempotencyContract(options);assert.equal(report.passed,checks.length===0,mode);assert.deepEqual(report.findings.map(finding=>finding.check),checks,mode+': '+JSON.stringify(report.findings));assert.equal(new Set(Object.values(report.keys)).size,3);}finally{server.close();}}
+ for(const [mode,checks] of Object.entries(expect)){const {server,options}=await service(mode);try{const report=await checkIdempotencyContract(options);assert.equal(report.passed,checks.length===0,mode);assert.deepEqual(report.findings.map(finding=>finding.check),checks,mode+': '+JSON.stringify(report.findings));assert.equal(new Set(Object.values(report.keys)).size,3);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}}
 });
 
 test('idempotency contract rejects unsafe configuration',async()=>{
