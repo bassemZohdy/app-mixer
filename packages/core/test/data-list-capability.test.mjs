@@ -112,3 +112,21 @@ test('bounded item policies time out without returning partial pages and retain 
   const recovered=await call();assert.equal(recovered.status,200);assert.deepEqual((await recovered.json()).result.items.map(item=>item.id),['a','b']);
  }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
 });
+
+test('optional page rechecks reject scope or record access revoked during a scan',async()=>{
+ for(const revoked of ['scope','record']){
+  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,started,blocked=true,scopeAllowed=true,recordAllowed=true,server;
+  const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+  try{
+   provider.put(scope,'items','a',{name:'secret'},null);provider.put(scope,'items','b',{name:'other'},null);
+   const options={candidate:{operationId:'checked.list',method:'GET',path:'/'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,authorize:()=>scopeAllowed,authorizeItem:async(_actor,item)=>{if(item.id==='b'&&blocked){started();await gate;}return item.id!=='a'||recordAllowed;}};
+   assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...options,recheckAuthorization:'true'}),/Invalid data list/);
+   registerDataListCapability(registry,provider,options);options.recheckAuthorization=false;
+   server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});server.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+   const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/checked.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});
+   const pending=call();await waiting;if(revoked==='scope')scopeAllowed=false;else recordAllowed=false;blocked=false;release();
+   const denied=await pending;assert.equal(denied.status,403);assert.deepEqual(await denied.json(),{error:'Capability forbidden'});
+   scopeAllowed=true;recordAllowed=true;const allowed=await call();assert.equal(allowed.status,200);assert.deepEqual((await allowed.json()).result.items.map(item=>item.id),['a','b']);
+  }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
+ }
+});
