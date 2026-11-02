@@ -18,7 +18,7 @@ type Options={
  acknowledgement?:'twiml';
  traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
  tracing?:{tracer:Tracer;propagateToRun?:boolean};
- maxPending:number;maxInFlight?:number;clock?:()=>number;
+ maxPending:number;maxInFlight?:number;requestTimeoutMs?:number;clock?:()=>number;
 };
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const reply=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));};
@@ -40,38 +40,45 @@ function validateEvent(value:unknown):EventRequest {
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
  if((options?.contentType!==undefined||options?.acknowledgement!==undefined)&&(options.contentType!=='application/x-www-form-urlencoded'||options.acknowledgement!=='twiml'||typeof options.authenticateRaw!=='function'||typeof options.mapAuthenticatedBody!=='function'||options.challengeAuthenticatedBody!==undefined))throw Error('Invalid event ingress');
- if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.maxInFlight!==undefined&&(!Number.isSafeInteger(options.maxInFlight)||options.maxInFlight<1||options.maxInFlight>10000))||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,maxInFlight,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
+ if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.maxInFlight!==undefined&&(!Number.isSafeInteger(options.maxInFlight)||options.maxInFlight<1||options.maxInFlight>10000))||(options.requestTimeoutMs!==undefined&&(!Number.isSafeInteger(options.requestTimeoutMs)||options.requestTimeoutMs<100||options.requestTimeoutMs>30000||options.maxInFlight===undefined))||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,maxInFlight,requestTimeoutMs,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
  let inFlight=0;
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   if(maxInFlight!==undefined&&inFlight>=maxInFlight){reply(res,503,{error:'Event ingress busy'});return;}
-  inFlight++;try{
+  inFlight++;let expired=false;const timer=requestTimeoutMs===undefined?undefined:setTimeout(()=>{expired=true;if(!res.writableEnded&&!res.destroyed){if(!req.complete)res.once('finish',()=>req.destroy());reply(res,503,{error:'Event ingress timeout'});}else if(!req.complete)req.destroy();},requestTimeoutMs);try{
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
   if(authenticate){try{source=await authenticate(req);}catch{}
+   if(expired)return;
    if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
    source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
   }
-  if(authenticateRaw||source){try{raw=await readBytes(req,contentType);}catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}}
+  if(authenticateRaw||source){try{raw=await readBytes(req,contentType);}catch(error){if(expired)return;const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}}
+  if(expired)return;
   if(authenticateRaw&&raw){try{source=await authenticateRaw(req,Buffer.from(raw));}catch{}}
+  if(expired)return;
   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
   if(challengeAuthenticatedBody){try{const challenge=challengeAuthenticatedBody(Buffer.from(raw!),{...source});if(challenge!==undefined){if(typeof challenge!=='string'||!/^[\x21-\x7e]{1,512}$/.test(challenge))throw Error('Invalid challenge');reply(res,200,{challenge});return;}}catch{reply(res,400,{error:'Invalid event'});return;}}
   let event:EventRequest;try{event=mapAuthenticatedBody?validateEvent(structuredClone(mapAuthenticatedBody(Buffer.from(raw!),{...source},req))):parse(raw!);}catch{reply(res,400,{error:'Invalid event'});return;}
   try{
    const selected=await definitions.get(source.tenantId,event.agentId);
+   if(expired)return;
    if(!selected||!selected.manifest.lifecycle.enabled||selected.manifest.tenantId!==source.tenantId||selected.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
    const definition=structuredClone(selected);
    let allowed=false;try{allowed=await authorize({...source},structuredClone(event),structuredClone(definition))===true;}catch{}
+   if(expired)return;
    let parent:string|undefined;if(allowed&&traceParent)try{const candidate=await traceParent(req,{...source},structuredClone(event));if(parseAgentTraceParent(candidate))parent=candidate;}catch{}
+   if(expired)return;
    const latest=await definitions.get(source.tenantId,event.agentId);
+   if(expired)return;
    if(!allowed||!latest||latest.version!==definition.version||!latest.manifest.lifecycle.enabled||latest.manifest.tenantId!==source.tenantId||latest.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
    const now=clock(),deadline=now+definition.manifest.lifecycle.runTimeoutMs;if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(deadline))throw Error('Invalid clock');
    let span:Span|undefined;try{if(tracing){const parsed=parseAgentTraceParent(parent),context=parsed?trace.setSpanContext(ROOT_CONTEXT,parsed):ROOT_CONTEXT;span=tracing.tracer.startSpan('agent.event.enqueue',{kind:SpanKind.PRODUCER},context);if(tracing.propagateToRun){const sc=span.spanContext(),candidate=`00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2,'0')}`;if(parseAgentTraceParent(candidate))parent=candidate;}}}catch{}
    let result:{runId:string;duplicate:boolean};try{result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);try{span?.setAttribute('app_mixer.agent.event.outcome',result.duplicate?'duplicate':'accepted');}catch{}}catch(error){try{span?.setStatus({code:SpanStatusCode.ERROR});span?.setAttribute('error.type','agent_event_enqueue_failed');}catch{}throw error;}finally{try{span?.end();}catch{}}
    if(acknowledgement==='twiml'){res.writeHead(200,{'content-type':'text/xml; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');}else reply(res,result.duplicate?200:202,result);
-  }catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='Trigger identity conflict'?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:message==='Trigger identity conflict'?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
-  }finally{inFlight--;}
+  }catch(error){if(expired)return;const message=error instanceof Error?error.message:'';reply(res,message==='Trigger identity conflict'?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:message==='Trigger identity conflict'?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
+  }finally{if(timer!==undefined)clearTimeout(timer);inFlight--;}
  });
 }
 export type {Options as AgentEventIngressOptions,SourceIdentity as AgentEventSourceIdentity,EventRequest as AgentEventRequest};
