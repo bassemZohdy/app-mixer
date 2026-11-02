@@ -11,6 +11,24 @@ const token='capability-secret-at-least-thirty-two-characters';
 async function start(target,env){const child=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',...env},stdio:['ignore','pipe','pipe']});const url=await new Promise((resolve,reject)=>{let output='',errors='';child.stderr.on('data',chunk=>errors+=chunk);child.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});child.once('error',reject);child.once('exit',code=>reject(Error('Server exited '+code+': '+errors)));});return {child,url};}
 async function stop(child){if(child.exitCode!==null||child.signalCode!==null)return;const exit=once(child,'exit');child.kill();await exit;}
 
+test('capability upload deadline releases capacity even while a client slowly sends data',{timeout:20000},async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'capability-upload-timeout-'));let upstream,child,upload,drip,calls=0;
+ try{
+  upstream=createServer(async(req,res)=>{for await(const _chunk of req){}calls++;res.writeHead(200,{'content-type':'application/json'});res.end('{"result":"ok"}');});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
+  const target=await createProject('upload-app',dir),app=await start(target,{CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token,CAPABILITY_MAX_IN_FLIGHT:'1',CAPABILITY_UPLOAD_TIMEOUT_MS:'500'});child=app.child;
+  const slow=new Promise((resolve,reject)=>{upload=request(app.url+'/api/capabilities/example',{method:'POST',headers:{origin:app.url,'content-type':'application/json'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});upload.on('error',reject);upload.write('{');drip=setInterval(()=>upload.write(' '),25);});
+  assert.equal(await slow,408);clearInterval(drip);assert.equal(calls,0);
+  const call=body=>fetch(app.url+'/api/capabilities/example',{method:'POST',headers:{origin:app.url,'content-type':'application/json'},body});
+  assert.equal((await call('{')).status,400);assert.equal((await call(JSON.stringify({text:'x'.repeat(1024*1024)}))).status,413);assert.equal(calls,0);
+  const fragmented=await new Promise((resolve,reject)=>{const req=request(app.url+'/api/capabilities/example',{method:'POST',headers:{origin:app.url,'content-type':'application/json'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.write('{');setTimeout(()=>req.end('}'),25);});assert.equal(fragmented,200);
+  assert.equal((await call('{}')).status,200);assert.equal(calls,2);assert.match(await readFile(join(target,'.env.example'),'utf8'),/^# CAPABILITY_UPLOAD_TIMEOUT_MS=5000$/m);
+ }finally{clearInterval(drip);upload?.destroy();if(child)await stop(child);if(upstream){upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));}await rm(dir,{recursive:true,force:true});}
+});
+
+test('generated server rejects invalid capability upload deadlines',{timeout:20000},async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'capability-upload-invalid-'));try{const target=await createProject('upload-app',dir);for(const value of ['0','99','30001','0100','abc','']){const child=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_UPLOAD_TIMEOUT_MS:value},stdio:['ignore','ignore','pipe']}),errors=[];child.stderr.on('data',chunk=>errors.push(String(chunk)));const [code]=await once(child,'exit');assert.notEqual(code,0);assert.match(errors.join(''),/Invalid CAPABILITY_UPLOAD_TIMEOUT_MS/);}}finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('capability proxy bounds in-flight requests and frees capacity after completion',{timeout:20000},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'capability-concurrency-'));let upstream,child,release,started,calls=0;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
  try{
@@ -31,7 +49,7 @@ test('capability proxy frees an admitted slot when an upload disconnects',{timeo
  const dir=await mkdtemp(join(tmpdir(),'capability-concurrency-disconnect-'));let upstream,child,upload;
  try{
   upstream=createServer(async(req,res)=>{for await(const _chunk of req){}res.writeHead(200,{'content-type':'application/json'});res.end('{"result":"ok"}');});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
-  const target=await createProject('concurrency-app',dir),app=await start(target,{CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token,CAPABILITY_MAX_IN_FLIGHT:'1'});child=app.child;
+  const target=await createProject('concurrency-app',dir),app=await start(target,{CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token,CAPABILITY_MAX_IN_FLIGHT:'1',CAPABILITY_UPLOAD_TIMEOUT_MS:'5000'});child=app.child;
   upload=request(app.url+'/api/capabilities/example',{method:'POST',headers:{origin:app.url,'content-type':'application/json'}});upload.on('error',()=>{});upload.write('{');
   const call=()=>fetch(app.url+'/api/capabilities/example',{method:'POST',headers:{origin:app.url,'content-type':'application/json'},body:'{}'});let busy=false;
   for(let i=0;i<100;i++){if((await call()).status===503){busy=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(busy,true);
