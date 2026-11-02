@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {createRemoteControlConnector} from './remote-control-connector.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
-import type {RemoteRolloutScope} from './remote-rollout.js';
+import type {RemoteRolloutScope,RemoteRolloutRecoveryEvidence,RemoteRolloutRecoveryEvent} from './remote-rollout.js';
 
 type Actor={tenantId:string;principalId:string};
 type Connector=ReturnType<typeof createRemoteControlConnector>;
@@ -20,6 +20,10 @@ export class PostgresRemoteRollout {
  isBoundTo(scope:RemoteRolloutScope):boolean{return !!scope&&JSON.stringify([scope.tenantId,scope.applicationId,scope.sourceEnvironment,scope.targetEnvironment])===this.key;}
  async initialize():Promise<void>{
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_remote_rollouts (id TEXT PRIMARY KEY,phase TEXT NOT NULL CHECK (phase IN ('idle','running','importing','uncertain')),token TEXT,source_version BIGINT,expected_version BIGINT)",[]);
+  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_remote_rollout_recovery_events (event_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT NULL,source_version BIGINT,expected_version BIGINT,observed_at BIGINT NOT NULL)',[]);
+  await this.query('CREATE INDEX IF NOT EXISTS app_mixer_rollout_recovery_scope ON app_mixer_remote_rollout_recovery_events(rollout_id,event_id)',[]);
+  await this.query("CREATE OR REPLACE FUNCTION app_mixer_rollout_recovery_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Recovery evidence is immutable'; END $$",[]);
+  await this.query("DO $$ BEGIN CREATE TRIGGER app_mixer_rollout_recovery_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_remote_rollout_recovery_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_rollout_recovery_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$",[]);
   await this.query("INSERT INTO app_mixer_remote_rollouts(id,phase) VALUES ($1,'idle') ON CONFLICT (id) DO NOTHING",[this.key]);
  }
  async getState():Promise<PostgresRemoteRolloutState>{
@@ -46,9 +50,16 @@ export class PostgresRemoteRollout {
    if(claimed){if(importing){try{await this.query("UPDATE app_mixer_remote_rollouts SET phase='uncertain' WHERE id=$1 AND phase='importing' AND token=$2",[this.key,token]);}catch{}}else{try{await this.release(token);}catch{}}}throw error;
   }finally{this.active=false;}
  }
- async recover(authorize:(state:PostgresRemoteRolloutState)=>boolean|Promise<boolean>):Promise<void>{
+ async recover(authorize:(state:PostgresRemoteRolloutState)=>boolean|Promise<boolean>,evidence?:RemoteRolloutRecoveryEvidence):Promise<void>{
+  if(evidence!==undefined&&(!evidence||!validText(evidence.principalId)||!validText(evidence.reference)||!Number.isSafeInteger(evidence.observedAt)||evidence.observedAt<0))throw Error('Invalid rollout recovery evidence');const recorded=evidence?{principalId:evidence.principalId,reference:evidence.reference,observedAt:evidence.observedAt}:undefined;
   if(this.active||typeof authorize!=='function')throw Error('Invalid remote rollout recovery');const state=await this.getState();if(state.phase==='idle'||!state.token)throw Error('No rollout requires recovery');let permitted=false;try{permitted=await authorize({...state})===true;}catch{}if(!permitted)throw Error('Remote rollout recovery denied');
-  await this.change("UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id",[this.key,state.phase,state.token]);
+  if(!recorded){await this.change("UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id",[this.key,state.phase,state.token]);return;}
+  await this.change("WITH changed AS (UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id) INSERT INTO app_mixer_remote_rollout_recovery_events(rollout_id,principal_id,reference,phase,source_version,expected_version,observed_at) SELECT id,$4,$5,$2,$6,$7,$8 FROM changed RETURNING event_id",[this.key,state.phase,state.token,recorded.principalId,recorded.reference,state.sourceVersion,state.expectedVersion,recorded.observedAt]);
  }
+ async listRecoveryEvidence(options:{after?:number;limit?:number}={}):Promise<{items:RemoteRolloutRecoveryEvent[];nextAfter?:number}>{
+  const after=options?.after??0,limit=options?.limit??50;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid rollout recovery listing');const rows=(await this.query('SELECT event_id,principal_id,reference,phase,source_version,expected_version,observed_at FROM app_mixer_remote_rollout_recovery_events WHERE rollout_id=$1 AND event_id>$2 ORDER BY event_id LIMIT $3',[this.key,after,limit+1])).rows;if(!Array.isArray(rows)||rows.length>limit+1)throw Error('Invalid rollout recovery listing');
+  const items=rows.slice(0,limit).map(row=>{const id=Number(row.event_id),observedAt=Number(row.observed_at),sourceVersion=row.source_version===null?null:Number(row.source_version),expectedVersion=row.expected_version===null?null:Number(row.expected_version),phase=row.phase;if(!version(id,1)||!version(observedAt,0)||!validText(row.principal_id)||!validText(row.reference)||!['running','importing','uncertain'].includes(String(phase))||(phase==='running'?(sourceVersion!==null||expectedVersion!==null):(!version(sourceVersion,1)||!version(expectedVersion,0))))throw Error('Invalid rollout recovery listing');return {id,principalId:row.principal_id,reference:row.reference,phase:phase as RemoteRolloutRecoveryEvent['phase'],sourceVersion,expectedVersion,observedAt};});return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.id}:{})};
+ }
+
 }
 export type {Options as PostgresRemoteRolloutOptions};

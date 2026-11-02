@@ -108,7 +108,7 @@ export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
-export type { RemoteRolloutScope } from './remote-rollout.js';
+export type { RemoteRolloutScope, RemoteRolloutRecoveryEvidence, RemoteRolloutRecoveryEvent } from './remote-rollout.js';
 export { registerRemoteRolloutStatusCapability } from './remote-rollout-status-capability.js';
 export { registerRemoteRolloutRecoveryCapability } from './remote-rollout-recovery-capability.js';
 export type { RemoteRolloutRecoveryCapabilityOptions, RemoteRolloutRecoveryState } from './remote-rollout-recovery-capability.js';
