@@ -1,0 +1,4 @@
+import {CapabilityRegistry,SqliteStagedOperations} from '../../dist/index.js';
+const store=new SqliteStagedOperations(process.env.STAGED_TEST_DB),registry=new CapabilityRegistry(()=>{}),scope={tenantId:'tenant',applicationId:'app'};
+registry.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:async input=>{const response=await fetch(process.env.STAGED_TEST_PROVIDER+'/pay',{method:'POST',headers:{'content-type':'application/json','idempotency-key':input.idempotencyKey},body:JSON.stringify(input.payload)});if(!response.ok)throw Error('Provider failed');return response.json();}});
+try{await store.submit(scope,process.env.STAGED_TEST_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});throw Error('Expected process termination');}finally{store.close();}
