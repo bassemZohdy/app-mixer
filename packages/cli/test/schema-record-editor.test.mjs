@@ -212,12 +212,12 @@ test('dependent schema properties validate only when the trigger exists',async()
   for(const name of ['valid','skip']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
-   for(const rule of [{properties:{unknown:{const:1}}},{properties:{phone:{type:'string',format:'email'}}},{required:['unknown']},{additionalProperties:false},{}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,dependentSchemas:{email:rule}}}),/Unsupported/);
+   for(const rule of [{properties:{unknown:{const:1}}},{properties:{phone:{type:'string',format:'email'}}},{required:['unknown']},{additionalProperties:{type:'string'}},{}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,dependentSchemas:{email:rule}}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('dependentSchemas rejects unsupported assertions and unknown fields in runtime and preview',async()=>{const s=await setup();try{for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const dependentSchemas of [{other:{required:['phone']}},{email:{required:['other']}},{email:{required:['phone','phone']}},{email:{properties:{phone:{type:'string',format:'email'}}}},{email:true},{email:{required:['phone'],additionalProperties:false}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentSchemas}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
+test('dependentSchemas rejects unsupported assertions and unknown fields in runtime and preview',async()=>{const s=await setup();try{for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const dependentSchemas of [{other:{required:['phone']}},{email:{required:['other']}},{email:{required:['phone','phone']}},{email:{properties:{phone:{type:'string',format:'email'}}}},{email:true},{email:{required:['phone'],additionalProperties:{type:'string'}}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentSchemas}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
 
 
 test('if/then/else validates conditional required fields against the assembled record',async()=>{
@@ -252,7 +252,7 @@ test('conditional branches validate typed fields and preserve optional-field sem
   for(const name of ['valid','validelse','optional']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
-   for(const then of [{properties:{unknown:{const:1}}},{properties:{price:{type:'number',multipleOf:0}}},{required:['unknown']},{additionalProperties:false},{}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,then}}),/Unsupported/);
+   for(const then of [{properties:{unknown:{const:1}}},{properties:{price:{type:'number',multipleOf:0}}},{required:['unknown']},{additionalProperties:{type:'string'}},{}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,then}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
@@ -304,6 +304,21 @@ test('object matching counts and validates property names in array items',async(
   dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
   for(const name of ['few','many','bad']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
   id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('closed object conditions and dependencies respect their own declared properties',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const conditional={type:'object',properties:{kind:{type:'string'},name:{type:'string'},note:{type:'string'}},if:{required:['kind'],properties:{kind:{const:'special'},name:{}},minProperties:2,maxProperties:2,propertyNames:{pattern:'^[a-z]+$'},additionalProperties:false},then:{properties:{kind:{},name:{type:'string',pattern:'^OK'}},additionalProperties:false},else:{properties:{kind:{},name:{},note:{}},additionalProperties:false}},dependent={type:'object',properties:{email:{type:['string','null']},phone:{type:'string'},note:{type:'string'}},dependentSchemas:{email:{properties:{email:{},phone:{type:'string'}},additionalProperties:false}}};
+  const scenarios=[{jsonSchema:conditional,records:{bad:{kind:'special',name:'bad'},extra:{kind:'ordinary',name:'A',extra:1},valid:{kind:'special',name:'OK'},fallback:{kind:'special',name:'bad',note:'N'}},invalid:['bad','extra'],valid:['valid','fallback'],error:/does not satisfy a condition/},{jsonSchema:dependent,records:{extra:{email:null,phone:'123',note:'not allowed'},valid:{email:null,phone:'123'},skip:{note:'N',extra:1}},invalid:['extra'],valid:['valid','skip'],error:/object does not satisfy the dependency for email/}],saved=[];
+  let records,validate;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');for(const scenario of scenarios){records=scenario.records;validate=createRecordJsonSchemaValidator(scenario.jsonSchema);const options={getOperation:'items.get',putOperation:'items.put',jsonSchema:scenario.jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+   for(const name of scenario.invalid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();assert.match(root.textContent,scenario.error);assert.equal(validate(records[name]),false);assert.equal(saved.length,before);}
+   for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
+   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
+  }
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rule of [{additionalProperties:'false'},{additionalProperties:{type:'string'}},{minProperties:-1},{propertyNames:{pattern:'['}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,if:rule}}),/Unsupported/);
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
