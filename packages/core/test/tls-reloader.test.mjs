@@ -46,3 +46,16 @@ test('a chain-only change reloads a running HTTPS Data Plane',async()=>{
   assert.notEqual(reloads[0],reloads[1]);assert.equal(await reloader.reloadNow(),false);
  }finally{reloader.stop();plane.closeAllConnections();await new Promise(resolve=>plane.close(resolve));}
 });
+
+test('TLS reload snapshots the configured loader, CA policy and callbacks',async()=>{
+ const store=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});store.publish(0);
+ const plane=createDataPlaneHttps(store,server);let next=server;const reloads=[];
+ const options={load:()=>next,intervalMs:60000,clientCa:false,onReload:info=>reloads.push(info.subject)};
+ const reloader=createTlsCredentialReloader(plane,options);
+ try{
+  options.load=()=>{throw Error('replacement loader used');};options.clientCa=true;options.onReload=()=>{throw Error('replacement callback used');};
+  assert.equal(await reloader.reloadNow(),true);assert.equal(reloads.length,1);
+  next={...server,clientCa:ca};await assert.rejects(reloader.reloadNow(),/client CA presence changed/);
+  next=rogue;assert.equal(await reloader.reloadNow(),true);assert.equal(reloads.length,2);
+ }finally{reloader.stop();plane.close();}
+});

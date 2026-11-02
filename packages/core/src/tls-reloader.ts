@@ -33,17 +33,17 @@ export function validateTlsCredentials(credentials:TlsCredentials,now:number=Dat
 /** Periodically reload server credentials; invalid or unchanged credentials keep the current context. */
 export function createTlsCredentialReloader(server:HttpsServer,options:TlsCredentialReloaderOptions){
  if(!server||typeof (server as {setSecureContext?:unknown}).setSecureContext!=='function'||!options||typeof options.load!=='function'||!Number.isSafeInteger(options.intervalMs)||options.intervalMs<1000||options.intervalMs>86400000||typeof options.clientCa!=='boolean'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.onReload!==undefined&&typeof options.onReload!=='function')||(options.onError!==undefined&&typeof options.onError!=='function'))throw Error('Invalid TLS reloader configuration');
- const clock=options.clock??Date.now;let current:string|undefined,running:Promise<boolean>|undefined,stopped=false;
- const report=(error:unknown)=>{try{options.onError?.(error instanceof Error?error:Error('TLS reload failed'));}catch{}};
+ const {load,clientCa,onReload,onError,intervalMs}=options,clock=options.clock??Date.now;let current:string|undefined,running:Promise<boolean>|undefined,stopped=false;
+ const report=(error:unknown)=>{try{onError?.(error instanceof Error?error:Error('TLS reload failed'));}catch{}};
  const attempt=async():Promise<boolean>=>{
-  const credentials=await options.load();if(stopped)return false;
-  if(!credentials||(credentials.clientCa!==undefined)!==options.clientCa)throw Error('TLS client CA presence changed');
+  const credentials=await load();if(stopped)return false;
+  if(!credentials||(credentials.clientCa!==undefined)!==clientCa)throw Error('TLS client CA presence changed');
   const info=validateTlsCredentials(credentials,clock());if(info.fingerprint===current)return false;
   server.setSecureContext({cert:credentials.cert,key:credentials.key,minVersion:'TLSv1.2',...(credentials.clientCa!==undefined?{ca:credentials.clientCa}:{})});
-  current=info.fingerprint;try{options.onReload?.({...info});}catch{}return true;
+  current=info.fingerprint;try{onReload?.({...info});}catch{}return true;
  };
  /** Load once now. Resolves true when new credentials were applied; rejects when they were invalid. */
  const reloadNow=():Promise<boolean>=>{if(stopped)return Promise.resolve(false);if(!running)running=attempt().finally(()=>{running=undefined;});return running;};
- const timer=setInterval(()=>{reloadNow().catch(report);},options.intervalMs);timer.unref?.();
+ const timer=setInterval(()=>{reloadNow().catch(report);},intervalMs);timer.unref?.();
  return {reloadNow,stop(){stopped=true;clearInterval(timer);}};
 }
