@@ -24,6 +24,29 @@ test('scope, deadline, revocation races and stale revisions fail closed',async()
 
 test('renewal cannot reactivate an earlier identical grant snapshot',async()=>{const s=setup();try{const first=await s.store.issue(admin,grant);await s.store.renew(admin,'grant',1,'v2',60);const third=await s.store.renew(admin,'grant',2,'v1',50);assert.equal(await s.store.verify(worker,first.grant),false);assert.equal(await s.store.verify(worker,third.grant),true);assert.equal(await s.store.verify(worker,{...third.grant,revision:undefined}),false);}finally{close(s);}});
 
+test('maximum delegation revision blocks renewal but remains revocable',async()=>{
+ const s=setup();let db;try{
+  await s.store.issue(admin,grant);db=new DatabaseSync(s.path);db.prepare('UPDATE agent_delegations SET revision=? WHERE grant_id=?').run(Number.MAX_SAFE_INTEGER-1,'grant');
+  const last=await s.store.renew(admin,'grant',Number.MAX_SAFE_INTEGER-1,'v2',100);assert.equal(last.revision,Number.MAX_SAFE_INTEGER);assert.equal(await s.store.verify(worker,last.grant),true);
+  await assert.rejects(s.store.renew(admin,'grant',Number.MAX_SAFE_INTEGER,'v3',120),/revision|Invalid/);assert.equal((await s.store.get(admin,'grant')).revision,Number.MAX_SAFE_INTEGER);
+  const revoked=await s.store.revoke(admin,'grant',Number.MAX_SAFE_INTEGER);assert.equal(revoked.revision,Number.MAX_SAFE_INTEGER);assert.equal(revoked.revoked,true);assert.equal(await s.store.verify(worker,last.grant),false);
+  await assert.rejects(s.store.revoke(admin,'grant',Number.MAX_SAFE_INTEGER),/revoked/);const events=await s.store.history(admin,'grant');assert.deepEqual(events.map(event=>event.event),['issued','renewed','revoked']);assert.equal(events.at(-1).revision,Number.MAX_SAFE_INTEGER);
+ }finally{db?.close();close(s);}
+});
+
+test('maximum-revision revocation fences pending delegation reads and history',async()=>{
+ for(const access of ['read','history']){
+  const s=setup();let db,restricted,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  try{
+   await s.store.issue(admin,grant);db=new DatabaseSync(s.path);db.prepare('UPDATE agent_delegations SET revision=? WHERE grant_id=?').run(Number.MAX_SAFE_INTEGER,'grant');
+   restricted=new SqliteAgentDelegations(s.path,{...s.options,authorize:async(_actor,action)=>{if(action===access){entered();await gate;}return true;}});
+   const pending=access==='read'?restricted.get(admin,'grant'):restricted.history(admin,'grant');await ready;
+   await s.store.revoke(admin,'grant',Number.MAX_SAFE_INTEGER);release();await assert.rejects(pending,/Delegation changed/);
+   assert.equal((await s.store.get(admin,'grant')).revoked,true);assert.deepEqual((await s.store.history(admin,'grant')).map(event=>event.event),['issued','revoked']);
+  }finally{release();restricted?.close();db?.close();close(s);}
+ }
+});
+
 test('delegation history cannot include a renewal committed after its revision check',async()=>{
  const s=setup();try{
   s.store.db.exec('PRAGMA journal_mode=WAL');await s.store.issue(admin,grant);
