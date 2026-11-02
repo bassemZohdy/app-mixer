@@ -12,7 +12,7 @@ Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configu
 const React=require('react'),{createRoot}=require('react-dom/client'),native=require('react-native-web');
 const {code}=require('esbuild').transformSync(await readFile('packages/native/device-test/App.js','utf8'),{loader:'jsx',format:'cjs'});
 const module={exports:{}};
-new Function('require','module','exports',code)(name=>name==='react'?React:name==='react-native'?native:name==='./app-mixer'?adapter:require(name),module,module.exports);
+new Function('require','module','exports',code)(name=>name==='react'?React:name==='react-native'?native:name==='./app-mixer'?adapter:name==='./signed-plan.json'?JSON.parse(require('node:fs').readFileSync('packages/native/device-test/signed-plan.json','utf8')):require(name),module,module.exports);
 const root=createRoot(document.getElementById('app'));
 const button=name=>[...document.querySelectorAll('[role="button"]')].find(node=>node.textContent===name);
 const text=value=>[...document.querySelectorAll('*')].some(node=>node.children.length===0&&node.textContent===value);
@@ -35,6 +35,7 @@ try{
  await click('Check multiline input');const note=document.querySelector('textarea[aria-label="Notes"]');assert.ok(note,'Missing accessible multiline field');
  await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(note,'First\nSecond');note.dispatchEvent(new window.Event('input',{bubbles:true}));});
  await click('Save note');assert.ok(text('Saved multiline note'));
+ await click('Check signed extension');await React.act(async()=>{});assert.ok(text('Verified signed extension'));assert.ok(text('Tampered plan rejected'));
  assert.ok(!text('FAIL renderer'));
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}

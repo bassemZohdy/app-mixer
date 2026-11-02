@@ -94,5 +94,10 @@ final class MixerDeviceUITests: XCTestCase {
     XCTAssertTrue(saveNote.waitForExistence(timeout: 10))
     saveNote.tap()
     XCTAssertTrue(app.staticTexts["Saved multiline note"].waitForExistence(timeout: 10))
+    let signed = app.buttons["Check signed extension"]
+    XCTAssertTrue(signed.waitForExistence(timeout: 10))
+    signed.tap()
+    XCTAssertTrue(app.staticTexts["Verified signed extension"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["Tampered plan rejected"].waitForExistence(timeout: 10))
   }
 }
