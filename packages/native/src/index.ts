@@ -189,7 +189,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const render=(node:NativeNode,surface:NativeSurface,inButton=false):any=>{
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header',...(!inButton?{accessible:true}:{}),...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:textStyles[node.variant??'body']},node.text);
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:textStyles[node.variant??'body']},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}

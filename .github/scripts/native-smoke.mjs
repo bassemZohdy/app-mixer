@@ -49,7 +49,7 @@ try{
  assert.deepEqual(variants.map(node=>node.dataset.level??''),['','','','','','','','']);
  assert.deepEqual(variants.map(node=>node.dataset.accessible??''),['true','true','true','true','true','','','']);
  await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Button',child:'nested',action:{event:{name:'save'}}},{id:'nested',component:'Column',children:['nestedHeading']},{id:'nestedHeading',component:'Text',text:'Button heading',variant:'h2'}]}}));
- assert.equal(document.querySelector('button span').dataset.accessible,undefined);
+ assert.equal(document.querySelector('button span').dataset.accessible,undefined);assert.equal(document.querySelector('button span').dataset.role,undefined);assert.equal(document.querySelector('button span').style.fontSize,'24px');assert.equal(document.querySelector('button').textContent,'Button heading');
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
  const root2=createRoot(document.getElementById('app'));let next;const failures=[];
  const broken=()=>()=>{throw Error('cleanup failed');},replacement=callback=>{next=callback;};

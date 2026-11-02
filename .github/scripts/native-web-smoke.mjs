@@ -98,5 +98,7 @@ try{
  assert.equal(heading.style.fontSize,'32px');assert.equal(heading.style.fontWeight,'bold');assert.notEqual(heading.getAttribute('tabindex'),'0');
  const caption=[...document.querySelectorAll('*')].find(element=>element.textContent==='Caption' && element.children.length===0);
  assert.ok(caption);assert.equal(caption.style.fontSize,'13.33px');
+ await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Button',child:'nested',action:{event:{name:'nestedAction'}}},{id:'nested',component:'Column',children:['nestedHeading']},{id:'nestedHeading',component:'Text',text:'Button heading',variant:'h2'}]}}));
+ const nestedButton=document.querySelector('[role="button"]'),nestedText=[...nestedButton.querySelectorAll('*')].find(node=>node.children.length===0&&node.textContent==='Button heading');assert.ok(nestedText);assert.equal(nestedButton.textContent,'Button heading');assert.equal(nestedText.style.fontSize,'24px');assert.equal(nestedButton.querySelector('[role="heading"]'),null);assert.equal(nestedText.getAttribute('aria-level'),null);await React.act(()=>nestedButton.click());assert.equal(actions.at(-1).action.name,'nestedAction');
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}
