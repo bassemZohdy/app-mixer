@@ -5,11 +5,12 @@ import {SafeAreaView, Text, TextInput, View, Pressable, Platform} from 'react-na
 import {APP_MIXER_CATALOG, createReactNativeA2UIComponent, NativeComponentRegistry} from './app-mixer';
 
 
-// This test-only verifier supports the ASCII fixture; production hosts need full UTF-8 handling and key management.
+// Test-only verifier and fixture; production hosts need independent key management and verification policy.
 const decode64=value=>{const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';let bits=0,buffer=0;const bytes=[];for(const char of value){const index=chars.indexOf(char);if(index<0)throw Error('Invalid signature');buffer=(buffer<<6)|index;bits+=6;if(bits>=8){bits-=8;bytes.push((buffer>>>bits)&255);}}return Uint8Array.from(bytes);};
-const verifyDevicePlan=({keyId,signingInput,signature})=>keyId==='device-test-key'&&/^[\x00-\x7f]*$/.test(signingInput)&&nacl.sign.detached.verify(Uint8Array.from(signingInput,character=>character.charCodeAt(0)),decode64(signature),Uint8Array.from(signedFixture.publicKey));
+const utf8=value=>Uint8Array.from(encodeURIComponent(value).match(/%[0-9A-F]{2}|./g)??[],part=>part[0]==='%'?parseInt(part.slice(1),16):part.charCodeAt(0));
+const verifyDevicePlan=({keyId,signingInput,signature})=>keyId==='device-test-key'&&nacl.sign.detached.verify(utf8(signingInput),decode64(signature),Uint8Array.from(signedFixture.publicKey));
 const signedInstalled=[{id:'device-extension',version:'1.0.0',scope:'application',components:{'signed-probe':{render:()=> <Text>Verified signed extension</Text>,validate:component=>Object.keys(component).every(key=>['id','component'].includes(key))}}}];
-const signedTarget={tenantId:'test-tenant',environment:'test',applicationId:'device-test',revision:1,clock:()=>150};
+const signedTarget={tenantId:'test-tenant',environment:'test',applicationId:'device-\u0627\u062e\u062a\u0628\u0627\u0631-\ud83d\ude00',revision:1,clock:()=>150};
 const subscribeSigned=receive=>{receive({version:'v0.9.1',createSurface:{surfaceId:'signed',catalogId:APP_MIXER_CATALOG}});receive({version:'v0.9.1',updateComponents:{surfaceId:'signed',components:[{id:'root',component:'signed-probe'}]}});};
 
 let mountCount=0;
@@ -71,7 +72,7 @@ export default function App(){
   const [multiline,setMultiline]=useState(false);
   const [signedRenderer,setSignedRenderer]=useState(null);
   const [signedStatus,setSignedStatus]=useState('');
-  const checkSigned=async()=>{try{const registry=await NativeComponentRegistry.fromSignedPlan(signedFixture.envelope,signedInstalled,signedTarget,verifyDevicePlan);let rejected=false;try{await NativeComponentRegistry.fromSignedPlan({...signedFixture.envelope,payload:signedFixture.envelope.payload+' '},signedInstalled,signedTarget,verifyDevicePlan);}catch{rejected=true;}if(!rejected)throw Error('Tampered plan accepted');const Signed=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform},registry);setSignedRenderer(()=>Signed);setSignedStatus('Tampered plan rejected');}catch{setSignedStatus('FAIL signed plan');}};
+  const checkSigned=async()=>{try{const registry=await NativeComponentRegistry.fromSignedPlan(signedFixture.envelope,signedInstalled,signedTarget,verifyDevicePlan);const rejected=async(envelope,target)=>{try{await NativeComponentRegistry.fromSignedPlan(envelope,signedInstalled,target,verifyDevicePlan);return false;}catch{return true;}};const changedSignature=(signedFixture.envelope.signature[0]==='A'?'B':'A')+signedFixture.envelope.signature.slice(1);if(!await rejected({...signedFixture.envelope,payload:signedFixture.envelope.payload+' '},signedTarget)||!await rejected({...signedFixture.envelope,signature:changedSignature},signedTarget)||!await rejected(signedFixture.envelope,{...signedTarget,tenantId:'other'})||!await rejected(signedFixture.envelope,{...signedTarget,clock:()=>200}))throw Error('Invalid plan accepted');const Signed=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform},registry);setSignedRenderer(()=>Signed);setSignedStatus('Tampered plan rejected');}catch{setSignedStatus('FAIL signed plan');}};
   const onAction=useCallback(event=>{const name=event?.action?.context?.name;setResult(event?.action?.name==='save'&&name==='Grace'?'Saved Grace':'FAIL action');},[]);
   const onError=useCallback(()=>{if(expectingRejection)setRejection('Rejected safely');else setResult('FAIL renderer');},[]);
   const update=()=>publish?.({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/profile/name',value:'Lin'}});
