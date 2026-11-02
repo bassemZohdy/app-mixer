@@ -1,6 +1,6 @@
 # Data Plane health probes
 
-Publication lookups may be asynchronous. Readiness shares one in-flight publication/dependency check and applies its configured timeout; a timed-out lookup occupies that slot until it settles. Hosts must bound database operations, since the adapter cannot cancel a repository lookup itself. A Data Plane reading a shared repository depends on that repository's availability.
+Publication lookups may be asynchronous. Readiness shares one in-flight publication/dependency check and applies its configured timeout; a timed-out lookup occupies that slot until it settles. Hosts must bound database operations, since the adapter cannot cancel a repository lookup itself. If the first lookup finishes after the check times out or draining starts, the adapter does not start the subsequent dependency check or recheck. A Data Plane reading a shared repository depends on that repository's availability.
 
 `createDataPlane(repository, {health: {timeoutMs, check?}})` enables `GET /health/live` and `GET /health/ready` on the same HTTP server as `/application`. Without this option both routes return 404. Liveness responds 200 when the server can handle a request. Readiness responds 200 only when a local publication exists and the optional host-supplied dependency check resolves to `true`; missing publications, false results, errors and timeouts return 503. Responses expose only a generic status and use `Cache-Control: no-store`. Neither probe contacts the optional Control Plane unless the host explicitly adds such a check.
 

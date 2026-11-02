@@ -234,7 +234,7 @@ function createDataPlaneInternal(repository:DataPlanePublicationRepository,optio
   const readinessCheck=():Promise<boolean>=>{
     if(pending)return pending;
     const current=new AbortController();controller=current;let timer:ReturnType<typeof setTimeout>;
-    const task=Promise.resolve().then(async()=>{if(current.signal.aborted||!await repository.getPublished())return false;if(check&&await check(current.signal)!==true)return false;if(current.signal.aborted)return false;return !!await repository.getPublished();}).then(value=>value===true,()=>false);
+    const task=Promise.resolve().then(async()=>{if(current.signal.aborted||!await repository.getPublished()||current.signal.aborted)return false;if(check&&await check(current.signal)!==true)return false;if(current.signal.aborted)return false;return !!await repository.getPublished();}).then(value=>value===true,()=>false);
     const deadline=new Promise<boolean>(resolve=>{timer=setTimeout(()=>{current.abort();resolve(false);},timeout);checkTimer=timer;});
     const result=Promise.race([task,deadline]);pending=result;
     void task.finally(()=>{clearTimeout(timer);if(checkTimer===timer)checkTimer=undefined;if(controller===current)controller=undefined;if(pending===result)pending=undefined;});
