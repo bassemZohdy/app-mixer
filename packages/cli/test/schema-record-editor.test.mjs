@@ -236,7 +236,7 @@ test('typed and structured conditional predicates agree with server validation',
   for(const name of ['valid','validelse']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===(name==='valid'?1:2)&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
-   for(const test of [{type:'string',format:'email'},{type:'number',multipleOf:0},{anyOf:[{const:'X'}]},{type:'object',properties:{x:{type:'string'}},additionalProperties:{type:'string'}}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{code:test}},then:{required:['thenlabel']},else:undefined}}),/Unsupported/);
+   for(const test of [{type:'string',format:'email'},{type:'number',multipleOf:0},{anyOf:[]},{type:'object',properties:{x:{type:'string'}},additionalProperties:{type:'string'}}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{code:test}},then:{required:['thenlabel']},else:undefined}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
@@ -265,6 +265,22 @@ test('conditional branch predicates validate object-array items',async()=>{
   dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
   id.value='bad';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/age does not satisfy a condition/);assert.equal(validate(records.bad),false);assert.equal(saved.length,0);
   id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('combined matching rules agree with server conditional and array validation',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const score={allOf:[{type:'number',minimum:10},{type:'number',maximum:20}],anyOf:[{enum:[12,15,16,18]}],oneOf:[{type:'integer',multipleOf:2},{enum:[12,15]}],not:{const:18}},jsonSchema={type:'object',$defs:{score},properties:{score:{type:'number'},result:{type:'string'},reason:{type:'string'},scores:{type:'array',items:{type:'number'},contains:{$ref:'#/$defs/score'}}},if:{properties:{score:{$ref:'#/$defs/score'}},required:['score']},then:{required:['result'],properties:{result:{type:'string',anyOf:[{const:'accepted'},{const:'override'}],not:{const:'revoked'}}}},else:{required:['reason']}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
+  const records={matched:{score:15,scores:[15]},overlap:{score:12,scores:[15]},excluded:{score:18,scores:[15]},outside:{score:13,scores:[15]},missing:{scores:[15]},branch:{score:16,result:'bad',scores:[15]},nomatch:{score:15,result:'accepted',scores:[12,18]},valid:{score:15,result:'accepted',scores:[12,15]},valid2:{score:16,result:'override',scores:[16]},validelse:{score:12,reason:'Review',scores:[15]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const [name,error] of [['matched',/result is required by a condition/],['overlap',/reason is required by a condition/],['excluded',/reason is required by a condition/],['outside',/reason is required by a condition/],['missing',/reason is required by a condition/],['branch',/result does not satisfy a condition/],['nomatch',/required number of matching items/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  for(const name of ['valid','valid2','validelse']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   assert.doesNotThrow(()=>factory(options));
+   for(const rule of [{allOf:[]},{anyOf:[true]},{oneOf:Array(41).fill({const:1})},{not:false},{anyOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{score:rule}},then:{required:['result']},else:undefined}}),/Unsupported/);
+  }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
