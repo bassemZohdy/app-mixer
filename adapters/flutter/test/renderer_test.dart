@@ -412,6 +412,47 @@ void main() {
     ]}));
     await tester.pump();expect(tester.getSize(find.text('Left')).width,lessThan(300));expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
+  testWidgets('incremental sibling insertion and reordering preserve field editing state', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Grace'}}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['later','group']},
+      {'id':'group','component':'Column','children':['field']},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}}
+    ]}));
+    await tester.pump();await tester.showKeyboard(find.byType(TextField));
+    final state=tester.state<EditableTextState>(find.byType(EditableText));
+    state.updateEditingValue(const TextEditingValue(text:'Grace',selection:TextSelection.collapsed(offset:2)));
+    await tester.pump();expect(state.widget.focusNode.hasFocus,isTrue);
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'later','component':'Text','text':'Loaded'}]}));
+    await tester.pump();
+    expect(find.text('Loaded'),findsOneWidget);expect(tester.state<EditableTextState>(find.byType(EditableText)),same(state));
+    expect(state.widget.focusNode.hasFocus,isTrue);expect(state.textEditingValue.selection.baseOffset,2);
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Column','children':['group','later']}]}));
+    await tester.pump();
+    expect(tester.state<EditableTextState>(find.byType(EditableText)),same(state));
+    expect(state.widget.focusNode.hasFocus,isTrue);expect(state.textEditingValue.selection.baseOffset,2);
+    expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
+  testWidgets('repeated component references keep distinct widget keys', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['field','field']},
+      {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}}
+    ]}));
+    await tester.pump();expect(find.byType(TextField),findsNWidgets(2));
+    await tester.enterText(find.byType(TextField).first,'Ada');await tester.pump();
+    expect(tester.widgetList<EditableText>(find.byType(EditableText)).map((field)=>field.controller.text),['Ada','Ada']);
+    expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   testWidgets('deep same-axis stretch layouts render and preserve loose sizing', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

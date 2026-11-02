@@ -385,11 +385,15 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     }
     final stretch=(node.kind=='Column'||node.kind=='Row')&&(node.align==null||node.align=='stretch');
     final childTightWidth=node.kind=='Column'&&stretch, childTightHeight=node.kind=='Row'&&stretch;
-    final children=<Widget>[];
-    for (var i=0;i<node.children.length;i++) {
-      final child=node.children[i], rendered=_widget(child,surface,store,generation,'$path/$i',childTightWidth,childTightHeight);
+    final children=<Widget>[], occurrences=<String,int>{};
+    for (final child in node.children) {
+      final occurrence=occurrences.update(child.id,(value)=>value+1,ifAbsent:()=>0);
+      final childPath='$path${child.id.length}:${child.id}:$occurrence;';
+      final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight);
       // Row gives non-flex children unbounded width. Material text inputs require a finite width.
-      children.add(node.kind=='Row' && _containsTextField(child) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered);
+      final layoutChild=node.kind=='Row' && _containsTextField(child) ? Flexible(fit:FlexFit.loose,child:rendered) : rendered;
+      // Preserve child state when another referenced component arrives or the order changes.
+      children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }
     if (node.kind == 'TextField') return _BoundTextField(key:ValueKey((surface.id,path,node.id)),label:node.label ?? '',value:node.value ?? '',multiline:node.variant=='longText',onChanged:(value){
       if (!mounted || generation!=_generation || !identical(store,_store)) return;
