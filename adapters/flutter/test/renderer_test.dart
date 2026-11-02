@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'signed_plan_fixture.dart';
+import 'parity_scenario.dart';
 
 Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
 void main() {
+  testWidgets('narrow row remains usable', verifyNarrowRowParity);
   test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};
     final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:components)];

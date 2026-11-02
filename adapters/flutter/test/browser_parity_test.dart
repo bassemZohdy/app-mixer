@@ -6,4 +6,5 @@ import 'parity_scenario.dart';
 
 void main() {
   testWidgets('preserves surfaces when nested interactive controls are rejected', verifySurfaceParity);
+  testWidgets('narrow row remains usable', verifyNarrowRowParity);
 }
