@@ -178,16 +178,20 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
   return function NativeA2UI({subscribe,onError,onAction}:NativeA2UIProps):any{
-    const [surfaces,setSurfaces]=React.useState<NativeSurface[]>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null);
+    const [surfaces,setSurfaces]=React.useState<Array<{surface:NativeSurface;key:number}>>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null),publishRef=React.useRef<(()=>void)|null>(null),nextKey=React.useRef(0);
     React.useEffect(()=>{errors.current=onError;actions.current=onAction;},[onError,onAction]);
     React.useEffect(()=>{
-      let active=true;const store=new NativeSurfaceStore(fixedRegistry);storeRef.current=store;setSurfaces([]);let stop:void|(()=>void);
+      let active=true;const store=new NativeSurfaceStore(fixedRegistry),keys=new Map<string,number>();storeRef.current=store;setSurfaces([]);let stop:void|(()=>void);
+      const publish=()=>setSurfaces(store.snapshot().map(surface=>({surface,key:keys.get(surface.id)!})));publishRef.current=publish;
       try{stop=subscribe(message=>{if(!active)return;try{
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.TextInput&&message.updateComponents.components.some(c=>obj(c)&&c.component==='TextField'))throw Error('TextInput primitive is required');
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.Pressable&&message.updateComponents.components.some(c=>obj(c)&&c.component==='Button'))throw Error('Pressable primitive is required');
-        store.apply(message);setSurfaces(store.snapshot());
+        store.apply(message);
+        if(obj(message)&&obj(message.createSurface))keys.set(message.createSurface.surfaceId as string,++nextKey.current);
+        if(obj(message)&&obj(message.deleteSurface))keys.delete(message.deleteSurface.surfaceId as string);
+        publish();
       }catch(error){errors.current(error);}});}catch(error){errors.current(error);}
-      return ()=>{active=false;if(storeRef.current===store)storeRef.current=null;try{if(typeof stop==='function')stop();}catch(error){errors.current(error);}};
+      return ()=>{active=false;if(storeRef.current===store){storeRef.current=null;publishRef.current=null;}try{if(typeof stop==='function')stop();}catch(error){errors.current(error);}};
     },[subscribe]);
     const store=storeRef.current;
     const render=(node:NativeNode,surface:NativeSurface,inButton=false,inRow=false,key=node.id):any=>{
@@ -203,11 +207,11 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
         React.createElement(primitives.Text,null,node.label),
         React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{
           if(!store||storeRef.current!==store)return;
-          try{store.writeField(surface.id,node.id,surface.revision,value);setSurfaces(store.snapshot());}catch(error){errors.current(error);}
+          try{store.writeField(surface.id,node.id,surface.revision,value);publishRef.current?.();}catch(error){errors.current(error);}
         }}));
       const style={...(inRow?{flexShrink:1,minWidth:0}:{}),...(node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:{})};
       return React.createElement(primitives.View,{key,style},...renderChildren(inButton,node.kind==='Row'));
     };
-    return React.createElement(primitives.View,null,...surfaces.map(surface=>React.createElement(primitives.View,{key:surface.id},...(surface.root?[render(surface.root,surface)]:[]))));
+    return React.createElement(primitives.View,null,...surfaces.map(({surface,key})=>React.createElement(primitives.View,{key},...(surface.root?[render(surface.root,surface)]:[]))));
   };
 }

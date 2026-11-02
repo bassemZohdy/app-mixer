@@ -127,5 +127,17 @@ try{
   assert.deepEqual([...document.querySelectorAll('[aria-label="Repeated"]')],fields);
   assert.deepEqual(reactWarnings,[]);assert.deepEqual(errors,[]);
  }finally{console.error=originalError;}
+ const oldField=document.querySelector('[aria-label="Repeated"]');oldField.focus();
+ await React.act(()=>{
+  receive({version:'v0.9.1',deleteSurface:{surfaceId:'main'}});
+  receive({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{repeated:'New'}}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+   {id:'root',component:'Column',children:['repeated']},
+   {id:'repeated',component:'TextField',label:'Repeated',value:{path:'/repeated'}}
+  ]}});
+ });
+ const replacementField=document.querySelector('[aria-label="Repeated"]');
+ assert.notEqual(replacementField,oldField);assert.equal(replacementField.value,'New');assert.notEqual(document.activeElement,replacementField);assert.deepEqual(errors,[]);
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}
