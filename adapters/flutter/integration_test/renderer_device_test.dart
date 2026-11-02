@@ -37,6 +37,7 @@ void main() {
   testWidgets('field labels do not include adjacent text on a mobile device', verifyAdjacentFieldSemantics);
 
   testWidgets('narrow nested row remains usable on a mobile device', verifyNarrowNestedRowParity);
+  testWidgets('row spacing modes place children consistently on a mobile device', verifyRowSpacing);
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
     late void Function(Object?) receive;

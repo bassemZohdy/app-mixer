@@ -15,6 +15,7 @@ void main() {
   testWidgets('surface lifecycle preserves multiline editing', verifySurfaceParity);
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
+  testWidgets('row spacing modes place children consistently', verifyRowSpacing);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
   test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};

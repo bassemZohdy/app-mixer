@@ -14,5 +14,6 @@ void main() {
   testWidgets('external updates do not interrupt input composition', verifyInputComposition);
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
+  testWidgets('row spacing modes place children consistently', verifyRowSpacing);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
 }

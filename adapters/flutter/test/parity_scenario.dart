@@ -2,6 +2,25 @@ import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+Future<void> verifyRowSpacing(WidgetTester tester) async {
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+  final errors=<Object>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+  receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'left','component':'Text','text':'Left'},{'id':'right','component':'Text','text':'Right'}]}));
+  for(final mode in ['start','center','end','spaceBetween','spaceAround','spaceEvenly']){
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Row','align':'start','justify':mode,'children':['left','right']}]}));await tester.pump();
+    final row=tester.getRect(find.ancestor(of:find.text('Left'),matching:find.byType(Row)).first),left=tester.getRect(find.text('Left')),right=tester.getRect(find.text('Right'));
+    final remaining=row.width-left.width-right.width;
+    final expectedLeft=switch(mode){'center'=>remaining/2,'end'=>remaining,'spaceAround'=>remaining/4,'spaceEvenly'=>remaining/3,_=>0.0};
+    final expectedGap=switch(mode){'spaceBetween'=>remaining,'spaceAround'=>remaining/2,'spaceEvenly'=>remaining/3,_=>0.0};
+    expect(row.width,closeTo(300,0.5),reason:mode);expect(left.left-row.left,closeTo(expectedLeft,1.0),reason:mode);expect(right.left-left.right,closeTo(expectedGap,1.0),reason:mode);
+  }
+  expect(errors,isEmpty);expect(tester.takeException(),isNull);
+}
+
 Future<void> verifySurfaceEditingIdentity(WidgetTester tester) async {
   Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
   late void Function(Object?) receive;
