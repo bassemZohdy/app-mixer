@@ -218,6 +218,13 @@ void main() {
     expect(store.snapshot().single?.text,'Safe');
   });
 
+  test('invalid intermediate array indices reject updates and deletions atomically', () {
+    final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    store.apply(message('updateDataModel',{'surfaceId':'main','value':{'items':[{'name':'Safe'}]}}));store.apply(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'Text','text':{'path':'/items/0/name'}}]}));
+    for(final path in ['/items/01/name','/items/-1/name','/items/1/name','/items/length/name']) {for(final remove in [false,true]) {expect(()=>store.apply(message('updateDataModel',{'surfaceId':'main','path':path,if(!remove)'value':'Changed'})),throwsFormatException);expect(store.snapshot().single?.text,'Safe');}}
+    store.apply(message('updateDataModel',{'surfaceId':'main','path':'/items/0/missing/leaf'}));store.apply(message('updateDataModel',{'surfaceId':'main','path':'/items/0/name','value':'Updated'}));expect(store.snapshot().single?.text,'Updated');
+  });
+
   test('array bindings expose only canonical element indices', () {
     final store=FlutterSurfaceStore();store.apply(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
     store.apply(message('updateDataModel',{'surfaceId':'main','value':{'items':['first','second']}}));

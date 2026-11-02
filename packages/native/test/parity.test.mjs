@@ -201,3 +201,10 @@ test('late children cannot insert an interactive control inside a button',()=>{
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Text',text:'Continue'}]}));
  assert.equal(native.snapshot()[0].root.children[0].children[0].text,'Continue');
 });
+
+test('web and native reject invalid intermediate array indices for updates and deletions atomically',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore(),apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));apply(message('updateDataModel',{surfaceId:'main',value:{items:[{name:'Safe'}]}}));apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/items/0/name'}}]}));
+ for(const path of ['/items/01/name','/items/-1/name','/items/1/name','/items/length/name'])for(const remove of [false,true]){const invalid=message('updateDataModel',{surfaceId:'main',path,...(remove?{}:{value:'Changed'})});assert.throws(()=>web.apply(invalid),/array index/);assert.throws(()=>native.apply(invalid),/array index/);assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
+ apply(message('updateDataModel',{surfaceId:'main',path:'/items/0/missing/leaf'}));assert.equal(native.snapshot()[0].root.text,'Safe');apply(message('updateDataModel',{surfaceId:'main',path:'/items/0/name',value:'Updated'}));assert.equal(host.children[0].children[0].textContent,'Updated');assert.equal(native.snapshot()[0].root.text,'Updated');
+});

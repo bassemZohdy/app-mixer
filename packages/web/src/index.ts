@@ -61,6 +61,7 @@ function update(data: unknown, path: string, value: unknown, remove: boolean): u
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i];
     if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
+    if(Array.isArray(current)&&(!/^(0|[1-9]\d*)$/.test(key)||Number(key)>=current.length))throw Error('Invalid array index');
     if (!Object.hasOwn(current, key) || (current as Record<string, unknown>)[key] === undefined) {
       if (remove) return root;
       if (Array.isArray(current)) throw Error('Invalid array index');
