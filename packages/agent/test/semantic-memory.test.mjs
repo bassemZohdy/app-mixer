@@ -121,3 +121,12 @@ test('known semantic memory lookup enforces host and store policies without embe
 test('known memory lookup rechecks store policy after asynchronous capability authorization',async()=>{
  const s=setup();try{await s.semantic.put(admin,scope,'note','apple',options);let started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),registry=new CapabilityRegistry(()=>{});registerSemanticMemoryRead(registry,{memory:s.semantic,scope,operationId:'read',path:'/read',authorize:()=>true,authorizeRead:async()=>{started();await gate;return true;}});const pending=registry.invoke('read',{query:{memoryId:'note'}},{tenantId:'tenant',principalId:'service',origin:'agent'});await ready;s.allowed=false;release();await assert.rejects(pending,/access denied/);}finally{s.memory.close();}
 });
+
+
+test('exact and hybrid searches recheck scope access after final record authorization',async()=>{
+ for(const mode of ['search','searchHybrid']){
+  let listAllowed=true,reads=0,revoke=false;const memory=new SqliteAgentMemory(':memory:',{enabled:true,maxTtlMs:1000,maxEntries:10,clock:()=>100,authorize:(_actor,_scope,action)=>{if(action==='read'&&revoke&&++reads===2)listAllowed=false;return action!=='list'||listAllowed;}});
+  const semantic=new AgentSemanticMemory(memory,{modelId:'model-v1',dimensions:2,embed:async()=>[1,0]});
+  try{await semantic.put(admin,scope,'apple','apple notes',options);revoke=true;await assert.rejects(semantic[mode](admin,scope,'apple'),/access denied/);listAllowed=true;revoke=false;assert.deepEqual((await semantic[mode](admin,scope,'apple')).map(hit=>hit.id),['apple']);}finally{memory.close();}
+ }
+});

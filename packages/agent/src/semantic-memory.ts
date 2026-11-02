@@ -89,7 +89,7 @@ export class AgentSemanticMemory {
   }
   const result:SemanticMemoryHit[]=[];
   for(const hit of matches){if(result.length===limit)break;const current=await this.memory.get(safeActor,safeScope,hit.id);if(current&&current.revision===hit.revision)result.push(hit);}
-  return result;
+  await this.memory.assertAccess(safeActor,safeScope,'list');return result;
  }
 }
 export type {Embedder as AgentMemoryEmbedder};
