@@ -183,6 +183,8 @@ export {AgentRunLeaseRecoveryWorker} from './agent-run-lease-recovery.js';
 export type {AgentRunLeaseRecoveryWorkerOptions} from './agent-run-lease-recovery.js';
 export type {ExpiredAgentLease,AgentRunLeaseRecoveryEvidence} from './durable-runs.js';
 export {SqliteAgentLeaseRecoveryHistory} from './agent-run-lease-recovery-history.js';
+export {registerAgentLeaseRecoveryHistory} from './agent-run-lease-recovery-history-capability.js';
+export type {AgentLeaseRecoveryHistoryCapabilityOptions} from './agent-run-lease-recovery-history-capability.js';
 export type {AgentRunLeaseRecoveryEvent,AgentRunLeaseRecoveryHistoryOptions,AgentRunLeaseRecoveryHistoryActor} from './agent-run-lease-recovery-history.js';
 export {AgentRunExpiryWorker} from './agent-run-expiry.js';
 export type {AgentRunExpiryWorkerOptions,AgentRunExpiryObservation} from './agent-run-expiry.js';
