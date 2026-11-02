@@ -1,3 +1,4 @@
+import {ensureAgentRunTerminalSchema} from './agent-run-terminal.js';
 import {ensureAgentRunHistory} from './agent-run-history.js';
 import {ensureAgentTraceSchema,insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
@@ -32,7 +33,7 @@ export class SqliteAgentRuns {
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
+  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentRunTerminalSchema(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  get(scope:RunScope,runId:string):DurableAgentRun|undefined {
   scopeKey(scope,runId);const row=this.db.prepare('SELECT * FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
@@ -63,12 +64,13 @@ export class SqliteAgentRuns {
   const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);
   if(result.changes!==1)throw Error('Run already exists');return this.get(scope,runId)!;
  }
- private transition(scope:RunScope,runId:string,expectedRevision:number,fn:(run:DurableAgentRun)=>void):DurableAgentRun {
+ private transition(scope:RunScope,runId:string,expectedRevision:number,fn:(run:DurableAgentRun)=>void,observedAt?:number):DurableAgentRun {
   scopeKey(scope,runId);if(!number(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER)throw Error('Invalid run revision');
   this.db.exec('BEGIN IMMEDIATE');try{
    const run=this.get(scope,runId);if(!run)throw Error('Run not found');if(run.revision!==expectedRevision)throw Error('Run revision conflict');
-   if(run.archived)throw Error('Run is archived');fn(run);run.revision++;
+   if(run.archived)throw Error('Run is archived');const previousStatus=run.status;fn(run);run.revision++;
    this.db.prepare('UPDATE agent_runs SET revision=?,status=?,attempts=?,lease_owner=?,lease_token=?,lease_until=?,archived=? WHERE tenant_id=? AND agent_id=? AND run_id=?').run(run.revision,run.status,run.attempts,run.leaseOwner,run.leaseToken,run.leaseUntil,run.archived?1:0,scope.tenantId,scope.agentId,runId);
+   if(!['succeeded','failed','cancelled'].includes(previousStatus)&&['succeeded','failed','cancelled'].includes(run.status)){if(!number(observedAt))throw Error('Invalid terminal time');this.db.prepare('INSERT INTO agent_run_terminal_times VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,observedAt);}
    this.db.exec('COMMIT');return run;
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }
@@ -97,7 +99,7 @@ export class SqliteAgentRuns {
    else if(action==='cancel'&&(run.status==='queued'||run.status==='paused')){run.status='cancelled';this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;}
    else if(action==='cancel'&&(run.status==='running'||run.status==='pause_requested'))run.status='cancel_requested';
    else throw Error('Invalid run state');
-  });
+  },now);
  }
  settle(scope:RunScope,runId:string,revision:number,token:string,outcome:'succeeded'|'failed'|'stopped'|'uncertain',now=Date.now()):DurableAgentRun {
   if(!id(token)||!number(now)||!['succeeded','failed','stopped','uncertain'].includes(outcome))throw Error('Invalid run outcome');
@@ -107,7 +109,7 @@ export class SqliteAgentRuns {
    else if(outcome==='stopped'){if(run.status==='pause_requested')run.status='paused';else run.status='cancelled';}
    else run.status=outcome;
    run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;
-  });
+  },now);
  }
  /** Pause only after execution stopped and no journaled action has an uncertain outcome. */
  pauseForApproval(scope:RunScope,runId:string,revision:number,token:string,actionId:string,now=Date.now()):DurableAgentRun {
@@ -131,14 +133,14 @@ export class SqliteAgentRuns {
  }
  /** Fail an unleased run after its deadline, without guessing unresolved external outcomes. */
  expireDeadline(scope:RunScope,runId:string,revision:number,now=Date.now(),evidence?:AgentRunExpiryEvidence):DurableAgentRun{
-  if(!number(now))throw Error('Invalid time');if(evidence!==undefined&&(!evidence||typeof evidence!=='object'||Object.keys(evidence).length!==2||!Object.hasOwn(evidence,'principalId')||!Object.hasOwn(evidence,'reference')||!id(evidence.principalId)||!id(evidence.reference)))throw Error('Invalid expiry evidence');const proof=evidence===undefined?undefined:{principalId:evidence.principalId,reference:evidence.reference};return this.transition(scope,runId,revision,run=>{if(!['queued','paused'].includes(run.status)||run.deadline>now||run.leaseToken!==null||run.leaseOwner!==null||run.leaseUntil!==null)throw Error('Run deadline not eligible');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(this.hasUnresolvedActions(scope,runId))throw Error('Action requires reconciliation');if(proof)this.db.prepare('INSERT INTO agent_run_expiry_audit (tenant_id,agent_id,run_id,revision,previous_status,deadline,actor_id,reference,observed_at) VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,runId,run.revision+1,run.status,run.deadline,proof.principalId,proof.reference,now);this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;run.delegationWait=null;run.status='failed';});
+  if(!number(now))throw Error('Invalid time');if(evidence!==undefined&&(!evidence||typeof evidence!=='object'||Object.keys(evidence).length!==2||!Object.hasOwn(evidence,'principalId')||!Object.hasOwn(evidence,'reference')||!id(evidence.principalId)||!id(evidence.reference)))throw Error('Invalid expiry evidence');const proof=evidence===undefined?undefined:{principalId:evidence.principalId,reference:evidence.reference};return this.transition(scope,runId,revision,run=>{if(!['queued','paused'].includes(run.status)||run.deadline>now||run.leaseToken!==null||run.leaseOwner!==null||run.leaseUntil!==null)throw Error('Run deadline not eligible');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(this.hasUnresolvedActions(scope,runId))throw Error('Action requires reconciliation');if(proof)this.db.prepare('INSERT INTO agent_run_expiry_audit (tenant_id,agent_id,run_id,revision,previous_status,deadline,actor_id,reference,observed_at) VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,runId,run.revision+1,run.status,run.deadline,proof.principalId,proof.reference,now);this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;run.delegationWait=null;run.status='failed';},now);
  }
  recoverExpired(scope:RunScope,runId:string,revision:number,now=Date.now()):DurableAgentRun {
   if(!number(now))throw Error('Invalid time');return this.transition(scope,runId,revision,run=>{if(!['running','pause_requested','cancel_requested'].includes(run.status)||run.leaseUntil===null||now<run.leaseUntil)throw Error('Lease is active');run.status='uncertain';run.leaseOwner=null;run.leaseToken=null;run.leaseUntil=null;});
  }
  reconcile(scope:RunScope,runId:string,revision:number,outcome:'retry'|'succeeded'|'failed'|'cancelled'|'paused',now=Date.now()):DurableAgentRun {
   if(!number(now)||!['retry','succeeded','failed','cancelled','paused'].includes(outcome))throw Error('Invalid reconciliation');
-  return this.transition(scope,runId,revision,run=>{if(run.status!=='uncertain')throw Error('Invalid run state');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(this.hasUnresolvedActions(scope,runId))throw Error('Action requires reconciliation');if(outcome==='retry'){if(run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be retried');run.status='queued';}else run.status=outcome;});
+  return this.transition(scope,runId,revision,run=>{if(run.status!=='uncertain')throw Error('Invalid run state');if(this.hasUnresolvedTokenUsage(scope,runId))throw Error('Token usage requires reconciliation');if(this.hasUnresolvedActions(scope,runId))throw Error('Action requires reconciliation');if(outcome==='retry'){if(run.attempts>=run.maxAttempts||now>=run.deadline)throw Error('Run cannot be retried');run.status='queued';}else run.status=outcome;},now);
  }
  archive(scope:RunScope,runId:string,revision:number):DurableAgentRun{return this.transition(scope,runId,revision,run=>{if(!['succeeded','failed','cancelled'].includes(run.status))throw Error('Invalid run state');run.archived=true;});}
  private checkLease(run:DurableAgentRun,token:string,now:number):void{if(!['running','pause_requested','cancel_requested'].includes(run.status)||run.leaseToken!==token||run.leaseUntil===null||now>=run.leaseUntil)throw Error('Invalid or expired lease');}
