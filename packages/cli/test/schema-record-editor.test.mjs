@@ -329,6 +329,23 @@ test('typed array contains rules agree with server validation',async()=>{
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('object array contains checks nested properties and required fields',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{active:{type:'string',const:'active'}},properties:{people:{type:'array',items:{type:['object','null'],properties:{name:{type:'string'},status:{type:'string'},profile:{type:'object',properties:{rank:{type:'integer'}}}}},contains:{type:'object',properties:{name:{type:'string'},status:{$ref:'#/$defs/active'},profile:{type:'object',properties:{rank:{type:'integer',minimum:2}},required:['rank'],additionalProperties:false}},required:['status','profile'],additionalProperties:false},minContains:1,maxContains:1}},required:['people']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
+  const valid={people:[null,{name:'Ada',status:'active',profile:{rank:2}}]},records={valid,inactive:{people:[{status:'inactive',profile:{rank:2}}]},missing:{people:[{status:'active'}]},low:{people:[{status:'active',profile:{rank:1}}]},extra:{people:[{status:'active',profile:{rank:2},other:true}]},twice:{people:[{status:'active',profile:{rank:2}},{status:'active',profile:{rank:3}}]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const name of ['inactive','missing','low','extra','twice']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],valid);
+  let tooDeep={type:'string'};for(let i=0;i<7;i++)tooDeep={type:'object',properties:{child:tooDeep}};
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   assert.doesNotThrow(()=>factory(options));
+   for(const contains of [{properties:{x:{type:'string'}}},{type:'object',required:['x','x']},{type:'object',additionalProperties:{type:'string'}},{type:'object',properties:{x:{pattern:'['}}},tooDeep])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
+  }
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('JSON Schema scalar descriptions are safely associated with controls in runtime and preview',async()=>{
  const s=await setup();let dom;try{
   const jsonSchema={type:'object',properties:{name:{type:'string',description:'Use <strong>plain text</strong>.'},count:{type:'integer',description:'Count of items'},tags:{type:'array',items:{type:'string',description:'Tag help'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
