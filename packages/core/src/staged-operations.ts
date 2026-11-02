@@ -68,7 +68,7 @@ export class SqliteStagedOperations {
     const snapshotScope={tenantId:scope.tenantId,applicationId:scope.applicationId};
     // Reserve one revision each for claim, outcome, and a possible reconciliation.
     const claim=this.db.prepare("UPDATE staged_business_operations SET status='submitting',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='staged' AND state_revision<=?").run(snapshotScope.tenantId,snapshotScope.applicationId,id,Number.MAX_SAFE_INTEGER-3);
-    if(claim.changes!==1)throw Error('Operation not staged or revision exhausted');
+    if(claim.changes!==1)throw Error('Operation not staged');
     const operation=this.get(snapshotScope,id)!;
     try {
       const result=await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);
