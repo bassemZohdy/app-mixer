@@ -111,11 +111,24 @@ export class SqliteOfflineQueue {
     if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid reconciliation');
     this.evidenceTransition(scope,principalId,id,'uncertain',outcome==='applied'?'succeeded':'pending',outcome,evidence,recordedAt);
   }
-  private evidenceTransition(scope:DataScope,principalId:string,id:string,from:OfflineStatus,to:OfflineStatus,action:SqliteOfflineRecoveryEvent['action'],evidence:SqliteOfflineRecoveryEvidence,recordedAt:number):void{
+  private evidenceTransition(scope:DataScope,principalId:string,id:string,from:OfflineStatus,to:OfflineStatus,action:SqliteOfflineRecoveryEvent['action'],evidence:SqliteOfflineRecoveryEvidence,recordedAt:number,expected?:OfflineOperation):void{
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
+    this.checkRecoveryEvidence(scope,evidence,recordedAt);
+    this.db.exec('BEGIN IMMEDIATE');try{if(expected&&!isDeepStrictEqual(this.get(scope,principalId,id),expected))throw Error('Stale offline recovery');this.transition(scope,principalId,id,from,to,0);this.db.prepare('INSERT INTO offline_recovery_events (tenant_id,application_id,principal_id,queue_id,operator_id,reference,action,recorded_at) VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,evidence.operatorId,evidence.reference,action,recordedAt);this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  private checkRecoveryEvidence(scope:DataScope,evidence:SqliteOfflineRecoveryEvidence,recordedAt:number):void{
     if(!evidence||typeof evidence!=='object'||Array.isArray(evidence)||Object.keys(evidence).length!==2||!Object.hasOwn(evidence,'operatorId')||!Object.hasOwn(evidence,'reference')||!Number.isSafeInteger(recordedAt)||recordedAt<0)throw Error('Invalid offline recovery evidence');
     checkKey(scope,'operator',evidence.operatorId);checkKey(scope,'reference',evidence.reference);
-    this.db.exec('BEGIN IMMEDIATE');try{this.transition(scope,principalId,id,from,to,0);this.db.prepare('INSERT INTO offline_recovery_events (tenant_id,application_id,principal_id,queue_id,operator_id,reference,action,recorded_at) VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,evidence.operatorId,evidence.reference,action,recordedAt);this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  /** Recheck the exact observed claim after the host confirms its submitter has stopped. */
+  async verifyAndRecoverAbandoned(scope:DataScope,principalId:string,id:string,verify:(scope:DataScope,operation:OfflineOperation)=>boolean|Promise<boolean>,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):Promise<boolean>{
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(typeof verify!=='function')throw Error('Invalid offline recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId};this.checkRecoveryEvidence(selected,evidence,recordedAt);const proof={operatorId:evidence.operatorId,reference:evidence.reference},snapshot=this.get(selected,principalId,id);if(!snapshot||snapshot.status!=='running')throw Error('Invalid offline operation state');
+    const confirmed=await verify({...selected},structuredClone(snapshot));if(confirmed!==true)return false;this.evidenceTransition(selected,principalId,id,'running','uncertain','recover',proof,recordedAt,snapshot);return true;
+  }
+  /** Unknown results leave the operation uncertain; changed claims reject stale decisions. */
+  async verifyAndReconcile(scope:DataScope,principalId:string,id:string,verify:(scope:DataScope,operation:OfflineOperation)=>'applied'|'not_applied'|'unknown'|Promise<'applied'|'not_applied'|'unknown'>,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):Promise<'applied'|'not_applied'|'unknown'>{
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(typeof verify!=='function')throw Error('Invalid offline recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId};this.checkRecoveryEvidence(selected,evidence,recordedAt);const proof={operatorId:evidence.operatorId,reference:evidence.reference},snapshot=this.get(selected,principalId,id);if(!snapshot||snapshot.status!=='uncertain')throw Error('Invalid offline operation state');
+    const outcome=await verify({...selected},structuredClone(snapshot));if(outcome==='unknown')return outcome;if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid offline verification outcome');this.evidenceTransition(selected,principalId,id,'uncertain',outcome==='applied'?'succeeded':'pending',outcome,proof,recordedAt,snapshot);return outcome;
   }
   /** Scoped recovery evidence; the caller must authorize access before exposing it. */
   listRecoveryEvidence(scope:DataScope,principalId:string,id:string,options:{after?:number;limit?:number}={}):SqliteOfflineRecoveryEvent[]{
