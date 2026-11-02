@@ -101,3 +101,9 @@ test('SQLite listings recheck scope permission after asynchronous record authori
   }finally{store.close();}
  }
 });
+
+
+test('local memory list and audit fail closed when earlier item access changes',async()=>{
+ let active=false,revoked=false;const store=new SqliteAgentMemory(':memory:',settings({audit:true,authorize:(_actor,_scope,action,id)=>{if(active&&(action==='read'||action==='audit')&&id==='b')revoked=true;return !(active&&revoked&&(action==='read'||action==='audit')&&id==='a');}}));
+ try{for(const id of ['a','b','c'])await store.put(actor,scope,id,id,write(500));for(const limit of [1,3]){active=true;revoked=false;await assert.rejects(store.list(actor,scope,{limit}),/access denied/);active=false;}active=true;revoked=false;await assert.rejects(store.auditHistory(actor,scope),/access denied/);}finally{store.close();}
+});

@@ -63,6 +63,8 @@ The worker passes an `AbortSignal` as the third argument to its scope authorizat
 The list and actor are fixed at construction; rebuilding the worker is required when scopes change. This worker does not discover new scopes, guarantee purge timing, coordinate a production scheduler, remove tombstones or erase database backups. Callbacks and database operations must return promptly; the host owns scheduler health, retries, storage protection and alerting.
 
 
+Local SQLite listing and audit pages recheck each returned item and then scope authorization before returning; semantic and hybrid searches, including exact/indexed comparisons, also recheck access to their selected hits after other asynchronous checks. A failed final check rejects the response rather than returning a partially stale page. Policy may still change after the final check; hosts requiring atomic authorization must coordinate it with data access.
+
 ## Indexed PostgreSQL keyword search
 
 Set `textIndex: true` on `PostgresAgentMemory` and call `initialize()` to create a PostgreSQL GIN full-text index on live semantic records. `AgentSemanticMemory.searchLexical(actor, scope, query, limit?, maxCandidates?)` uses it to find the current embedding model's records without calling the embedding provider. PostgreSQL's `simple` text configuration tokenizes and lowercases the query; all query tokens must match. Its tokenizer and rank differ from hybrid search's NFKC word matching. Results carry PostgreSQL text-rank scores, not cosine similarity or confidence.

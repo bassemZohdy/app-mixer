@@ -130,3 +130,9 @@ test('exact and hybrid searches recheck scope access after final record authoriz
   try{await semantic.put(admin,scope,'apple','apple notes',options);revoke=true;await assert.rejects(semantic[mode](admin,scope,'apple'),/access denied/);listAllowed=true;revoke=false;assert.deepEqual((await semantic[mode](admin,scope,'apple')).map(hit=>hit.id),['apple']);}finally{memory.close();}
  }
 });
+
+
+test('semantic and hybrid searches reject earlier hits if record access is revoked during final reads',async()=>{
+ let active=false,revoked=false,bReads=0;const memory=new SqliteAgentMemory(':memory:',{enabled:true,maxTtlMs:1000,maxEntries:10,clock:()=>100,authorize:(_actor,_scope,action,id)=>{if(active&&action==='read'&&id==='b'&&++bReads===3)revoked=true;return !(active&&revoked&&action==='read'&&id==='a');}}),semantic=new AgentSemanticMemory(memory,{modelId:'model-v1',dimensions:2,embed:async()=>[1,0]});
+ try{await semantic.put(admin,scope,'a','shared a',options);await semantic.put(admin,scope,'b','shared b',options);for(const mode of ['search','searchHybrid']){active=true;revoked=false;bReads=0;await assert.rejects(semantic[mode](admin,scope,'shared',2),/access denied/,mode);active=false;}}finally{memory.close();}
+});

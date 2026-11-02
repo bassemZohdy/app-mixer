@@ -122,3 +122,9 @@ test('PostgreSQL rejects a page when an earlier record permission is revoked mid
   for(const mode of ['list','text','audit']){revoked=false;active=true;const result=mode==='list'?store.list(actor,scope):mode==='text'?store.searchSemanticText(actor,scope,'shared','model'):store.auditHistory(actor,scope);await assert.rejects(result,/access denied/,mode);active=false;}
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
+
+
+test('indexed comparison rechecks exact hits after later indexed reads',async()=>{
+ let revoke=false;const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,vectorIndex:{modelId:'model',dimensions:2},authorize:(_actor,_scope,action,id)=>!(action==='read'&&id==='exact'&&revoke),query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')}}),record=id=>({id,revision:1,value:{format:'semantic-v1',modelId:'model',text:id,vector:[1,0]},provenance,expiresAt:500});
+ store.searchSemanticVector=async()=>[{record:record('indexed'),score:1}];store.list=async()=>({items:[record('exact')]});store.get=async(_actor,_scope,id)=>{if(id==='indexed')revoke=true;return record(id);};const semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]});await assert.rejects(semantic.compareIndexed(actor,scope,'query'),/access denied/);
+});
