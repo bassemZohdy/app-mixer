@@ -50,6 +50,9 @@ export class CapabilityRegistry {
     if(!context || typeof context.tenantId!=='string' || !context.tenantId.trim() || typeof context.principalId!=='string' || !context.principalId.trim() || !['ui','agent','service'].includes(context.origin)) throw Error('Invalid invocation context');
     // Origin is intentionally not part of authorization or execution context.
     const policyContext={tenantId:context.tenantId,principalId:context.principalId};
+    // Capture caller-owned input before any asynchronous audit or authorization.
+    let safeInput:unknown, snapshotFailed=false, snapshotError:unknown;
+    try { safeInput=structuredClone(input); } catch(error) { snapshotFailed=true;snapshotError=error; }
     const invocationId=randomUUID();
     const audit = (outcome:CapabilityAuditEvent['outcome']) => this.audit({invocationId,operationId,...policyContext,outcome});
     // An unavailable audit sink blocks execution before any side effect.
@@ -60,8 +63,8 @@ export class CapabilityRegistry {
     try { authorized=await entry.binding.authorize({...policyContext}) === true; }
     catch(error) { await audit('failed'); throw error; }
     if(!authorized) { await audit('denied'); throw Error('Capability forbidden'); }
-    let safeInput:unknown, valid:boolean;
-    try { safeInput=structuredClone(input); valid=await entry.binding.validate(structuredClone(safeInput)) === true; }
+    let valid:boolean;
+    try { if(snapshotFailed)throw snapshotError; valid=await entry.binding.validate(structuredClone(safeInput)) === true; }
     catch(error) { await audit('failed'); throw error; }
     if(!valid) { await audit('invalid'); throw Error('Invalid capability input'); }
     if(entry.binding.authorizeInput){

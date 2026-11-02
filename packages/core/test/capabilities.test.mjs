@@ -62,3 +62,16 @@ test('input-aware authorization is isolated, fail-closed and audited',async()=>{
  assert.equal(executeCount,0);assert.deepEqual(events,['attempt','denied','attempt','failed']);
  assert.throws(()=>registry.register({operationId:'bad',method:'GET',path:'/'},{authorize:()=>true,validate:()=>true,authorizeInput:'bad',execute:()=>{}}),/Invalid/);
 });
+
+test('capability invocation snapshots input before asynchronous audit and isolates each policy callback',async()=>{
+ let started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),events=[],observed=[];
+ const registry=new CapabilityRegistry(async event=>{events.push(event.outcome);if(event.outcome==='attempt'){started();await gate;}});
+ registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:()=>true,validate:input=>{observed.push(['validate',input.value.n]);input.value.n=20;return true;},authorizeInput:(_context,input)=>{observed.push(['authorize',input.value.n]);input.value.n=30;return true;},execute:input=>{observed.push(['execute',input.value.n]);return input.value.n;}});
+ const input={value:{n:1}},pending=registry.invoke('write',input,{tenantId:'t',principalId:'p',origin:'ui'});await ready;input.value.n=99;release();assert.equal(await pending,1);assert.deepEqual(observed,[['validate',1],['authorize',1],['execute',1]]);assert.deepEqual(events,['attempt','succeeded']);
+});
+
+test('uncloneable invocation inputs retain fail-closed audit and authorization behavior',async()=>{
+ const events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));let calls=0;
+ registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:context=>context.principalId==='allowed',validate:()=>true,execute:()=>calls++});
+ await assert.rejects(registry.invoke('write',{f:()=>{}},{tenantId:'t',principalId:'denied',origin:'ui'}),/forbidden/);await assert.rejects(registry.invoke('write',{f:()=>{}},{tenantId:'t',principalId:'allowed',origin:'ui'}));assert.deepEqual(events,['attempt','denied','attempt','failed']);assert.equal(calls,0);
+});
