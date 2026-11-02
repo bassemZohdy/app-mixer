@@ -412,6 +412,26 @@ void main() {
     ]}));
     await tester.pump();expect(tester.getSize(find.text('Left')).width,lessThan(300));expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
+  testWidgets('external field updates preserve and bound the selected range', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add)))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Grace'}}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'root','component':'TextField','label':'Name','value':{'path':'/name'}}]}));
+    await tester.pump();await tester.showKeyboard(find.byType(TextField));
+    final state=tester.state<EditableTextState>(find.byType(EditableText));
+    state.widget.controller.selection=const TextSelection(baseOffset:4,extentOffset:1,isDirectional:true);
+    receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'Grace Hopper'}));await tester.pump();
+    expect(state.widget.controller.text,'Grace Hopper');
+    expect(state.widget.controller.selection,const TextSelection(baseOffset:4,extentOffset:1,isDirectional:true));
+    expect(state.widget.focusNode.hasFocus,isTrue);
+    receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'Hi'}));await tester.pump();
+    expect(state.widget.controller.text,'Hi');
+    expect(state.widget.controller.selection,const TextSelection(baseOffset:2,extentOffset:1,isDirectional:true));
+    expect(state.widget.focusNode.hasFocus,isTrue);expect(errors,isEmpty);expect(tester.takeException(),isNull);
+  });
   testWidgets('incremental sibling insertion and reordering preserve field editing state', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

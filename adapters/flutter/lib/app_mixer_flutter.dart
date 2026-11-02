@@ -428,8 +428,13 @@ class _BoundTextFieldState extends State<_BoundTextField> {
   void didUpdateWidget(covariant _BoundTextField oldWidget){
     super.didUpdateWidget(oldWidget);
     if(_controller.text!=widget.value){
-      final offset=_controller.selection.baseOffset.clamp(0,widget.value.length).toInt();
-      _controller.value=TextEditingValue(text:widget.value,selection:TextSelection.collapsed(offset:offset));
+      final selection=_controller.selection;
+      final nextSelection=selection.isValid ? TextSelection(
+        baseOffset:selection.baseOffset.clamp(0,widget.value.length).toInt(),
+        extentOffset:selection.extentOffset.clamp(0,widget.value.length).toInt(),
+        affinity:selection.affinity,isDirectional:selection.isDirectional,
+      ) : const TextSelection.collapsed(offset:-1);
+      _controller.value=TextEditingValue(text:widget.value,selection:nextSelection);
     }
   }
   @override
