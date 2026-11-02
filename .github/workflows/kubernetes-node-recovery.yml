@@ -42,6 +42,12 @@ jobs:
           APP_MIXER_NODE_TEST_NAMESPACE: app-mixer-node-test-zone
           APP_MIXER_NODE_TEST_PLACEMENT: zone
         run: node deploy/kubernetes/test-support/node-failure-test.mjs
+      - name: Verify recovery from a worker network partition
+        env:
+          APP_MIXER_NODE_TEST_NAMESPACE: app-mixer-node-test-partition
+          APP_MIXER_NODE_TEST_PLACEMENT: zone
+          APP_MIXER_NODE_TEST_FAILURE: partition
+        run: node deploy/kubernetes/test-support/node-failure-test.mjs
       - name: Verify zone capacity and stalled rollout recovery
         run: node deploy/kubernetes/test-support/zone-capacity-test.mjs
       - name: Render protected zone overlay
