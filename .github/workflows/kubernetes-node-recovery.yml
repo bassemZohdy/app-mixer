@@ -42,6 +42,8 @@ jobs:
           APP_MIXER_NODE_TEST_NAMESPACE: app-mixer-node-test-zone
           APP_MIXER_NODE_TEST_PLACEMENT: zone
         run: node deploy/kubernetes/test-support/node-failure-test.mjs
+      - name: Verify zone capacity and stalled rollout recovery
+        run: node deploy/kubernetes/test-support/zone-capacity-test.mjs
       - name: Render protected zone overlay
         run: kubectl kustomize deploy/kubernetes/zone-placement-example > /dev/null
       - name: Validate protected overlay against the Kubernetes API
