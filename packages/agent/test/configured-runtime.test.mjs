@@ -96,3 +96,17 @@ test('model authority policy is snapshotted and permits valid responses',async()
 test('model authority recheck can block dispatch before the model is called',async()=>{
  const s=setup();try{let checks=0,modelCalls=0;s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>++checks<3;s.options.createModel=()=>({invoke:async()=>{modelCalls++;return new AIMessage('Must not appear');}});const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(modelCalls,0);}finally{s.definitions.close();}
 });
+
+
+test('configured model checks propagate cancellation to definition lookups and fence late results',async()=>{
+ for(const mode of ['signal-aware','fallback']){const s=setup(),controller=new AbortController();let armed=false,started,release,seen,signalReads=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const source={marker:'trusted',async get(tenant,id){assert.equal(this.marker,'trusted');if(armed&&mode==='fallback'){started();await gate;}return s.definitions.get(tenant,id);}};if(mode==='signal-aware')source.getWithSignal=async function(tenant,id,signal){assert.equal(this.marker,'trusted');signalReads++;if(armed){seen=signal;started();await gate;}return s.definitions.get(tenant,id);};s.options.definitions=source;s.options.recheckModelAuthority=true;s.options.createModel=()=>({invoke:async()=>{armed=true;return new AIMessage('Late output');}});const agent=await createConfiguredAgentRun(s.options);if(mode==='signal-aware')source.getWithSignal=()=>{throw Error('mutated lookup');};const pending=collect(agent.run(input,{signal:controller.signal}));await ready;controller.abort();if(seen)assert.equal(seen.aborted,true);release();const events=await pending;assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(s.count(),0);if(mode==='signal-aware')assert.ok(signalReads>0);}finally{release?.();s.definitions.close();}}
+});
+
+test('configured agents reject malformed signal-aware definition lookups',async()=>{
+ const s=setup();try{await assert.rejects(createConfiguredAgentRun({...s.options,definitions:{get:()=>undefined,getWithSignal:true}}),/Invalid configured agent/);}finally{s.definitions.close();}
+});
+
+
+test('configured runs fence cancellation during the first definition check',async()=>{
+ for(const mode of ['signal-aware','fallback']){const s=setup(),controller=new AbortController();let armed=false,started,release,seen,modelCalls=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const source={async get(tenant,id){if(armed&&mode==='fallback'){started();await gate;}return s.definitions.get(tenant,id);}};if(mode==='signal-aware')source.getWithSignal=async(tenant,id,signal)=>{seen=signal;started();await gate;return s.definitions.get(tenant,id);};s.options.definitions=source;s.options.createModel=()=>({invoke:async()=>{modelCalls++;return new AIMessage('Unexpected');}});const agent=await createConfiguredAgentRun(s.options);armed=true;const pending=collect(agent.run(input,{signal:controller.signal}));await ready;controller.abort();if(seen)assert.equal(seen.aborted,true);release();await assert.rejects(pending,/abort/i);assert.equal(modelCalls,0);}finally{release?.();s.definitions.close();}}
+});
