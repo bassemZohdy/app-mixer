@@ -107,6 +107,7 @@ test('PostgreSQL pages and indexed searches recheck earlier record permissions b
  for(const mode of ['list','text','vector','audit']){
   let revoked=false;const rows=['a','b'].map(id=>({memory_id:id,revision:1,score:1,distance:0}));const query=async(sql,args)=>{
    if(sql.startsWith('SET LOCAL'))return {rows:[]};
+   if(sql.startsWith('SELECT memory_id,revision,expires_at,deleted'))return {rows:args[5].map(id=>({memory_id:id,revision:1,expires_at:500,deleted:false}))};
    if(sql.startsWith('SELECT * FROM app_mixer_agent_memories')){const id=args[5];return {rows:[{memory_id:id,revision:1,value:JSON.stringify({format:'semantic-v1',modelId:'model',text:id,vector:[1,0]}),provenance:JSON.stringify(provenance),expires_at:500,deleted:false}]};}
    if(sql.startsWith('SELECT id,actor_id'))return {rows:rows.map((row,index)=>({id:index+1,actor_id:'service',action:'write',memory_id:row.memory_id,revision:1,count:1,observed_at:100}))};
    return {rows};
@@ -127,4 +128,13 @@ test('PostgreSQL rejects a page when an earlier record permission is revoked mid
 test('indexed comparison rechecks exact hits after later indexed reads',async()=>{
  let revoke=false;const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,vectorIndex:{modelId:'model',dimensions:2},authorize:(_actor,_scope,action,id)=>!(action==='read'&&id==='exact'&&revoke),query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')}}),record=id=>({id,revision:1,value:{format:'semantic-v1',modelId:'model',text:id,vector:[1,0]},provenance,expiresAt:500});
  store.searchSemanticVector=async()=>[{record:record('indexed'),score:1}];store.list=async()=>({items:[record('exact')]});store.get=async(_actor,_scope,id)=>{if(id==='indexed')revoke=true;return record(id);};const semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]});await assert.rejects(semantic.compareIndexed(actor,scope,'query'),/access denied/);
+});
+
+
+test('PostgreSQL rejects records changed during final authorization',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ for(const mode of ['get','list','text'])for(const change of ['update','delete','expire']){
+  const schema='app_mixer_stale_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let active=false,modified=false,checks=0,now=100;
+  try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,textIndex:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:async(_actor,_scope,action,id)=>{if(active&&!modified&&action==='read'&&id==='a'&&++checks===(mode==='get'?3:4)){modified=true;if(change==='expire')now=500;else if(change==='delete')await pool.query("UPDATE app_mixer_agent_memories SET deleted=TRUE,revision=revision+1 WHERE memory_id='a'");else await pool.query("UPDATE app_mixer_agent_memories SET revision=revision+1 WHERE memory_id='a'");}return true;},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await store.initialize();await store.put(actor,scope,'a',{format:'semantic-v1',modelId:'model',text:'shared term',vector:[1,0]},{expectedRevision:null,expiresAt:500,provenance});active=true;const result=mode==='get'?store.get(actor,scope,'a'):mode==='list'?store.list(actor,scope):store.searchSemanticText(actor,scope,'shared','model');await assert.rejects(result,/Memory changed during read/,`${mode} ${change}`);assert.equal(modified,true);
+  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+ }
 });
