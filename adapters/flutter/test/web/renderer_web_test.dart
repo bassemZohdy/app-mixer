@@ -15,6 +15,9 @@ void main() {
   testWidgets('field labels do not include adjacent text in layouts', verifyAdjacentFieldSemantics);
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
+  testWidgets('row spacing modes place children consistently', verifyRowSpacing);
+  testWidgets('row cross-axis alignment places children consistently', verifyRowAlignment);
+  testWidgets('column cross-axis alignment places children consistently', verifyColumnAlignment);
   testWidgets('card does not add layout margins or decoration', verifyCardLayoutParity);
   testWidgets('exposes the correct heading levels to web semantics', (tester) async {
     final semantics=tester.ensureSemantics();
