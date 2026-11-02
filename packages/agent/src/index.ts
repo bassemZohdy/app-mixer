@@ -251,3 +251,6 @@ export type {PricedCostLimitedToolModelOptions} from './priced-cost-model.js';
 
 export {createOpenAIPricedCostModel} from './openai-priced-cost-model.js';
 export type {OpenAIPricedCostModelOptions} from './openai-priced-cost-model.js';
+
+export {createOpenAICapabilityPricedModel} from './openai-capability-priced-model.js';
+export type {OpenAICapabilityPricedModelOptions,OpenAICapabilityCountingRequest} from './openai-capability-priced-model.js';
