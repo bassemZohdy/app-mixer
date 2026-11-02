@@ -170,7 +170,7 @@ export class EncryptedBrowserQueue {
     if(count!==entries.length){tx.abort();try{await done;}catch{}throw Error('Offline queue changed during rotation');}
     await this.applyCounter(store,tx,done,prepared);for(const entry of replacements)store.put(entry);store.put(marker);await done;await this.advanceAnchor(prepared);this.close();return replacements.length;
   }
-  async enqueue(operationId:string,requestKey:string,payload:Record<string,unknown>,options?:{idempotencyKey:string}):Promise<BrowserQueueItem>{return this.retry(()=>this.enqueueOnce(operationId,requestKey,payload,options));}
+  async enqueue(operationId:string,requestKey:string,payload:Record<string,unknown>,options?:{idempotencyKey:string}):Promise<BrowserQueueItem>{if(!identifier(operationId)||!identifier(requestKey))throw Error('Invalid offline request');if(options!==undefined&&(!record(options)||Object.keys(options).length!==1||!identifier(options.idempotencyKey)))throw Error('Invalid shared offline key');const value=copy(payload),selected=options?{idempotencyKey:options.idempotencyKey}:undefined;return this.retry(()=>this.enqueueOnce(operationId,requestKey,value,selected));}
   private async enqueueOnce(operationId:string,requestKey:string,payload:Record<string,unknown>,options?:{idempotencyKey:string}):Promise<BrowserQueueItem>{
     if(!identifier(operationId)||!identifier(requestKey))throw Error('Invalid offline request');
     if(options!==undefined&&(!record(options)||Object.keys(options).length!==1||!identifier(options.idempotencyKey)))throw Error('Invalid shared offline key');const sharedKey=options?.idempotencyKey;
@@ -183,7 +183,7 @@ export class EncryptedBrowserQueue {
     return structuredClone(item);
   }
   /** Atomically replace a reviewed conflict with a new, separately idempotent intent. */
-  async resolveConflict(id:string,expectedVersion:number,requestKey:string,payload:Record<string,unknown>):Promise<BrowserQueueItem>{return this.retry(()=>this.resolveConflictOnce(id,expectedVersion,requestKey,payload));}
+  async resolveConflict(id:string,expectedVersion:number,requestKey:string,payload:Record<string,unknown>):Promise<BrowserQueueItem>{if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER||!identifier(requestKey))throw Error('Invalid conflict resolution');const value=copy(payload);return this.retry(()=>this.resolveConflictOnce(id,expectedVersion,requestKey,value));}
   private async resolveConflictOnce(id:string,expectedVersion:number,requestKey:string,payload:Record<string,unknown>):Promise<BrowserQueueItem>{
     if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER||!identifier(requestKey))throw Error('Invalid conflict resolution');
     const normalized=copy(payload),replacementId=await this.itemId(requestKey),current=await this.get(id);
