@@ -61,3 +61,15 @@ test('explicit scoped delegation invokes as the user only while host policy and 
   if(mode==='wrong-run'){await assert.rejects(collect(run.run(input)),/run mismatch/);continue}const events=await collect(run.run(input));assert.equal(events.at(-1).type,mode==='allowed'?'RUN_FINISHED':'RUN_ERROR');assert.equal(calls,mode==='allowed'?1:0);if(mode==='allowed'){assert.ok(checks>0);assert.ok(contexts.every(e=>e.principalId==='user'));}
  }finally{s.definitions.close();}}
 });
+
+
+test('versioned agent instructions reach each model turn without changing capability policy',async()=>{
+ const s=setup(),histories=[];try{const instructions='Answer inventory questions using the approved tool.';s.definitions.save('t',{...base,instructions},1);s.options.expectedVersion=2;let turns=0;s.options.createModel=(definition,tools)=>{assert.equal(definition.manifest.instructions,instructions);definition.manifest.instructions='mutated by host model';assert.deepEqual(tools.map(tool=>tool.name),['lookup']);return {async invoke(messages){histories.push(messages.map(message=>({role:message._getType(),content:message.content})));return ++turns===1?new AIMessage({content:'',tool_calls:[{id:'c1',name:'lookup',args:{}}]}):new AIMessage('Found');}};};const run=await createConfiguredAgentRun(s.options),events=await collect(run.run(input));assert.equal(events.at(-1).type,'RUN_FINISHED');assert.equal(s.count(),1);assert.equal(histories.length,2);for(const history of histories){assert.deepEqual(history[0],{role:'system',content:instructions});assert.equal(history.filter(message=>message.role==='system').length,1);}assert.equal(histories[0][1].content,'Find it');assert.equal(s.definitions.get('t','agent').manifest.instructions,instructions);assert.ok(s.audit.every(event=>event.principalId==='svc'));
+  const stale=await createConfiguredAgentRun(s.options);s.definitions.save('t',{...base,instructions:'Changed instruction'},2);await assert.rejects(collect(stale.run(input)),/definition changed/);assert.equal(turns,2);
+ }finally{s.definitions.close();}
+});
+
+
+test('configured runs reject invalid instructions from a custom definition source',async()=>{
+ const s=setup();try{const current=s.definitions.get('t','agent');for(const instructions of ['',123,'x'.repeat(16001)]){s.options.definitions={get:()=>({...current,manifest:{...current.manifest,instructions}})};await assert.rejects(createConfiguredAgentRun(s.options),/definition unavailable/);}assert.equal(s.count(),0);}finally{s.definitions.close();}
+});

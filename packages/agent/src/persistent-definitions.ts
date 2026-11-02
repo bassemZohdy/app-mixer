@@ -12,6 +12,7 @@ const manifestSchema=z.object({
  administrators:z.array(identifier).min(1).max(128).refine(unique),
  userAssociation:identifier.optional(),
  servicePrincipalId:identifier,
+ instructions:z.string().min(1).max(16000).optional(),
  model:z.object({provider:identifier,model:identifier,credentialRef:identifier.optional()}).strict(),
  allowedCapabilities:z.array(identifier).max(256).refine(unique),
  lifecycle:z.object({enabled:z.boolean(),maxAttempts:z.number().int().min(1).max(100),runTimeoutMs:z.number().int().min(1000).max(86400000)}).strict(),
