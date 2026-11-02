@@ -99,6 +99,9 @@ try {
       external=document.querySelector('input');
       if(document.activeElement!==external || external.selectionStart!==1 || external.selectionEnd!==2 || external.value!=='Go') throw Error('External update did not clamp selection');
       renderer.apply({version,updateDataModel:{surfaceId,path:'/form/name',value:'Grace'}});
+      const focused=document.querySelector('input');focused.setSelectionRange(1,3,'backward');
+      renderer.apply({version,updateComponents:{surfaceId,components:[{id:'root',component:'Column',children:['title','display','field','button']}]}});
+      const reordered=document.querySelector('input');if(document.activeElement!==reordered || reordered.selectionStart!==1 || reordered.selectionEnd!==3 || reordered.selectionDirection!=='backward') throw Error('Unrelated component update lost focus');
       document.querySelector('button').click();
       if(event.action.context.name!=='Grace' || Object.hasOwn(event.action.context,'secret')) throw Error('Action context failed');
       const originalInput=document.querySelector('input'),originalButton=document.querySelector('button');

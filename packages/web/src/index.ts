@@ -182,7 +182,7 @@ export function basicRegistry(): ComponentRegistry {
   }, validateBasic);
   return registry;
 }
-type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; composing: Set<HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
+type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; controlComponents: Map<string, Obj>; composing: Set<HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
 export class A2UIRenderer {
   private readonly surfaces = new Map<string, Surface>();
   constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry(), private readonly onAction?: (message: ActionMessage) => void) {}
@@ -200,7 +200,7 @@ export class A2UIRenderer {
       if (this.surfaces.has(surfaceId)) throw Error('Surface already exists');
       const element = this.host.ownerDocument.createElement('div');
       element.dataset.surfaceId = surfaceId; this.host.appendChild(element);
-      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map(), composing:new Set(), componentRevision:{}}); return;
+      this.surfaces.set(surfaceId, {element, components:new Map(), data:{}, controls:new Map(), controlComponents:new Map(), composing:new Set(), componentRevision:{}}); return;
     }
     const surface = this.surfaces.get(surfaceId);
     if (!surface) throw Error('Unknown surface');
@@ -223,10 +223,11 @@ export class A2UIRenderer {
       data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value') || payload.value === undefined);
     }
     const doc = this.host.ownerDocument;
-    // Data updates rebuild the surface; retain a current field's focus and selection.
-    const focusedEntry = kind === 'updateDataModel' ? [...surface.controls].find(([, control]) => doc.activeElement === control) : undefined;
+    // Retain focus only when the same field definition survives at the same tree path.
+    const focusedEntry = [...surface.controls].find(([, control]) => doc.activeElement === control);
     const focused = focusedEntry ? {id:focusedEntry[0], control:focusedEntry[1], start:focusedEntry[1].selectionStart, end:focusedEntry[1].selectionEnd, direction:focusedEntry[1].selectionDirection} : undefined;
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
+    const controlComponents = new Map<string, Obj>();
     let renderedCount = 0;
     const render = (componentId: string, visited: Set<string>, inButton = false, path = 'root;'): HTMLElement => {
       if (++renderedCount > 5000) throw Error('Component tree too large');
@@ -235,6 +236,7 @@ export class A2UIRenderer {
       if (inButton && (c.component === 'Button' || c.component === 'TextField')) throw Error('Interactive component inside button');
       if (visited.has(componentId) || visited.size >= 100) throw Error('Cyclic or deeply nested components');
       const next = new Set(visited); next.add(componentId);
+      if (c.component === 'TextField') controlComponents.set(path,c);
       const occurrences = new Map<string,number>();
       const interaction: Interaction = {
         controlKey:path, controls, enabled: !!this.onAction,
@@ -270,9 +272,9 @@ export class A2UIRenderer {
     const root = components.has('root') ? render('root', new Set()) : undefined;
     // Keep an active IME control mounted until compositionend commits its text.
     if (kind === 'updateDataModel' && surface.composing.size) { surface.data = data; return; }
-    const restoreFocus = focused && doc.activeElement === focused.control;
+    const restoreFocus = focused && doc.activeElement === focused.control && surface.controlComponents.get(focused.id) === controlComponents.get(focused.id);
     surface.element.replaceChildren(...(root ? [root] : []));
-    surface.components = components; surface.data = data; surface.controls = controls; surface.composing.clear(); surface.componentRevision = componentRevision;
+    surface.components = components; surface.data = data; surface.controls = controls; surface.controlComponents = controlComponents; surface.composing.clear(); surface.componentRevision = componentRevision;
     const replacement = restoreFocus ? controls.get(focused.id) : undefined;
     if (replacement && focused) {
       replacement.focus({preventScroll:true});

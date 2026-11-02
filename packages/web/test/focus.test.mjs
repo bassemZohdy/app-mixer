@@ -23,6 +23,22 @@ test('external data updates preserve the focused field and clamp its selection',
  }finally{dom.window.close();}
 });
 
+test('unrelated component updates preserve field focus without focusing a replacement field',()=>{
+ const dom=new JSDOM('<!doctype html><main></main>',{pretendToBeVisual:true}),doc=dom.window.document,renderer=new A2UIRenderer(doc.querySelector('main'));
+ try{
+  renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+  renderer.apply(message('updateDataModel',{surfaceId:'main',value:{name:'Grace',other:'Other'}}));
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['later','field']},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}}]}));
+  let input=doc.querySelector('input');input.focus();input.setSelectionRange(1,4,'backward');
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'later',component:'Text',text:'Loaded'}]}));
+  input=doc.querySelector('input');assert.equal(doc.activeElement,input);assert.deepEqual([input.selectionStart,input.selectionEnd,input.selectionDirection],[1,4,'backward']);
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['field','later']}]}));
+  input=doc.querySelector('input');assert.equal(doc.activeElement,input);assert.deepEqual([input.selectionStart,input.selectionEnd,input.selectionDirection],[1,4,'backward']);
+  renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'field',component:'TextField',label:'Other',value:{path:'/other'}}]}));
+  input=doc.querySelector('input');assert.equal(input.value,'Other');assert.notEqual(doc.activeElement,input);
+ }finally{dom.window.close();}
+});
+
 test('repeated field references remain editable and retain the focused occurrence',()=>{
  const dom=new JSDOM('<!doctype html><main></main>',{pretendToBeVisual:true}),doc=dom.window.document,renderer=new A2UIRenderer(doc.querySelector('main'));
  try{
