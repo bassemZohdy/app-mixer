@@ -1,7 +1,7 @@
 /** Encrypted browser storage for explicitly enabled offline intents. The host owns keys and synchronization. */
 export type BrowserQueueScope={tenantId:string;applicationId:string;principalId:string};
-export type BrowserQueueStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
-export type BrowserQueueItem={id:string;version:number;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:BrowserQueueStatus;attempts:number;replacementId?:string};
+export type BrowserQueueStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded'|'retired';
+export type BrowserQueueItem={id:string;version:number;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:BrowserQueueStatus;attempts:number;replacementId?:string;retiredFrom?:'succeeded'|'discarded'};
 /** Host-held floor for the queue's monotonic change counter, stored outside browser storage. `advance` must keep the maximum value it has seen. */
 export type BrowserQueueRollbackAnchor={read():Promise<number>;advance(counter:number):Promise<void>};
 export type BrowserQueueOptions={enabled:true;databaseName:string;scope:BrowserQueueScope;key:CryptoKey;indexedDB?:IDBFactory;crypto?:Crypto;rollbackAnchor?:BrowserQueueRollbackAnchor};
@@ -144,7 +144,7 @@ export class EncryptedBrowserQueue {
     try{
       const bytes=await this.crypt.subtle.decrypt({name:'AES-GCM',iv:envelope.iv,additionalData:this.aad(envelope.id,envelope.version)},this.key,envelope.ciphertext);
       const value=JSON.parse(dec.decode(bytes)) as BrowserQueueItem;
-      if(!record(value)||value.id!==envelope.id||value.version!==envelope.version||!identifier(value.operationId)||!identifier(value.requestKey)||!identifier(value.idempotencyKey)||!['pending','running','conflict','uncertain','exhausted','succeeded','discarded'].includes(value.status)||!Number.isSafeInteger(value.attempts)||value.attempts<0||(Object.keys(value).length!==8&&Object.keys(value).length!==9)||(value.replacementId!==undefined&&(value.status!=='discarded'||typeof value.replacementId!=='string'||!/^[a-f0-9]{64}$/.test(value.replacementId)))||(Object.keys(value).length===9&&!Object.hasOwn(value,'replacementId'))||await this.itemId(value.requestKey)!==value.id)throw Error('Invalid entry');
+      if(!record(value)||value.id!==envelope.id||value.version!==envelope.version||!identifier(value.operationId)||!identifier(value.requestKey)||!identifier(value.idempotencyKey)||!['pending','running','conflict','uncertain','exhausted','succeeded','discarded','retired'].includes(value.status)||!Number.isSafeInteger(value.attempts)||value.attempts<0||(Object.keys(value).length!==8&&Object.keys(value).length!==9)||(value.replacementId!==undefined&&(value.status!=='discarded'||typeof value.replacementId!=='string'||!/^[a-f0-9]{64}$/.test(value.replacementId)))||(value.status==='retired'?(!['succeeded','discarded'].includes(value.retiredFrom as string)||!record(value.payload)||Object.keys(value.payload).length!==0||Object.hasOwn(value,'replacementId')):Object.hasOwn(value,'retiredFrom'))||(Object.keys(value).length===9&&!Object.hasOwn(value,value.status==='retired'?'retiredFrom':'replacementId'))||await this.itemId(value.requestKey)!==value.id)throw Error('Invalid entry');
       value.payload=copy(value.payload);return value;
     }catch{throw Error('Cannot authenticate offline entry');}
   }
@@ -179,7 +179,7 @@ export class EncryptedBrowserQueue {
     await this.guard(store,tx,done);const existing=await req(store.get(id)) as Envelope|undefined;
     if(!existing){const count=await req(store.index('partition').count(this.partition));if(count>=1000){tx.abort();try{await done;}catch{}throw Error('Offline queue full');}await this.applyCounter(store,tx,done,prepared);store.add(envelope);}
     await done;if(!existing)await this.advanceAnchor(prepared);
-    if(existing){const previous=await this.unseal(existing);await this.checkRollback();await this.ensureCurrent();if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized)||(sharedKey!==undefined&&previous.idempotencyKey!==sharedKey))throw Error('Offline request conflict');return previous;}
+    if(existing){const previous=await this.unseal(existing);await this.checkRollback();await this.ensureCurrent();if(previous.status==='retired')throw Error('Offline request retired');if(previous.operationId!==operationId||canonical(previous.payload)!==canonical(normalized)||(sharedKey!==undefined&&previous.idempotencyKey!==sharedKey))throw Error('Offline request conflict');return previous;}
     return structuredClone(item);
   }
   /** Atomically replace a reviewed conflict with a new, separately idempotent intent. */
@@ -204,6 +204,20 @@ export class EncryptedBrowserQueue {
       if(existing)throw Error('Offline request conflict');if(count>=1000)throw Error('Offline queue full');throw Error('Offline version conflict');
     }
     await this.applyCounter(store,tx,done,prepared);store.put(originalEnvelope);store.add(replacementEnvelope);await done;await this.advanceAnchor(prepared);return structuredClone(replacement);
+  }
+  /** Replace a terminal payload with an encrypted request-key fence. */
+  async retire(id:string,expectedVersion:number):Promise<BrowserQueueItem>{return this.retry(()=>this.retireOnce(id,expectedVersion));}
+  private async retireOnce(id:string,expectedVersion:number):Promise<BrowserQueueItem>{
+    if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER)throw Error('Invalid offline version');
+    const current=await this.get(id);if(!current)throw Error('Offline version conflict');
+    if(current.status==='retired'&&current.version===expectedVersion+1)return current;
+    if(current.version!==expectedVersion)throw Error('Offline version conflict');
+    if(current.status!=='succeeded'&&current.status!=='discarded')throw Error('Invalid offline retirement');
+    const {replacementId:_replacementId,...rest}=current;
+    const updated:BrowserQueueItem={...rest,status:'retired',retiredFrom:current.status,payload:{},version:current.version+1},envelope=await this.seal(updated),prepared=await this.prepareCounter([envelope]);
+    await this.checkRollback();const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);const latest=await req(store.get(id)) as Envelope|undefined;
+    if(!latest||latest.partition!==this.partition||latest.version!==expectedVersion){tx.abort();try{await done;}catch{}throw Error('Offline version conflict');}
+    await this.applyCounter(store,tx,done,prepared);store.put(envelope);await done;await this.advanceAnchor(prepared);return structuredClone(updated);
   }
   /** Compare-and-swap transitions prevent two tabs from claiming the same entry. */
   async transition(id:string,expectedVersion:number,action:BrowserQueueAction):Promise<BrowserQueueItem>{return this.retry(()=>this.transitionOnce(id,expectedVersion,action));}

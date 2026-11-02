@@ -3,13 +3,13 @@ import {invokeCapability} from './capabilities.mjs';
 
 // Trusted host code supplies an unlocked key, current identity and authorized transport.
 export async function createGeneratedOfflineRuntime(config){
-  if(!config||config.enabled!==true||!Array.isArray(config.operations)||!config.operations.length||config.operations.length>100||typeof config.canEnqueue!=='function'||typeof config.canDiscard!=='function'||typeof config.isOnline!=='function'||typeof config.resolveActor!=='function'||typeof config.dispatch!=='function'||typeof config.classify!=='function'||typeof config.onError!=='function'||typeof config.loadCurrent!=='function')throw Error('Invalid offline runtime configuration');
+  if(!config||config.enabled!==true||!Array.isArray(config.operations)||!config.operations.length||config.operations.length>100||typeof config.canEnqueue!=='function'||typeof config.canDiscard!=='function'||(config.canRetire!==undefined&&typeof config.canRetire!=='function')||typeof config.isOnline!=='function'||typeof config.resolveActor!=='function'||typeof config.dispatch!=='function'||typeof config.classify!=='function'||typeof config.onError!=='function'||typeof config.loadCurrent!=='function')throw Error('Invalid offline runtime configuration');
   const pattern=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,operations=new Map();
   for(const operation of config.operations){
     if(!operation||typeof operation.id!=='string'||!pattern.test(operation.id)||typeof operation.label!=='string'||!operation.label.trim()||operation.label.length>120||operations.has(operation.id))throw Error('Invalid offline operation');
     operations.set(operation.id,operation.label);
   }
-  const {canEnqueue,canDiscard,isOnline,resolveActor,dispatch,classify,onError,loadCurrent}=config;
+  const {canEnqueue,canDiscard,canRetire,isOnline,resolveActor,dispatch,classify,onError,loadCurrent}=config;
   const scope={tenantId:config.scope?.tenantId,applicationId:config.scope?.applicationId,principalId:config.scope?.principalId};
   const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{})});
   let closed=false,closePromise;const panels=new Set();
@@ -30,6 +30,11 @@ export async function createGeneratedOfflineRuntime(config){
       ensureOpen();if(!operations.has(operationId)||!await current())throw Error('Offline operation not allowed');
       if(await canEnqueue(operationId,structuredClone(safe),{...scope})!==true||!await current()||closed)throw Error('Offline operation not allowed');
       return queue.enqueue(operationId,requestKey,safe,keyOptions);
+    },
+    async retire(id,expectedVersion){
+      ensureOpen();if(!canRetire||!await current())throw Error('Offline operation not allowed');
+      const item=await queue.get(id);if(!item||!operations.has(item.operationId)||!['succeeded','discarded','retired'].includes(item.status)||await canRetire(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
+      return queue.retire(id,expectedVersion);
     },
     mountConflicts(root){
       ensureOpen();const panel=mountOfflineConflictPanel(root,queue,{
@@ -73,7 +78,7 @@ export function mountGeneratedOfflineHistory(root,runtime,options={}){
         const items=await runtime.list();if(disposed||current!==generation)return;
         if(!items.length){status.textContent='No offline operations.';return;}
         status.textContent='Review saved operations before creating another request.';
-        for(const item of items){const section=node('section'),details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id),details);if(options.onRecover){const recover=node('button','Use request in form');recover.type='button';recover.addEventListener('click',()=>{recover.disabled=true;void (async()=>{try{await options.onRecover(item.id);if(!disposed&&current===generation)status.textContent='Request loaded into the form. Review it before submitting.';}catch{if(!disposed&&current===generation)status.textContent='Unable to load the request into the form.';}finally{if(!disposed&&current===generation)recover.disabled=false;}})();});section.appendChild(recover);}list.appendChild(section);}
+        for(const item of items){const section=node('section');section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id));if(item.status==='retired')section.appendChild(node('p','Request data removed.'));else{const details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.appendChild(details);}if(options.onRecover&&item.status!=='retired'){const recover=node('button','Use request in form');recover.type='button';recover.addEventListener('click',()=>{recover.disabled=true;void (async()=>{try{await options.onRecover(item.id);if(!disposed&&current===generation)status.textContent='Request loaded into the form. Review it before submitting.';}catch{if(!disposed&&current===generation)status.textContent='Unable to load the request into the form.';}finally{if(!disposed&&current===generation)recover.disabled=false;}})();});section.appendChild(recover);}list.appendChild(section);}
       }catch{if(!disposed&&current===generation)status.textContent='Unable to load offline operations.';}
     },
     dispose(){disposed=true;generation++;root.replaceChildren();}
@@ -169,9 +174,9 @@ export function mountGeneratedOfflineForm(root,runtime,options={}){
       busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
       try{
         const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
-        const item=(await runtime.list()).find(value=>value.id===id);if(disposed||!item||![...select.options].some(option=>option.value===item.operationId)||typeof item.requestKey!=='string'||!/^[0-9a-f-]{36}$/.test(item.requestKey))throw Error('Cannot recover offline request');
+        const item=(await runtime.list()).find(value=>value.id===id);if(disposed||!item||item.status==='retired'||![...select.options].some(option=>option.value===item.operationId)||typeof item.requestKey!=='string'||!/^[0-9a-f-]{36}$/.test(item.requestKey))throw Error('Cannot recover offline request');
         const payload=JSON.stringify(item.payload,null,2),salt=crypt.randomUUID(),digest=Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([salt,item.operationId,item.payload])))),byte=>byte.toString(16).padStart(2,'0')).join('');
-        const latest=(await runtime.list()).find(value=>value.id===id);if(disposed||!latest||latest.version!==item.version)throw Error('Cannot recover offline request');if(sharedIdentityStore){if(!uuid.test(item.requestKey)||!uuid.test(item.idempotencyKey))throw Error('Cannot recover shared request');await sharedIdentityStore.restore(storageKey,item.operationId,structuredClone(item.payload),{requestKey:item.requestKey,idempotencyKey:item.idempotencyKey});}else if(identityStore)await identityStore.restore(storageKey,item.operationId,item.payload,item.requestKey);else storage.setItem(storageKey,JSON.stringify({version:1,key:item.requestKey,salt,digest}));if(disposed)throw Error('Cannot recover offline request');select.value=item.operationId;data.value=payload;status.textContent='Previous request loaded. Review before submitting.';
+        const latest=(await runtime.list()).find(value=>value.id===id);if(disposed||!latest||latest.status==='retired'||latest.version!==item.version)throw Error('Cannot recover offline request');if(sharedIdentityStore){if(!uuid.test(item.requestKey)||!uuid.test(item.idempotencyKey))throw Error('Cannot recover shared request');await sharedIdentityStore.restore(storageKey,item.operationId,structuredClone(item.payload),{requestKey:item.requestKey,idempotencyKey:item.idempotencyKey});}else if(identityStore)await identityStore.restore(storageKey,item.operationId,item.payload,item.requestKey);else storage.setItem(storageKey,JSON.stringify({version:1,key:item.requestKey,salt,digest}));if(disposed)throw Error('Cannot recover offline request');select.value=item.operationId;data.value=payload;status.textContent='Previous request loaded. Review before submitting.';
       }finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}}
     },
     dispose(){disposed=true;root.replaceChildren();}

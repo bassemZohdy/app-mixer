@@ -47,6 +47,40 @@ test('two tabs cannot claim the same intent and ambiguous results require reconc
  }finally{a.close();b.close();}
 });
 
+test('terminal payload retirement keeps an encrypted request fence across tabs and key rotation',async()=>{
+ const factory=new IDBFactory(),oldKey=await key(),newKey=await key(),a=await EncryptedBrowserQueue.open(options(factory,oldKey)),b=await EncryptedBrowserQueue.open(options(factory,oldKey)),other=await EncryptedBrowserQueue.open(options(factory,oldKey,{...scope,principalId:'bob'}));
+ try{
+  const item=await a.enqueue('save','retired-key',{private:'sensitive payload'}),otherItem=await other.enqueue('save','retired-key',{private:'other tenant'});
+  await assert.rejects(a.retire(item.id,item.version),/Invalid offline retirement/);
+  const running=await a.transition(item.id,item.version,'claim');await assert.rejects(a.retire(item.id,running.version),/Invalid offline retirement/);
+  const completed=await a.transition(item.id,running.version,'succeed');
+  const retired=await a.retire(item.id,completed.version);assert.equal(retired.status,'retired');assert.equal(retired.retiredFrom,'succeeded');assert.deepEqual(retired.payload,{});assert.equal(retired.version,completed.version+1);
+  assert.deepEqual(await b.retire(item.id,completed.version),retired);await assert.rejects(b.transition(item.id,completed.version,'claim'),/version conflict/);
+  await assert.rejects(a.enqueue('save','retired-key',{private:'sensitive payload'}),/retired/);await assert.rejects(a.enqueue('save','retired-key',{}),/retired/);
+  assert.equal((await other.get(otherItem.id)).payload.private,'other tenant');assert.equal((await a.list())[0].status,'retired');
+  assert.equal(await a.rotateKey(newKey),1);await assert.rejects(b.list(),/key changed/);const reopened=await EncryptedBrowserQueue.open(options(factory,newKey));
+  try{assert.deepEqual((await reopened.get(item.id)).payload,{});await assert.rejects(reopened.enqueue('save','retired-key',{private:'sensitive payload'}),/retired/);}finally{reopened.close();}
+ }finally{a.close();b.close();other.close();}
+});
+
+test('retirement retains a rollback-protected fence and rejects stale versions',async()=>{
+ const factory=new IDBFactory(),secret=await key();let floor=0;const anchor={read:async()=>floor,advance:async value=>{floor=Math.max(floor,value);}},config={...options(factory,secret),rollbackAnchor:anchor},queue=await EncryptedBrowserQueue.open(config);
+ try{
+  const item=await queue.enqueue('save','key',{secret:'payload'}),discarded=await queue.transition(item.id,item.version,'discard');await assert.rejects(queue.retire(item.id,item.version),/version conflict/);
+  const before=floor,retired=await queue.retire(item.id,discarded.version);assert.equal(retired.retiredFrom,'discarded');assert.ok(floor>before);assert.equal((await queue.get(item.id)).status,'retired');await assert.rejects(queue.enqueue('save','key',{secret:'payload'}),/retired/);
+ }finally{queue.close();}
+});
+
+test('retiring a discarded conflict does not recreate its replacement',async()=>{
+ const factory=new IDBFactory(),secret=await key(),queue=await EncryptedBrowserQueue.open(options(factory,secret));
+ try{
+  const item=await queue.enqueue('save','original',{text:'old'}),running=await queue.transition(item.id,item.version,'claim'),conflict=await queue.transition(item.id,running.version,'conflict'),replacement=await queue.resolveConflict(item.id,conflict.version,'replacement',{text:'new'}),discarded=await queue.get(item.id);
+  const retired=await queue.retire(item.id,discarded.version);assert.equal(retired.retiredFrom,'discarded');assert.equal(retired.replacementId,undefined);
+  await assert.rejects(queue.resolveConflict(item.id,conflict.version,'replacement',{text:'new'}),/Invalid conflict resolution|version conflict/);
+  await assert.rejects(queue.enqueue('save','original',{text:'old'}),/retired/);assert.deepEqual((await queue.get(replacement.id)).payload,{text:'new'});assert.equal((await queue.list()).length,2);
+ }finally{queue.close();}
+});
+
 test('ciphertext and authenticated metadata tampering are rejected',async()=>{
  const factory=new IDBFactory(),secret=await key(),queue=await EncryptedBrowserQueue.open(options(factory,secret)),item=await queue.enqueue('save','key',{value:'secret'});
  const db=await request(factory.open('offline-test',3)),tx=db.transaction('offline','readwrite'),ended=done(tx),store=tx.objectStore('offline'),entry=await request(store.get(item.id));

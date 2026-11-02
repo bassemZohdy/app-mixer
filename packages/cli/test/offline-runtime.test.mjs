@@ -15,6 +15,22 @@ import {DatabaseSync} from 'node:sqlite';
 const token='capability-secret-at-least-thirty-two-characters',scope={tenantId:'tenant',applicationId:'demo-app',principalId:'local'};
 const waitFor=async condition=>{for(let i=0;i<250;i++){if(await condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for offline integration');};
 
+test('generated offline runtime authorizes retirement and prevents recovery or reuse of removed payloads',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retire-'));let runtime,dom,release;
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  let actor={...scope},allowed=false,blocked=false,started;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
+  const config={enabled:true,databaseName:'retirement',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>true,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,canRetire:async item=>{item.payload.secret='changed';if(blocked){started();await gate;}return allowed;},dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
+  runtime=await createGeneratedOfflineRuntime(config);config.canRetire=()=>false;runtime.start();const requestKey=webcrypto.randomUUID(),queued=await runtime.enqueue('items.update',requestKey,{secret:'private'});await waitFor(async()=>(await runtime.list())[0].status==='succeeded');const completed=(await runtime.list())[0];
+  await assert.rejects(runtime.retire(queued.id,completed.version),/not allowed/);assert.equal((await runtime.list())[0].payload.secret,'private');
+  allowed=true;blocked=true;const attempt=runtime.retire(queued.id,completed.version);await waiting;actor={...scope,principalId:'other'};release();await assert.rejects(attempt,/not allowed/);actor={...scope};blocked=false;
+  const retired=await runtime.retire(queued.id,completed.version);assert.equal(retired.status,'retired');assert.deepEqual(retired.payload,{});await assert.rejects(runtime.enqueue('items.update',requestKey,{secret:'private'}),/retired/);
+  dom=new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const form=mountGeneratedOfflineForm(dom.window.document.getElementById('form'),runtime),historyRoot=dom.window.document.getElementById('history'),history=runtime.mountHistory(historyRoot,{onRecover:id=>form.recover(id)});
+  await history.refresh();assert.match(historyRoot.textContent,/Request data removed/);assert.doesNotMatch(historyRoot.textContent,/private/);assert.equal(historyRoot.querySelector('button'),null);await assert.rejects(form.recover(queued.id),/Cannot recover/);history.dispose();form.dispose();
+  await runtime.close();delete config.canRetire;runtime=await createGeneratedOfflineRuntime(config);await assert.rejects(runtime.retire(queued.id,completed.version),/not allowed/);
+ }finally{release?.();if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('generated offline runtime queues, synchronizes and resolves a conflict through the capability service', {timeout:15000},async()=>{
  let externalCalls=0,stored={value:'server',version:2};const events=[],registry=new CapabilityRegistry(event=>events.push(event));
  registry.register({operationId:'items.offline',method:'POST',path:'/items'}, {authorize:ctx=>ctx.tenantId==='tenant'&&ctx.principalId==='local',validate:input=>typeof input?.idempotencyKey==='string'&&typeof input?.payload?.value==='string',execute:input=>{externalCalls++;if(input.payload.version!==stored.version)throw Error('Data revision conflict');stored={value:input.payload.value,version:stored.version+1};return stored;}});

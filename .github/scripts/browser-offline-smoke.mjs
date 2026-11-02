@@ -34,7 +34,9 @@ try {
  const result=await Promise.allSettled([a.transition(item.id,1,'claim'),b.transition(item.id,1,'claim')]);
  if(result.filter(x=>x.status==='fulfilled').length!==1)throw Error('Concurrent claim failed');
  const running=await a.get(item.id),uncertain=await a.transition(item.id,running.version,'uncertain');
- if((await b.transition(item.id,uncertain.version,'reconcileApplied')).status!=='succeeded')throw Error('Reconciliation failed');
+ const completed=await b.transition(item.id,uncertain.version,'reconcileApplied');if(completed.status!=='succeeded')throw Error('Reconciliation failed');
+ const retired=await a.retire(item.id,completed.version);if(retired.status!=='retired'||Object.keys(retired.payload).length||(await b.get(item.id)).status!=='retired')throw Error('Browser retirement failed');
+ let fenced=false;try{await b.enqueue('save','request',{name:'private-value'});}catch(error){fenced=String(error).includes('retired');}if(!fenced)throw Error('Retired request key was reused');
  const next=await a.enqueue('save','second',{name:'worker'});let dispatched=0;
  const worker=new BrowserOfflineWorker(a,{intervalMs:100,maxPerPass:2,maxAttempts:2,isOnline:()=>true,resolveActor:()=>opts.scope,dispatch:()=>{dispatched++;},classify:()=> 'uncertain',onError:error=>{throw error;}});
  worker.start();const limit=Date.now()+10000;while((await a.get(next.id)).status!=='succeeded'&&Date.now()<limit)await new Promise(resolve=>setTimeout(resolve,25));
