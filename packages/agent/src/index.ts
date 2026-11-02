@@ -318,3 +318,6 @@ export type {WakeupRetentionMetricsOptions,WakeupRetentionMetricsSnapshot} from 
 
 export {registerAgentMemoryScopeErase} from './agent-memory-erase-capability.js';
 export type {AgentMemoryScopeEraseOptions} from './agent-memory-erase-capability.js';
+
+export {registerAgentMemoryErasureEvidence} from './agent-memory-erasure-evidence-capability.js';
+export type {AgentMemoryErasureEvidenceOptions} from './agent-memory-erasure-evidence-capability.js';
