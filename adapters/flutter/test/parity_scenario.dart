@@ -226,20 +226,21 @@ Future<void> verifyInputComposition(WidgetTester tester) async {
   receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
   receive(message('updateDataModel',{'surfaceId':'main','value':{'name':'Ada'}}));
   receive(message('updateComponents',{'surfaceId':'main','components':[
-    {'id':'root','component':'Column','children':['field','echo']},
+    {'id':'root','component':'Column','children':['field','mirror','echo']},
     {'id':'field','component':'TextField','label':'Name','value':{'path':'/name'}},
+    {'id':'mirror','component':'TextField','label':'Name copy','value':{'path':'/name'}},
     {'id':'echo','component':'Text','text':{'path':'/name'}}
   ]}));
-  await tester.pump();await tester.showKeyboard(find.byType(TextField));
-  final state=tester.state<EditableTextState>(find.byType(EditableText));
+  await tester.pump();await tester.showKeyboard(find.byType(TextField).first);
+  final state=tester.state<EditableTextState>(find.byType(EditableText).first);
   state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2),composing:TextRange(start:0,end:2)));
   await tester.pump();expect(state.textEditingValue.composing,const TextRange(start:0,end:2));
   receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'External'}));await tester.pump();
-  expect(state.textEditingValue.text,'日本');expect(state.textEditingValue.composing,const TextRange(start:0,end:2));expect(find.text('External'),findsOneWidget);
+  expect(state.textEditingValue.text,'日本');expect(state.textEditingValue.composing,const TextRange(start:0,end:2));expect(find.text('External'),findsNWidgets(2));
   state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2)));
-  await tester.pump();expect(state.textEditingValue.text,'日本');expect(find.text('日本'),findsNWidgets(2));
+  await tester.pump();expect(state.textEditingValue.text,'日本');expect(find.text('日本'),findsNWidgets(3));
   receive(message('updateDataModel',{'surfaceId':'main','path':'/name','value':'Other'}));await tester.pump();
   state.updateEditingValue(const TextEditingValue(text:'日本',selection:TextSelection.collapsed(offset:2)));await tester.pump();
-  expect(find.text('日本'),findsNWidgets(2));
+  expect(find.text('日本'),findsNWidgets(3));
   expect(state.widget.focusNode.hasFocus,isTrue);expect(errors,isEmpty);expect(tester.takeException(),isNull);
 }
