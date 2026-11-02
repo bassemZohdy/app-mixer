@@ -13,8 +13,9 @@ export type DataRollbackEvent={fromVersion:number;toVersion:number;targetVersion
 export interface DataProvider {
   readonly supportsSchemaRead?:boolean;
   readonly supportsReverseList?:boolean;
+  readonly supportsIdPrefix?:boolean;
   get(scope:DataScope, collection:string, id:string,expectedSchemaVersion?:number):DataRecord|undefined;
-  list?(scope:DataScope,collection:string,options?:{after?:string;limit?:number;expectedSchemaVersion?:number;order?:'asc'|'desc'}):DataRecordPage;
+  list?(scope:DataScope,collection:string,options?:{after?:string;limit?:number;expectedSchemaVersion?:number;order?:'asc'|'desc';idPrefix?:string}):DataRecordPage;
   put(scope:DataScope, collection:string, id:string, value:Record<string,unknown>, expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord;
   delete(scope:DataScope, collection:string, id:string, expectedRevision:number,expectedSchemaVersion?:number):void;
 }
@@ -54,6 +55,7 @@ export function dataCopy(value:unknown):Record<string,unknown> {
 export class SqliteDataProvider implements DataProvider {
   readonly supportsSchemaRead=true;
   readonly supportsReverseList=true;
+  readonly supportsIdPrefix=true;
   private readonly db:DatabaseSync;
   constructor(path:string){
     this.db=new DatabaseSync(path);
@@ -167,13 +169,13 @@ export class SqliteDataProvider implements DataProvider {
     if(expectedSchemaVersion===undefined)return read();
     this.db.exec('BEGIN');try{this.requireSchema(scope,collection,expectedSchemaVersion);const result=read();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}
   }
-  list(scope:DataScope,collection:string,options:{after?:string;limit?:number;expectedSchemaVersion?:number;order?:'asc'|'desc'}={}):DataRecordPage {
-    checkKey(scope,collection,'validation');if(!options||typeof options!=='object'||Array.isArray(options)||(options.after!==undefined&&!identifier(options.after))||(options.order!==undefined&&options.order!=='asc'&&options.order!=='desc')||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid data listing');
+  list(scope:DataScope,collection:string,options:{after?:string;limit?:number;expectedSchemaVersion?:number;order?:'asc'|'desc';idPrefix?:string}={}):DataRecordPage {
+    checkKey(scope,collection,'validation');if(!options||typeof options!=='object'||Array.isArray(options)||(options.after!==undefined&&!identifier(options.after))||(options.order!==undefined&&options.order!=='asc'&&options.order!=='desc')||(options.idPrefix!==undefined&&(typeof options.idPrefix!=='string'||options.idPrefix.length>256||/[\u0000-\u001f]/.test(options.idPrefix)))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid data listing');
     const limit=options.limit??50,items:DataRecord[]=[];let bytes=0,more=false;
     // Read small metadata first and copy each BLOB separately; Node 22 SQLite text iteration can corrupt large values.
     this.db.exec('BEGIN');try{
       if(options.expectedSchemaVersion!==undefined)this.requireSchema(scope,collection,options.expectedSchemaVersion);
-      const order=options.order??'asc',comparison=order==='desc'?'<':'>',sort=order==='desc'?'DESC':'ASC';const rows=this.db.prepare(`SELECT record_id,revision,length(CAST(value AS BLOB)) AS byte_size FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 ${options.after===undefined?'':`AND record_id${comparison}?`} ORDER BY record_id ${sort} LIMIT ?`).all(scope.tenantId,scope.applicationId,collection,...(options.after===undefined?[]:[options.after]),limit+1);
+      const order=options.order??'asc',comparison=order==='desc'?'<':'>',sort=order==='desc'?'DESC':'ASC';const rows=this.db.prepare(`SELECT record_id,revision,length(CAST(value AS BLOB)) AS byte_size FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 ${options.idPrefix===undefined?'':'AND substr(record_id,1,length(?))=?'} ${options.after===undefined?'':`AND record_id${comparison}?`} ORDER BY record_id ${sort} LIMIT ?`).all(scope.tenantId,scope.applicationId,collection,...(options.idPrefix===undefined?[]:[options.idPrefix,options.idPrefix]),...(options.after===undefined?[]:[options.after]),limit+1);
       const read=this.db.prepare('SELECT CAST(value AS BLOB) AS value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND revision=? AND deleted=0');
       for(const row of rows){if(typeof row.record_id!=='string'||!identifier(row.record_id)||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1||!Number.isSafeInteger(Number(row.byte_size))||Number(row.byte_size)<0)throw Error('Invalid data record');const size=Number(row.byte_size);if(items.length===limit||(items.length>0&&bytes+size>512*1024)){more=true;break;}const data=read.get(scope.tenantId,scope.applicationId,collection,row.record_id,row.revision as number);if(!data||!(data.value instanceof Uint8Array))throw Error('Invalid data record');items.push({id:row.record_id,revision:Number(row.revision),value:dataCopy(JSON.parse(Buffer.from(data.value).toString('utf8')))});bytes+=size;}
       this.db.exec('COMMIT');return {items,...(more&&items.length?{nextAfter:items.at(-1)!.id}:{})};
