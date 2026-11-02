@@ -33,8 +33,12 @@ jobs:
           kind create cluster --name app-mixer-nodes --config deploy/kubernetes/test-support/multi-node-kind.yaml --wait 180s
           docker build -f Dockerfile.data-plane -t app-mixer-node-recovery-test:local .
           kind load docker-image app-mixer-node-recovery-test:local --name app-mixer-nodes
+      - name: Render protected placement overlay
+        run: kubectl kustomize deploy/kubernetes/strict-placement-example > /dev/null
       - name: Verify node failure and recovery
         run: node deploy/kubernetes/test-support/node-failure-test.mjs
+      - name: Validate protected overlay against the Kubernetes API
+        run: kubectl apply --dry-run=server -n app-mixer-node-test -k deploy/kubernetes/strict-placement-example -o name
       - name: Diagnostics on failure
         if: failure()
         run: |

@@ -17,12 +17,11 @@ async function checkPublication(target){
   await waitFor('ready publication',async()=>{const ready=await fetch(`http://127.0.0.1:${port}/health/ready`,{signal:AbortSignal.timeout(5000)});if(!ready.ok)return false;const result=await fetch(`http://127.0.0.1:${port}/application`,{signal:AbortSignal.timeout(5000)});if(!result.ok)return false;const value=await result.json();return value.version===1&&value.definition?.id==='demo';},30000);
  }finally{if(child.exitCode===null&&child.signalCode===null){const exit=once(child,'exit');child.kill();await exit;}}
 }
-let stoppedNode;
+let stoppedNode,controlPlaneUntainted=false;
 try{
  const context=kubectl('config','current-context').trim();if(context!==`kind-${cluster}`)throw Error(`Expected disposable kind context kind-${cluster}, got ${context}`);
- kubectl('create','namespace',namespace);kubectl('apply','-n',namespace,'-k','deploy/kubernetes/data-plane');kubectl('scale','deployment','app-mixer-data-plane','-n',namespace,'--replicas=0');await waitFor('initial pods to stop',()=>json('get','pods','-n',namespace,'-l',selector).items.length===0,90000);kubectl('set','image','deployment/app-mixer-data-plane','data-plane=app-mixer-node-recovery-test:local','-n',namespace);
- const labels={'app.kubernetes.io/name':'app-mixer','app.kubernetes.io/component':'data-plane'},patch={spec:{template:{spec:{affinity:{podAntiAffinity:{preferredDuringSchedulingIgnoredDuringExecution:[],requiredDuringSchedulingIgnoredDuringExecution:[{topologyKey:'kubernetes.io/hostname',labelSelector:{matchLabels:labels}}]}}}}}};
- kubectl('patch','deployment','app-mixer-data-plane','-n',namespace,'--type=merge','-p',JSON.stringify(patch));kubectl('scale','deployment','app-mixer-data-plane','-n',namespace,'--replicas=2');
+ kubectl('create','namespace',namespace);kubectl('apply','-n',namespace,'-k','deploy/kubernetes/test-support/strict-placement');kubectl('scale','deployment','app-mixer-data-plane','-n',namespace,'--replicas=0');await waitFor('initial pods to stop',()=>json('get','pods','-n',namespace,'-l',selector).items.length===0,90000);kubectl('set','image','deployment/app-mixer-data-plane','data-plane=app-mixer-node-recovery-test:local','-n',namespace);
+ kubectl('scale','deployment','app-mixer-data-plane','-n',namespace,'--replicas=2');
  const initial=await waitFor('two ready replicas on different worker nodes',()=>{const pods=readyPods();return pods.length===2&&new Set(pods.map(p=>p.spec.nodeName)).size===2&&pods.every(p=>p.spec.nodeName.startsWith(`${cluster}-worker`))?pods:false;},240000);
  const survivor=initial[0],failed=initial[1];console.log('Ready replicas on',survivor.spec.nodeName,'and',failed.spec.nodeName);await checkPublication(`pod/${survivor.metadata.name}`);await checkPublication(`pod/${failed.metadata.name}`);await checkPublication('service/app-mixer-data-plane');
  stoppedNode=failed.spec.nodeName;run('docker',['stop','--time','0',stoppedNode]);
@@ -31,7 +30,13 @@ try{
  run('docker',['start',stoppedNode]);stoppedNode=undefined;
  const restored=await waitFor('two ready replicas and Service endpoints after node recovery',()=>{const pods=readyPods(),targets=serviceTargets();return pods.length===2&&new Set(pods.map(p=>p.spec.nodeName)).size===2&&targets.length===2&&pods.every(p=>targets.includes(p.metadata.name))?pods:false;},300000);
  for(const pod of restored)await checkPublication(`pod/${pod.metadata.name}`);await checkPublication('service/app-mixer-data-plane');
- console.log('Data Plane remained available on the surviving node and recovered both replicas after node restart.');
+ console.log('Both replicas recovered; checking a rollout with a third eligible host.');
+ // Make the disposable control-plane node a third eligible host to exercise maxUnavailable=0 with a surge replica.
+ const controlPlane=`${cluster}-control-plane`;kubectl('taint','nodes',controlPlane,'node-role.kubernetes.io/control-plane:NoSchedule-');controlPlaneUntainted=true;
+ kubectl('patch','deployment','app-mixer-data-plane','-n',namespace,'--type=merge','-p',JSON.stringify({spec:{template:{metadata:{annotations:{'app-mixer.dev/node-test-rollout':'verified'}}}}}));let emptyEndpoints=false;
+ await waitFor('strict-placement rollout with spare node',()=>{const deployment=json('get','deployment','app-mixer-data-plane','-n',namespace),targets=serviceTargets();if(targets.length===0)emptyEndpoints=true;const status=deployment.status??{};return status.observedGeneration>=deployment.metadata.generation&&status.updatedReplicas===2&&status.readyReplicas===2&&status.availableReplicas===2&&(status.replicas??0)===2;},240000);
+ if(emptyEndpoints)throw Error('Service had no ready endpoints during rollout');const rolled=readyPods();if(rolled.length!==2||new Set(rolled.map(p=>p.spec.nodeName)).size!==2)throw Error('Rollout did not retain strict host placement');for(const pod of rolled)await checkPublication(`pod/${pod.metadata.name}`);await checkPublication('service/app-mixer-data-plane');
+ console.log('Data Plane survived node loss, recovered both replicas and rolled out with a third eligible host.');
 }catch(error){try{console.error(kubectl('get','nodes','-o','wide'));console.error(kubectl('get','pods,endpointslices','-n',namespace,'-o','wide'));}catch{}throw error;}
-finally{if(stoppedNode)try{run('docker',['start',stoppedNode]);}catch(error){console.error('Could not restart test node:',error);}}
+finally{if(stoppedNode)try{run('docker',['start',stoppedNode]);}catch(error){console.error('Could not restart test node:',error);}if(controlPlaneUntainted)try{kubectl('taint','nodes',`${cluster}-control-plane`,'node-role.kubernetes.io/control-plane=:NoSchedule','--overwrite');}catch(error){console.error('Could not restore test node taint:',error);}}
 
