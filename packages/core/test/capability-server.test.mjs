@@ -6,6 +6,20 @@ import {CapabilityRegistry,createCapabilityServer,importOpenAPI} from '../dist/i
 async function start(server){server.listen(0,'127.0.0.1');await once(server,'listening');return `http://127.0.0.1:${server.address().port}`;}
 async function stop(server){if(server.listening)await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
 
+test('capability request limits are bounded, snapshotted and enforced before invocation',async()=>{
+ let calls=0;const registry=new CapabilityRegistry(()=>{}),auth=()=>({tenantId:'tenant',principalId:'user'}),audit=()=>{};
+ registry.register({operationId:'large',method:'POST',path:'/large'},{authorize:()=>true,validate:()=>true,execute:()=>{calls++;return 'ok';}});
+ for(const invalid of [null,[],{maxRequestBytes:0},{maxRequestBytes:1048575},{maxRequestBytes:8388609},{maxRequestBytes:1.5},{maxRequestBytes:'2097152'},{extra:true}])assert.throws(()=>createCapabilityServer(registry,auth,audit,undefined,invalid),/Invalid capability server limits/);
+ let reads=0;const onceOnly=createCapabilityServer(registry,auth,audit,undefined,{get maxRequestBytes(){reads++;return reads===1?2097152:0;}});assert.equal(reads,1);onceOnly.close();
+ const limits={maxRequestBytes:2*1024*1024},server=createCapabilityServer(registry,auth,audit,undefined,limits),baseline=createCapabilityServer(registry,auth,audit);limits.maxRequestBytes=1024*1024;
+ try{
+  const url=await start(server),defaultUrl=await start(baseline),call=(base,size)=>fetch(`${base}/capabilities/large/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{text:'x'.repeat(size)}})});
+  assert.equal((await call(defaultUrl,1024*1024)).status,413);assert.equal(calls,0);
+  assert.equal((await call(url,1024*1024)).status,200);assert.equal(calls,1);
+  assert.equal((await call(url,2*1024*1024)).status,413);assert.equal(calls,1);
+ }finally{await stop(server);await stop(baseline);}
+});
+
 test('authenticated UI and agent calls share authorization, validation, audit and a REST operation',async()=>{
   let externalCalls=0;const external=createServer((req,res)=>{externalCalls++;res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify([{id:'c1',name:'Ada'}]));});
   const externalURL=await start(external), records=[], authFailures=[];

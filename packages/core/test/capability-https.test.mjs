@@ -8,7 +8,7 @@ import {CapabilityRegistry,createCapabilityHttpsServer} from '../dist/index.js';
 // Public test-only keys; never use these certificates outside this test.
 const fixture=name=>readFileSync(new URL(`./fixtures/capability-tls/${name}.pem`,import.meta.url));
 const ca=fixture('ca-cert'),cert=fixture('server-cert'),key=fixture('server-key'),clientCert=fixture('client-cert'),clientKey=fixture('client-key');
-function call(port,options={}){return new Promise((resolve,reject)=>{const req=request({host:'127.0.0.1',port,path:'/capabilities/read/invoke',method:'POST',ca,headers:{'content-type':'application/json',authorization:'Bearer valid'},...options},res=>{const parts=[];res.on('data',chunk=>parts.push(chunk));res.on('end',()=>resolve({status:res.statusCode,body:JSON.parse(Buffer.concat(parts))}));});req.on('error',reject);req.end(JSON.stringify({origin:'ui',input:{}}));});}
+function call(port,options={},input={}){return new Promise((resolve,reject)=>{const req=request({host:'127.0.0.1',port,path:'/capabilities/read/invoke',method:'POST',ca,headers:{'content-type':'application/json',authorization:'Bearer valid'},...options},res=>{const parts=[];res.on('data',chunk=>parts.push(chunk));res.on('end',()=>resolve({status:res.statusCode,body:JSON.parse(Buffer.concat(parts))}));});req.on('error',reject);req.end(JSON.stringify({origin:'ui',input}));});}
 
 test('HTTPS verifies server trust, optional client certificates, and the normal authorization and audit path',async()=>{
  let authentications=0,calls=0;const events=[],failures=[],registry=new CapabilityRegistry(event=>events.push(event));registry.register({operationId:'read',method:'POST',path:'/read'},{authorize:actor=>actor.tenantId==='tenant',validate:()=>true,execute:()=>++calls});
@@ -27,4 +27,12 @@ test('HTTPS rejects missing TLS settings and accepts server-only TLS when explic
  const registry=new CapabilityRegistry(()=>{}),auth=()=>({tenantId:'tenant',principalId:'alice'}),audit=()=>{};
  for(const config of [undefined,{}, {cert,key:''},{cert,key,clientCa:''},{cert,key,clientCA:ca}])assert.throws(()=>createCapabilityHttpsServer(registry,auth,audit,config),/TLS configuration/);
  const server=createCapabilityHttpsServer(registry,auth,audit,{cert,key});server.listen(0,'127.0.0.1');await once(server,'listening');try{assert.equal((await call(server.address().port)).status,404);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('HTTPS enforces the configured request limit before invoking capabilities',async()=>{
+ let calls=0;const registry=new CapabilityRegistry(()=>{}),auth=()=>({tenantId:'tenant',principalId:'alice'}),audit=()=>{};
+ registry.register({operationId:'read',method:'POST',path:'/read'},{authorize:()=>true,validate:()=>true,execute:()=>++calls});
+ assert.throws(()=>createCapabilityHttpsServer(registry,auth,audit,{cert,key},undefined,{maxRequestBytes:8388609}),/Invalid capability server limits/);
+ const server=createCapabilityHttpsServer(registry,auth,audit,{cert,key},undefined,{maxRequestBytes:2*1024*1024});server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{assert.equal((await call(server.address().port,{}, {text:'x'.repeat(1024*1024)})).status,200);assert.equal(calls,1);assert.equal((await call(server.address().port,{}, {text:'x'.repeat(2*1024*1024)})).status,413);assert.equal(calls,1);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
