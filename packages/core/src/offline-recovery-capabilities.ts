@@ -32,3 +32,17 @@ function register(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:O
   });
  }});
 }
+
+
+export type OfflineRecoveryEvidenceCapabilityOptions={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeOperation:(actor:Actor,operation:OfflineOperation,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
+/** Read scoped recovery evidence only after separate host authorization. */
+export function registerOfflineRecoveryEvidenceCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineRecoveryEvidenceCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function')throw Error('Invalid offline evidence capability');
+ const {candidate,applicationId,queuePrincipalId,targetOperationId,authorize,authorizeOperation,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline evidence capability','Offline evidence unavailable');
+ registry.register(candidate,{authorize,validate:input=>{if(!input||typeof input!=='object'||Array.isArray(input))return false;const value=input as Record<string,unknown>;return Object.keys(value).every(key=>['id','after','limit'].includes(key))&&Object.hasOwn(value,'id')&&id(value.id)&&(value.after===undefined||(Number.isSafeInteger(value.after)&&Number(value.after)>=0))&&(value.limit===undefined||(Number.isSafeInteger(value.limit)&&Number(value.limit)>=1&&Number(value.limit)<=99));},execute:async(input,context)=>{
+  const value=input as {id:string;after?:number;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:context.tenantId,applicationId};return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Offline evidence unavailable');};const permit=async()=>{active();const operation=queue.get(scope,queuePrincipalId,value.id);if(!operation||operation.operationId!==targetOperationId)throw Error('Operation not found');if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();if(await authorizeOperation({...actor},structuredClone(operation),signal)!==true)throw Error('Capability forbidden');active();};
+   await permit();const limit=value.limit??50,rows=queue.listRecoveryEvidence(scope,queuePrincipalId,value.id,{after:value.after,limit:limit+1});await permit();active();const items=rows.slice(0,limit);return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.id}:{})};
+  });
+ }});
+}
