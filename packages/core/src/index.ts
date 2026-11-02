@@ -123,6 +123,8 @@ export { PostgresPromotionTarget } from './postgres-promotion-target.js';
 export type { PostgresPromotionTargetOptions } from './postgres-promotion-target.js';
 export { RemoteRolloutPoller } from './remote-rollout-poller.js';
 export type { RemoteRolloutPollerOptions, RemoteRolloutResult, RemoteRolloutPollerStatus } from './remote-rollout-poller.js';
+export {registerRemoteRolloutPollerCapability} from './remote-rollout-poller-capability.js';
+export type {RemoteRolloutPollerCapabilityOptions} from './remote-rollout-poller-capability.js';
 export { createControlPlane, createDataPlane, createDataPlaneHttps, createProposalPlane, createDevelopmentPlanes } from './planes.js';
 export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationRepository, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
 
