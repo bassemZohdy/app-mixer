@@ -121,3 +121,27 @@ test('delegation administration enforces signed identity, tenant, policy and tok
   const fresh=await sign({jti:'token-two'});response=await call('renew',fresh,{revision:1,permissionVersion:'v2',expiresAt:100});assert.equal(response.status,200);const renewed=(await response.json()).result;assert.equal(await s.store.verify(worker,issued.grant),false);assert.equal(await s.store.verify(worker,renewed.grant),true);response=await call('history',fresh,{});const history=(await response.json()).result;assert.deepEqual(history.items.map(event=>[event.event,event.actorId]),[['issued','admin'],['renewed','admin']]);assert.ok(events.some(event=>event.outcome==='denied'));assert.equal((await call('revoke',fresh,{revision:2})).status,200);assert.equal(await s.store.verify(worker,renewed.grant),false);
  }finally{if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}auth.close();revocations.close();close(s);}
 });
+
+test('delegation store bounds stalled authorization and fences late issue, renewal and revocation',async()=>{
+ for(const action of ['issue','renew','revoke']){
+  const s=setup();let bounded,release,entered,seenSignal,block=false;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
+  try{if(action!=='issue')await s.store.issue(admin,grant);bounded=new SqliteAgentDelegations(s.path,{...s.options,timeoutMs:100,maxPending:1,authorize:async(_actor,access,_grant,signal)=>{if(block&&access===action){seenSignal=signal;entered();await gate;}return true;}});const invoke=()=>action==='issue'?bounded.issue(admin,grant):action==='renew'?bounded.renew(admin,'grant',1,'v2',100):bounded.revoke(admin,'grant',1);block=true;const pending=invoke();await ready;await assert.rejects(pending,/authorization unavailable/);assert.equal(seenSignal.aborted,true);await assert.rejects(invoke(),/authorization unavailable/);release();block=false;await new Promise(resolve=>setImmediate(resolve));const current=await s.store.get(admin,'grant');assert.equal(current?.revision,action==='issue'?undefined:1);if(current)assert.equal(current.revoked,false);assert.equal((await invoke()).revision,action==='issue'?1:2);
+  }finally{release();bounded?.close();close(s);}
+ }
+});
+
+test('delegation cancellation prevents late authorization and fences history reads',async()=>{
+ const s=setup();let bounded,release,entered,block=false,checks=0;let ready,gate;const reset=()=>{ready=new Promise(resolve=>entered=resolve);gate=new Promise(resolve=>release=resolve);};
+ try{await s.store.issue(admin,grant);bounded=new SqliteAgentDelegations(s.path,{...s.options,authorize:async(_actor,access,_grant,signal)=>{if(block&&access==='history'&&++checks===2){entered(signal);await gate;}return true;}});const controller=new AbortController();reset();block=true;const pending=bounded.historyPage(admin,'grant',{limit:1},controller.signal);const signal=await ready;controller.abort();await assert.rejects(pending,/authorization unavailable/);assert.equal(signal.aborted,true);release();block=false;await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await bounded.historyPage(admin,'grant',{limit:1})).items.map(item=>item.event),['issued']);await assert.rejects(bounded.revoke(admin,'grant',1,AbortSignal.abort()),/authorization unavailable/);assert.equal((await s.store.get(admin,'grant')).revoked,false);
+ }finally{release?.();bounded?.close();close(s);}
+});
+
+test('delegation store rejects partial or unsafe authorization limits',async()=>{
+ const s=setup();try{for(const extra of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:100,maxPending:0}])assert.throws(()=>new SqliteAgentDelegations(s.path,{...s.options,...extra}),/configuration/);}finally{close(s);}
+});
+
+test('delegation store authorization deadlines return HTTP unavailable without a late grant',async()=>{
+ const {CapabilityRegistry,createCapabilityServer}=await import('../../core/dist/index.js'),{registerAgentDelegationCapability}=await import('../dist/index.js'),{once}=await import('node:events'),s=setup(),registry=new CapabilityRegistry(()=>{});let bounded,server,release,entered,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
+ try{bounded=new SqliteAgentDelegations(s.path,{...s.options,timeoutMs:100,maxPending:1,authorize:async(_actor,action,_grant,signal)=>{if(block&&action==='issue'){entered();await gate;}return !signal.aborted;}});registerAgentDelegationCapability(registry,{store:bounded,scope,runId:'run',grantId:'grant',mode:'issue',operationId:'issue',path:'/issue',authorize:()=>true,authorizeAction:()=>true});server=createCapabilityServer(registry,()=>admin,()=>{});server.listen(0,'127.0.0.1');await once(server,'listening');const request=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/issue/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{principalId:'user',permissionVersion:'v1',expiresAt:50}}})});const pending=request();await ready;assert.equal((await pending).status,503);release();block=false;await new Promise(resolve=>setImmediate(resolve));assert.equal(await s.store.get(admin,'grant'),undefined);assert.equal((await request()).status,200);
+ }finally{release();if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}bounded?.close();close(s);}
+});
