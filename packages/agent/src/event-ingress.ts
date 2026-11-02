@@ -9,14 +9,14 @@ type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknow
 type Options={
  triggers:SqliteAgentTriggers;
  definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};
- authenticate?: (request:IncomingMessage)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
- authenticateRaw?: (request:IncomingMessage,body:Buffer)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
- authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;
+ authenticate?: (request:IncomingMessage,signal:AbortSignal)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
+ authenticateRaw?: (request:IncomingMessage,body:Buffer,signal:AbortSignal)=>SourceIdentity|undefined|Promise<SourceIdentity|undefined>;
+ authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion,signal:AbortSignal)=>boolean|Promise<boolean>;
  mapAuthenticatedBody?:(body:Buffer,identity:SourceIdentity,request:IncomingMessage)=>EventRequest;
  challengeAuthenticatedBody?:(body:Buffer,identity:SourceIdentity)=>string|undefined;
  contentType?:'application/x-www-form-urlencoded';
  acknowledgement?:'twiml';
- traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest)=>string|undefined|Promise<string|undefined>;
+ traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest,signal:AbortSignal)=>string|undefined|Promise<string|undefined>;
  tracing?:{tracer:Tracer;propagateToRun?:boolean};
  maxPending:number;maxInFlight?:number;requestTimeoutMs?:number;clock?:()=>number;
 };
@@ -46,16 +46,16 @@ export function createAgentEventIngress(options:Options):Server {
  return createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   if(maxInFlight!==undefined&&inFlight>=maxInFlight){reply(res,503,{error:'Event ingress busy'});return;}
-  inFlight++;let expired=false;const timer=requestTimeoutMs===undefined?undefined:setTimeout(()=>{expired=true;if(!res.writableEnded&&!res.destroyed){if(!req.complete)res.once('finish',()=>req.destroy());reply(res,503,{error:'Event ingress timeout'});}else if(!req.complete)req.destroy();},requestTimeoutMs);try{
+  inFlight++;let expired=false;const controller=new AbortController(),timer=requestTimeoutMs===undefined?undefined:setTimeout(()=>{expired=true;controller.abort();if(!res.writableEnded&&!res.destroyed){if(!req.complete)res.once('finish',()=>req.destroy());reply(res,503,{error:'Event ingress timeout'});}else if(!req.complete)req.destroy();},requestTimeoutMs);try{
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
-  if(authenticate){try{source=await authenticate(req);}catch{}
+  if(authenticate){try{source=await authenticate(req,controller.signal);}catch{}
    if(expired)return;
    if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
    source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
   }
   if(authenticateRaw||source){try{raw=await readBytes(req,contentType);}catch(error){if(expired)return;const message=error instanceof Error?error.message:'';reply(res,message==='TOO_LARGE'?413:message==='CONTENT_TYPE'?415:400,{error:'Invalid event'});return;}}
   if(expired)return;
-  if(authenticateRaw&&raw){try{source=await authenticateRaw(req,Buffer.from(raw));}catch{}}
+  if(authenticateRaw&&raw){try{source=await authenticateRaw(req,Buffer.from(raw),controller.signal);}catch{}}
   if(expired)return;
   if(!source||!id(source.tenantId)||!id(source.principalId)||!id(source.sourceId)||source.sourceId.startsWith('schedule.')){reply(res,401,{error:'Unauthorized'});return;}
   source={tenantId:source.tenantId,principalId:source.principalId,sourceId:source.sourceId};
@@ -66,9 +66,9 @@ export function createAgentEventIngress(options:Options):Server {
    if(expired)return;
    if(!selected||!selected.manifest.lifecycle.enabled||selected.manifest.tenantId!==source.tenantId||selected.manifest.agentId!==event.agentId){reply(res,403,{error:'Forbidden'});return;}
    const definition=structuredClone(selected);
-   let allowed=false;try{allowed=await authorize({...source},structuredClone(event),structuredClone(definition))===true;}catch{}
+   let allowed=false;try{allowed=await authorize({...source},structuredClone(event),structuredClone(definition),controller.signal)===true;}catch{}
    if(expired)return;
-   let parent:string|undefined;if(allowed&&traceParent)try{const candidate=await traceParent(req,{...source},structuredClone(event));if(parseAgentTraceParent(candidate))parent=candidate;}catch{}
+   let parent:string|undefined;if(allowed&&traceParent)try{const candidate=await traceParent(req,{...source},structuredClone(event),controller.signal);if(parseAgentTraceParent(candidate))parent=candidate;}catch{}
    if(expired)return;
    const latest=await definitions.get(source.tenantId,event.agentId);
    if(expired)return;
