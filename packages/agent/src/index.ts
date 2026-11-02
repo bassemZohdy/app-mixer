@@ -330,3 +330,6 @@ export type {AgentDelegationCapabilityOptions,AgentDelegationCapabilityInput} fr
 
 export {createNotionWebhookAdapter} from './notion-webhook.js';
 export type {NotionWebhookOptions} from './notion-webhook.js';
+
+export {createDiscordWebhookAdapter} from './discord-webhook.js';
+export type {DiscordWebhookOptions} from './discord-webhook.js';

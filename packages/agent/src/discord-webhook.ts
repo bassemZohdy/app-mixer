@@ -1,0 +1,25 @@
+import {createHash,createPublicKey,verify} from 'node:crypto';
+import type {IncomingMessage} from 'node:http';
+import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+
+export type DiscordWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;applicationId:string;publicKey:Uint8Array;previousPublicKeys?:Uint8Array[];eventTypes:string[];toleranceSeconds?:number;clock?:()=>number};
+const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const appId=(x:unknown):x is string=>typeof x==='string'&&/^[1-9][0-9]{0,19}$/.test(x);
+const eventType=(x:unknown):x is string=>typeof x==='string'&&/^[A-Z][A-Z0-9_]{0,110}$/.test(x);
+const parse=(body:Buffer):Record<string,unknown>=>{const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid Discord webhook');return value as Record<string,unknown>;};
+/** One fixed Discord application's webhook event endpoint. */
+export function createDiscordWebhookAdapter(options:DiscordWebhookOptions){
+ const identity=options?.identity,tolerance=options?.toleranceSeconds??900;
+ if(!options||!identity||!id(identity.tenantId)||!id(identity.principalId)||!id(identity.sourceId)||identity.sourceId.startsWith('schedule.')||!id(options.agentId)||!appId(options.applicationId)||!(options.publicKey instanceof Uint8Array)||options.publicKey.byteLength!==32||(options.previousPublicKeys!==undefined&&(!Array.isArray(options.previousPublicKeys)||options.previousPublicKeys.length>2||!options.previousPublicKeys.every(key=>key instanceof Uint8Array&&key.byteLength===32)))||!Array.isArray(options.eventTypes)||options.eventTypes.length<1||options.eventTypes.length>100||!options.eventTypes.every(eventType)||new Set(options.eventTypes).size!==options.eventTypes.length||!Number.isSafeInteger(tolerance)||tolerance<1||tolerance>3600||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid Discord webhook configuration');
+ const rawKeys=[options.publicKey,...(options.previousPublicKeys??[])].map(key=>Buffer.from(key));if(rawKeys.some((key,index)=>rawKeys.slice(0,index).some(other=>key.equals(other))))throw Error('Invalid Discord webhook configuration');const keys=rawKeys.map(key=>createPublicKey({key:Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),key]),format:'der',type:'spki'})),fixed={tenantId:identity.tenantId,principalId:identity.principalId,sourceId:identity.sourceId},agentId=options.agentId,applicationId=options.applicationId,allowed=new Set(options.eventTypes),clock=options.clock??Date.now;
+ const envelope=(body:Buffer)=>{const value=parse(body);if(value.version!==1||value.application_id!==applicationId||(value.type!==0&&value.type!==1))throw Error('Invalid Discord webhook');return value;};
+ return {
+  acknowledgement:'discord' as const,
+  authenticateRaw(req:IncomingMessage,body:Buffer):AgentEventSourceIdentity|undefined{
+   let signature:string|undefined,timestamp:string|undefined;for(let i=0;i<req.rawHeaders.length;i+=2){const name=req.rawHeaders[i].toLowerCase();if(name==='x-signature-ed25519'){if(signature!==undefined)return undefined;signature=req.rawHeaders[i+1];}if(name==='x-signature-timestamp'){if(timestamp!==undefined)return undefined;timestamp=req.rawHeaders[i+1];}}
+   if(!signature||!/^[a-f0-9]{128}$/.test(signature)||!timestamp||!/^(0|[1-9][0-9]{0,15})$/.test(timestamp))return undefined;const now=clock(),seconds=Number(timestamp);if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(seconds)||Math.abs(Math.floor(now/1000)-seconds)>tolerance)return undefined;const bytes=Buffer.concat([Buffer.from(timestamp,'utf8'),body]),actual=Buffer.from(signature,'hex');let matched=0;for(const key of keys)matched|=Number(verify(null,bytes,key,actual));return matched?{...fixed}:undefined;
+  },
+  challengeAuthenticatedBody(body:Buffer):string|undefined{const value=envelope(body);return value.type===0?'discord-ping':undefined;},
+  mapAuthenticatedBody(body:Buffer):AgentEventRequest{const value=envelope(body);if(value.type!==1||!value.event||typeof value.event!=='object'||Array.isArray(value.event))throw Error('Invalid Discord webhook');const event=value.event as Record<string,unknown>;if(!eventType(event.type)||!allowed.has(event.type)||typeof event.timestamp!=='string'||!event.timestamp||event.timestamp.length>64||/[\x00-\x1f\x7f]/.test(event.timestamp)||(event.data!==undefined&&(!event.data||typeof event.data!=='object'||Array.isArray(event.data))))throw Error('Invalid Discord webhook');return {agentId,eventType:'discord.'+event.type,eventId:'discord.'+createHash('sha256').update(body).digest('hex'),payload:value};}
+ };
+}
