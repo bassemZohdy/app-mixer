@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createProject} from '../../packages/cli/dist/index.js';
+
+const fixture=`<!doctype html><body><main></main><script type="module">
+import {createRecordEditor} from '/data-editor.mjs';
+const original=window.fetch,calls=[];window.fetch=(url,options)=>{if(String(url).includes('/api/capabilities/'))calls.push(JSON.parse(options.body));return original(url,options);};
+const wait=async predicate=>{for(let i=0;i<200;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,20));}throw Error('Timed out waiting for record filter');};
+try{
+ const editor=createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'',label:'Empty name',type:'string'},{field:'a.b',label:'Literal dot',type:'number'}],prefixFilterFields:[''],rangeFilterFields:['a.b'],multipleFilters:true});
+ const root=editor.render({},null,null,document);document.querySelector('main').append(root);const label=text=>[...root.querySelectorAll('label')].find(node=>node.textContent.startsWith(text)),field=label('Filter field').querySelector('select'),operator=label('Comparison').querySelector('select'),value=label('Filter value').querySelector('input'),button=text=>[...root.querySelectorAll('button')].find(node=>node.textContent===text),change=node=>node.dispatchEvent(new Event('change',{bubbles:true})),browse=button('Browse records');
+ field.value=[...field.options].find(option=>option.textContent==='Empty name').value;change(field);if(!field.value||operator.disabled)throw Error('Empty filter was not selectable');operator.value='prefix';change(operator);value.value='ab';browse.click();await wait(()=>calls.length===1&&!browse.disabled);if(JSON.stringify(calls[0].filter)!==JSON.stringify({field:'',value:'ab',operator:'prefix'}))throw Error('Empty filter request mismatch');
+ field.value='a.b';change(field);operator.value='gte';change(operator);value.value='4';browse.click();await wait(()=>calls.length===2&&!browse.disabled);if(JSON.stringify(calls[1].filter)!==JSON.stringify({field:'a.b',value:4,operator:'gte'}))throw Error('Literal filter request mismatch');
+ button('Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(node=>node.querySelector('legend')?.textContent==='Additional filter'),extraField=extra.querySelectorAll('select')[0],extraOperator=extra.querySelectorAll('select')[1],extraValue=[...extra.querySelectorAll('label')].find(node=>node.textContent==='Filter value').querySelector('input');extraField.value=[...extraField.options].find(option=>option.textContent==='Empty name').value;change(extraField);extraOperator.value='prefix';change(extraOperator);extraValue.value='abc';browse.click();await wait(()=>calls.length===3&&!browse.disabled);if(JSON.stringify(calls[2].filters)!==JSON.stringify([{field:'a.b',value:4,operator:'gte'},{field:'',value:'abc',operator:'prefix'}]))throw Error('Combined filter request mismatch');
+ button('Remove filter').click();field.value='';change(field);browse.click();await wait(()=>calls.length===4&&!browse.disabled);if(Object.hasOwn(calls[3],'filter')||Object.hasOwn(calls[3],'filters'))throw Error('All-records option retained a filter');
+ await fetch('/result',{method:'POST',body:'pass'});
+}catch(error){await fetch('/result',{method:'POST',body:'fail:'+String(error)});}
+</script></body>`;
+let resolveResult,rejectResult,browser,timer,dataEditor,capabilities;
+const result=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;});
+const server=createServer(async(req,res)=>{
+ if(req.url==='/result'&&req.method==='POST'){const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));return;}
+ if(req.url==='/api/capabilities/items.list'&&req.method==='POST'){for await(const _part of req){}res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({result:{items:[]}}));return;}
+ if(req.url==='/data-editor.mjs'||req.url==='/capabilities.mjs'){res.writeHead(200,{'content-type':'text/javascript; charset=utf-8'});res.end(req.url==='/data-editor.mjs'?dataEditor:capabilities);return;}
+ res.writeHead(200,{'content-type':'text/html; charset=utf-8'});res.end(fixture);
+});
+const dir=await mkdtemp(join(tmpdir(),'app-mixer-record-browser-'));
+try{
+ const target=await createProject('record-browser',dir);[dataEditor,capabilities]=await Promise.all([readFile(join(target,'data-editor.mjs')),readFile(join(target,'capabilities.mjs'))]);server.listen(0,'127.0.0.1');await once(server,'listening');
+ browser=spawn(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',`--user-data-dir=${join(dir,'profile')}`,`http://127.0.0.1:${server.address().port}/`],{stdio:['ignore','ignore','pipe']});browser.stderr.resume();browser.once('error',rejectResult);browser.once('exit',code=>rejectResult(Error(`Browser exited before reporting: ${code}`)));timer=setTimeout(()=>rejectResult(Error('Record browser test timed out')),30000);assert.equal(await result,'pass');
+}finally{
+ clearTimeout(timer);if(browser&&browser.exitCode===null&&browser.signalCode===null){const stopped=once(browser,'exit');browser.kill();await stopped;}if(server.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});
+}

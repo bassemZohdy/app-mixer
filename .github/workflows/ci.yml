@@ -71,4 +71,5 @@ jobs:
         run: |
           node .github/scripts/browser-smoke.mjs
           node .github/scripts/browser-offline-smoke.mjs
+          node .github/scripts/browser-record-filter-smoke.mjs
           node .github/scripts/browser-shell-smoke.mjs
