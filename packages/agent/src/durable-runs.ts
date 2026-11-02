@@ -1,9 +1,10 @@
+import {canonicalTriggerPayload} from './agent-trigger-payload.js';
 import {ensureAgentRunTerminalSchema} from './agent-run-terminal.js';
 import {ensureAgentRunHistory} from './agent-run-history.js';
 import {ensureAgentTraceSchema,insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 
 type RunScope={tenantId:string;agentId:string};
 type RunStatus='queued'|'running'|'pause_requested'|'cancel_requested'|'paused'|'uncertain'|'succeeded'|'failed'|'cancelled';
@@ -30,6 +31,11 @@ export class SqliteAgentRuns {
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_replace BEFORE INSERT ON agent_run_expiry_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_update BEFORE UPDATE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_delete BEFORE DELETE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
+  CREATE TABLE IF NOT EXISTS agent_run_wakeups (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,source_id,event_id));
+  CREATE INDEX IF NOT EXISTS agent_run_wakeups_by_run ON agent_run_wakeups(tenant_id,agent_id,run_id,id);
+  CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_replace BEFORE INSERT ON agent_run_wakeups WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_wakeups WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_wakeups WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND source_id=NEW.source_id AND event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_delete BEFORE DELETE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
@@ -64,15 +70,15 @@ export class SqliteAgentRuns {
   const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);
   if(result.changes!==1)throw Error('Run already exists');return this.get(scope,runId)!;
  }
+ private transitionInTransaction(scope:RunScope,runId:string,expectedRevision:number,fn:(run:DurableAgentRun)=>void,observedAt?:number):DurableAgentRun {
+  const run=this.get(scope,runId);if(!run)throw Error('Run not found');if(run.revision!==expectedRevision)throw Error('Run revision conflict');
+  if(run.archived)throw Error('Run is archived');const previousStatus=run.status;fn(run);run.revision++;
+  this.db.prepare('UPDATE agent_runs SET revision=?,status=?,attempts=?,lease_owner=?,lease_token=?,lease_until=?,archived=? WHERE tenant_id=? AND agent_id=? AND run_id=?').run(run.revision,run.status,run.attempts,run.leaseOwner,run.leaseToken,run.leaseUntil,run.archived?1:0,scope.tenantId,scope.agentId,runId);
+  if(!['succeeded','failed','cancelled'].includes(previousStatus)&&['succeeded','failed','cancelled'].includes(run.status)){if(!number(observedAt))throw Error('Invalid terminal time');this.db.prepare('INSERT INTO agent_run_terminal_times VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,observedAt);}return run;
+ }
  private transition(scope:RunScope,runId:string,expectedRevision:number,fn:(run:DurableAgentRun)=>void,observedAt?:number):DurableAgentRun {
   scopeKey(scope,runId);if(!number(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER)throw Error('Invalid run revision');
-  this.db.exec('BEGIN IMMEDIATE');try{
-   const run=this.get(scope,runId);if(!run)throw Error('Run not found');if(run.revision!==expectedRevision)throw Error('Run revision conflict');
-   if(run.archived)throw Error('Run is archived');const previousStatus=run.status;fn(run);run.revision++;
-   this.db.prepare('UPDATE agent_runs SET revision=?,status=?,attempts=?,lease_owner=?,lease_token=?,lease_until=?,archived=? WHERE tenant_id=? AND agent_id=? AND run_id=?').run(run.revision,run.status,run.attempts,run.leaseOwner,run.leaseToken,run.leaseUntil,run.archived?1:0,scope.tenantId,scope.agentId,runId);
-   if(!['succeeded','failed','cancelled'].includes(previousStatus)&&['succeeded','failed','cancelled'].includes(run.status)){if(!number(observedAt))throw Error('Invalid terminal time');this.db.prepare('INSERT INTO agent_run_terminal_times VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,observedAt);}
-   this.db.exec('COMMIT');return run;
-  }catch(error){this.db.exec('ROLLBACK');throw error;}
+  this.db.exec('BEGIN IMMEDIATE');try{const run=this.transitionInTransaction(scope,runId,expectedRevision,fn,observedAt);this.db.exec('COMMIT');return run;}catch(error){this.db.exec('ROLLBACK');throw error;}
  }
  private hasUnresolvedTokenUsage(scope:RunScope,runId:string):boolean {
   const table=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_token_calls'").get();
@@ -90,16 +96,36 @@ export class SqliteAgentRuns {
   if(!id(token)||!number(leaseMs)||leaseMs<1||leaseMs>3600000||!number(now)||now>Number.MAX_SAFE_INTEGER-leaseMs)throw Error('Invalid lease');
   return this.transition(scope,runId,revision,run=>{this.checkLease(run,token,now);if(run.status!=='running')throw Error('Run cannot be renewed');run.leaseUntil=Math.min(now+leaseMs,run.deadline);});
  }
- request(scope:RunScope,runId:string,revision:number,action:'pause'|'resume'|'cancel',now=Date.now()):DurableAgentRun {
-  if(!['pause','resume','cancel'].includes(action)||!number(now))throw Error('Invalid run action');
-  return this.transition(scope,runId,revision,run=>{
+ private applyRunRequest(scope:RunScope,runId:string,action:'pause'|'resume'|'cancel',now:number,run:DurableAgentRun):void {
    if(action==='pause'&&run.status==='queued')run.status='paused';
    else if(action==='pause'&&run.status==='running')run.status='pause_requested';
    else if(action==='resume'&&run.status==='paused'&&run.attempts<run.maxAttempts){if(now>=run.deadline)throw Error('Run deadline expired');if(run.approvalWait){const approval=this.db.prepare('SELECT status,expires_at,definition_version FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(scope.tenantId,scope.agentId,runId,run.approvalWait.actionId);if(!approval||approval.status!=='approved'||Number(approval.expires_at)<=now||Number(approval.definition_version)!==run.definitionVersion||run.deadline<=now)throw Error('Approval required');this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;}if(run.delegationWait){const wait=run.delegationWait;const grant=this.db.prepare('SELECT principal_id,revision,revoked,expires_at FROM agent_delegations WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=?').get(scope.tenantId,scope.agentId,runId,wait.grantId);if(!grant||grant.principal_id!==wait.principalId||Number(grant.revision)<=wait.revision||grant.revoked===1||Number(grant.expires_at)<=now||run.deadline<=now)throw Error('Delegation renewal required');this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;}run.status='queued';}
    else if(action==='cancel'&&(run.status==='queued'||run.status==='paused')){run.status='cancelled';this.db.prepare('DELETE FROM agent_delegation_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.delegationWait=null;this.db.prepare('DELETE FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').run(scope.tenantId,scope.agentId,runId);run.approvalWait=null;}
    else if(action==='cancel'&&(run.status==='running'||run.status==='pause_requested'))run.status='cancel_requested';
    else throw Error('Invalid run state');
-  },now);
+ }
+ request(scope:RunScope,runId:string,revision:number,action:'pause'|'resume'|'cancel',now=Date.now()):DurableAgentRun {
+  if(!['pause','resume','cancel'].includes(action)||!number(now))throw Error('Invalid run action');return this.transition(scope,runId,revision,run=>this.applyRunRequest(scope,runId,action,now,run),now);
+ }
+ /** Atomically resume a paused run and record one deduplicated host-authorized trigger. */
+ resumeWithTrigger(scope:RunScope,runId:string,revision:number,event:{sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown},now=Date.now()):{run:DurableAgentRun;duplicate:boolean}{
+  scopeKey(scope,runId);if(!number(revision)||revision<1||revision>=Number.MAX_SAFE_INTEGER||!number(now)||!event||!id(event.sourceId)||!id(event.principalId)||!id(event.eventId)||!id(event.eventType))throw Error('Invalid run wakeup');const payload=canonicalTriggerPayload(event.payload),hash=createHash('sha256').update(payload).digest('hex');this.db.exec('BEGIN IMMEDIATE');try{
+   const args=[scope.tenantId,scope.agentId,event.sourceId,event.eventId],existing=this.db.prepare('SELECT principal_id,event_type,payload,payload_hash,run_id FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(...args);
+   if(existing){if(existing.principal_id!==event.principalId||existing.event_type!==event.eventType||existing.payload!==payload||existing.payload_hash!==hash||existing.run_id!==runId)throw Error('Trigger identity conflict');const run=this.get(scope,runId);if(!run)throw Error('Invalid run wakeup');this.db.exec('COMMIT');return {run,duplicate:true};}
+   const inbox=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_trigger_inbox'").get();if(inbox&&this.db.prepare('SELECT 1 FROM agent_trigger_inbox WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(...args))throw Error('Trigger identity conflict');
+   const run=this.transitionInTransaction(scope,runId,revision,current=>this.applyRunRequest(scope,runId,'resume',now,current),now);this.db.prepare('INSERT INTO agent_run_wakeups (tenant_id,agent_id,source_id,event_id,principal_id,event_type,payload,payload_hash,run_id,observed_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(...args,event.principalId,event.eventType,payload,hash,runId,now);this.db.exec('COMMIT');return {run,duplicate:false};
+  }catch(error){this.db.exec('ROLLBACK');throw error;}
+ }
+ private parseWakeup(row:Record<string,unknown>):{id:number;sourceId:string;eventId:string;principalId:string;eventType:string;payload:unknown;runId:string;observedAt:number}{
+  if(!number(row.id)||row.id<1||!id(row.source_id)||!id(row.event_id)||!id(row.principal_id)||!id(row.event_type)||!id(row.run_id)||!number(row.observed_at)||typeof row.payload!=='string'||typeof row.payload_hash!=='string')throw Error('Invalid run wakeup data');let payload:unknown;try{payload=JSON.parse(row.payload);if(canonicalTriggerPayload(payload)!==row.payload||createHash('sha256').update(row.payload).digest('hex')!==row.payload_hash)throw Error();}catch{throw Error('Invalid run wakeup data');}return {id:row.id,sourceId:row.source_id,eventId:row.event_id,principalId:row.principal_id,eventType:row.event_type,payload,runId:row.run_id,observedAt:row.observed_at};
+ }
+ /** Host-authorized ordered delivery of retained wakeups for one fixed run. */
+ listWakeups(scope:RunScope,runId:string,options:{after?:number;limit?:number}={}):{items:{id:number;sourceId:string;eventId:string;principalId:string;eventType:string;payload:unknown;observedAt:number}[];nextAfter?:number}{
+  scopeKey(scope,runId);const after=options?.after??0,limit=options?.limit??50;if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||!number(after)||!number(limit)||limit<1||limit>100)throw Error('Invalid run wakeup query');const rows=this.db.prepare('SELECT id,source_id,event_id,principal_id,event_type,payload,payload_hash,run_id,observed_at FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND run_id=? AND id>? ORDER BY id LIMIT ?').all(scope.tenantId,scope.agentId,runId,after,limit+1),items=rows.slice(0,limit).map(row=>{const {runId:_runId,...item}=this.parseWakeup(row);return item;});return {items,...(rows.length>limit?{nextAfter:items[items.length-1]!.id}:{})};
+ }
+ /** Read a wakeup after the host independently authorizes the entire event and payload. */
+ getWakeup(scope:RunScope,sourceId:string,eventId:string):{sourceId:string;eventId:string;principalId:string;eventType:string;payload:unknown;runId:string;observedAt:number}|undefined{
+  scopeKey(scope,'validation');if(!id(sourceId)||!id(eventId))throw Error('Invalid run wakeup');const row=this.db.prepare('SELECT id,source_id,event_id,principal_id,event_type,payload,payload_hash,run_id,observed_at FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId);if(!row)return undefined;const {id:_id,...item}=this.parseWakeup(row);return item;
  }
  settle(scope:RunScope,runId:string,revision:number,token:string,outcome:'succeeded'|'failed'|'stopped'|'uncertain',now=Date.now()):DurableAgentRun {
   if(!id(token)||!number(now)||!['succeeded','failed','stopped','uncertain'].includes(outcome))throw Error('Invalid run outcome');

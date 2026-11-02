@@ -1,3 +1,4 @@
+import {canonicalTriggerPayload} from './agent-trigger-payload.js';
 import {DatabaseSync} from 'node:sqlite';
 import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
 import {randomUUID,createHash} from 'node:crypto';
@@ -8,18 +9,6 @@ type EventInput={sourceId:string;principalId:string;eventId:string;eventType:str
 type EnqueueOptions={definitionVersion:number;maxAttempts:number;deadline:number;maxPending:number;traceParent?:string};
 export type TriggerRecord={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown;runId:string;payloadRedacted?:true};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-function canonical(value:unknown):string {
- let count=0;const ancestors=new Set<object>();
- const copy=(x:unknown,depth:number):unknown=>{
-  if(++count>10000||depth>40)throw Error('Invalid trigger payload');
-  if(x===null||typeof x==='boolean'||typeof x==='string'||(typeof x==='number'&&Number.isFinite(x)))return x;
-  if(!x||typeof x!=='object'||ancestors.has(x))throw Error('Invalid trigger payload');ancestors.add(x);let result:unknown;
-  if(Array.isArray(x)){if(x.length>10000||Object.keys(x).length!==x.length||Array.from({length:x.length},(_,i)=>Object.hasOwn(x,i)).some(v=>!v))throw Error('Invalid trigger payload');result=x.map(y=>copy(y,depth+1));}
-  else{if(![Object.prototype,null].includes(Object.getPrototypeOf(x)))throw Error('Invalid trigger payload');const obj:Record<string,unknown>={};for(const key of Object.keys(x).sort()){if(['__proto__','constructor','prototype'].includes(key))throw Error('Invalid trigger payload');obj[key]=copy((x as Record<string,unknown>)[key],depth+1);}result=obj;}
-  ancestors.delete(x);return result;
- };
- const text=JSON.stringify(copy(value,0));if(Buffer.byteLength(text)>256*1024)throw Error('Invalid trigger payload');return text;
-}
 /** Local trigger inbox; caller must authenticate and authorize the source and scope. */
 export class SqliteAgentTriggers {
  private readonly db:DatabaseSync;
@@ -41,8 +30,9 @@ export class SqliteAgentTriggers {
  }
  enqueue(scope:AgentRunScope,event:EventInput,options:EnqueueOptions,now=Date.now()):{runId:string;duplicate:boolean}{
   if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!event||!id(event.sourceId)||!id(event.principalId)||!id(event.eventId)||!id(event.eventType)||!options||!Number.isSafeInteger(options.definitionVersion)||options.definitionVersion<1||!Number.isSafeInteger(options.maxAttempts)||options.maxAttempts<1||options.maxAttempts>100||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||!Number.isSafeInteger(options.deadline)||!Number.isSafeInteger(now)||now<0||options.deadline<=now||(options.traceParent!==undefined&&!parseAgentTraceParent(options.traceParent)))throw Error('Invalid trigger');
-  const payload=canonical(event.payload),hash=createHash('sha256').update(payload).digest('hex');this.db.exec('BEGIN IMMEDIATE');
+  const payload=canonicalTriggerPayload(event.payload),hash=createHash('sha256').update(payload).digest('hex');this.db.exec('BEGIN IMMEDIATE');
   try{
+   const wakeups=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_run_wakeups'").get();if(wakeups&&this.db.prepare('SELECT 1 FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,event.sourceId,event.eventId))throw Error('Trigger identity conflict');
    const existing=this.db.prepare('SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.source_id=? AND i.event_id=?').get(scope.tenantId,scope.agentId,event.sourceId,event.eventId);
    if(existing){if(existing.principal_id!==event.principalId||existing.event_type!==event.eventType||existing.payload_hash!==hash||(existing.redacted===null&&existing.payload!==payload))throw Error('Trigger identity conflict');this.db.exec('COMMIT');return {runId:String(existing.run_id),duplicate:true};}
    const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);
