@@ -83,3 +83,13 @@ test('PostgreSQL erasure and expiry clear maximum-revision records',{skip:!proce
   assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(x=>x.action),['write','write','purge','erase']);await assert.rejects(memory.put(actor,scope,'erase','replacement',opts(500)),/Invalid memory revision/);await assert.rejects(memory.put(actor,scope,'expire','replacement',opts(500)),/Invalid memory revision/);
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
+
+
+test('indexed comparison rechecks candidates after the exact search',async()=>{
+ let current=true,scopeAllowed=true;const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,vectorIndex:{modelId:'model',dimensions:2},authorize:(_actor,_scope,action,id)=>action==='list'?scopeAllowed:id!=='indexed'||current,query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')}});
+ const record=id=>({id,revision:1,value:{format:'semantic-v1',modelId:'model',text:id,vector:[1,0]},provenance,expiresAt:500});
+ store.searchSemanticVector=async()=>[{record:record('indexed'),score:1}];store.list=async()=>{current=false;return {items:[record('exact')]};};store.get=async(who,selected,id)=>{await store.assertAccess(who,selected,'read',id);return record(id);};
+ const semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]}),result=await semantic.compareIndexed(actor,scope,'query');assert.deepEqual(result.indexed,[]);assert.deepEqual(result.exact.map(hit=>hit.id),['exact']);
+ for(const changed of [undefined,{...record('indexed'),revision:2}]){current=true;store.list=async()=>({items:[]});store.get=async(who,selected,id)=>{await store.assertAccess(who,selected,'read',id);return id==='indexed'?changed:record(id);};assert.deepEqual((await semantic.compareIndexed(actor,scope,'query')).indexed,[]);}
+ store.list=async()=>{scopeAllowed=false;return {items:[]};};await assert.rejects(semantic.compareIndexed(actor,scope,'query'),/access denied/);
+});
