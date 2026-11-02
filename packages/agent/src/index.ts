@@ -191,6 +191,8 @@ export {registerAgentDefinitionControl} from './agent-definition-control-capabil
 export {registerAgentDefinitionStatus} from './agent-definition-status-capability.js';
 export {registerAgentDefinitionHistory} from './agent-definition-history-capability.js';
 export {registerAgentDefinitionWrite} from './agent-definition-write-capability.js';
+export {registerAgentDefinitionRead} from './agent-definition-read-capability.js';
+export type {AgentDefinitionReadCapabilityOptions} from './agent-definition-read-capability.js';
 export type {AgentDefinitionWriteCapabilityOptions} from './agent-definition-write-capability.js';
 export type {AgentDefinitionHistoryCapabilityOptions} from './agent-definition-history-capability.js';
 export type {AgentDefinitionStatusCapabilityOptions} from './agent-definition-status-capability.js';
