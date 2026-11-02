@@ -1,4 +1,5 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
+import {performance} from 'node:perf_hooks';
 import {SqliteAgentTriggers} from './agent-triggers.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
@@ -6,6 +7,7 @@ import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
+export type AgentEventIngressObservation={outcome:'accepted'|'completed'|'rejected'|'unavailable'|'disconnected';status?:number;durationMs:number};
 type Options={
  triggers:SqliteAgentTriggers;
  definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>;getWithSignal?:(tenantId:string,agentId:string,signal:AbortSignal)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};
@@ -18,7 +20,7 @@ type Options={
  acknowledgement?:'twiml';
  traceParent?:(request:IncomingMessage,identity:SourceIdentity,event:EventRequest,signal:AbortSignal)=>string|undefined|Promise<string|undefined>;
  tracing?:{tracer:Tracer;propagateToRun?:boolean};
- maxPending:number;maxInFlight?:number;requestTimeoutMs?:number;clock?:()=>number;
+ maxPending:number;maxInFlight?:number;requestTimeoutMs?:number;observe?:(observation:AgentEventIngressObservation)=>void|Promise<void>;clock?:()=>number;
 };
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const reply=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));};
@@ -40,11 +42,12 @@ function validateEvent(value:unknown):EventRequest {
 /** Host supplies authentication, source authorization, definitions and network boundary. */
 export function createAgentEventIngress(options:Options):Server {
  if((options?.contentType!==undefined||options?.acknowledgement!==undefined)&&(options.contentType!=='application/x-www-form-urlencoded'||options.acknowledgement!=='twiml'||typeof options.authenticateRaw!=='function'||typeof options.mapAuthenticatedBody!=='function'||options.challengeAuthenticatedBody!==undefined))throw Error('Invalid event ingress');
- if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.maxInFlight!==undefined&&(!Number.isSafeInteger(options.maxInFlight)||options.maxInFlight<1||options.maxInFlight>10000))||(options.requestTimeoutMs!==undefined&&(!Number.isSafeInteger(options.requestTimeoutMs)||options.requestTimeoutMs<100||options.requestTimeoutMs>30000||options.maxInFlight===undefined))||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
- const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,maxInFlight,requestTimeoutMs,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
+ if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(options.definitions.getWithSignal!==undefined&&typeof options.definitions.getWithSignal!=='function')||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.maxInFlight!==undefined&&(!Number.isSafeInteger(options.maxInFlight)||options.maxInFlight<1||options.maxInFlight>10000))||(options.requestTimeoutMs!==undefined&&(!Number.isSafeInteger(options.requestTimeoutMs)||options.requestTimeoutMs<100||options.requestTimeoutMs>30000||options.maxInFlight===undefined))||(options.observe!==undefined&&typeof options.observe!=='function')||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
+ const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,maxInFlight,requestTimeoutMs,observe,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
  const basicLookup=definitions.get.bind(definitions),getDefinition=definitions.getWithSignal?definitions.getWithSignal.bind(definitions):(tenantId:string,agentId:string,_signal:AbortSignal)=>basicLookup(tenantId,agentId);
  let inFlight=0;
  return createServer(async(req,res)=>{
+  if(observe){const started=performance.now();let reported=false;const report=(disconnected:boolean)=>{if(reported)return;reported=true;const status=disconnected?undefined:res.statusCode,outcome:AgentEventIngressObservation['outcome']=disconnected?'disconnected':status===202?'accepted':status===200?'completed':status!==undefined&&status>=500?'unavailable':'rejected';try{const result=observe({outcome,...(status===undefined?{}:{status}),durationMs:Math.max(0,performance.now()-started)});if(result&&typeof result.then==='function')Promise.resolve(result).catch(()=>{});}catch{}};res.once('finish',()=>report(false));res.once('close',()=>report(true));}
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   if(maxInFlight!==undefined&&inFlight>=maxInFlight){reply(res,503,{error:'Event ingress busy'});return;}
   inFlight++;let expired=false;const controller=new AbortController(),timer=requestTimeoutMs===undefined?undefined:setTimeout(()=>{expired=true;controller.abort();if(!res.writableEnded&&!res.destroyed){if(!req.complete)res.once('finish',()=>req.destroy());reply(res,503,{error:'Event ingress timeout'});}else if(!req.complete)req.destroy();},requestTimeoutMs);try{
