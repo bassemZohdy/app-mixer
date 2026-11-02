@@ -196,6 +196,7 @@ export function prepareWorkspace(app){
       if(!object(item))throw Error('Invalid component');
       const itemId='page-'+index+'-item-'+itemIndex;components[0].children.push(itemId);
       if(item.type==='Text'){components.push({id:itemId,component:'Text',text:String(item.props?.text??'')});continue;}
+      if(item.type==='Input'){const props=item.props;if(!props||typeof props!=='object'||Array.isArray(props)||Object.keys(props).some(key=>!['label','path','variant'].includes(key))||typeof props.label!=='string'||typeof props.path!=='string'||(props.variant!==undefined&&!['shortText','longText'].includes(props.variant)))throw Error('Invalid Input properties');components.push({id:itemId,component:'TextField',label:props.label,value:{path:props.path},...(props.variant===undefined?{}:{variant:props.variant})});continue;}
       if(item.type!=='Extension'||typeof item.extensionId!=='string'||typeof item.name!=='string')throw Error('Unsupported component type: '+item.type);
       const extension=selected.get(item.extensionId), binding=extension&&Object.hasOwn(extension.components,item.name)?extension.components[item.name]:undefined;
       if(!binding||typeof binding.render!=='function'||(binding.validate!==undefined&&typeof binding.validate!=='function'))throw Error('Extension component unavailable: '+item.name);
