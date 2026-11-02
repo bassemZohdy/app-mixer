@@ -14,7 +14,7 @@ export async function createGeneratedOfflineRuntime(config){
   const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{}),...(config.rollbackAnchor!==undefined?{rollbackAnchor:config.rollbackAnchor}:{})});
   let closed=false,closePromise;const panels=new Set();
   class OperationNotAllowed extends Error {}
-  const current=async()=>{const actor=await resolveActor();return !closed&&!!actor&&actor.tenantId===scope.tenantId&&actor.applicationId===scope.applicationId&&actor.principalId===scope.principalId;};
+  const current=async()=>{if(closed)return false;const actor=await resolveActor();return !closed&&!!actor&&actor.tenantId===scope.tenantId&&actor.applicationId===scope.applicationId&&actor.principalId===scope.principalId;};
   let worker;
   try{
     worker=new BrowserOfflineWorker(queue,{
@@ -33,7 +33,8 @@ export async function createGeneratedOfflineRuntime(config){
     },
     async retire(id,expectedVersion){
       ensureOpen();if(!canRetire||!await current())throw Error('Offline operation not allowed');
-      const item=await queue.get(id);if(!item||!operations.has(item.operationId)||!['succeeded','discarded','retired'].includes(item.status)||await canRetire(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
+      const item=await queue.get(id);if(!item||!operations.has(item.operationId)||!['succeeded','discarded','retired'].includes(item.status)||closed||!await current())throw Error('Offline operation not allowed');
+      if(await canRetire(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
       return queue.retire(id,expectedVersion);
     },
     async recoverAbandoned(id,expectedVersion){

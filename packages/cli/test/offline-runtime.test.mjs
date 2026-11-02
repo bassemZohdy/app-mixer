@@ -66,6 +66,17 @@ test('generated offline runtime authorizes retirement and prevents recovery or r
  }finally{release?.();if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('retirement does not start host policy or identity checks after runtime closure',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-retirement-close-'));let runtime,queue,originalGet,prototype,release;
+ try{
+  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),{EncryptedBrowserQueue}=await import(pathToFileURL(join(target,'offline.js')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();let policyCalls=0,identityCalls=0,started;
+  const waiting=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),config={enabled:true,databaseName:'retirement-close',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>{identityCalls++;return scope;},canEnqueue:()=>true,canDiscard:()=>true,canRetire:()=>{policyCalls++;return true;},dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
+  queue=await EncryptedBrowserQueue.open(config);let item=await queue.enqueue('items.update','close',{value:'private'});item=await queue.transition(item.id,item.version,'claim');item=await queue.transition(item.id,item.version,'succeed');runtime=await createGeneratedOfflineRuntime(config);
+  prototype=EncryptedBrowserQueue.prototype;originalGet=prototype.get;prototype.get=async function(id){const result=await originalGet.call(this,id);started();await gate;return result;};
+  const pending=runtime.retire(item.id,item.version);await waiting;await runtime.close();const callsAtClose=identityCalls;release();await assert.rejects(pending,/not allowed/);assert.equal(policyCalls,0);assert.equal(identityCalls,callsAtClose);prototype.get=originalGet;assert.equal((await queue.get(item.id)).status,'succeeded');
+ }finally{release?.();if(prototype&&originalGet)prototype.get=originalGet;if(runtime)await runtime.close();queue?.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('generated offline runtime queues, synchronizes and resolves a conflict through the capability service', {timeout:15000},async()=>{
  let externalCalls=0,stored={value:'server',version:2};const events=[],registry=new CapabilityRegistry(event=>events.push(event));
  registry.register({operationId:'items.offline',method:'POST',path:'/items'}, {authorize:ctx=>ctx.tenantId==='tenant'&&ctx.principalId==='local',validate:input=>typeof input?.idempotencyKey==='string'&&typeof input?.payload?.value==='string',execute:input=>{externalCalls++;if(input.payload.version!==stored.version)throw Error('Data revision conflict');stored={value:input.payload.value,version:stored.version+1};return stored;}});
