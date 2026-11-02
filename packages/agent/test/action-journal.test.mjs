@@ -133,3 +133,12 @@ test('stopping a recovery worker prevents a late verifier result from changing t
  const s=setup();let entered,release;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,onError:()=>{},authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>{entered();await gate;return {outcome:'applied',result:'verified'};}});worker.start();await started;const stopping=worker.stop();release();await stopping;assert.equal(s.journal.get('one').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('one').status,'succeeded');assert.equal(s.journal.listReconciliations().length,1);
  }finally{close(s);}
 });
+
+test('stopping a manual recovery pass discards a late verifier result and permits retry',async()=>{
+ const s=setup(),errors=[];let entered,release,block=true;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+ try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);
+  const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,onError:error=>errors.push(error),authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>{if(block){entered();await gate;}return {outcome:'applied',result:'verified'};}});
+  const pending=worker.runOnce();await started;const stopping=worker.stop();block=false;release();assert.equal(await pending,0);await stopping;assert.equal(s.journal.get('one').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);assert.deepEqual(errors,[]);
+  assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('one').status,'succeeded');assert.equal(s.journal.listReconciliations().length,1);
+ }finally{close(s);}
+});
