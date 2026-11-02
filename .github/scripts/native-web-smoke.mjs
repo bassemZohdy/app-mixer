@@ -95,7 +95,7 @@ try{
  ]}}));
  const headings=[...document.querySelectorAll('[role="heading"]')];assert.deepEqual(headings.map(node=>node.tagName),['H1','H2','H3','H4','H5']);
  const heading=headings[0];assert.ok(heading);
- assert.equal(heading.style.fontSize,'32px');assert.equal(heading.style.fontWeight,'bold');
+ assert.equal(heading.style.fontSize,'32px');assert.equal(heading.style.fontWeight,'bold');assert.notEqual(heading.getAttribute('tabindex'),'0');
  const caption=[...document.querySelectorAll('*')].find(element=>element.textContent==='Caption' && element.children.length===0);
  assert.ok(caption);assert.equal(caption.style.fontSize,'13.33px');
  await React.act(()=>root.unmount());

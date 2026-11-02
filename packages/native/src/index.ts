@@ -186,14 +186,14 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
       return ()=>{active=false;if(storeRef.current===store)storeRef.current=null;try{if(typeof stop==='function')stop();}catch(error){errors.current(error);}};
     },[subscribe]);
     const store=storeRef.current;
-    const render=(node:NativeNode,surface:NativeSurface):any=>{
+    const render=(node:NativeNode,surface:NativeSurface,inButton=false):any=>{
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header',...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:textStyles[node.variant??'body']},node.text);
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header',...(!inButton?{accessible:true}:{}),...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:textStyles[node.variant??'body']},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
-      }},...node.children.map(child=>render(child,surface)));
+      }},...node.children.map(child=>render(child,surface,true)));
       if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id},
         React.createElement(primitives.Text,null,node.label),
         React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{
@@ -201,7 +201,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
           try{store.writeField(surface.id,node.id,surface.revision,value);setSurfaces(store.snapshot());}catch(error){errors.current(error);}
         }}));
       const style=node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:undefined;
-      return React.createElement(primitives.View,{key:node.id,style},...node.children.map(child=>render(child,surface)));
+      return React.createElement(primitives.View,{key:node.id,style},...node.children.map(child=>render(child,surface,inButton)));
     };
     return React.createElement(primitives.View,null,...surfaces.map(surface=>React.createElement(primitives.View,{key:surface.id},...(surface.root?[render(surface.root,surface)]:[]))));
   };

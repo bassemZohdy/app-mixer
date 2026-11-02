@@ -9,7 +9,7 @@ globalThis.window=dom.window;globalThis.document=dom.window.document;
 Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const React=require('react');const {createRoot}=require('react-dom/client');
 const View=({children,style})=>React.createElement('div',{style},children);
-const Text=({children,accessibilityRole,style,'aria-level':level})=>React.createElement('span',{'data-role':accessibilityRole,'data-level':level,style},children);
+const Text=({children,accessibilityRole,accessible,style,'aria-level':level})=>React.createElement('span',{'data-role':accessibilityRole,'data-accessible':accessible,'data-level':level,style},children);
 let change;const TextInput=props=>{change=props.onChangeText;return React.createElement('input',{value:props.value,readOnly:true});};
 const Pressable=({children,onPress,disabled})=>React.createElement('button',{onClick:onPress,disabled},children);
 const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform:{OS:'android'}});const root=createRoot(document.getElementById('app'));
@@ -47,6 +47,9 @@ try{
  assert.deepEqual(variants.map(node=>node.style.fontSize),['32px','24px','18.72px','16px','13.28px','13.33px','16px','16px']);
  assert.deepEqual(variants.map(node=>node.dataset.role??''),['header','header','header','header','header','','','']);
  assert.deepEqual(variants.map(node=>node.dataset.level??''),['','','','','','','','']);
+ assert.deepEqual(variants.map(node=>node.dataset.accessible??''),['true','true','true','true','true','','','']);
+ await React.act(()=>newReceive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Button',child:'nested',action:{event:{name:'save'}}},{id:'nested',component:'Column',children:['nestedHeading']},{id:'nestedHeading',component:'Text',text:'Button heading',variant:'h2'}]}}));
+ assert.equal(document.querySelector('button span').dataset.accessible,undefined);
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
  const root2=createRoot(document.getElementById('app'));let next;const failures=[];
  const broken=()=>()=>{throw Error('cleanup failed');},replacement=callback=>{next=callback;};
