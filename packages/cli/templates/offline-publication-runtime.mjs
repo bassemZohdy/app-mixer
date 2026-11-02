@@ -20,6 +20,8 @@ export async function createOfflinePublicationRuntime(options){
    return {publication,offline:false};
   },
   async clear(){generation++;await cache.clear();},
+  hasPendingRollbackAnchor(){check(generation);return cache.hasPendingRollbackAnchor();},
+  async syncRollbackAnchor(){const version=generation;check(version);const result=await cache.syncRollbackAnchor();check(version);return result;},
   close(){closed=true;generation++;cache.close();}
  };
 }

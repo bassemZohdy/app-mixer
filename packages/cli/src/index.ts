@@ -32,7 +32,7 @@ try {
     offlineRuntime=await createOfflinePublicationRuntime({...offlineOptions,compatible:definition=>{try{prepareWorkspace(definition);return true;}catch{return false;}}});
     const button=document.getElementById('refresh-publication');button.hidden=false;button.addEventListener('click',()=>render());
     const clearDisplay=()=>{renderGeneration++;document.getElementById('publication-status').textContent='';host.replaceChildren();};
-    offlineOptions.onReady({lock(){clearDisplay();offlineRuntime.close();button.hidden=true;},async clear(){clearDisplay();await offlineRuntime.clear();}});
+    offlineOptions.onReady({lock(){clearDisplay();offlineRuntime.close();button.hidden=true;},async clear(){clearDisplay();await offlineRuntime.clear();},hasPendingRollbackAnchor(){return offlineRuntime.hasPendingRollbackAnchor();},async syncRollbackAnchor(){return offlineRuntime.syncRollbackAnchor();}});
   } else {
   const state=await (await fetch('/api/publication/status')).json();
   if(state.configured){

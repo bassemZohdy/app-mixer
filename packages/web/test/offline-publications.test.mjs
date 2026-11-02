@@ -86,3 +86,45 @@ test('revoked access can clear a cached publication but clearing resets its loca
  const db=new IDBFactory(),k=await key();let allowed=true;const cache=await EncryptedPublicationCache.open(options(db,k,{authorize:()=>allowed})),newer=publication(3),older=publication(1);try{await cache.store(newer,tag(newer));allowed=false;await assert.rejects(cache.read(),/access denied/);await assert.rejects(cache.store(older,tag(older)),/access denied/);await cache.clear();allowed=true;assert.equal(await cache.read(),undefined);await cache.store(older,tag(older));assert.deepEqual((await cache.read()).publication,older);
  }finally{cache.close();}
 });
+async function publicationRows(factory){const database=await new Promise((resolve,reject)=>{const r=factory.open('test');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});try{return await new Promise((resolve,reject)=>{const r=database.transaction('publications').objectStore('publications').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}finally{database.close();}}
+async function replacePublicationRows(factory,rows){const database=await new Promise((resolve,reject)=>{const r=factory.open('test');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});try{await new Promise((resolve,reject)=>{const tx=database.transaction('publications','readwrite'),store=tx.objectStore('publications');store.clear();for(const row of rows)store.put(row);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});}finally{database.close();}}
+
+test('publication rollback anchor detects restoration after a clear and preserves scope isolation',async()=>{
+ const db=new IDBFactory(),k=await key();let floor=0;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor})),other=await EncryptedPublicationCache.open(options(db,k,{scope:{...scope,principalId:'other'}}));try{const p=publication(2);await cache.store(p,tag(p));await other.store(p,tag(p));assert.equal(floor,1);const old=await publicationRows(db);await cache.clear();assert.equal(floor,2);assert.equal(await cache.read(),undefined);cache.close();await replacePublicationRows(db,old);await assert.rejects(EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor})),/rollback detected/);assert.deepEqual((await other.read()).publication,p);
+ }finally{cache.close();other.close();}
+});
+
+test('publication rollback anchor survives key rotation and fences restored older snapshots',async()=>{
+ const db=new IDBFactory(),oldKey=await key(),newKey=await key();let floor=0;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},old=await EncryptedPublicationCache.open(options(db,oldKey,{rollbackAnchor:anchor})),p=publication(1);try{await old.store(p,tag(p));const snapshot=await publicationRows(db);assert.equal(await old.rotateKey(newKey),true);assert.equal(floor,2);const current=await EncryptedPublicationCache.open(options(db,newKey,{rollbackAnchor:anchor}));assert.deepEqual((await current.read()).publication,p);current.close();await replacePublicationRows(db,snapshot);await assert.rejects(EncryptedPublicationCache.open(options(db,oldKey,{rollbackAnchor:anchor})),/rollback detected/);
+ }finally{old.close();}
+});
+
+test('publication rollback anchors detect tampering, missing counters, and invalid external floors',async()=>{
+ const db=new IDBFactory(),k=await key();let floor=0;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{const p=publication(1);await cache.store(p,tag(p));const saved=await publicationRows(db);cache.close();const counter=saved.find(row=>row.id.startsWith('@publication-counter:'));assert.ok(counter);const corrupt=structuredClone(saved),target=corrupt.find(row=>row.id===counter.id);new Uint8Array(target.ciphertext)[0]^=1;await replacePublicationRows(db,corrupt);await assert.rejects(EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor})),/Invalid offline publication counter/);await replacePublicationRows(db,saved.filter(row=>row.id!==counter.id));await assert.rejects(EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor})),/rollback detected/);await replacePublicationRows(db,saved);floor=-1;await assert.rejects(EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor})),/Invalid offline publication rollback anchor/);await assert.rejects(EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:{read:()=>0}})),/configuration/);
+ }finally{cache.close();}
+});
+
+test('publication rollback anchor exposes failed advances and can synchronize later',async()=>{
+ const db=new IDBFactory(),k=await key();let floor=0,failed=false;const anchor={async read(){return floor;},async advance(value){if(failed)throw Error('offline');floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{failed=true;const p=publication(1);await cache.store(p,tag(p));assert.equal(cache.hasPendingRollbackAnchor(),true);assert.equal(floor,0);await assert.rejects(cache.syncRollbackAnchor(),/offline/);failed=false;assert.equal(await cache.syncRollbackAnchor(),1);assert.equal(cache.hasPendingRollbackAnchor(),false);assert.equal(floor,1);cache.close();const reopened=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{assert.deepEqual((await reopened.read()).publication,p);}finally{reopened.close();}
+ }finally{cache.close();}
+});
+
+test('anchored concurrent writes cannot advance the counter without the corresponding publication',async()=>{
+ const db=new IDBFactory(),k=await key();let floor=0,entered,release,armed=false;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),slow={subtle:{digest:webcrypto.subtle.digest.bind(webcrypto.subtle),decrypt:webcrypto.subtle.decrypt.bind(webcrypto.subtle),encrypt:async(...args)=>{if(armed&&new TextDecoder().decode(args[2])==='publication-counter-v1'){entered();await gate;}return webcrypto.subtle.encrypt(...args);}},getRandomValues:webcrypto.getRandomValues.bind(webcrypto)},first=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor,crypto:slow})),second=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{armed=true;const older=publication(1),newer=publication(2),pending=first.store(older,tag(older));await ready;await second.store(newer,tag(newer));release();await assert.rejects(pending,/cache changed/);assert.equal(floor,1);assert.deepEqual((await second.read()).publication,newer);
+ }finally{release?.();first.close();second.close();}
+});
+
+test('a failed anchor advance during key rotation is reconciled when the new key reopens',async()=>{
+ const db=new IDBFactory(),oldKey=await key(),newKey=await key();let floor=0,failed=false;const anchor={async read(){return floor;},async advance(value){if(failed)throw Error('anchor offline');floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,oldKey,{rollbackAnchor:anchor})),p=publication(1);try{await cache.store(p,tag(p));failed=true;assert.equal(await cache.rotateKey(newKey),true);assert.equal(cache.hasPendingRollbackAnchor(),true);assert.equal(floor,1);await assert.rejects(EncryptedPublicationCache.open(options(db,newKey,{rollbackAnchor:anchor})),/anchor offline/);failed=false;const reopened=await EncryptedPublicationCache.open(options(db,newKey,{rollbackAnchor:anchor}));try{assert.equal(floor,2);assert.deepEqual((await reopened.read()).publication,p);}finally{reopened.close();}
+ }finally{cache.close();}
+});
+
+test('publication rollback anchor callbacks are snapshotted and bound to their host',async()=>{
+ const db=new IDBFactory(),k=await key(),anchor={floor:0,async read(){return this.floor;},async advance(value){this.floor=Math.max(this.floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{anchor.advance=async()=>{throw Error('replaced');};const p=publication(1);await cache.store(p,tag(p));assert.equal(anchor.floor,1);assert.equal(cache.hasPendingRollbackAnchor(),false);
+ }finally{cache.close();}
+});
+
+test('explicit publication anchor synchronization detects a newer external floor',async()=>{
+ const db=new IDBFactory(),k=await key();let floor=0;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{const p=publication(1);await cache.store(p,tag(p));floor=2;await assert.rejects(cache.syncRollbackAnchor(),/rollback detected/);assert.equal(floor,2);floor=-1;await assert.rejects(cache.syncRollbackAnchor(),/Invalid offline publication rollback anchor/);
+ }finally{cache.close();}
+});
