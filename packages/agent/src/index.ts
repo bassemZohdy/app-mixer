@@ -186,6 +186,8 @@ export type {AgentLeaseRecoveryCapabilityOptions} from './agent-run-lease-recove
 export {AgentRunLeaseRecoveryWorker} from './agent-run-lease-recovery.js';
 export {registerAgentRunControl} from './agent-run-control-capability.js';
 export {registerAgentRunInspection} from './agent-run-inspection-capability.js';
+export {registerAgentManualStart} from './agent-manual-start-capability.js';
+export type {AgentManualStartCapabilityOptions} from './agent-manual-start-capability.js';
 export type {AgentRunInspectionCapabilityOptions,AgentRunInspectionSnapshot} from './agent-run-inspection-capability.js';
 export type {AgentRunControlCapabilityOptions} from './agent-run-control-capability.js';
 export {SqliteAgentRunControlHistory} from './agent-run-control-history.js';
