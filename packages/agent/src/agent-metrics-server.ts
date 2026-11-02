@@ -18,7 +18,7 @@ export function createAgentMetricsServer(options:AgentMetricsServerOptions):Serv
    let actor:AgentRunMetricsActor|undefined;try{actor=await authenticate(req,controller.signal);}catch{return {status:401,body:'Unauthorized\n'};}
    if(controller.signal.aborted)return {status:503,body:'Unavailable\n'};
    if(!actor)return {status:401,body:'Unauthorized\n'};
-   try{const text=await metrics.render(actor);if(typeof text!=='string'||Buffer.byteLength(text)>65536)throw Error('Invalid metrics');return {status:200,body:text};}catch(error){const message=error instanceof Error?error.message:'';return message==='Agent metrics access denied'||message==='Invalid agent metrics actor'?{status:403,body:'Forbidden\n'}:{status:503,body:'Unavailable\n'};}
+   try{const text=await metrics.render(actor);if(typeof text!=='string'||Buffer.byteLength(text)>65536)throw Error('Invalid metrics');return {status:200,body:text};}catch(error){const message=error instanceof Error?error.message:'';return message==='Agent metrics access denied'||message==='Invalid agent metrics actor'||message==='Shared cost access denied'||message==='Invalid shared cost actor'?{status:403,body:'Forbidden\n'}:{status:503,body:'Unavailable\n'};}
   }).then(result=>{if(finished)return;finished=true;clearTimeout(timer);reply(res,result.status,result.body,result.status===200?'text/plain; version=0.0.4; charset=utf-8':undefined);},()=>{if(!finished){finished=true;clearTimeout(timer);reply(res,503,'Unavailable\n');}}).finally(()=>{pending--;}).catch(()=>{});
  });
 }

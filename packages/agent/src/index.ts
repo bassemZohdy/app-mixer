@@ -241,7 +241,7 @@ export {AgentBudgetRecoveryCoordinator} from './agent-budget-recovery-coordinato
 export type {AgentBudgetRecoveryCoordinatorOptions,AgentBudgetRecoverySession} from './agent-budget-recovery-coordinator.js';
 
 export {PostgresAgentSharedCost} from './postgres-agent-shared-cost.js';
-export type {PostgresAgentSharedCostOptions,SharedCostActor,SharedCostScope,SharedCostCall,SharedCostReservation,SharedCostSummary,SharedCostReconciliation} from './postgres-agent-shared-cost.js';
+export type {PostgresAgentSharedCostOptions,SharedCostActor,SharedCostScope,SharedCostCall,SharedCostReservation,SharedCostSummary,SharedCostMetricsSnapshot,SharedCostReconciliation} from './postgres-agent-shared-cost.js';
 
 export {registerSharedCostPending} from './postgres-shared-cost-capability.js';
 export type {SharedCostPendingCapabilityOptions} from './postgres-shared-cost-capability.js';
@@ -254,3 +254,5 @@ export type {OpenAIPricedCostModelOptions} from './openai-priced-cost-model.js';
 
 export {createOpenAICapabilityPricedModel} from './openai-capability-priced-model.js';
 export type {OpenAICapabilityPricedModelOptions,OpenAICapabilityCountingRequest} from './openai-capability-priced-model.js';
+
+export {PostgresAgentSharedCostMetrics} from './postgres-shared-cost-metrics.js';
