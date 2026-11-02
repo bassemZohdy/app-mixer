@@ -11,7 +11,7 @@ type Options={rollout:SqliteRemoteRollout|PostgresRemoteRollout;intervalMs:numbe
 /** Explicitly started local polling; never recovers a durable rollout gate automatically. */
 export class RemoteRolloutPoller {
  private readonly rollout:SqliteRemoteRollout|PostgresRemoteRollout;private readonly intervalMs:number;private readonly maxBackoffMs:number;private readonly onResult:Options['onResult'];private readonly onError:Options['onError'];
- private active=false;private pending?:Promise<void>;private timer?:ReturnType<typeof setTimeout>;private failures=0;private readonly jitterRatio:number;private readonly random:()=>number;
+ private active=false;private controller?:AbortController;private pending?:Promise<void>;private timer?:ReturnType<typeof setTimeout>;private failures=0;private readonly jitterRatio:number;private readonly random:()=>number;
  constructor(options:Options){
   if(!options||!(options.rollout instanceof SqliteRemoteRollout||options.rollout instanceof PostgresRemoteRollout)||!Number.isSafeInteger(options.intervalMs)||options.intervalMs<100||options.intervalMs>3600000||!Number.isSafeInteger(options.maxBackoffMs)||options.maxBackoffMs<options.intervalMs||options.maxBackoffMs>3600000||typeof options.onResult!=='function'||typeof options.onError!=='function'||(options.jitterRatio!==undefined&&(typeof options.jitterRatio!=='number'||!Number.isFinite(options.jitterRatio)||options.jitterRatio<0||options.jitterRatio>0.5))||(options.random!==undefined&&typeof options.random!=='function'))throw Error('Invalid rollout poller');
   this.rollout=options.rollout;this.intervalMs=options.intervalMs;this.maxBackoffMs=options.maxBackoffMs;this.onResult=options.onResult;this.onError=options.onError;this.jitterRatio=options.jitterRatio??0;this.random=options.random??Math.random;
@@ -24,12 +24,12 @@ export class RemoteRolloutPoller {
  }
  private loop():void{
   if(!this.active)return;
-  const pending=(async()=>{
-   try{const result=await this.rollout.runOnce();this.failures=0;try{void Promise.resolve(this.onResult(result)).catch(()=>{});}catch{}}
+  const controller=new AbortController();this.controller=controller;const pending=(async()=>{
+   try{const result=await this.rollout.runOnce(controller.signal);this.failures=0;try{void Promise.resolve(this.onResult(result)).catch(()=>{});}catch{}}
    catch(error){let needsReview=true;try{needsReview=(await this.rollout.getState()).phase!=='idle';}catch{}if(needsReview)this.active=false;else this.failures++;try{void Promise.resolve(this.onError(error,needsReview)).catch(()=>{});}catch{}}
   })();this.pending=pending;
-  void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.active){const base=Math.min(this.maxBackoffMs,this.intervalMs*2**Math.min(this.failures,20)),delay=this.jitterRatio>0?this.jittered(base):base;this.timer=setTimeout(()=>{this.timer=undefined;this.loop();},delay);}});
+  void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.controller===controller)this.controller=undefined;if(this.active){const base=Math.min(this.maxBackoffMs,this.intervalMs*2**Math.min(this.failures,20)),delay=this.jitterRatio>0?this.jittered(base):base;this.timer=setTimeout(()=>{this.timer=undefined;this.loop();},delay);}});
  }
- async stop():Promise<void>{this.active=false;if(this.timer)clearTimeout(this.timer);this.timer=undefined;const pending=this.pending;if(pending)await pending;}
+ async stop():Promise<void>{this.active=false;this.controller?.abort();if(this.timer)clearTimeout(this.timer);this.timer=undefined;const pending=this.pending;if(pending)await pending;}
 }
 export type {Options as RemoteRolloutPollerOptions,RolloutResult as RemoteRolloutResult};

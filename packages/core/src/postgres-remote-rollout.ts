@@ -35,16 +35,17 @@ export class PostgresRemoteRollout {
  }
  private async change(sql:string,args:unknown[]):Promise<void>{const result=await this.query(sql,args);if(!Array.isArray(result.rows)||result.rows.length!==1)throw Error('Remote rollout state changed');}
  private async release(token:string):Promise<void>{await this.change("UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND token=$2 AND phase IN ('running','importing') RETURNING id",[this.key,token]);}
- async runOnce():Promise<{status:'unchanged'|'imported';sourceVersion:number;targetVersion:number}>{
+ async runOnce(signal?:AbortSignal):Promise<{status:'unchanged'|'imported';sourceVersion:number;targetVersion:number}>{
+  if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid rollout signal');const check=()=>{if(signal?.aborted)throw Error('Remote rollout cancelled');};check();
   if(this.active)throw Error('Remote rollout already active');this.active=true;const token=randomUUID();let claimed=false,importing=false;
   try{
-   const result=await this.query("UPDATE app_mixer_remote_rollouts SET phase='running',token=$2,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS NULL RETURNING id",[this.key,token]);if(!Array.isArray(result.rows)||result.rows.length!==1)throw Error('Remote rollout requires recovery');claimed=true;
-   const discovered=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;
-   const floor=await repo.getPromotionFloor!(c.sourceEnvironment,c.targetEnvironment),target=(await repo.getPublished!())?.version??0;
+   const result=await this.query("UPDATE app_mixer_remote_rollouts SET phase='running',token=$2,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS NULL RETURNING id",[this.key,token]);if(!Array.isArray(result.rows)||result.rows.length!==1)throw Error('Remote rollout requires recovery');claimed=true;check();
+   const discovered=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;check();
+   const floor=await repo.getPromotionFloor!(c.sourceEnvironment,c.targetEnvironment);check();const target=(await repo.getPublished!())?.version??0;check();
    if(!version(floor,0)||!version(target,0)||target>=Number.MAX_SAFE_INTEGER)throw Error('Invalid local rollout state');
    if(discovered.sourceVersion<floor)throw Error('Remote source version is behind local history');
    if(discovered.sourceVersion===floor){await this.release(token);claimed=false;return {status:'unchanged',sourceVersion:floor,targetVersion:target};}
-   await this.change("UPDATE app_mixer_remote_rollouts SET phase='importing',source_version=$3,expected_version=$4 WHERE id=$1 AND phase='running' AND token=$2 RETURNING id",[this.key,token,discovered.sourceVersion,target]);importing=true;
+   await this.change("UPDATE app_mixer_remote_rollouts SET phase='importing',source_version=$3,expected_version=$4 WHERE id=$1 AND phase='running' AND token=$2 RETURNING id",[this.key,token,discovered.sourceVersion,target]);check();importing=true;
    const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:discovered.sourceVersion,expectedVersion:target});await this.release(token);claimed=false;return {status:'imported',sourceVersion:discovered.sourceVersion,targetVersion:publication.version};
   }catch(error){
    if(claimed){if(importing){try{await this.query("UPDATE app_mixer_remote_rollouts SET phase='uncertain' WHERE id=$1 AND phase='importing' AND token=$2",[this.key,token]);}catch{}}else{try{await this.release(token);}catch{}}}throw error;

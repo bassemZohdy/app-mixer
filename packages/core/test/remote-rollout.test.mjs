@@ -26,7 +26,15 @@ test('poller stops on an uncertain import until an operator reconciles and resta
 
 test('poller stop waits for an in-flight pass and prevents another pass',async()=>{
  const f=await fixture();let started,release,passes=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{passes++;started();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});
- try{poller.start();await ready;let stopped=false;const pending=poller.stop().then(()=>stopped=true);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(stopped,false);release();await pending;await new Promise(resolve=>setTimeout(resolve,150));assert.equal(passes,2);assert.equal(poller.isRunning(),false);}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+ try{poller.start();await ready;let stopped=false;const pending=poller.stop().then(()=>stopped=true);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(stopped,false);release();await pending;await new Promise(resolve=>setTimeout(resolve,150));assert.equal(passes,2);assert.equal(poller.isRunning(),false);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+});
+
+test('stopping after import begins waits for the import and preserves its outcome',async()=>{
+ const f=await fixture();let started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,authorize:async()=>{started();await gate;return true;}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;assert.equal(rollout.getState().phase,'importing');let stopped=false;const pending=poller.stop().then(()=>stopped=true);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(stopped,false);release();await pending;assert.equal(f.target.getPublished().version,1);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+});
+
+test('stopping during a failed import keeps the uncertainty gate',async()=>{
+ const f=await fixture();let started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,authorize:async()=>{started();await gate;return true;},audit:event=>{if(event.phase==='completed')throw Error('audit failed');}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;const pending=poller.stop();release();await pending;assert.equal(f.target.getPublished().version,1);assert.equal(rollout.getState().phase,'uncertain');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
 });
 
 test('scheduled rollout imports signed newer versions and skips an already applied version',async()=>{

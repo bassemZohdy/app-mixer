@@ -25,15 +25,16 @@ export class SqliteRemoteRollout {
  }
  isBoundTo(scope:RemoteRolloutScope):boolean{return !!scope&&JSON.stringify([scope.tenantId,scope.applicationId,scope.sourceEnvironment,scope.targetEnvironment])===this.key;}
  getState():State{const row=this.db.prepare('SELECT phase,token,source_version,expected_version FROM remote_rollouts WHERE id=?').get(this.key);if(!row||!['idle','running','importing','uncertain'].includes(String(row.phase)))throw Error('Invalid rollout state');return {phase:row.phase as State['phase'],token:row.token===null?null:String(row.token),sourceVersion:row.source_version===null?null:Number(row.source_version),expectedVersion:row.expected_version===null?null:Number(row.expected_version)};}
- async runOnce():Promise<{status:'unchanged'|'imported';sourceVersion:number;targetVersion:number}>{
+ async runOnce(signal?:AbortSignal):Promise<{status:'unchanged'|'imported';sourceVersion:number;targetVersion:number}>{
+  if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid rollout signal');const check=()=>{if(signal?.aborted)throw Error('Remote rollout cancelled');};check();
   const token=randomUUID(),claim=this.db.prepare("UPDATE remote_rollouts SET phase='running',token=?,source_version=NULL,expected_version=NULL WHERE id=? AND phase='idle'").run(token,this.key);if(Number(claim.changes)!==1)throw Error('Remote rollout requires recovery');this.active=true;let importing=false;
-  try{
-   const result=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;
-   const floor=await repo.getPromotionFloor!(c.sourceEnvironment,c.targetEnvironment),target=(await repo.getPublished!())?.version??0;
+  try{check();
+   const result=await this.connector.discoverLatest({...this.actor}),c=this.connector.rolloutConfig,repo=this.connector.rolloutRepository;check();
+   const floor=await repo.getPromotionFloor!(c.sourceEnvironment,c.targetEnvironment);check();const target=(await repo.getPublished!())?.version??0;check();
    if(!Number.isSafeInteger(floor)||floor<0||!Number.isSafeInteger(target)||target<0||target>=Number.MAX_SAFE_INTEGER)throw Error('Invalid local rollout state');
    if(result.sourceVersion<floor)throw Error('Remote source version is behind local history');
    if(result.sourceVersion===floor){this.release(token);return {status:'unchanged',sourceVersion:floor,targetVersion:target};}
-   const marked=this.db.prepare("UPDATE remote_rollouts SET phase='importing',source_version=?,expected_version=? WHERE id=? AND phase='running' AND token=?").run(result.sourceVersion,target,this.key,token);if(Number(marked.changes)!==1)throw Error('Remote rollout state changed');importing=true;
+   const marked=this.db.prepare("UPDATE remote_rollouts SET phase='importing',source_version=?,expected_version=? WHERE id=? AND phase='running' AND token=?").run(result.sourceVersion,target,this.key,token);if(Number(marked.changes)!==1)throw Error('Remote rollout state changed');check();importing=true;
    const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:result.sourceVersion,expectedVersion:target});this.release(token);return {status:'imported',sourceVersion:result.sourceVersion,targetVersion:publication.version};
   }catch(error){if(importing)this.db.prepare("UPDATE remote_rollouts SET phase='uncertain' WHERE id=? AND phase='importing' AND token=?").run(this.key,token);else this.release(token);throw error;}finally{this.active=false;}
  }
