@@ -27,6 +27,28 @@ test('offline queue requires explicit enablement and deduplicates durable intent
  }finally{queue.close();rmSync(dir,{recursive:true,force:true});}
 });
 
+
+test('terminal offline records archive atomically while retaining request fences',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'offline-archive-')),path=join(dir,'queue.sqlite'),registry=new CapabilityRegistry(()=>{}),proof={operatorId:'operator',reference:'retention-case'};let queue=new SqliteOfflineQueue(path,policy),db=new DatabaseSync(path);registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=> 'ok'});
+ try{
+  const item=queue.enqueue(scope,'p','update','request',{secret:'private'},{idempotencyKey:'shared-key'}),pending=queue.enqueue(scope,'p','update','pending',{v:2}),other=queue.enqueue({...scope,tenantId:'other'},'p','update','request',{v:3});assert.throws(()=>queue.archiveTerminal(scope,'p',pending.id,proof,100),/state/);assert.equal(queue.getArchived(scope,'p',pending.id),undefined);assert.equal((await queue.processOne(scope,actor,registry,()=> 'uncertain',10)).status,'succeeded');
+  db.exec("CREATE TRIGGER fail_archive_delete BEFORE DELETE ON offline_operations BEGIN SELECT RAISE(ABORT,'forced archive failure'); END");assert.throws(()=>queue.archiveTerminal(scope,'p',item.id,proof,100),/forced archive failure/);assert.equal(queue.get(scope,'p',item.id).status,'succeeded');assert.equal(queue.getArchived(scope,'p',item.id),undefined);db.exec('DROP TRIGGER fail_archive_delete');
+  queue.archiveTerminal(scope,'p',item.id,proof,100);assert.equal(queue.get(scope,'p',item.id),undefined);assert.deepEqual(queue.getArchived(scope,'p',item.id),{id:item.id,operationId:'update',requestKey:'request',idempotencyKey:'shared-key',status:'succeeded',operatorId:'operator',reference:'retention-case',recordedAt:100});assert.equal(queue.getArchived({...scope,tenantId:'other'},'p',item.id),undefined);assert.equal(queue.get({...scope,tenantId:'other'},'p',other.id).status,'pending');assert.throws(()=>queue.enqueue(scope,'p','update','request',{secret:'private'}),/archived/);assert.throws(()=>queue.enqueue({...scope,tenantId:'other'},'p','update','another',{v:1},{idempotencyKey:'shared-key'}),/archived/);
+  assert.throws(()=>db.prepare("INSERT INTO offline_operations VALUES (?,?,?,?,?,?,?,?,?,?,?)").run('t','a','p','legacy-id','update','request','another-key','{}','pending',0,0),/archived/);assert.throws(()=>db.prepare("INSERT INTO offline_operations VALUES (?,?,?,?,?,?,?,?,?,?,?)").run('other','a','p','legacy-id','update','other-request','shared-key','{}','pending',0,0),/archived/);assert.throws(()=>db.prepare("UPDATE offline_archived_operations SET reference='changed'").run(),/immutable/);assert.throws(()=>db.prepare('DELETE FROM offline_archived_operations').run(),/immutable/);
+  queue.close();queue=new SqliteOfflineQueue(path,policy);assert.equal(queue.getArchived(scope,'p',item.id).reference,'retention-case');assert.throws(()=>queue.enqueue(scope,'p','update','request',{secret:'private'}),/archived/);queue.discard(scope,'p',pending.id);queue.archiveTerminal(scope,'p',pending.id,proof,101);assert.equal(queue.getArchived(scope,'p',pending.id).status,'discarded');
+ }finally{db.close();queue.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('retirement cannot remove an in-flight or uncertain operation',async()=>{
+ const queue=new SqliteOfflineQueue(':memory:',policy),registry=new CapabilityRegistry(()=>{}),proof={operatorId:'operator',reference:'case'};let started,release;const running=new Promise(resolve=>started=resolve),wait=new Promise(resolve=>release=resolve);registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:async()=>{started();await wait;throw Error('ambiguous');}});
+ try{const item=queue.enqueue(scope,'p','update','request',{v:1}),work=queue.processOne(scope,actor,registry,()=> 'uncertain',10);await running;assert.equal(queue.get(scope,'p',item.id).status,'running');assert.throws(()=>queue.archiveTerminal(scope,'p',item.id,proof,10),/state/);release();assert.equal((await work).status,'uncertain');assert.throws(()=>queue.archiveTerminal(scope,'p',item.id,proof,11),/state/);assert.equal(queue.getArchived(scope,'p',item.id),undefined);queue.reconcile(scope,'p',item.id,'applied');queue.archiveTerminal(scope,'p',item.id,proof,12);assert.equal(queue.getArchived(scope,'p',item.id).status,'succeeded');}finally{release?.();queue.close();}
+});
+
+test('archiving terminal records releases queue capacity without allowing identity reuse',()=>{
+ const queue=new SqliteOfflineQueue(':memory:',policy),proof={operatorId:'operator',reference:'case'};try{let first;for(let i=0;i<1000;i++){const item=queue.enqueue(scope,'p','update','r'+i,{value:i});if(i===0)first=item;}assert.throws(()=>queue.enqueue(scope,'p','update','overflow',{}),/full/);queue.discard(scope,'p',first.id);queue.archiveTerminal(scope,'p',first.id,proof,0);assert.equal(queue.list(scope,'p').length,999);assert.ok(queue.enqueue(scope,'p','update','overflow',{}));assert.throws(()=>queue.enqueue(scope,'p','update','r0',{value:0}),/archived/);}finally{queue.close();}
+});
+
 test('bounded retries preserve the key, reauthorize, and remain separate from staged operations',async()=>{
  const queue=new SqliteOfflineQueue(':memory:',policy),staged=new SqliteStagedOperations(':memory:'),events=[],keys=[];let attempts=0;
  const registry=new CapabilityRegistry(event=>events.push(event.outcome));registry.register(candidate,{authorize:ctx=>ctx.principalId==='p',validate:()=>true,execute:input=>{keys.push(input.idempotencyKey);if(++attempts===1)throw Error('known pre-effect outage');return 'ok';}});

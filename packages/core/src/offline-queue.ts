@@ -12,6 +12,7 @@ export type OfflineRecoveryCandidate={id:string;status:'running'|'uncertain';att
 export type OfflineRecoveryCandidatePage={items:OfflineRecoveryCandidate[];nextAfter?:string};
 export type SqliteOfflineRecoveryEvidence={operatorId:string;reference:string};
 export type SqliteOfflineRecoveryEvent=SqliteOfflineRecoveryEvidence & {id:number;action:'recover'|'applied'|'not_applied';recordedAt:number};
+export type ArchivedOfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;status:'succeeded'|'discarded';operatorId:string;reference:string;recordedAt:number};
 
 /** Local durable queue. The host owns secure storage, access control, and safe retry classification. */
 export class SqliteOfflineQueue {
@@ -32,6 +33,18 @@ export class SqliteOfflineQueue {
         UNIQUE(tenant_id,application_id,principal_id,request_key)
       );
       CREATE INDEX IF NOT EXISTS offline_operations_recovery ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('running','uncertain');
+      CREATE TABLE IF NOT EXISTS offline_archived_operations (
+        tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, principal_id TEXT NOT NULL,
+        id TEXT NOT NULL, operation_id TEXT NOT NULL, request_key TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN ('succeeded','discarded')),
+        operator_id TEXT NOT NULL, reference TEXT NOT NULL, recorded_at INTEGER NOT NULL,
+        PRIMARY KEY(tenant_id,application_id,principal_id,id),
+        UNIQUE(tenant_id,application_id,principal_id,request_key)
+      );
+      CREATE TRIGGER IF NOT EXISTS offline_archived_no_replace BEFORE INSERT ON offline_archived_operations WHEN EXISTS(SELECT 1 FROM offline_archived_operations WHERE (tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND (id=NEW.id OR request_key=NEW.request_key)) OR idempotency_key=NEW.idempotency_key) BEGIN SELECT RAISE(ABORT,'Offline archive is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_archived_no_update BEFORE UPDATE ON offline_archived_operations BEGIN SELECT RAISE(ABORT,'Offline archive is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_archived_no_delete BEFORE DELETE ON offline_archived_operations BEGIN SELECT RAISE(ABORT,'Offline archive is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_operations_no_archived_insert BEFORE INSERT ON offline_operations WHEN EXISTS(SELECT 1 FROM offline_archived_operations WHERE (tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND (id=NEW.id OR request_key=NEW.request_key)) OR idempotency_key=NEW.idempotency_key) BEGIN SELECT RAISE(ABORT,'Offline request archived'); END;
       CREATE TABLE IF NOT EXISTS offline_recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,queue_id TEXT NOT NULL,operator_id TEXT NOT NULL,reference TEXT NOT NULL,action TEXT NOT NULL,recorded_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS offline_recovery_events_scope ON offline_recovery_events(tenant_id,application_id,principal_id,queue_id,id);
       CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_replace BEFORE INSERT ON offline_recovery_events WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM offline_recovery_events WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
@@ -46,6 +59,8 @@ export class SqliteOfflineQueue {
     const serialized=JSON.stringify(dataCopy(payload)),normalized=JSON.parse(serialized) as Record<string,unknown>;
     this.db.exec('BEGIN IMMEDIATE');
     try{
+      const archived=this.db.prepare('SELECT id FROM offline_archived_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND request_key=?').get(scope.tenantId,scope.applicationId,principalId,requestKey);
+      if(archived)throw Error('Offline request archived');
       const row=this.db.prepare('SELECT id,operation_id,payload FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND request_key=?').get(scope.tenantId,scope.applicationId,principalId,requestKey);
       if(row){
         if(row.operation_id!==operationId||!isDeepStrictEqual(JSON.parse(row.payload as string),normalized))throw Error('Offline request conflict');
@@ -68,6 +83,27 @@ export class SqliteOfflineQueue {
     checkKey(scope,'principal',principalId);
     const ids=this.db.prepare('SELECT id FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? ORDER BY rowid').all(scope.tenantId,scope.applicationId,principalId);
     return ids.map(row=>this.get(scope,principalId,row.id as string)!);
+  }
+  /** Retire only completed records; the immutable marker keeps request identities fenced. */
+  archiveTerminal(scope:DataScope,principalId:string,id:string,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):void {
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);this.checkRecoveryEvidence(scope,evidence,recordedAt);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result=this.db.prepare("INSERT INTO offline_archived_operations SELECT tenant_id,application_id,principal_id,id,operation_id,request_key,idempotency_key,status,?,?,? FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')").run(evidence.operatorId,evidence.reference,recordedAt,scope.tenantId,scope.applicationId,principalId,id);
+      if(result.changes!==1)throw Error('Invalid offline operation state');
+      const removed=this.db.prepare("DELETE FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')").run(scope.tenantId,scope.applicationId,principalId,id);
+      if(removed.changes!==1)throw Error('Invalid offline operation state');
+      this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  /** The host must authorize access to this payload-free archive record. */
+  getArchived(scope:DataScope,principalId:string,id:string):ArchivedOfflineOperation|undefined {
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
+    const row=this.db.prepare('SELECT operation_id,request_key,idempotency_key,status,operator_id,reference,recorded_at FROM offline_archived_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=?').get(scope.tenantId,scope.applicationId,principalId,id);
+    if(!row)return undefined;
+    if(typeof row.operation_id!=='string'||typeof row.request_key!=='string'||typeof row.idempotency_key!=='string'||(row.status!=='succeeded'&&row.status!=='discarded')||typeof row.operator_id!=='string'||typeof row.reference!=='string'||!Number.isSafeInteger(row.recorded_at)||Number(row.recorded_at)<0)throw Error('Invalid offline archive data');
+    for(const [kind,value] of [['operation',row.operation_id],['request',row.request_key],['idempotency',row.idempotency_key],['operator',row.operator_id],['reference',row.reference]] as const)checkKey(scope,kind,value);
+    return {id,operationId:row.operation_id,requestKey:row.request_key,idempotencyKey:row.idempotency_key,status:row.status,operatorId:row.operator_id,reference:row.reference,recordedAt:Number(row.recorded_at)};
   }
   /** Bounded metadata-only listing; the caller must authorize the entire selected scope. */
   listRecoveryCandidates(scope:DataScope,principalId:string,operationId:string,options:{after?:string;limit?:number}={}):OfflineRecoveryCandidatePage{
