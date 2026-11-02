@@ -53,6 +53,20 @@ test('array item titles label repeated and positional controls',async()=>{
  }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('schema forms edit safe property names without interpreting punctuation as paths',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',properties:{'first-name':{type:'string'},'city name':{type:'string'},'0':{type:'integer'},'a/b':{type:'string'},'δοκιμή':{type:'object',properties:{'x.y':{type:'string'}}},'item list':{type:'array',items:{type:'object',properties:{'part-id':{type:'integer'}}}}},required:['first-name','city name','0','a/b','δοκιμή','item list']},record={'first-name':'Ada','city name':'Dubai','0':2,'a/b':'slash','δοκιμή':{'x.y':'nested'},'item list':[{'part-id':7}]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
+  const edit=(labelText,value)=>{const input=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith(labelText)).querySelector('input');input.value=value;input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));};edit('first-name (required)','Grace');edit('a/b (required)','changed');edit('δοκιμή / x.y (optional)','updated');buttons.find(x=>x.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,'first-name':'Grace','a/b':'changed','δοκιμή':{'x.y':'updated'}});
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   assert.doesNotThrow(()=>factory(options));for(const key of ['', 'bad\nname','x'.repeat(65),'__proto__','constructor','prototype']){const properties=Object.create(null);properties[key]={type:'string',title:'Safe label'};assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties}}),/Unsupported/);}
+   assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',fields:[{key:'first-name',label:'Name',type:'string'}]}),/Invalid record fields/);
+  }
+ }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('record browser sends typed filters, resets pages and ignores stale responses',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'active',label:'Active',type:'boolean'}]};let resolvePending;
  globalThis.fetch=async(_path,request)=>{const input=JSON.parse(request.body);calls.push(input);if(input.filter?.value==='slow')return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}]}})}));return {ok:true,json:async()=>({result:{items:[{id:'found',revision:1}],nextCursor:'opaque'}})}};
