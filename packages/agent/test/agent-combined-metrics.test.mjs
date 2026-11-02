@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {AgentCombinedMetrics,AgentIngressMetrics,AgentActionRecoveryMetrics,SqliteAgentRuns,SqliteAgentRunMetrics,createAgentMetricsServer} from '../dist/index.js';
+import {AgentCombinedMetrics,AgentIngressMetrics,AgentActionRecoveryMetrics,SqliteAgentRuns,SqliteAgentRunMetrics,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentTriggerRetention,SqliteTriggerRetentionMetrics,SqliteAgentScheduleMetrics,ConfiguredAgentOperationMetrics,createAgentMetricsServer} from '../dist/index.js';
 const actor={tenantId:'tenant',principalId:'operator'};
 
 test('combined metric sources retain independent authorization and serve one protected endpoint',async()=>{
@@ -48,4 +48,17 @@ test('built-in metric sources propagate cancellation to optional signal-aware po
 
 test('legacy built-in metric policy callbacks keep their argument count',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'metrics-legacy-')),path=join(dir,'db.sqlite');let runs,source;const lengths=[];try{const authorize=(...args)=>{lengths.push(args.length);return true;};runs=new SqliteAgentRuns(path);source=new SqliteAgentRunMetrics(path,{scope:{tenantId:'tenant',agentId:'agent'},authorize});const combined=new AgentCombinedMetrics({sources:[new AgentIngressMetrics({authorize}),new AgentActionRecoveryMetrics({authorize}),source],authorize:()=>true});await combined.render(actor);assert.deepEqual(lengths,[1,1,1,1,2,2]);}finally{source?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('schedule, retention and operation metric policies support cooperative cancellation',async()=>{
+ for(const kind of ['schedule','retention','operation'])for(const phase of [1,2]){
+  const dir=mkdtempSync(join(tmpdir(),'metrics-extra-cancel-')),path=join(dir,'db.sqlite'),scope={tenantId:'tenant',agentId:'agent'};let runs,triggers,schedules,retention,source,checks=0,seen,entered;const ready=new Promise(resolve=>entered=resolve),authorizeWithSignal=async(...args)=>{const signal=args.at(-1);if(++checks===phase){seen=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return true;};
+  try{runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);schedules=new SqliteAgentSchedules(path);retention=new SqliteAgentTriggerRetention(path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});const options={scope,authorize:()=>{throw Error('legacy callback must not run');},authorizeWithSignal};source=kind==='schedule'?new SqliteAgentScheduleMetrics(path,options):kind==='retention'?new SqliteTriggerRetentionMetrics(path,{...options,minAgeMs:1}):new ConfiguredAgentOperationMetrics(options);const combined=new AgentCombinedMetrics({sources:[source],authorize:()=>true,callbackTimeoutMs:100,maxPendingCallbacks:1}),pending=combined.render(actor);await ready;await assert.rejects(pending,/unavailable/);assert.equal(seen.aborted,true);assert.equal(checks,phase);await assert.rejects(source.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);
+  }finally{source?.close?.();retention?.close();schedules?.close();triggers?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
+
+test('legacy schedule, retention and operation policies keep their argument counts',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'metrics-extra-legacy-')),path=join(dir,'db.sqlite'),scope={tenantId:'tenant',agentId:'agent'};let runs,triggers,schedules,retention,scheduleMetrics,retentionMetrics;const lengths=[];try{runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);schedules=new SqliteAgentSchedules(path);retention=new SqliteAgentTriggerRetention(path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});const authorize=(...args)=>{lengths.push(args.length);return true;};scheduleMetrics=new SqliteAgentScheduleMetrics(path,{scope,authorize});retentionMetrics=new SqliteTriggerRetentionMetrics(path,{scope,authorize,minAgeMs:1});const combined=new AgentCombinedMetrics({authorize:()=>true,sources:[scheduleMetrics,retentionMetrics,new ConfiguredAgentOperationMetrics({authorize})]});await combined.render(actor);assert.deepEqual(lengths,[2,2,2,2,1,1]);}finally{scheduleMetrics?.close();retentionMetrics?.close();retention?.close();schedules?.close();triggers?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
 });
