@@ -22,26 +22,27 @@ const settle=async(work:()=>Promise<unknown>)=>{try{return {ok:true as const,val
 export async function checkIdempotencyContract(options:IdempotencyContractOptions):Promise<IdempotencyContractReport>{
  const concurrency=options?.concurrency??5;
  if(!options||typeof options.dispatch!=='function'||typeof options.countEffects!=='function'||!record(options.input)||!record(options.conflictingInput)||isDeepStrictEqual(options.input,options.conflictingInput)||!Number.isSafeInteger(concurrency)||concurrency<2||concurrency>50||(options.newKey!==undefined&&typeof options.newKey!=='function'))throw Error('Invalid idempotency contract configuration');
- const newKey=options.newKey??randomUUID,keys={replay:newKey(),concurrent:newKey(),fresh:newKey()};
+ let fixedInput:Record<string,unknown>,fixedConflict:Record<string,unknown>;try{fixedInput=structuredClone(options.input);fixedConflict=structuredClone(options.conflictingInput);}catch{throw Error('Invalid idempotency contract configuration');}const dispatch=options.dispatch.bind(options),countEffects=options.countEffects.bind(options),newKey=options.newKey??randomUUID,keys={replay:newKey(),concurrent:newKey(),fresh:newKey()};
  if(new Set(Object.values(keys)).size!==3||Object.values(keys).some(key=>typeof key!=='string'||!key))throw Error('Invalid idempotency contract keys');
- const findings:IdempotencyContractFinding[]=[],input=()=>structuredClone(options.input);
- const effects=async(key:string)=>{const count=await options.countEffects(key);if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid effect count');return count;};
+ const findings:IdempotencyContractFinding[]=[],input=()=>structuredClone(fixedInput);
+ const effects=async(key:string)=>{const count=await countEffects(key);if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid effect count');return count;};
 
- const first=await options.dispatch(input(),keys.replay),second=await settle(()=>options.dispatch(input(),keys.replay));
+ const first=await dispatch(input(),keys.replay),second=await settle(()=>dispatch(input(),keys.replay));
  if(!second.ok)findings.push({check:'sequential-replay',problem:'replay with the same key and input failed'});
  else if(!isDeepStrictEqual(second.value,first))findings.push({check:'sequential-replay',problem:'replay returned a different result'});
  const replayed=await effects(keys.replay);if(replayed!==1)findings.push({check:'sequential-replay',problem:`expected 1 effect, observed ${replayed}`});
 
- const parallel=await Promise.all(Array.from({length:concurrency},()=>settle(()=>options.dispatch(input(),keys.concurrent))));
+ const parallel=await Promise.all(Array.from({length:concurrency},()=>settle(()=>dispatch(input(),keys.concurrent))));
  const succeeded=parallel.filter(result=>result.ok) as {ok:true;value:unknown}[];
  if(!succeeded.length)findings.push({check:'concurrent-replay',problem:'every concurrent attempt failed'});
- else if(succeeded.some(result=>!isDeepStrictEqual(result.value,succeeded[0].value)))findings.push({check:'concurrent-replay',problem:'concurrent attempts returned different results'});
+ let different=succeeded.length>0&&succeeded.some(result=>!isDeepStrictEqual(result.value,succeeded[0].value));const replay=await settle(()=>dispatch(input(),keys.concurrent));if(!replay.ok)findings.push({check:'concurrent-replay',problem:'replay after concurrent attempts failed'});else if(succeeded.length&&!isDeepStrictEqual(replay.value,succeeded[0].value))different=true;
+ if(different)findings.push({check:'concurrent-replay',problem:'concurrent attempts or their replay returned different results'});
  const concurrent=await effects(keys.concurrent);if(concurrent!==1)findings.push({check:'concurrent-replay',problem:`expected 1 effect, observed ${concurrent}`});
 
- const conflict=await settle(()=>options.dispatch(structuredClone(options.conflictingInput),keys.replay));
+ const conflict=await settle(()=>dispatch(structuredClone(fixedConflict),keys.replay));
  if(conflict.ok)findings.push({check:'conflicting-input',problem:isDeepStrictEqual(conflict.value,first)?'a reused key with different input returned the original result instead of an error':'a reused key was accepted for different input'});
  const afterConflict=await effects(keys.replay);if(afterConflict!==1)findings.push({check:'conflicting-input',problem:`expected 1 effect after reuse, observed ${afterConflict}`});
 
- await options.dispatch(input(),keys.fresh);const fresh=await effects(keys.fresh);if(fresh!==1)findings.push({check:'fresh-key',problem:`expected 1 effect for a new key, observed ${fresh}`});
+ await dispatch(input(),keys.fresh);const fresh=await effects(keys.fresh);if(fresh!==1)findings.push({check:'fresh-key',problem:`expected 1 effect for a new key, observed ${fresh}`});
  return {passed:findings.length===0,findings,keys};
 }
