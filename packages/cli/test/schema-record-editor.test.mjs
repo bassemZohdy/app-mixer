@@ -309,7 +309,7 @@ test('array contains constraints validate before saving and agree with server sc
   dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
   for(const record of ['few','many','nested']){id.value=record;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(saved.length,0);assert.equal(validate(records[record]),false);}
   id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const unsupported of [{contains:{type:'unknown'}},{contains:{enum:[]}},{contains:{const:{x:1}}},{contains:{const:'red'},minContains:2,maxContains:1},{minContains:1}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tags:{type:'array',items:{type:'string'},...unsupported}}}}),/Unsupported/);}
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const unsupported of [{contains:{type:'unknown'}},{contains:{enum:[]}},{contains:{const:{x:undefined}}},{contains:{const:'red'},minContains:2,maxContains:1},{minContains:1}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tags:{type:'array',items:{type:'string'},...unsupported}}}}),/Unsupported/);}
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
@@ -359,6 +359,19 @@ test('nested array matching checks item rules, uniqueness and match counts',asyn
    assert.doesNotThrow(()=>factory(options));
    for(const contains of [{type:'array',uniqueItems:'yes'},{type:'array',minItems:-1},{type:'array',minContains:1},{type:'array',contains:{type:'string'},minContains:2,maxContains:1},{type:'string',items:{type:'string'}},{type:'array',items:{type:'string',format:'email'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
   }
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('structured contains constants use JSON equality and snapshot their values',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{target:{const:{first:'Ada',last:'Lovelace'}}},properties:{people:{type:'array',items:{type:'object',properties:{first:{type:'string'},last:{type:'string'}}},contains:{$ref:'#/$defs/target'}},matrix:{type:'array',items:{type:'array',items:{type:'integer'}},contains:{enum:[[1,2],[3,4]]}}},required:['people','matrix']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),valid={people:[{last:'Lovelace',first:'Ada'}],matrix:[[3,4]]},records={valid,person:{...valid,people:[{first:'Ada',last:'Byron'}]},matrix:{...valid,matrix:[[4,3]]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const editor=s.runtime.createRecordEditor(options);jsonSchema.$defs.target.const.last='Changed after configuration';const root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const name of ['person','matrix']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],valid);
+  const cycle={};cycle.self=cycle;const sparse=Array(1);sparse.extra=1;
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const contains of [{const:cycle},{const:new Date()},{const:sparse},{const:{bad:undefined}},{enum:[{a:1,b:2},{b:2,a:1}]},{const:Array(1001).fill(1)}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
