@@ -128,3 +128,13 @@ test('explicit publication anchor synchronization detects a newer external floor
  const db=new IDBFactory(),k=await key();let floor=0;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{const p=publication(1);await cache.store(p,tag(p));floor=2;await assert.rejects(cache.syncRollbackAnchor(),/rollback detected/);assert.equal(floor,2);floor=-1;await assert.rejects(cache.syncRollbackAnchor(),/Invalid offline publication rollback anchor/);
  }finally{cache.close();}
 });
+
+test('open publication caches reject restored snapshots on reads and mutations',async()=>{
+ const db=new IDBFactory(),k=await key(),next=await key();let floor=0;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{const p=publication(1);await cache.store(p,tag(p));const old=await publicationRows(db);await cache.clear();const current=await publicationRows(db);await replacePublicationRows(db,old);await assert.rejects(cache.read(),/rollback detected/);await assert.rejects(cache.store(p,tag(p)),/rollback detected/);await assert.rejects(cache.clear(),/rollback detected/);await assert.rejects(cache.rotateKey(next),/rollback detected/);await replacePublicationRows(db,current);assert.equal(await cache.read(),undefined);await cache.store(p,tag(p));assert.deepEqual((await cache.read()).publication,p);
+ }finally{cache.close();}
+});
+
+test('open publication caches fail closed when the host anchor cannot be checked',async()=>{
+ const db=new IDBFactory(),k=await key();let floor=0,unavailable=false;const anchor={async read(){if(unavailable)throw Error('anchor unavailable');return floor;},async advance(value){floor=Math.max(floor,value);}},cache=await EncryptedPublicationCache.open(options(db,k,{rollbackAnchor:anchor}));try{const p=publication(1);await cache.store(p,tag(p));unavailable=true;await assert.rejects(cache.read(),/anchor unavailable/);await assert.rejects(cache.clear(),/anchor unavailable/);await assert.rejects(cache.store(p,tag(p)),/anchor unavailable/);unavailable=false;assert.deepEqual((await cache.read()).publication,p);
+ }finally{cache.close();}
+});
