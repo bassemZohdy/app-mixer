@@ -39,11 +39,11 @@ export class BrowserOfflineWorker {
       for(const item of items){
         if(!this.active||processed>=this.options.maxPerPass)return;
         if(item.status!=='pending')continue;
+        processed++;
         if(!await this.authorized())return;
         if(item.attempts>=this.options.maxAttempts){try{await this.queue.transition(item.id,item.version,'exhaustPending');}catch(error){if(!(error instanceof Error&&error.message==='Offline version conflict'))throw error;}continue;}
         let claimed:BrowserQueueItem;
         try{claimed=await this.queue.transition(item.id,item.version,'claim');}catch(error){if(error instanceof Error&&error.message==='Offline version conflict')continue;throw error;}
-        processed++;
         let permitted:boolean;
         try{permitted=await this.authorized();}catch(error){await this.queue.transition(claimed.id,claimed.version,'release');throw error;}
         if(!permitted){await this.queue.transition(claimed.id,claimed.version,'release');return;}

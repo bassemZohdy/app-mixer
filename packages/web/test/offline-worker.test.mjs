@@ -39,6 +39,25 @@ test('retries are bounded and ambiguous failures do not replay',async()=>{
  }finally{await worker.stop();queue.close();}
 });
 
+test('each exhausted pending entry consumes a per-pass slot',async()=>{
+ const queue=await open(new IDBFactory(),await key()),worker=new BrowserOfflineWorker(queue,{...config,intervalMs:10000,maxPerPass:1,maxAttempts:1});
+ try{
+  for(let i=0;i<3;i++){const item=await queue.enqueue('update',`exhausted-${i}`,{}),running=await queue.transition(item.id,item.version,'claim');await queue.transition(item.id,running.version,'requeue');}
+  worker.start();await waitFor(async()=>(await queue.list()).some(item=>item.status==='exhausted'));await worker.stop();
+  const items=await queue.list();assert.equal(items.filter(item=>item.status==='exhausted').length,1);assert.equal(items.filter(item=>item.status==='pending').length,2);
+ }finally{await worker.stop();queue.close();}
+});
+
+test('a contested claim consumes a per-pass slot',async()=>{
+ const queue=await open(new IDBFactory(),await key());let attempts=0;const transition=queue.transition.bind(queue);
+ const worker=new BrowserOfflineWorker(queue,{...config,intervalMs:10000,maxPerPass:1});
+ try{
+  for(let i=0;i<3;i++)await queue.enqueue('update',`contested-${i}`,{});
+  queue.transition=async(id,version,action)=>{if(action==='claim'){attempts++;throw Error('Offline version conflict');}return transition(id,version,action);};
+  worker.start();await waitFor(()=>attempts>0);await worker.stop();assert.equal(attempts,1);assert.equal((await queue.list()).filter(item=>item.status==='pending').length,3);
+ }finally{await worker.stop();queue.close();}
+});
+
 test('stopping before dispatch releases the claim without consuming an attempt',async()=>{
  const queue=await open(new IDBFactory(),await key());let checks=0,release,started,calls=0;
  const gate=new Promise(resolve=>release=resolve),signal=new Promise(resolve=>started=resolve),item=await queue.enqueue('update','req',{});
