@@ -55,6 +55,8 @@ for(const [probe,field,value] of [['readinessProbe','periodSeconds',6],['readine
 changed('excessive startup window',(_,c)=>{c.startupProbe.periodSeconds=10;c.startupProbe.failureThreshold=31;});
 for(const probe of ['livenessProbe','startupProbe']){const object=structuredClone(original);object.spec.template.spec.containers[0][probe].terminationGracePeriodSeconds=10;const result=apply(object);if(result.status!==0)throw Error('Expected approved '+probe+' termination grace to pass: '+result.stderr);}
 for(const replicas of [0,1])changed('insufficient replicas '+replicas,o=>o.spec.replicas=replicas);
+for(const [field,value] of [['paused',true],['minReadySeconds',61],['progressDeadlineSeconds',59],['progressDeadlineSeconds',1801]])changed('unsafe rollout '+field,o=>o.spec[field]=value);
+for(const [minReadySeconds,progressDeadlineSeconds] of [[0,60],[60,61],[60,1800]]){const object=structuredClone(original);object.spec.minReadySeconds=minReadySeconds;object.spec.progressDeadlineSeconds=progressDeadlineSeconds;const result=apply(object);if(result.status!==0)throw Error('Expected bounded rollout timing to pass: '+result.stderr);}
 changed('recreate deployment',o=>o.spec.strategy={type:'Recreate'});
 changed('unavailable rolling update',o=>o.spec.strategy.rollingUpdate.maxUnavailable='100%');
 changed('unapproved surge',o=>o.spec.strategy.rollingUpdate.maxSurge=2);

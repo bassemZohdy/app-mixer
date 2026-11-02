@@ -96,9 +96,12 @@ spec:
         (!has(variables.c.securityContext.procMount) || variables.c.securityContext.procMount == 'Default') &&
         has(variables.c.securityContext.capabilities) && has(variables.c.securityContext.capabilities.drop) && 'ALL' in variables.c.securityContext.capabilities.drop &&
         (!has(variables.c.securityContext.capabilities.add) || variables.c.securityContext.capabilities.add.size() == 0)
-    - message: Keep at least two replicas and use the approved rolling update and shutdown grace period.
+    - message: Keep at least two replicas, an active bounded rollout and the approved shutdown grace period.
       expression: >-
         has(object.spec.replicas) && object.spec.replicas >= 2 &&
+        (!has(object.spec.paused) || !object.spec.paused) &&
+        (!has(object.spec.minReadySeconds) || object.spec.minReadySeconds <= 60) &&
+        (!has(object.spec.progressDeadlineSeconds) || (object.spec.progressDeadlineSeconds >= 60 && object.spec.progressDeadlineSeconds <= 1800)) &&
         has(object.spec.strategy) && object.spec.strategy.type == 'RollingUpdate' &&
         has(object.spec.strategy.rollingUpdate) && object.spec.strategy.rollingUpdate.maxUnavailable == 0 &&
         object.spec.strategy.rollingUpdate.maxSurge == 1 &&
