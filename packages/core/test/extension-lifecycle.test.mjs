@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync} from 'node:crypto';
-import {ExtensionRegistry,SqliteApplicationStore,createExtensionPublicationGuard,createExtensionRuntime,createCapabilityServer,signExtensionManifest,computeExtensionIntegrity} from '../dist/index.js';
+import {ExtensionRegistry,SqliteApplicationStore,createExtensionPublicationGuard,createExtensionRuntime,createCapabilityServer,CapabilityRegistry,registerExtensionCapability,signExtensionManifest,computeExtensionIntegrity} from '../dist/index.js';
 
 function policyFixture(policy,globals={}){const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:['read.data']},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},registry=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]}),calls=[];registry.register(manifest,{components:{},tools:{lookup:()=>{calls.push('executed');return 'ok';}},providers:{}});const application={id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[reference],extensionOperations:[{extensionId:reference.id,kind:'tool',name:'lookup'}]},runtime=createExtensionRuntime(application,registry,()=>{},{...globals,operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},validate:()=>true,...policy}}});return {runtime,calls,context:{tenantId:'tenant',principalId:'operator',origin:'ui'}};}
 
@@ -34,6 +34,14 @@ test('extension validation timeout returns HTTP 503 without invoking the impleme
 
 test('extension authorization is rechecked after bounded validation resolves',async()=>{
  let release,entered,allowed=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,validate:async()=>{entered();await gate;return true;},validationTimeoutMs:1000,maxPendingValidations:1});try{const pending=runtime.capabilities.invoke('lookup',{},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(calls,[]);}finally{release();}
+});
+
+test('declared extension authorization is rechecked after ordinary validation',async()=>{
+ let release,entered,allowed=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,validate:async()=>{entered();await gate;return true;}});try{const pending=runtime.capabilities.invoke('lookup',{},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(calls,[]);}finally{release();}
+});
+
+test('legacy extension tools recheck authorization after validation',async()=>{
+ const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:[]},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},extensions=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:[]}]}),registry=new CapabilityRegistry(()=>{});let release,entered,allowed=true,executed=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);extensions.register(manifest,{components:{},tools:{lookup:()=>{executed++;return 'ok';}},providers:{}});registerExtensionCapability(registry,extensions,[reference],{operationId:'lookup',method:'GET',path:'/lookup'},{authorize:()=>allowed,validate:async()=>{entered();await gate;return true;}});try{const pending=registry.invoke('lookup',{}, {tenantId:'tenant',principalId:'operator',origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.equal(executed,0);}finally{release();}
 });
 
 test('approved extension publication survives repository reopening and is rechecked when rebuilding the runtime',async()=>{

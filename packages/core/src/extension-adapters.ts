@@ -35,10 +35,11 @@ export function registerExtensionCapability(
   policy: CapabilityPolicy
 ): void {
   if(policy&&['authorizeExtension','authorizeExtensionWithSignal','authorizeWithSignal','policyTimeoutMs','maxPendingPolicies','validateWithSignal','validationTimeoutMs','maxPendingValidations'].some(key=>key in policy))throw Error('Live approval requires a declared extension capability');
+  if(!policy||typeof policy.authorize!=='function'||typeof policy.validate!=='function')throw Error('Invalid extension capability policy');
   const implementation = extensions.getForApplication(references, 'tools', candidate.operationId);
   if (!implementation) throw Error('Extension tool not available');
   const execute = implementation as unknown as (input:unknown, context:{tenantId:string;principalId:string})=>unknown|Promise<unknown>;
-  target.register(candidate, {authorize:policy?.authorize,validate:policy?.validate,execute});
+  const {authorize,validate}=policy;target.register(candidate, {authorize,validate,authorizeInput:context=>authorize({...context}),execute});
 }
 
 /** Bind a declared tool or provider to a capability with host-supplied policy and validation. */
@@ -55,7 +56,7 @@ export function registerDeclaredExtensionCapability(
   const safeReference=structuredClone(reference),safeOperation=structuredClone(operation),{authorize,authorizeWithSignal,validate,validateWithSignal,authorizeExtension,authorizeExtensionWithSignal}=policy,bounded=createBoundedOperation(policy.policyTimeoutMs,policy.maxPendingPolicies,'Invalid extension capability policy','Extension policy unavailable'),boundedValidation=createBoundedOperation(policy.validationTimeoutMs,policy.maxPendingValidations,'Invalid extension capability policy','Extension validation unavailable');
   const permit=(context:{tenantId:string;principalId:string})=>bounded(async signal=>{const check=()=>{if(signal.aborted)throw Error('Extension policy unavailable');},scope=async()=>{check();const allowed=(authorizeWithSignal?await authorizeWithSignal({...context},signal):await authorize({...context}))===true;check();return allowed;},approval=async()=>{check();const allowed=authorizeExtensionWithSignal?await authorizeExtensionWithSignal({...context},structuredClone(safeReference),structuredClone(safeOperation),signal)===true:!authorizeExtension||await authorizeExtension({...context},structuredClone(safeReference),structuredClone(safeOperation))===true;check();return allowed;};return await scope()&&await approval()&&await scope()&&await approval();});
   const execute=implementation as unknown as (input:unknown,context:{tenantId:string;principalId:string})=>unknown|Promise<unknown>;
-  const recheck=!!authorizeWithSignal||!!authorizeExtension||!!authorizeExtensionWithSignal||policy.policyTimeoutMs!==undefined||!!validateWithSignal||policy.validationTimeoutMs!==undefined,checkedValidate=validateWithSignal||policy.validationTimeoutMs!==undefined?(input:unknown)=>boundedValidation(async signal=>{if(signal.aborted)throw Error('Extension validation unavailable');const allowed=validateWithSignal?await validateWithSignal(input,signal):await validate(input);if(signal.aborted)throw Error('Extension validation unavailable');return allowed===true;}):validate;target.register(candidate,{authorize:recheck?permit:authorize,validate:checkedValidate,...(recheck?{authorizeInput:(context:{tenantId:string;principalId:string})=>permit(context)}:{}),execute});
+  const checkedValidate=validateWithSignal||policy.validationTimeoutMs!==undefined?(input:unknown)=>boundedValidation(async signal=>{if(signal.aborted)throw Error('Extension validation unavailable');const allowed=validateWithSignal?await validateWithSignal(input,signal):await validate(input);if(signal.aborted)throw Error('Extension validation unavailable');return allowed===true;}):validate;target.register(candidate,{authorize:permit,validate:checkedValidate,authorizeInput:context=>permit(context),execute});
 }
 
 export type ExtensionRuntimeBindings = {
