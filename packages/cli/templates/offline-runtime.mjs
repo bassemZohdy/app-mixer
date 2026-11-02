@@ -86,28 +86,29 @@ export async function createGeneratedOfflineRuntime(config){
 // Host callbacks govern optional recovery and retirement actions.
 export function mountGeneratedOfflineHistory(root,runtime,options={}){
   if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function'||!options||typeof options!=='object'||['onRecover','onRetire','onAbandoned','onVerify'].some(name=>options[name]!==undefined&&typeof options[name]!=='function'))throw Error('Invalid offline history');
-  const doc=root.ownerDocument,{onRecover,onRetire,onAbandoned,onVerify}=options;let generation=0,disposed=false;
+  const doc=root.ownerDocument,{onRecover,onRetire,onAbandoned,onVerify}=options;let generation=0,disposed=false,lastItems=[];
   const node=(tag,text)=>{const result=doc.createElement(tag);if(text!==undefined)result.textContent=text;return result;};
   const panel={
     async refresh(){
-      if(disposed)return;const current=++generation,heading=node('h2','Offline operation history'),status=node('p','Loading operations…'),list=node('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');root.replaceChildren(heading,status,list);
+      if(disposed)return;lastItems=[];const current=++generation,heading=node('h2','Offline operation history'),status=node('p','Loading operations…'),list=node('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');root.replaceChildren(heading,status,list);
       try{
-        const items=await runtime.list();if(disposed||current!==generation)return;
-        if(!items.length){status.textContent='No offline operations.';return;}
+        const items=await runtime.list();if(disposed||current!==generation)return;lastItems=items;
+        if(!items.length){status.textContent='No offline operations.';return true;}
         status.textContent='Review saved operations before creating another request.';
         for(const item of items){
           const section=node('section');section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id));
           if(item.status==='retired')section.appendChild(node('p','Request data removed.'));else{const details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.appendChild(details);}
-          const action=(label,callback,success,failure,refresh=false)=>{const button=node('button',label);button.type='button';button.addEventListener('click',()=>{if(disposed||current!==generation||!root.contains(button)||button.disabled)return;button.disabled=true;void (async()=>{try{await callback(item.id,item.version);if(!disposed&&current===generation){if(refresh)await panel.refresh();else status.textContent=success;}}catch{if(!disposed&&current===generation)status.textContent=failure;}finally{if(!disposed&&current===generation)button.disabled=false;}})();});section.appendChild(button);};
+          const action=(label,callback,success,failure,refresh=false)=>{const button=node('button',label);button.type='button';button.addEventListener('click',()=>{if(disposed||current!==generation||!root.contains(button)||button.disabled)return;button.disabled=true;void (async()=>{try{await callback(item.id,item.version);if(!disposed&&current===generation){if(refresh){const loaded=await panel.refresh();if(loaded&&!disposed&&generation===current+1&&success){const message=root.querySelector('[role="status"]');if(message)message.textContent=typeof success==='function'?success(lastItems.find(value=>value.id===item.id)):success;}}else status.textContent=success;}}catch{if(!disposed&&current===generation)status.textContent=failure;}finally{if(!disposed&&current===generation)button.disabled=false;}})();});section.appendChild(button);};
           if(onRecover&&item.status!=='retired')action('Use request in form',onRecover,'Request loaded into the form. Review it before submitting.','Unable to load the request into the form.');
           if(onRetire&&['succeeded','discarded'].includes(item.status))action('Remove request data',onRetire,'','Could not confirm removal. Refresh history to check.',true);
           if(onAbandoned&&item.status==='running')action('Check interrupted operation',onAbandoned,'','Could not confirm recovery. Refresh history to check.',true);
-          if(onVerify&&item.status==='uncertain')action('Verify operation outcome',onVerify,'','Could not confirm verification. Refresh history to check.',true);
+          if(onVerify&&item.status==='uncertain')action('Verify operation outcome',onVerify,result=>result?.status==='uncertain'?'Outcome remains uncertain.':result?.status==='pending'?'Operation verified and ready to retry.':result?.status==='succeeded'?'Operation verified as completed.':'Verification finished. Review the current operation state.','Could not confirm verification. Refresh history to check.',true);
           list.appendChild(section);
         }
+        return true;
       }catch{if(!disposed&&current===generation)status.textContent='Unable to load offline operations.';}
     },
-    dispose(){disposed=true;generation++;root.replaceChildren();}
+    dispose(){disposed=true;generation++;lastItems=[];root.replaceChildren();}
   };
   return panel;
 }

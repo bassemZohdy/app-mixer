@@ -150,6 +150,16 @@ test('history exposes interrupted-operation controls only when explicitly config
  }finally{release?.();dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('history reports the refreshed verification state without hiding refresh failures',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-history-status-'));let dom;
+ try{
+  const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let item={id:'a'.repeat(64),version:1,operationId:'save',status:'uncertain',payload:{}},failList=false,mode='unknown';
+  const panel=mountGeneratedOfflineHistory(root,{list:async()=>{if(failList)throw Error('identity lost');return [item];}},{onVerify:async()=>{if(mode==='pending')item={...item,version:2,status:'pending'};if(mode==='failure')failList=true;return {status:'succeeded'};}});
+  await panel.refresh();root.querySelector('button').click();await waitFor(()=>root.textContent.includes('Outcome remains uncertain.'));mode='pending';root.querySelector('button').click();await waitFor(()=>root.textContent.includes('Operation verified and ready to retry.'));assert.match(root.textContent,/save — pending/);
+  item={...item,version:3,status:'uncertain'};await panel.refresh();mode='failure';root.querySelector('button').click();await waitFor(()=>root.textContent.includes('Unable to load offline operations.'));assert.doesNotMatch(root.textContent,/verified as completed/);panel.dispose();
+ }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('closing the runtime while identity is resolving prevents a later conflict lookup',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-close-check-'));let runtime,dom,release,started,paused=false,lookups=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
  try{
