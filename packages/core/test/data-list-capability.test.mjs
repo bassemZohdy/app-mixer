@@ -95,3 +95,20 @@ test('substring filters require approval and retain record authorization and cur
   for(const containsFilterFields of [['unknown'],['name','name'],'name'])assert.throws(()=>registerDataListCapability(registry,provider,{...base,containsFilterFields,candidate:{operationId:'bad',method:'GET',path:'/'}}),/Invalid data list/);
  }finally{provider.close();}
 });
+
+test('bounded item policies time out without returning partial pages and retain capacity until settlement',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),base={candidate:{operationId:'bounded.list',method:'GET',path:'/'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true};let release,signal,blocked=true,server;
+ const gate=new Promise(resolve=>release=resolve);
+ try{
+  provider.put(scope,'items','a',{name:'visible'},null);provider.put(scope,'items','b',{name:'pending'},null);
+  for(const invalid of [{policyTimeoutMs:100},{maxPendingPolicies:1},{policyTimeoutMs:99,maxPendingPolicies:1},{policyTimeoutMs:100,maxPendingPolicies:0}])assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...base,...invalid,authorizeItem:()=>true}),/Invalid data list/);
+  const options={...base,policyTimeoutMs:100,maxPendingPolicies:1,authorizeItem:async(_actor,item,currentSignal)=>{if(item.id==='b'&&blocked){signal=currentSignal;await gate;}return true;}};
+  registerDataListCapability(registry,provider,options);options.policyTimeoutMs=30000;options.maxPendingPolicies=100;
+  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});server.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/bounded.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});
+  const first=await call();assert.equal(first.status,503);assert.deepEqual(await first.json(),{error:'Data list unavailable'});assert.equal(signal.aborted,true);
+  const saturated=await call();assert.equal(saturated.status,503);assert.deepEqual(await saturated.json(),{error:'Data list unavailable'});
+  blocked=false;release();await new Promise(resolve=>setImmediate(resolve));
+  const recovered=await call();assert.equal(recovered.status,200);assert.deepEqual((await recovered.json()).result.items.map(item=>item.id),['a','b']);
+ }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
+});
