@@ -1,0 +1,4 @@
+import {CapabilityRegistry,SqliteOfflineQueue} from '../../dist/index.js';
+const [path,url]=process.argv.slice(2),scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'person',origin:'service'},queue=new SqliteOfflineQueue(path,{enabled:true,maxAttempts:2,retryDelayMs:0}),registry=new CapabilityRegistry(()=>{});
+registry.register({operationId:'change',method:'POST',path:'/change'},{authorize:()=>true,validate:()=>true,execute:async input=>{const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});if(!response.ok)throw Error('provider unavailable');return response.json();}});
+try{await queue.processOne(scope,actor,registry,()=> 'retry',10);process.send?.({error:'Expected process termination'});}catch(error){process.send?.({error:String(error)});}finally{queue.close();}
