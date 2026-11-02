@@ -189,6 +189,8 @@ export {registerAgentRunInspection} from './agent-run-inspection-capability.js';
 export type {AgentRunInspectionCapabilityOptions,AgentRunInspectionSnapshot} from './agent-run-inspection-capability.js';
 export type {AgentRunControlCapabilityOptions} from './agent-run-control-capability.js';
 export {SqliteAgentRunControlHistory} from './agent-run-control-history.js';
+export {registerAgentRunControlHistory} from './agent-run-control-history-capability.js';
+export type {AgentRunControlHistoryCapabilityOptions} from './agent-run-control-history-capability.js';
 export type {AgentRunControlEvent,AgentRunControlHistoryOptions,AgentRunControlHistoryActor} from './agent-run-control-history.js';
 export type {AgentRunLeaseRecoveryWorkerOptions,AgentLeaseRecoveryObservation} from './agent-run-lease-recovery.js';
 export {AgentLeaseRecoveryMetrics} from './agent-lease-recovery-metrics.js';
