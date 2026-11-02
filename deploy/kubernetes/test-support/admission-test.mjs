@@ -48,5 +48,9 @@ changed('extra sidecar',o=>o.spec.template.spec.containers.push({name:'sidecar',
 changed('untrusted key mount',o=>o.spec.template.spec.volumes.find(v=>v.name==='release-trust').configMap.name='untrusted');
 changed('select alternate key',o=>o.spec.template.spec.volumes.find(v=>v.name==='release-trust').configMap.items=[{key:'other',path:'keys.json'}]);
 changed('plaintext readiness probe',(_,c)=>c.readinessProbe.httpGet.scheme='HTTP');
+for(const probe of ['readinessProbe','livenessProbe','startupProbe']){changed(probe+' external host',(_,c)=>c[probe].httpGet.host='example.com');changed(probe+' alternate port',(_,c)=>c[probe].httpGet.port=8080);changed(probe+' custom host header',(_,c)=>c[probe].httpGet.httpHeaders=[{name:'Host',value:'other.example'}]);}
+changed('alternate listener port',(_,c)=>c.ports[0].containerPort=8080);
+changed('host listener port',(_,c)=>c.ports[0].hostPort=3002);
+changed('extra listener port',(_,c)=>c.ports.push({name:'other',containerPort:8080,protocol:'TCP'}));
 execFileSync('kubectl',['delete','configmap','app-mixer-security-policy','-n',namespace]);const missing=apply(original);if(missing.status===0||!missing.stderr.includes('app-mixer-data-plane-security'))throw Error('Missing policy parameters did not fail closed: '+missing.stderr);
 console.log('Admission policy accepted the approved deployment and denied unsafe changes and missing parameters.');

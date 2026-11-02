@@ -96,8 +96,15 @@ spec:
         (!has(variables.c.securityContext.procMount) || variables.c.securityContext.procMount == 'Default') &&
         has(variables.c.securityContext.capabilities) && has(variables.c.securityContext.capabilities.drop) && 'ALL' in variables.c.securityContext.capabilities.drop &&
         (!has(variables.c.securityContext.capabilities.add) || variables.c.securityContext.capabilities.add.size() == 0)
-    - message: HTTPS health probes must target the expected paths.
+    - message: The Data Plane must expose only its approved listener port.
       expression: >-
-        has(variables.c.readinessProbe) && has(variables.c.readinessProbe.httpGet) && variables.c.readinessProbe.httpGet.path == '/health/ready' && variables.c.readinessProbe.httpGet.scheme == 'HTTPS' &&
-        has(variables.c.livenessProbe) && has(variables.c.livenessProbe.httpGet) && variables.c.livenessProbe.httpGet.path == '/health/live' && variables.c.livenessProbe.httpGet.scheme == 'HTTPS' &&
-        has(variables.c.startupProbe) && has(variables.c.startupProbe.httpGet) && variables.c.startupProbe.httpGet.path == '/health/live' && variables.c.startupProbe.httpGet.scheme == 'HTTPS'
+        has(variables.c.ports) && variables.c.ports.size() == 1 &&
+        variables.c.ports[0].name == 'http' && variables.c.ports[0].containerPort == 3002 &&
+        (!has(variables.c.ports[0].protocol) || variables.c.ports[0].protocol == 'TCP') &&
+        (!has(variables.c.ports[0].hostPort) || variables.c.ports[0].hostPort == 0) &&
+        (!has(variables.c.ports[0].hostIP) || variables.c.ports[0].hostIP == '')
+    - message: HTTPS health probes must target the approved local listener and paths.
+      expression: >-
+        has(variables.c.readinessProbe) && has(variables.c.readinessProbe.httpGet) && variables.c.readinessProbe.httpGet.path == '/health/ready' && variables.c.readinessProbe.httpGet.scheme == 'HTTPS' && variables.c.readinessProbe.httpGet.port == 'http' && (!has(variables.c.readinessProbe.httpGet.host) || variables.c.readinessProbe.httpGet.host == '') && (!has(variables.c.readinessProbe.httpGet.httpHeaders) || variables.c.readinessProbe.httpGet.httpHeaders.size() == 0) &&
+        has(variables.c.livenessProbe) && has(variables.c.livenessProbe.httpGet) && variables.c.livenessProbe.httpGet.path == '/health/live' && variables.c.livenessProbe.httpGet.scheme == 'HTTPS' && variables.c.livenessProbe.httpGet.port == 'http' && (!has(variables.c.livenessProbe.httpGet.host) || variables.c.livenessProbe.httpGet.host == '') && (!has(variables.c.livenessProbe.httpGet.httpHeaders) || variables.c.livenessProbe.httpGet.httpHeaders.size() == 0) &&
+        has(variables.c.startupProbe) && has(variables.c.startupProbe.httpGet) && variables.c.startupProbe.httpGet.path == '/health/live' && variables.c.startupProbe.httpGet.scheme == 'HTTPS' && variables.c.startupProbe.httpGet.port == 'http' && (!has(variables.c.startupProbe.httpGet.host) || variables.c.startupProbe.httpGet.host == '') && (!has(variables.c.startupProbe.httpGet.httpHeaders) || variables.c.startupProbe.httpGet.httpHeaders.size() == 0)
