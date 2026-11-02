@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {CapabilityRegistry,SqliteOfflineQueue,SqliteStagedOperations} from '../dist/index.js';
 const scope={tenantId:'t',applicationId:'a'},actor={tenantId:'t',principalId:'p',origin:'service'},policy={enabled:true,maxAttempts:2,retryDelayMs:100};
 const candidate={operationId:'update',method:'POST',path:'/update'};
@@ -114,4 +115,18 @@ test('denial and invalid failure classification fail closed',async()=>{
   assert.equal((await queue.processOne(scope,actor,registry,()=> 'unexpected',1)).status,'uncertain');
   assert.equal(queue.get(scope,'p',item.id).status,'uncertain');assert.equal(calls,0);assert.deepEqual(events,['attempt','denied']);
  }finally{queue.close();}
+});
+
+
+test('failed success persistence never invokes the retry classifier after an effect',async()=>{
+ for(const failUncertain of [false,true]){const dir=mkdtempSync(join(tmpdir(),'offline-success-write-')),path=join(dir,'db.sqlite'),queue=new SqliteOfflineQueue(path,policy),db=new DatabaseSync(path),registry=new CapabilityRegistry(()=>{});let effects=0,classifications=0;
+  try{registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{effects++;}});const item=queue.enqueue(scope,'p','update','request',{});db.exec("CREATE TRIGGER fail_success BEFORE UPDATE OF status ON offline_operations WHEN NEW.status='succeeded' BEGIN SELECT RAISE(ABORT,'storage unavailable'); END");if(failUncertain)db.exec("CREATE TRIGGER fail_uncertain BEFORE UPDATE OF status ON offline_operations WHEN NEW.status='uncertain' BEGIN SELECT RAISE(ABORT,'storage unavailable'); END");await assert.rejects(queue.processOne(scope,actor,registry,()=>{classifications++;return 'retry';},1),/outcome uncertain/);assert.equal(queue.get(scope,'p',item.id).status,failUncertain?'running':'uncertain');assert.equal(await queue.processOne(scope,actor,registry,()=> 'retry',200),undefined);assert.equal(effects,1);assert.equal(classifications,0);
+  }finally{db.close();queue.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
+
+test('capability outcome audit failure remains uncertain even if classifier requests retry',async()=>{
+ for(const executionFails of [false,true]){const queue=new SqliteOfflineQueue(':memory:',policy);let effects=0,classifications=0;const registry=new CapabilityRegistry(event=>{if(event.outcome==='succeeded'||event.outcome==='failed')throw Error('audit unavailable');});registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{effects++;if(executionFails)throw Error('ambiguous provider failure');}});
+  try{const item=queue.enqueue(scope,'p','update','request',{}),result=await queue.processOne(scope,actor,registry,()=>{classifications++;return 'retry';},1);assert.equal(result.status,'uncertain');assert.equal(queue.get(scope,'p',item.id).status,'uncertain');assert.equal(await queue.processOne(scope,actor,registry,()=> 'retry',200),undefined);assert.equal(effects,1);assert.equal(classifications,0);}finally{queue.close();}
+ }
 });

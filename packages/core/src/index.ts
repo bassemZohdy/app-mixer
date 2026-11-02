@@ -119,7 +119,7 @@ export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal } from './proposals.js';
-export { importOpenAPI, CapabilityRegistry } from './capabilities.js';
+export { importOpenAPI, CapabilityRegistry, CapabilityOutcomeUncertainError } from './capabilities.js';
 export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';
 export { createCapabilityServer, createCapabilityHttpsServer } from './capability-server.js';
 export type { CapabilityServerTracingOptions, CapabilityHttpsOptions } from './capability-server.js';

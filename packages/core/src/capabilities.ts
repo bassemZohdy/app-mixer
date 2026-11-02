@@ -31,6 +31,10 @@ export function importOpenAPI(document:unknown): CapabilityCandidate[] {
   return result;
 }
 
+export class CapabilityOutcomeUncertainError extends Error {
+  constructor(){super('Capability outcome uncertain');this.name='CapabilityOutcomeUncertainError';}
+}
+
 /** Host registers explicit policy, input validation and implementation for each candidate. */
 export class CapabilityRegistry {
   private readonly bindings=new Map<string,{candidate:CapabilityCandidate;binding:Binding}>();
@@ -75,9 +79,9 @@ export class CapabilityRegistry {
     }
     let result:unknown;
     try { result=await entry.binding.execute(safeInput,{...policyContext}); }
-    catch(error) { await audit('failed'); throw error; }
+    catch(error) { try{await audit('failed');}catch{throw new CapabilityOutcomeUncertainError();}throw error; }
     // If this write fails, the operation may already have occurred; do not automatically retry.
-    await audit('succeeded');
+    try{await audit('succeeded');}catch{throw new CapabilityOutcomeUncertainError();}
     return result;
   }
 }

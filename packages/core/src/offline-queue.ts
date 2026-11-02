@@ -1,7 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {CapabilityRegistry, type InvocationContext} from './capabilities.js';
+import {CapabilityRegistry,CapabilityOutcomeUncertainError, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 
 export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
@@ -74,12 +74,17 @@ export class SqliteOfflineQueue {
     const operation=this.get(scope,context.principalId,id)!;
     try{
       await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);
-      this.transition(scope,context.principalId,id,'running','succeeded',0);
     }catch(error){
       let classification:OfflineFailure='uncertain';
-      try{const candidate=classify(error);if(candidate==='retry'||candidate==='conflict')classification=candidate;}catch{}
+      if(!(error instanceof CapabilityOutcomeUncertainError))try{const candidate=classify(error);if(candidate==='retry'||candidate==='conflict')classification=candidate;}catch{}
       const status=classification==='retry'?(operation.attempts>=this.maxAttempts?'exhausted':'pending'):classification;
       this.transition(scope,context.principalId,id,'running',status,status==='pending'?now+this.retryDelayMs:0);
+      return this.get(scope,context.principalId,id);
+    }
+    try{this.transition(scope,context.principalId,id,'running','succeeded',0);}catch{
+      // A local write failure after dispatch is never evidence that a replay is safe.
+      try{this.transition(scope,context.principalId,id,'running','uncertain',0);}catch{}
+      throw Error('Offline outcome uncertain');
     }
     return this.get(scope,context.principalId,id);
   }
