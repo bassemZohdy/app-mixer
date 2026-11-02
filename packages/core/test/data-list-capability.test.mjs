@@ -240,3 +240,30 @@ test('timed-out last list item recheck does not return a late page',async()=>{
  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,signal,count=0;const gate=new Promise(resolve=>release=resolve);
  try{provider.put(scope,'items','private',{text:'secret'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'checked.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,policyTimeoutMs:100,maxPendingPolicies:1,authorize:()=>true,authorizeItem:async(_actor,_item,currentSignal)=>{if(++count===3){signal=currentSignal;await gate;}return true;}});await assert.rejects(registry.invoke('checked.list',{},alice),/Data list unavailable/);assert.equal(signal.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await registry.invoke('checked.list',{},alice)).items.map(item=>item.id),['private']);}finally{release();provider.close();}
 });
+
+test('optional final record verification rejects updates and deletions during authorization',async()=>{
+ for(const mutation of ['update','delete']){
+  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,entered;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);let calls=0;
+  try{provider.put(scope,'items','a',{owner:'alice',secret:'old'},null);provider.put({...scope,tenantId:'other'},'items','a',{owner:'alice',secret:'foreign'},null);
+   registerDataListCapability(registry,provider,{candidate:{operationId:'verified.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,recheckRecords:true,authorize:()=>true,authorizeItem:async()=>{if(++calls===3){entered();await gate;}return true;}});
+   const result=registry.invoke('verified.list',{expectedSchemaVersion:0},alice);await waiting;if(mutation==='update')provider.put(scope,'items','a',{owner:'bob',secret:'new'},1);else provider.delete(scope,'items','a',1);release();await assert.rejects(result,/Data list changed/);assert.equal(provider.get({...scope,tenantId:'other'},'items','a').value.secret,'foreign');
+   const fresh=await registry.invoke('verified.list',{},alice);assert.deepEqual(fresh.items.map(x=>x.value.secret),mutation==='update'?['new']:[]);
+  }finally{release();provider.close();}
+ }
+});
+
+test('record verification is opt-in, fails closed for unsupported providers and compares values',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
+  const item=provider.put(scope,'items','a',{nested:{value:1}},null),base={candidate:{operationId:'verify.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:()=>true};
+  assert.equal(provider.verifyListPage(scope,'items',[item],0),true);assert.equal(provider.verifyListPage(scope,'items',[{...item,value:{nested:{value:2}}}],0),false);assert.equal(provider.verifyListPage({...scope,tenantId:'other'},'items',[item]),false);assert.throws(()=>provider.verifyListPage(scope,'items',[item,item]),/Invalid data listing/);assert.throws(()=>provider.verifyListPage(scope,'items',[],1),/schema version conflict/);
+  const legacy={list:provider.list.bind(provider)};assert.throws(()=>registerDataListCapability(registry,legacy,{...base,recheckRecords:true}),/Invalid data list capability/);assert.throws(()=>registerDataListCapability(registry,provider,{...base,recheckRecords:'yes'}),/Invalid data list capability/);
+  registerDataListCapability(registry,{...legacy,verifyListPage:()=>false},{...base,recheckRecords:true});await assert.rejects(registry.invoke('verify.list',{},alice),/Data list changed/);
+ }finally{provider.close();}
+});
+
+test('record verification reports an HTTP conflict without returning stale records',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,entered,server;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);
+ try{provider.put(scope,'items','a',{secret:'do not return'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'http.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckRecords:true,authorize:()=>true,authorizeItem:async()=>{entered();await gate;return true;}});
+  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=fetch(`http://127.0.0.1:${server.address().port}/capabilities/http.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});await waiting;provider.delete(scope,'items','a',1);release();const result=await response;assert.equal(result.status,409);assert.doesNotMatch(await result.text(),/do not return/);
+ }finally{release();if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();}
+});

@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 
 export type DataScope = {tenantId:string; applicationId:string};
 export type DataRecord = {id:string; revision:number; value:Record<string,unknown>};
@@ -20,6 +21,7 @@ export interface DataProvider {
   readonly supportsIdPrefix?:boolean;
   get(scope:DataScope, collection:string, id:string,expectedSchemaVersion?:number):DataRecord|undefined;
   list?(scope:DataScope,collection:string,options?:{after?:string;limit?:number;expectedSchemaVersion?:number;order?:'asc'|'desc';idPrefix?:string}):DataRecordPage;
+  verifyListPage?(scope:DataScope,collection:string,items:DataRecord[],expectedSchemaVersion?:number):boolean;
   put(scope:DataScope, collection:string, id:string, value:Record<string,unknown>, expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord;
   delete(scope:DataScope, collection:string, id:string, expectedRevision:number,expectedSchemaVersion?:number):void;
 }
@@ -218,6 +220,19 @@ export class SqliteDataProvider implements DataProvider {
       this.db.exec('COMMIT');return {items,...(more&&items.length?{nextAfter:items.at(-1)!.id}:{})};
     }catch(error){this.db.exec('ROLLBACK');throw error;}
 
+  }
+  /** Verify returned records in one read snapshot after asynchronous policies finish. */
+  verifyListPage(scope:DataScope,collection:string,items:DataRecord[],expectedSchemaVersion?:number):boolean {
+    checkKey(scope,collection,'validation');scope={tenantId:scope.tenantId,applicationId:scope.applicationId};
+    if(!Array.isArray(items)||items.length>100)throw Error('Invalid data listing');
+    const ids=new Set<string>();let bytes=0;
+    const safe=items.map(item=>{if(!item||!identifier(item.id)||ids.has(item.id)||!Number.isSafeInteger(item.revision)||item.revision<1)throw Error('Invalid data listing');ids.add(item.id);const value=dataCopy(item.value);bytes+=Buffer.byteLength(JSON.stringify(value),'utf8');if(bytes>1024*1024)throw Error('Invalid data listing');return {id:item.id,revision:item.revision,value};});
+    this.db.exec('BEGIN');try{
+      if(expectedSchemaVersion!==undefined)this.requireSchema(scope,collection,expectedSchemaVersion);
+      const read=this.db.prepare('SELECT revision,CAST(value AS BLOB) AS value FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND deleted=0');
+      let valid=true;for(const item of safe){const row=read.get(scope.tenantId,scope.applicationId,collection,item.id);if(!row||Number(row.revision)!==item.revision||!(row.value instanceof Uint8Array)||!isDeepStrictEqual(dataCopy(JSON.parse(Buffer.from(row.value).toString('utf8'))),item.value)){valid=false;break;}}
+      this.db.exec('COMMIT');return valid;
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   put(scope:DataScope,collection:string,id:string,value:Record<string,unknown>,expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord {
     checkKey(scope,collection,id);
