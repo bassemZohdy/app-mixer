@@ -65,3 +65,9 @@ test('caller cancellation interrupts parallel work without starting later checks
 test('deadline rejects invalid settings and interrupts stalled effect reads',async()=>{
  const base={input:{value:1},conflictingInput:{value:2},dispatch:async()=>({ok:true}),countEffects:async()=>new Promise(()=>{})};for(const timeoutMs of [0,-1,300001,1.5,'20'])await assert.rejects(checkIdempotencyContract({...base,timeoutMs}),/Invalid idempotency contract configuration/);await assert.rejects(checkIdempotencyContract({...base,signal:{}}),/Invalid idempotency contract configuration/);await assert.rejects(checkIdempotencyContract({...base,timeoutMs:20}),/timed out/);
 });
+
+test('provider errors after possible effects retain all keys and preserve the cause',async()=>{
+ const original=Error('response lost after commit'),keys=(()=>{let n=0;return()=>`key-${++n}`;})();let effects=0,reads=0;const options={input:{value:1},conflictingInput:{value:2},newKey:keys,dispatch:async()=>{effects++;throw original;},countEffects:async()=>{reads++;return effects;}};
+ await assert.rejects(checkIdempotencyContract(options),error=>error.name==='IdempotencyContractExecutionError'&&error.cause===original&&error.keys.replay==='key-1'&&error.keys.concurrent==='key-2'&&error.keys.fresh==='key-3');assert.equal(effects,1);assert.equal(reads,0);
+ const readError=Error('independent read unavailable');await assert.rejects(checkIdempotencyContract({...options,newKey:(()=>{let n=0;return()=>`read-${++n}`;})(),dispatch:async()=>({ok:true}),countEffects:async()=>{throw readError;}}),error=>error.name==='IdempotencyContractExecutionError'&&error.cause===readError&&error.keys.replay==='read-1');
+});

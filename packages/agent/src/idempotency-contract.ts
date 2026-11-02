@@ -25,6 +25,12 @@ export class IdempotencyContractInterruptedError extends Error {
  constructor(reason:'timeout'|'cancelled',keys:IdempotencyContractReport['keys']){super(reason==='timeout'?'Idempotency contract timed out':'Idempotency contract cancelled');this.name='IdempotencyContractInterruptedError';this.keys={...keys};}
 }
 
+/** A conformance check stopped after work may have reached the target. */
+export class IdempotencyContractExecutionError extends Error {
+ readonly keys:IdempotencyContractReport['keys'];
+ constructor(keys:IdempotencyContractReport['keys'],cause:unknown){super(cause instanceof Error?cause.message:'Idempotency contract execution failed',{cause});this.name='IdempotencyContractExecutionError';this.keys={...keys};}
+}
+
 /** Exercise a downstream operation's idempotency-key handling. This is a host-run conformance check, not proof of production behavior. */
 export async function checkIdempotencyContract(options:IdempotencyContractOptions):Promise<IdempotencyContractReport>{
  const concurrency=options?.concurrency??5;
@@ -61,5 +67,6 @@ export async function checkIdempotencyContract(options:IdempotencyContractOption
 
  await dispatch(input(),keys.fresh);const fresh=await effects(keys.fresh);if(fresh!==1)findings.push({check:'fresh-key',problem:`expected 1 effect for a new key, observed ${fresh}`});
  return {passed:findings.length===0,findings,keys};
+ } catch(error) {if(error instanceof IdempotencyContractInterruptedError)throw error;throw new IdempotencyContractExecutionError(keys,error);
  } finally {if(timer!==undefined)clearTimeout(timer);callerSignal?.removeEventListener('abort',cancel);}
 }
