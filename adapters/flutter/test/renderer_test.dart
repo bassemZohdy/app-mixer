@@ -19,6 +19,23 @@ void main() {
   testWidgets('row cross-axis alignment places children consistently', verifyRowAlignment);
   testWidgets('column cross-axis alignment places children consistently', verifyColumnAlignment);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
+  testWidgets('card does not add layout margins or decoration', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+    final errors=<Object>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:errors.add))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['outside','box']},
+      {'id':'outside','component':'Text','text':'Outside'},
+      {'id':'box','component':'Card','child':'inside'},
+      {'id':'inside','component':'Text','text':'Inside'},
+    ]}));
+    await tester.pump();
+    final outside=tester.getRect(find.text('Outside')),inside=tester.getRect(find.text('Inside'));
+    expect(inside.left,outside.left);expect(inside.top,outside.bottom);
+    expect(find.byType(Card),findsNothing);expect(errors,isEmpty);
+  });
   test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};
     final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:components)];

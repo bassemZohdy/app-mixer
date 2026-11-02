@@ -412,7 +412,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       if (!mounted || generation!=_generation || !identical(store,_store) || widget.onAction==null) return;
       try {widget.onAction!(store.action(surface.id,node.id,surface.revision));} catch(error){widget.onError(error);}
     },child:children.isEmpty ? const SizedBox.shrink() : children.first);
-    if (node.kind == 'Card') return Card(child:children.isEmpty ? const SizedBox.shrink() : children.first);
+    if (node.kind == 'Card') return SizedBox(child:children.isEmpty ? const SizedBox.shrink() : children.first);
     final main = {'start':MainAxisAlignment.start,'center':MainAxisAlignment.center,'end':MainAxisAlignment.end,'spaceBetween':MainAxisAlignment.spaceBetween,'spaceAround':MainAxisAlignment.spaceAround,'spaceEvenly':MainAxisAlignment.spaceEvenly}[node.justify] ?? MainAxisAlignment.start;
     final cross = {'start':CrossAxisAlignment.start,'center':CrossAxisAlignment.center,'end':CrossAxisAlignment.end,'stretch':CrossAxisAlignment.stretch}[node.align] ?? CrossAxisAlignment.stretch;
     final layout = node.kind == 'Row' ? Row(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children) : Column(mainAxisSize:MainAxisSize.min,mainAxisAlignment:main,crossAxisAlignment:cross,children:children);
