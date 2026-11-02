@@ -235,6 +235,10 @@ test('web and native support root value bindings for text and action context',()
  for(const value of messages){web.apply(value);native.apply(value);}
  assert.equal(native.snapshot()[0].root.children[0].text,'Root value');assert.equal(host.children[0].children[0].children[0].textContent,'Root value');
  host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.root,'Root value');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.root,'Root value');
+ const slash=message('updateDataModel',{surfaceId:'main',path:'/',value:'Replaced root'});web.apply(slash);native.apply(slash);
+ const replacement=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'go',context:{root:{path:'/'}}}}},{id:'label',component:'Text',text:{path:'/'}}]});web.apply(replacement);native.apply(replacement);
+ assert.equal(native.snapshot()[0].root.children[0].text,'Replaced root');assert.equal(host.children[0].children[0].children[0].textContent,'Replaced root');
+ host.children[0].children[0].listeners.click();assert.equal(events.at(-1).action.context.root,'Replaced root');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.root,'Replaced root');
 });
 
 test('web and native fields bind a non-root path containing a line break',()=>{

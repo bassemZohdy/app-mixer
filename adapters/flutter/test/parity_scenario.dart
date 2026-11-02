@@ -170,6 +170,13 @@ void verifyRootValueBindings() {
   ]}));
   expect(store.snapshot().single?.children.single.text,'Root value');
   expect(((store.action('main','root',store.views().single.revision)['action'] as Map)['context'] as Map)['root'],'Root value');
+  store.apply(message('updateDataModel',{'surfaceId':'main','path':'/','value':'Replaced root'}));
+  store.apply(message('updateComponents',{'surfaceId':'main','components':[
+    {'id':'root','component':'Button','child':'label','action':{'event':{'name':'go','context':{'root':{'path':'/'}}}}},
+    {'id':'label','component':'Text','text':{'path':'/'}}
+  ]}));
+  expect(store.snapshot().single?.children.single.text,'Replaced root');
+  expect(((store.action('main','root',store.views().single.revision)['action'] as Map)['context'] as Map)['root'],'Replaced root');
 }
 
 void verifyLineBreakFieldPath() {

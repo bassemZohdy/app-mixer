@@ -91,9 +91,9 @@ test('catalog identifiers use Unicode code point limits in actual component refe
 test('catalog permits root bindings for text and button context', async () => {
   const catalog=await load('../catalog/v1/catalog.json'),ajv=new Ajv2020({strict:false});
   const text=ajv.compile(catalog.components.Text),button=ajv.compile(catalog.components.Button);
-  assert.equal(text({text:{path:''}}),true);assert.equal(text({text:{path:'relative'}}),false);
+  assert.equal(text({text:{path:''}}),true);assert.equal(text({text:{path:'/'}}),true);assert.equal(text({text:{path:'relative'}}),false);
   const action=path=>({child:'label',action:{event:{name:'go',context:{root:{path}}}}});
-  assert.equal(button(action('')),true);assert.equal(button(action('relative')),false);
+  assert.equal(button(action('')),true);assert.equal(button(action('/')),true);assert.equal(button(action('relative')),false);
   const doc={createElement:()=>new Element(doc)},host=doc.createElement();let emitted;
   const renderer=new A2UIRenderer(host,basicRegistry(),event=>{emitted=event;});
   const message=(kind,payload)=>({version:'v0.9.1',[kind]:payload});
