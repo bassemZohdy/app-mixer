@@ -101,6 +101,18 @@ export function createFlutterExtensionPlan(application:ApplicationDefinition, ma
   if(host?.renderer!=='flutter')throw Error('Flutter host required');
   const guard=createExtensionPublicationGuard(manifests,host,()=>({components:[],tools:[],providers:[]}));
   guard(snapshot);
+  return checkedFlutterPlan(snapshot);
+}
+
+/** Build a Flutter plan from the registrations and approvals already checked by a host registry. */
+export function createFlutterExtensionPlanFromRegistry(application:ApplicationDefinition,registry:ExtensionRegistry):FlutterExtensionPlan {
+  const snapshot=structuredClone(application);validate(snapshot);
+  if(!(registry instanceof ExtensionRegistry)||registry.getTarget().renderer!=='flutter')throw Error('Flutter host required');
+  registry.createPublicationGuard(()=>({components:[],tools:[],providers:[]}))(snapshot);
+  return checkedFlutterPlan(snapshot);
+}
+
+function checkedFlutterPlan(snapshot:ApplicationDefinition):FlutterExtensionPlan {
   const components:FlutterExtensionPlan['components']=[],owners=new Map<string,string>();
   for(const page of snapshot.pages)for(const component of page.components){
     if(component.type!=='Extension')continue;

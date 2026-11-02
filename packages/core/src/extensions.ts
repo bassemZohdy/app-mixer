@@ -343,5 +343,8 @@ export class ExtensionRegistry {
     return createExtensionPublicationGuard(this.#manifests,this.#host,requirementsFor);
   }
 
+  /** Return the fixed host target without exposing mutable approval data. */
+  getTarget():{runtimeVersion:string;renderer:string} { return {runtimeVersion:this.#host.runtimeVersion,renderer:this.#host.renderer}; }
+
   getManifests(): ExtensionManifest[] { return structuredClone(this.#manifests); }
 }

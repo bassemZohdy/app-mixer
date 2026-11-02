@@ -127,7 +127,7 @@ export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
 export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry, computeExtensionIntegrity, verifyExtensionIntegrity, signExtensionManifest, verifySignedExtensionManifest } from './extensions.js';
-export { registerExtensionComponent, registerDeclaredNativeExtensionComponent, createFlutterExtensionPlan, registerExtensionCapability, registerDeclaredExtensionCapability, createExtensionRuntime } from './extension-adapters.js';
+export { registerExtensionComponent, registerDeclaredNativeExtensionComponent, createFlutterExtensionPlan, createFlutterExtensionPlanFromRegistry, registerExtensionCapability, registerDeclaredExtensionCapability, createExtensionRuntime } from './extension-adapters.js';
 export type { ExtensionRuntimeBindings, ExtensionInvocationApproval, FlutterExtensionPlan } from './extension-adapters.js';
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration, SignedExtensionManifest, ExtensionSigningPolicy } from './extensions.js';
 
@@ -216,7 +216,7 @@ export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionA
 export {registerExtensionApprovalDecision,registerExtensionApprovalStatus,registerExtensionApprovalHistory} from './extension-approval-capabilities.js';
 export type {ExtensionApprovalDecisionCapabilityOptions,ExtensionApprovalReadCapabilityOptions} from './extension-approval-capabilities.js';
 
-export {signFlutterExtensionPlan} from './signed-flutter-plan.js';
+export {signFlutterExtensionPlan,signFlutterExtensionPlanFromRegistry} from './signed-flutter-plan.js';
 export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signed-flutter-plan.js';
 
 export {registerDataMigrationPreview,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
