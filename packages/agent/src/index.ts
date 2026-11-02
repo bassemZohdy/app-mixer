@@ -179,6 +179,9 @@ export type {GithubWebhookOptions} from './github-webhook.js';
 export {DurableAgentDispatcher} from './durable-dispatcher.js';
 export type {DurableAgentDispatcherOptions} from './durable-dispatcher.js';
 
+export {AgentRunLeaseRecoveryWorker} from './agent-run-lease-recovery.js';
+export type {AgentRunLeaseRecoveryWorkerOptions} from './agent-run-lease-recovery.js';
+export type {ExpiredAgentLease} from './durable-runs.js';
 export {AgentRunExpiryWorker} from './agent-run-expiry.js';
 export type {AgentRunExpiryWorkerOptions,AgentRunExpiryObservation} from './agent-run-expiry.js';
 export {AgentRunExpiryMetrics} from './agent-run-expiry-metrics.js';

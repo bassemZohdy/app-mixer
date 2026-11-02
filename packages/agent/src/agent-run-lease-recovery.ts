@@ -1,0 +1,29 @@
+import {SqliteAgentRuns,type AgentRunScope,type ExpiredAgentLease} from './durable-runs.js';
+type Cursor={leaseUntil:number;runId:string};
+type Options={runs:SqliteAgentRuns;scope:AgentRunScope;authorize:(lease:ExpiredAgentLease,signal:AbortSignal)=>boolean|Promise<boolean>;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void;clock?:()=>number;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number};
+const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+/** Host-driven lease discovery and conservative transition to uncertainty; never retries a run. */
+export class AgentRunLeaseRecoveryWorker{
+ private readonly runs:SqliteAgentRuns;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly clock:()=>number;private readonly onError:Options['onError'];private readonly timeout:number|undefined;private readonly maxPending:number|undefined;private inFlight=0;private active=false;private generation=0;private pending?:Promise<number>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;private cursor?:Cursor;
+ constructor(options:Options){
+  if(!options||!(options.runs instanceof SqliteAgentRuns)||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPerPass)||options.maxPerPass<1||options.maxPerPass>100||!Number.isSafeInteger(options.pollMs)||options.pollMs<100||options.pollMs>3600000||typeof options.onError!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.authorizationTimeoutMs===undefined)!==(options.maxPendingAuthorizations===undefined)||(options.authorizationTimeoutMs!==undefined&&(!Number.isInteger(options.authorizationTimeoutMs)||options.authorizationTimeoutMs<100||options.authorizationTimeoutMs>30000))||(options.maxPendingAuthorizations!==undefined&&(!Number.isInteger(options.maxPendingAuthorizations)||options.maxPendingAuthorizations<1||options.maxPendingAuthorizations>100)))throw Error('Invalid lease recovery worker');
+  this.runs=options.runs;this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.maxPerPass=options.maxPerPass;this.pollMs=options.pollMs;this.clock=options.clock??Date.now;this.onError=options.onError;this.timeout=options.authorizationTimeoutMs;this.maxPending=options.maxPendingAuthorizations;
+ }
+ private report(error:unknown,runId?:string):void{try{this.onError(error,runId);}catch{}}
+ private async allowed(lease:ExpiredAgentLease,parent:AbortSignal):Promise<boolean>{
+  const snapshot={...lease};if(this.timeout===undefined)return await this.authorize(snapshot,parent)===true;
+  if(parent.aborted||this.inFlight>=this.maxPending!)throw Error('Lease recovery authorization unavailable');const controller=new AbortController(),signal=AbortSignal.any([parent,controller.signal]);this.inFlight++;
+  const task=Promise.resolve().then(()=>{if(signal.aborted)throw Error('Lease recovery authorization unavailable');return this.authorize(snapshot,signal);});void task.then(()=>{this.inFlight--;},()=>{this.inFlight--;});let abort=()=>{};const cancelled=new Promise<never>((_resolve,reject)=>{abort=()=>reject(Error('Lease recovery authorization unavailable'));if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});});const timer=setTimeout(()=>controller.abort(),this.timeout);
+  try{const result=await Promise.race([task,cancelled]);if(signal.aborted)throw Error('Lease recovery authorization unavailable');return result===true;}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
+ }
+ private async pass(keepGoing:()=>boolean,signal:AbortSignal):Promise<number>{
+  const page=this.runs.expiredLeasePage(this.scope,this.clock(),{after:this.cursor,limit:this.maxPerPass});let recovered=0;
+  for(const lease of page.items){if(!keepGoing())return recovered;try{if(await this.allowed(lease,signal)!==true||!keepGoing())continue;if(await this.allowed(lease,signal)!==true||!keepGoing())continue;this.runs.recoverExpired(this.scope,lease.runId,lease.revision,this.clock());recovered++;}catch(error){if(keepGoing()&&!(error instanceof Error&&error.message==='Run revision conflict'))this.report(error,lease.runId);}finally{if(keepGoing())this.cursor={leaseUntil:lease.leaseUntil,runId:lease.runId};}}
+  if(keepGoing()&&!page.next)this.cursor=undefined;return recovered;
+ }
+ private begin(keepGoing:()=>boolean):Promise<number>{const controller=new AbortController();this.controller=controller;const pending=this.pass(()=>!controller.signal.aborted&&keepGoing(),controller.signal);this.pending=pending;void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.controller===controller)this.controller=undefined;}).catch(()=>{});return pending;}
+ runOnce():Promise<number>{if(this.active||this.pending)throw Error('Lease recovery worker already running');const generation=this.generation;return this.begin(()=>this.generation===generation);}
+ start():void{if(this.active||this.pending)throw Error('Lease recovery worker already running');this.active=true;const generation=++this.generation,loop=()=>{if(!this.active||this.generation!==generation)return;const pending=this.begin(()=>this.active&&this.generation===generation);void pending.catch(error=>this.report(error)).finally(()=>{if(this.active&&this.generation===generation)this.timer=setTimeout(loop,this.pollMs);});};loop();}
+ async stop():Promise<void>{this.active=false;this.generation++;if(this.timer)clearTimeout(this.timer);this.timer=undefined;this.controller?.abort();const pending=this.pending;if(pending)try{await pending;}catch{}}
+}
+export type {Options as AgentRunLeaseRecoveryWorkerOptions};

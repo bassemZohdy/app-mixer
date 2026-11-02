@@ -9,6 +9,7 @@ import {createHash,randomUUID} from 'node:crypto';
 type RunScope={tenantId:string;agentId:string};
 type RunStatus='queued'|'running'|'pause_requested'|'cancel_requested'|'paused'|'uncertain'|'succeeded'|'failed'|'cancelled';
 export type AgentRunExpiryEvidence={principalId:string;reference:string};
+export type ExpiredAgentLease={runId:string;revision:number;status:'running'|'pause_requested'|'cancel_requested';leaseUntil:number};
 export type DurableAgentRun={tenantId:string;agentId:string;runId:string;definitionVersion:number;revision:number;status:RunStatus;attempts:number;maxAttempts:number;deadline:number;leaseOwner:string|null;leaseToken:string|null;leaseUntil:number|null;archived:boolean;delegationWait:{grantId:string;revision:number;principalId:string}|null;approvalWait:{actionId:string}|null};
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
 const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
@@ -56,6 +57,7 @@ export class SqliteAgentRuns {
   );
   CREATE INDEX IF NOT EXISTS agent_runs_queued ON agent_runs(tenant_id,agent_id,status,archived,run_id);
   CREATE INDEX IF NOT EXISTS agent_runs_expired ON agent_runs(tenant_id,agent_id,deadline,run_id) WHERE archived=0 AND status IN ('queued','paused');
+  CREATE INDEX IF NOT EXISTS agent_runs_expired_lease ON agent_runs(tenant_id,agent_id,lease_until,run_id) WHERE archived=0 AND status IN ('running','pause_requested','cancel_requested');
   CREATE TABLE IF NOT EXISTS agent_run_expiry_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,previous_status TEXT NOT NULL,deadline INTEGER NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision));
   CREATE INDEX IF NOT EXISTS agent_run_expiry_audit_scope ON agent_run_expiry_audit(tenant_id,agent_id,id);
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_replace BEFORE INSERT ON agent_run_expiry_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
@@ -94,6 +96,12 @@ export class SqliteAgentRuns {
  expiredPage(scope:RunScope,now:number,options:{after?:{deadline:number;runId:string};limit?:number}={}):{items:DurableAgentRun[];next?:{deadline:number;runId:string}}{
   scopeKey(scope,'validation');const limit=options?.limit??50,after=options?.after;if(!number(now)||!options||!number(limit)||limit<1||limit>100||(after!==undefined&&(!after||!number(after.deadline)||!id(after.runId))))throw Error('Invalid expired run query');
   const rows=this.db.prepare("SELECT run_id,deadline FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('queued','paused') AND deadline<=? AND (deadline>? OR (deadline=? AND run_id>?)) ORDER BY deadline,run_id LIMIT ?").all(scope.tenantId,scope.agentId,now,after?.deadline??0,after?.deadline??0,after?.runId??'',limit+1);const items=rows.slice(0,limit).map(row=>this.get(scope,String(row.run_id))!),last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{deadline:last.deadline,runId:last.runId}}:{})};
+ }
+ /** Trusted-host discovery only: lease tokens, owners and payloads are never returned. */
+ expiredLeasePage(scope:RunScope,now:number,options:{after?:{leaseUntil:number;runId:string};limit?:number}={}):{items:ExpiredAgentLease[];next?:{leaseUntil:number;runId:string}}{
+  scopeKey(scope,'validation');const limit=options?.limit??50,after=options?.after;if(!number(now)||!options||!number(limit)||limit<1||limit>100||(after!==undefined&&(!after||!number(after.leaseUntil)||!id(after.runId))))throw Error('Invalid expired lease query');
+  const rows=this.db.prepare("SELECT run_id,revision,status,lease_until FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('running','pause_requested','cancel_requested') AND lease_until IS NOT NULL AND lease_until<=? AND (lease_until>? OR (lease_until=? AND run_id>?)) ORDER BY lease_until,run_id LIMIT ?").all(scope.tenantId,scope.agentId,now,after?.leaseUntil??0,after?.leaseUntil??0,after?.runId??'',limit+1);
+  const items:ExpiredAgentLease[]=rows.slice(0,limit).map(row=>{const leaseUntil=Number(row.lease_until),revision=Number(row.revision);if(!id(row.run_id)||!number(leaseUntil)||!number(revision)||revision<1||!['running','pause_requested','cancel_requested'].includes(String(row.status)))throw Error('Invalid expired lease data');return {runId:row.run_id,revision,status:row.status as ExpiredAgentLease['status'],leaseUntil};});const last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{leaseUntil:last.leaseUntil,runId:last.runId}}:{})};
  }
  getTraceParent(scope:RunScope,runId:string):string|undefined{scopeKey(scope,runId);const row=this.db.prepare('SELECT trace_parent FROM agent_run_trace_context WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);if(!row)return undefined;if(!parseAgentTraceParent(row.trace_parent))throw Error('Invalid agent trace context');return String(row.trace_parent);}
  create(scope:RunScope,runId:string,config:{definitionVersion:number;maxAttempts:number;deadline:number;traceParent?:string},now=Date.now()):DurableAgentRun {
