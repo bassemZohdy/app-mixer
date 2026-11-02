@@ -1,6 +1,6 @@
 import {open,writeFile} from 'node:fs/promises';
-import {createPrivateKey} from 'node:crypto';
-import {computeExtensionIntegrity,signExtensionManifest,type ExtensionManifest} from '@app-mixer/core';
+import {createPrivateKey,createPublicKey} from 'node:crypto';
+import {computeExtensionIntegrity,signExtensionManifest,verifySignedExtensionManifest,type ExtensionManifest} from '@app-mixer/core';
 
 // Bounded reads do not trust a file size that can change while it is being read.
 async function readBounded(path:string,max:number):Promise<Buffer>{
@@ -17,4 +17,14 @@ export async function signExtensionFiles(manifestPath:string,packagePath:string,
   const signed=signExtensionManifest({...candidate,integrity:digest} as ExtensionManifest,keyId,createPrivateKey(keyBytes));
   await writeFile(outputPath,JSON.stringify(signed,null,2)+'\n',{flag:'wx',mode:0o600});
  }finally{keyBytes.fill(0);}
+}
+
+/** Verify using an explicitly selected public key; this does not approve installation. */
+export async function verifyExtensionFiles(manifestPath:string,packagePath:string,keyPath:string,keyId:string):Promise<ExtensionManifest>{
+ const manifestBytes=await readBounded(manifestPath,4*1024*1024),packageBytes=await readBounded(packagePath,64*1024*1024),keyBytes=await readBounded(keyPath,65536);
+ if(!keyBytes.toString('ascii').trimStart().startsWith('-----BEGIN PUBLIC KEY-----'))throw Error('Expected a PEM public key');
+ const signed:unknown=JSON.parse(manifestBytes.toString('utf8')),key=createPublicKey(keyBytes);
+ // A null prototype avoids treating a caller-supplied key ID as an object prototype.
+ const trustedKeys:Record<string,typeof key>=Object.create(null) as Record<string,typeof key>;trustedKeys[keyId]=key;
+ return verifySignedExtensionManifest(signed,{trustedKeys},packageBytes);
 }

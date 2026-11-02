@@ -16,6 +16,12 @@ test('extension-sign creates a verifiable package-bound manifest without overwri
   await writeFile(manifestPath,JSON.stringify(manifest));await writeFile(packagePath,bytes);await writeFile(keyPath,keys.privateKey.export({format:'pem',type:'pkcs8'}));
   await run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',output]);
   const signed=JSON.parse(await readFile(output,'utf8')),verified=verifySignedExtensionManifest(signed,{trustedKeys:{publisher:keys.publicKey}},bytes);assert.equal(verified.integrity,computeExtensionIntegrity(bytes));
+  const publicPath=join(dir,'public.pem'),otherPublicPath=join(dir,'other-public.pem');await writeFile(publicPath,keys.publicKey.export({format:'pem',type:'spki'}));await writeFile(otherPublicPath,generateKeyPairSync('ed25519').publicKey.export({format:'pem',type:'spki'}));
+  const args=['extension-verify',output,packagePath,publicPath,'publisher'];assert.match((await run(process.execPath,[cli,...args])).stdout,/Verified example\.chart@1\.0\.0 \(application\)/);
+  await assert.rejects(run(process.execPath,[cli,'extension-verify',output,packagePath,otherPublicPath,'publisher']));await assert.rejects(run(process.execPath,[cli,'extension-verify',output,packagePath,publicPath,'wrong-key']));await assert.rejects(run(process.execPath,[cli,'extension-verify',output,packagePath,keyPath,'publisher']),/Expected a PEM public key/);
+  await writeFile(packagePath,Buffer.from('tampered package'));await assert.rejects(run(process.execPath,[cli,...args]));await writeFile(packagePath,bytes);
+  const altered=join(dir,'altered.json');await writeFile(altered,JSON.stringify({...signed,manifest:{...signed.manifest,version:'2.0.0'}}));await assert.rejects(run(process.execPath,[cli,'extension-verify',altered,packagePath,publicPath,'publisher']));
+
   const before=await readFile(output,'utf8');await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',output]));assert.equal(await readFile(output,'utf8'),before);
   await writeFile(manifestPath,JSON.stringify({...manifest,integrity:computeExtensionIntegrity(Buffer.from('other'))}));await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',join(dir,'bad.json')]),/integrity does not match/);
   await writeFile(manifestPath,JSON.stringify({...manifest,unknown:true}));await assert.rejects(run(process.execPath,[cli,'extension-sign',manifestPath,packagePath,keyPath,'publisher',join(dir,'invalid.json')]));
