@@ -111,6 +111,8 @@ export { SqliteRemoteRollout } from './remote-rollout.js';
 export type { RemoteRolloutScope, RemoteRolloutRecoveryEvidence, RemoteRolloutRecoveryEvent } from './remote-rollout.js';
 export { registerRemoteRolloutStatusCapability } from './remote-rollout-status-capability.js';
 export { registerRemoteRolloutRecoveryCapability } from './remote-rollout-recovery-capability.js';
+export { registerRemoteRolloutEvidenceCapability } from './remote-rollout-evidence-capability.js';
+export type { RemoteRolloutEvidenceCapabilityOptions } from './remote-rollout-evidence-capability.js';
 export type { RemoteRolloutRecoveryCapabilityOptions, RemoteRolloutRecoveryState } from './remote-rollout-recovery-capability.js';
 export type { RemoteRolloutStatusCapabilityOptions } from './remote-rollout-status-capability.js';
 export { PostgresRemoteRollout } from './postgres-remote-rollout.js';
