@@ -84,6 +84,40 @@ test('approval lookup does not reveal a record inserted while authorization was 
  const s=setup();let restricted,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);try{restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>10,authorize:async(_actor,action,approval)=>{if(action==='read'&&approval.operationId==='unknown'){entered();await gate;}return true;}});const pending=restricted.get(human,'later');await ready;await s.approvals.request(service,s.run.leaseToken,'later','pay',{private:'value'},90);release();await assert.rejects(pending,/Approval changed/);assert.equal((await restricted.get(human,'later')).operationId,'pay');}finally{release();restricted?.close();close(s);}
 });
 
+test('approval decisions, expiry and history reject records created during authorization',async()=>{
+ for(const operation of ['approved','rejected','cancelled','expire','history']){
+  const s=setup();let restricted,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  try{
+   restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>s.now,authorize:async(_actor,action,approval)=>{
+    if(approval.operationId==='unknown'){entered();await gate;return true;}
+    return false;
+   }});
+   const invoke=()=>operation==='history'?restricted.history(human,'later'):operation==='expire'?restricted.expire(human,'later'):restricted.decide(human,'later',operation);
+   const pending=invoke();await ready;
+   await s.approvals.request(service,s.run.leaseToken,'later','pay',{private:'value'},90);
+   if(operation==='expire')s.now=90;
+   release();await assert.rejects(pending,/Approval changed/);
+   await assert.rejects(invoke(),/access denied/);
+   assert.deepEqual((await s.approvals.history(human,'later')).map(event=>event.event),['requested']);
+   assert.equal((await s.approvals.get(human,'later')).status,operation==='expire'?'expired':'pending');
+  }finally{release();restricted?.close();close(s);}
+ }
+});
+
+test('approval operations reject changed bindings and do not expose orphan history',async()=>{
+ for(const operation of ['approved','cancelled','expire','history']){
+  const s=setup();let restricted,db,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  try{
+   await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);if(operation==='expire')s.now=90;
+   restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>s.now,authorize:async(_actor,_action,approval)=>{if(approval.operationId==='pay'){entered();await gate;}return true;}});
+   const pending=operation==='history'?restricted.history(human,'action'):operation==='expire'?restricted.expire(human,'action'):restricted.decide(human,'action',operation);
+   await ready;db=new DatabaseSync(s.path);db.prepare("UPDATE agent_approvals SET operation_id='other' WHERE action_id='action'").run();release();await assert.rejects(pending,/Approval changed/);
+   assert.deepEqual((await s.approvals.history(human,'action')).map(event=>event.event),['requested']);
+   db.prepare("DELETE FROM agent_approvals WHERE action_id='action'").run();assert.deepEqual(await s.approvals.history(human,'action'),[]);
+  }finally{release();db?.close();restricted?.close();close(s);}
+ }
+});
+
 test('approval listing returns current decision after final scope authorization',async()=>{
  const s=setup();let restricted,entered,release,checks=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);try{await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>10,authorize:async(_actor,action)=>{if(action==='list'&&++checks===2){entered();await gate;}return true;}});const pending=restricted.list(human);await ready;await s.approvals.decide(human,'action','approved');release();assert.equal((await pending).items[0].status,'approved');}finally{release();restricted?.close();close(s);}
 });
