@@ -146,6 +146,10 @@ export class SqliteApplicationStore {
     });
   }
 
+  previewDraftMigration(expectedRevision:number,targetVersion:number):ApplicationDefinition {
+    const store=new ApplicationStore(this.getDraft());return store.previewDraftMigration(expectedRevision,targetVersion);
+  }
+
   publish(expectedRevision: number): Published {
     return this.transaction(() => {
       const draft = this.getDraft();

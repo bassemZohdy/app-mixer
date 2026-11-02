@@ -16,6 +16,7 @@ import {createBoundedOperation} from './bounded-operation.js';
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
   migrateDraft?(expectedRevision:number,targetVersion:number):ApplicationDefinition;
+  previewDraftMigration?(expectedRevision:number,targetVersion:number):ApplicationDefinition;
   apply(revision: number, patches: Patch[]): ApplicationDefinition;
   publish(revision: number): { version: number; definition: ApplicationDefinition };
   promote?(input:unknown,expectedVersion:number,targetEnvironment:string): { version: number; definition: ApplicationDefinition };
@@ -160,11 +161,11 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
           !Array.isArray(input.patches) || input.patches.length > 100 || !input.patches.every(isValidPatch)) throw new RequestError(400, 'Invalid patch request');
       respond(res, 200, repository.apply(input.baseRevision, input.patches)); return;
     }
-    if (req.method === 'POST' && req.url === '/draft/migrate') {
+    if (req.method === 'POST' && (req.url === '/draft/migrate' || req.url === '/draft/migrate/preview')) {
       const input=await body(req);
       if(!record(input)||!exact(input,['expectedRevision','targetVersion'])||!revision(input.expectedRevision)||!revision(input.targetVersion)||input.targetVersion<1)throw new RequestError(400,'Invalid migration request');
-      if(!repository.migrateDraft)throw new RequestError(501,'Migration unavailable');
-      respond(res,200,repository.migrateDraft(input.expectedRevision,input.targetVersion));return;
+      if(req.url==='/draft/migrate/preview'){if(!repository.previewDraftMigration)throw new RequestError(501,'Migration preview unavailable');respond(res,200,repository.previewDraftMigration(input.expectedRevision,input.targetVersion));return;}
+      if(!repository.migrateDraft)throw new RequestError(501,'Migration unavailable');respond(res,200,repository.migrateDraft(input.expectedRevision,input.targetVersion));return;
     }
     if (req.method === 'POST' && req.url === '/publish') {
       const input = await body(req);
