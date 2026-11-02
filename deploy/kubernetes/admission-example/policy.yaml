@@ -96,6 +96,13 @@ spec:
         (!has(variables.c.securityContext.procMount) || variables.c.securityContext.procMount == 'Default') &&
         has(variables.c.securityContext.capabilities) && has(variables.c.securityContext.capabilities.drop) && 'ALL' in variables.c.securityContext.capabilities.drop &&
         (!has(variables.c.securityContext.capabilities.add) || variables.c.securityContext.capabilities.add.size() == 0)
+    - message: Keep at least two replicas and use the approved rolling update and shutdown grace period.
+      expression: >-
+        has(object.spec.replicas) && object.spec.replicas >= 2 &&
+        has(object.spec.strategy) && object.spec.strategy.type == 'RollingUpdate' &&
+        has(object.spec.strategy.rollingUpdate) && object.spec.strategy.rollingUpdate.maxUnavailable == 0 &&
+        object.spec.strategy.rollingUpdate.maxSurge == 1 &&
+        has(object.spec.template.spec.terminationGracePeriodSeconds) && object.spec.template.spec.terminationGracePeriodSeconds >= 10
     - message: The Data Plane must expose only its approved listener port.
       expression: >-
         has(variables.c.ports) && variables.c.ports.size() == 1 &&

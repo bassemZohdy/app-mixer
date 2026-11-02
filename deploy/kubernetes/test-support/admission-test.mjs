@@ -49,6 +49,11 @@ changed('untrusted key mount',o=>o.spec.template.spec.volumes.find(v=>v.name==='
 changed('select alternate key',o=>o.spec.template.spec.volumes.find(v=>v.name==='release-trust').configMap.items=[{key:'other',path:'keys.json'}]);
 changed('plaintext readiness probe',(_,c)=>c.readinessProbe.httpGet.scheme='HTTP');
 for(const probe of ['readinessProbe','livenessProbe','startupProbe']){changed(probe+' external host',(_,c)=>c[probe].httpGet.host='example.com');changed(probe+' alternate port',(_,c)=>c[probe].httpGet.port=8080);changed(probe+' custom host header',(_,c)=>c[probe].httpGet.httpHeaders=[{name:'Host',value:'other.example'}]);}
+for(const replicas of [0,1])changed('insufficient replicas '+replicas,o=>o.spec.replicas=replicas);
+changed('recreate deployment',o=>o.spec.strategy={type:'Recreate'});
+changed('unavailable rolling update',o=>o.spec.strategy.rollingUpdate.maxUnavailable='100%');
+changed('unapproved surge',o=>o.spec.strategy.rollingUpdate.maxSurge=2);
+changed('short shutdown grace',o=>o.spec.template.spec.terminationGracePeriodSeconds=1);
 changed('alternate listener port',(_,c)=>c.ports[0].containerPort=8080);
 changed('host listener port',(_,c)=>c.ports[0].hostPort=3002);
 changed('extra listener port',(_,c)=>c.ports.push({name:'other',containerPort:8080,protocol:'TCP'}));
