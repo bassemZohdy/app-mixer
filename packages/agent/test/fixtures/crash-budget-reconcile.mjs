@@ -1,0 +1,4 @@
+import {writeFileSync} from 'node:fs';
+import {SqliteAgentTokenBudget} from '../../dist/index.js';
+const [path,barrier,phase]=process.argv.slice(2),hold=()=>{writeFileSync(barrier,phase);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);};
+try{const budget=new SqliteAgentTokenBudget(path,{scope:{tenantId:'tenant',agentId:'agent'},runId:'run',leaseToken:'old-worker',maxTokens:100,cost:{currency:'USD',maxMicros:1000},clock:()=>20});if(phase==='evidence'){budget.db.function('test_budget_barrier',()=>{hold();return 0;});budget.db.exec('CREATE TRIGGER test_budget_crash BEFORE INSERT ON agent_budget_reconciliations BEGIN SELECT test_budget_barrier(); END');}budget.reconcileWithEvidence('call',25,250,{principalId:'operator',reference:'case-1'});if(phase==='after')hold();throw Error('Expected process termination');}catch(error){process.send?.({error:String(error)});process.exitCode=1;}
