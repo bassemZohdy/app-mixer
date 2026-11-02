@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {JSDOM} from 'jsdom';
+import {Ajv2020} from 'ajv/dist/2020.js';
 import {createProject} from '../dist/index.js';
 import {createRecordFieldValidator,createRecordJsonSchemaValidator} from '../../core/dist/index.js';
 import {RECORD_EDITOR_PREVIEW} from '../../core/dist/data-editor-preview.js';
@@ -596,6 +597,45 @@ test('nested dependent rules match object-array items consistently with server v
   for(const name of ['missing','wrong','mode']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
   for(const name of ['empty','valid','mixed']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const contains of [{type:'object',dependentRequired:{email:'phone'}},{type:'object',dependentRequired:{email:['phone','phone']}},{type:'object',dependentSchemas:{email:null}},{type:'object',dependentSchemas:{email:{$ref:'#/$defs/missing'}}},{type:'string',dependentRequired:{email:[1]}}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{items:{...jsonSchema.properties.items,contains}}}}),/Unsupported/);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('tuple forms edit positional values without shifting earlier fields',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{name:{type:'string',minLength:1}},properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{$ref:'#/$defs/name',description:'Person name'},{type:'integer',minimum:0},{type:'boolean'}],items:false,minItems:3,maxItems:3}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={good:{tuple:['Ada',37,true]},bad:{tuple:['Ada','thirty',true]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>',{pretendToBeVisual:true});const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  id.value='good';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
+  let fieldset=root.querySelector('fieldset'),name=fieldset.querySelector('input[type=text]'),age=fieldset.querySelector('input[type=number]'),active=fieldset.querySelector('select');assert.equal(name.value,'Ada');assert.equal(age.value,'37');assert.equal(active.value,'true');assert.equal(dom.window.document.getElementById(name.getAttribute('aria-describedby')).textContent,'Person name');
+  const remove=()=>buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));assert.deepEqual(remove().map(x=>x.disabled),[true,true,false]);assert.equal(buttons().find(x=>x.textContent==='Add Tuple item').disabled,true);
+  name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));age.value='38';age.dispatchEvent(new dom.window.Event('input',{bubbles:true}));active.value='false';active.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:['Grace',38,false]});
+  remove()[2].focus();remove()[2].click();const add=buttons().find(x=>x.textContent==='Add Tuple item');assert.equal(dom.window.document.activeElement,add);save.click();assert.match(root.textContent,/between 3 and 3 items/);assert.equal(saved.length,1);add.click();fieldset=root.querySelector('fieldset');active=fieldset.querySelector('select');assert.equal(dom.window.document.activeElement,active);active.value='true';active.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:['Grace',38,true]});
+  id.value='bad';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(save.disabled,true);assert.equal(validate(records.bad),false);
+  const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('input,select,button')].every(x=>x.disabled));
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const tuple of [{prefixItems:[],items:false},{prefixItems:[{type:'object',properties:{name:{type:'string'}}}],items:false},{prefixItems:[{type:'string'}]},{prefixItems:[{type:'string'}],items:true},{prefixItems:[true],items:false}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tuple:{type:'array',...tuple}}}}),/Unsupported/);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('tuple positions can contain editable nested arrays',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'},{type:'array',items:{type:'integer'},minItems:1}],items:false,minItems:2,maxItems:2}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={tuple:['Ada',[1,2]]},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
+  const nested=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Tuple item 2 (required)');assert.ok(nested);const add=[...nested.querySelectorAll('button')].find(x=>x.textContent==='Add Tuple item 2 item');assert.ok(add);add.click();const numbers=[...nested.querySelectorAll('input[type=number]')];assert.equal(numbers.length,3);numbers[2].value='3';numbers[2].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{tuple:['Ada',[1,2,3]]});
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('tuple forms preserve typed trailing items when an item is removed',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'}],items:{type:'integer'},minItems:1,maxItems:4}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=new Ajv2020({strict:false}).compile(jsonSchema),record={tuple:['Ada',1,2]},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
+  const remove=()=>buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));assert.deepEqual(remove().map(x=>x.disabled),[true,false,false]);remove()[1].click();assert.deepEqual([...root.querySelectorAll('input[type=number]')].map(x=>x.value),['2']);save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:['Ada',2]});
+  buttons().find(x=>x.textContent==='Add Tuple item').click();const numbers=[...root.querySelectorAll('input[type=number]')];numbers[1].value='3';numbers[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:['Ada',2,3]});
+  assert.throws(()=>createRecordJsonSchemaValidator(jsonSchema),/Invalid record JSON Schema/);
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
