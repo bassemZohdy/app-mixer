@@ -184,7 +184,9 @@ export type {AgentExpiredLeaseDiscoveryOptions} from './agent-expired-lease-disc
 export {registerAgentLeaseRecovery} from './agent-run-lease-recovery-capability.js';
 export type {AgentLeaseRecoveryCapabilityOptions} from './agent-run-lease-recovery-capability.js';
 export {AgentRunLeaseRecoveryWorker} from './agent-run-lease-recovery.js';
-export type {AgentRunLeaseRecoveryWorkerOptions} from './agent-run-lease-recovery.js';
+export type {AgentRunLeaseRecoveryWorkerOptions,AgentLeaseRecoveryObservation} from './agent-run-lease-recovery.js';
+export {AgentLeaseRecoveryMetrics} from './agent-lease-recovery-metrics.js';
+export type {AgentLeaseRecoveryMetricsOptions} from './agent-lease-recovery-metrics.js';
 export type {ExpiredAgentLease,AgentRunLeaseRecoveryEvidence} from './durable-runs.js';
 export {SqliteAgentLeaseRecoveryHistory} from './agent-run-lease-recovery-history.js';
 export {registerAgentLeaseRecoveryHistory} from './agent-run-lease-recovery-history-capability.js';

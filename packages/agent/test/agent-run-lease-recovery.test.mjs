@@ -4,10 +4,25 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
-import {SqliteAgentRuns,AgentRunLeaseRecoveryWorker,SqliteAgentLeaseRecoveryHistory} from '../dist/index.js';
+import {SqliteAgentRuns,AgentRunLeaseRecoveryWorker,SqliteAgentLeaseRecoveryHistory,AgentLeaseRecoveryMetrics} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'},config={definitionVersion:1,maxAttempts:2,deadline:1000};
 function claim(runs,id,target=scope,leaseMs=50){const run=runs.create(target,id,config,0);return runs.claim(target,id,run.revision,'worker',leaseMs,10,10);}
 const worker=(runs,overrides={})=>new AgentRunLeaseRecoveryWorker({runs,scope,maxPerPass:2,pollMs:100,clock:()=>100,authorize:()=>true,onError:()=>{},...overrides});
+
+test('lease recovery metrics count passes without exposing run identities and recheck access',async()=>{
+ const runs=new SqliteAgentRuns(':memory:'),actor={tenantId:'tenant',principalId:'auditor'};let checks=0,allowed=true;try{
+  claim(runs,'recovered-secret');claim(runs,'denied-secret');claim(runs,'error-secret');const metrics=new AgentLeaseRecoveryMetrics({authorize:()=>{checks++;return allowed;}}),w=worker(runs,{maxPerPass:3,observe:metrics.observe,authorize:lease=>{if(lease.runId==='denied-secret')return false;if(lease.runId==='error-secret')throw Error('unavailable');return true;}});
+  assert.equal(await w.runOnce(),1);const output=await metrics.render(actor);assert.match(output,/app_mixer_agent_lease_recovery_passes_total\{outcome="completed"\} 1/);assert.match(output,/app_mixer_agent_lease_recovery_recovered_total 1/);assert.match(output,/app_mixer_agent_lease_recovery_skipped_total\{reason="denied"\} 1/);assert.match(output,/app_mixer_agent_lease_recovery_skipped_total\{reason="error"\} 1/);assert.doesNotMatch(output,/secret|tenant|auditor/);assert.equal(checks,2);allowed=false;await assert.rejects(metrics.render(actor),/access denied/);
+  const revoked=new AgentLeaseRecoveryMetrics({authorize:()=>++checks%2===0});checks=1;await assert.rejects(revoked.render(actor),/access denied/);await assert.rejects(metrics.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);assert.throws(()=>metrics.observe({outcome:'completed',recovered:101,denied:0,errors:0,durationMs:1}),/Invalid/);
+ }finally{runs.close();}
+});
+
+test('lease recovery observes stopped and failed passes without allowing observer failures to affect work',async()=>{
+ const runs=new SqliteAgentRuns(':memory:'),observations=[];let release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{
+  claim(runs,'a');const stopped=worker(runs,{authorizationTimeoutMs:1000,maxPendingAuthorizations:1,authorize:async()=>{entered();await gate;return true;},observe:value=>observations.push(value)}),pending=stopped.runOnce();await ready;await stopped.stop();assert.equal(await pending,0);assert.equal(observations[0].outcome,'stopped');assert.equal(runs.get(scope,'a').status,'running');release();await new Promise(resolve=>setImmediate(resolve));
+  const failing=worker(runs,{clock:()=>-1,observe:value=>observations.push(value)});await assert.rejects(failing.runOnce());assert.equal(observations[1].outcome,'failed');const throwing=worker(runs,{observe:()=>{throw Error('observer unavailable');}});assert.equal(await throwing.runOnce(),1);assert.equal(runs.get(scope,'a').status,'uncertain');
+ }finally{release();runs.close();}
+});
 
 test('expired lease discovery is bounded, scoped and excludes lease secrets',()=>{
  const runs=new SqliteAgentRuns(':memory:');try{
