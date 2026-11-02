@@ -25,7 +25,7 @@ test('retention rechecks changed claims and permission before retiring',async()=
  for(const mode of ['stale','revoked']){const s=setup(),errors=[];let calls=0,allowed=true;try{const item=done(s,'one',500),worker=new OfflineRetentionWorker(options(s,{onError:error=>errors.push(error),authorize:()=>{if(++calls===2){if(mode==='stale')s.db.prepare('UPDATE offline_terminal_times SET completed_at=900 WHERE id=?').run(item.id);else allowed=false;}return allowed;}}));assert.equal(await worker.runOnce(),0);assert.equal(s.queue.get(scope,'owner',item.id).status,'discarded');assert.equal(s.queue.getArchived(scope,'owner',item.id),undefined);assert.equal(errors.length,mode==='stale'?1:0);}finally{close(s);}}
 });
 
-test('retention worker validates bounds and clock',async()=>{const s=setup();try{for(const bad of [{minAgeMs:-1},{maxPerPass:0},{pollMs:1},{authorize:null},{now:3}])assert.throws(()=>new OfflineRetentionWorker(options(s,bad)),/worker/);const worker=new OfflineRetentionWorker(options(s,{now:()=>NaN}));await assert.rejects(worker.runOnce(),/time/);}finally{close(s);}});
+test('retention worker validates bounds and clock',async()=>{const s=setup();try{for(const bad of [{minAgeMs:-1},{maxPerPass:0},{pollMs:1},{authorize:null},{now:3},{policyTimeoutMs:100},{policyTimeoutMs:99,maxPendingPolicies:1},{policyTimeoutMs:100,maxPendingPolicies:0}])assert.throws(()=>new OfflineRetentionWorker(options(s,bad)),/worker/);const worker=new OfflineRetentionWorker(options(s,{now:()=>NaN}));await assert.rejects(worker.runOnce(),/time/);}finally{close(s);}});
 
 
 test('retention fences reentrant passes and stopping before a pass starts',async()=>{
@@ -35,4 +35,13 @@ test('retention fences reentrant passes and stopping before a pass starts',async
 
 test('started retention worker polls bounded pages until stopped',async()=>{
  const s=setup();let worker;try{const a=done(s,'a',500),b=done(s,'b',500);worker=new OfflineRetentionWorker(options(s));worker.start();const deadline=Date.now()+3000;while(!s.queue.getArchived(scope,'owner',a.id)||!s.queue.getArchived(scope,'owner',b.id)){if(Date.now()>deadline)throw Error('retention polling timed out');await new Promise(resolve=>setTimeout(resolve,20));}await worker.stop();assert.equal(s.queue.list(scope,'owner').length,0);}finally{await worker?.stop();close(s);}
+});
+
+
+test('policy deadlines fence late results and bound outstanding checks',async()=>{
+ const s=setup(),errors=[];let started,release,seen,calls=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const item=done(s,'one',500),worker=new OfflineRetentionWorker(options(s,{policyTimeoutMs:100,maxPendingPolicies:1,onError:error=>errors.push(error),authorize:async(_actor,_scope,_operation,signal)=>{calls++;if(calls===1){seen=signal;started();await gate;}return true;}}));const pending=worker.runOnce();await ready;assert.equal(await pending,0);assert.equal(seen.aborted,true);assert.equal(s.queue.get(scope,'owner',item.id).status,'discarded');assert.equal(await worker.runOnce(),0);assert.equal(calls,1);assert.equal(errors.length,2);release();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(s.queue.getArchived(scope,'owner',item.id),undefined);assert.equal(await worker.runOnce(),1);assert.equal(calls,3);assert.equal(s.queue.getArchived(scope,'owner',item.id).reference,proof.reference);}finally{release?.();close(s);}
+});
+
+test('configured policy deadlines bound stop when a callback ignores cancellation',async()=>{
+ const s=setup();let started,release,signal;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const item=done(s,'one',500),worker=new OfflineRetentionWorker(options(s,{policyTimeoutMs:100,maxPendingPolicies:1,authorize:async(_actor,_scope,_operation,passed)=>{signal=passed;started();await gate;return true;}})),pending=worker.runOnce();await ready;await worker.stop();assert.equal(signal.aborted,true);assert.equal(await pending,0);assert.equal(s.queue.get(scope,'owner',item.id).status,'discarded');release();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(s.queue.getArchived(scope,'owner',item.id),undefined);}finally{release?.();close(s);}
 });
