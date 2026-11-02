@@ -1,0 +1,22 @@
+import type {ConfiguredAgentOperationObservation} from './configured-runtime.js';
+import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+const kinds=['model','capability'] as const,outcomes=['succeeded','failed'] as const,bounds=[0.1,0.25,0.5,1,2.5,5,10,30] as const;
+type Kind=typeof kinds[number];type Outcome=typeof outcomes[number];
+type Entry={counts:Record<Outcome,number>;count:number;sumSeconds:number;buckets:number[]};
+export type ConfiguredAgentOperationMetricsOptions={authorize:(actor:AgentRunMetricsActor)=>boolean|Promise<boolean>};
+export type ConfiguredAgentOperationMetricsSnapshot={kind:Kind;outcome:Outcome;count:number}[];
+const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const empty=():Entry=>({counts:{succeeded:0,failed:0},count:0,sumSeconds:0,buckets:bounds.map(()=>0)});
+/** Process-wide, fixed-label operation counts and latency distributions. */
+export class ConfiguredAgentOperationMetrics {
+ private readonly authorize:ConfiguredAgentOperationMetricsOptions['authorize'];private readonly data:Record<Kind,Entry>={model:empty(),capability:empty()};
+ constructor(options:ConfiguredAgentOperationMetricsOptions){if(!options||typeof options.authorize!=='function')throw Error('Invalid operation metrics configuration');this.authorize=options.authorize;}
+ /** Supply this method as the configured runtime's observeOperation callback. */
+ readonly observe=(observation:ConfiguredAgentOperationObservation):void=>{if(!observation||typeof observation!=='object')throw Error('Invalid operation observation');const {kind,outcome,durationMs}=observation;if(!kinds.includes(kind)||!outcomes.includes(outcome)||typeof durationMs!=='number'||!Number.isFinite(durationMs)||durationMs<0)throw Error('Invalid operation observation');const entry=this.data[kind],seconds=durationMs/1000,next=entry.sumSeconds+seconds;if(!Number.isFinite(next)||entry.count>=Number.MAX_SAFE_INTEGER||entry.counts[outcome]>=Number.MAX_SAFE_INTEGER)throw Error('Operation metrics exhausted');entry.count++;entry.counts[outcome]++;entry.sumSeconds=next;bounds.forEach((bound,index)=>{if(seconds<=bound)entry.buckets[index]++;});};
+ private actor(actor:AgentRunMetricsActor):AgentRunMetricsActor{if(!actor||!valid(actor.tenantId)||!valid(actor.principalId))throw Error('Invalid agent metrics actor');return {tenantId:actor.tenantId,principalId:actor.principalId};}
+ private async permit(actor:AgentRunMetricsActor):Promise<void>{try{if(await this.authorize({...actor})===true)return;}catch{}throw Error('Agent metrics access denied');}
+ private copy():Record<Kind,Entry>{return {model:{...this.data.model,counts:{...this.data.model.counts},buckets:[...this.data.model.buckets]},capability:{...this.data.capability,counts:{...this.data.capability.counts},buckets:[...this.data.capability.buckets]}};}
+ /** Authorization must cover every operation observed by this instance. */
+ async snapshot(actor:AgentRunMetricsActor):Promise<ConfiguredAgentOperationMetricsSnapshot>{const who=this.actor(actor);await this.permit(who);const data=this.copy(),result=kinds.flatMap(kind=>outcomes.map(outcome=>({kind,outcome,count:data[kind].counts[outcome]})));await this.permit(who);return result;}
+ async render(actor:AgentRunMetricsActor):Promise<string>{const who=this.actor(actor);await this.permit(who);const data=this.copy(),lines=['# HELP app_mixer_agent_operations_total Completed configured agent operations by fixed outcome.','# TYPE app_mixer_agent_operations_total counter',...kinds.flatMap(kind=>outcomes.map(outcome=>`app_mixer_agent_operations_total{kind="${kind}",outcome="${outcome}"} ${data[kind].counts[outcome]}`)),'# HELP app_mixer_agent_operation_duration_seconds Configured agent operation duration in seconds.','# TYPE app_mixer_agent_operation_duration_seconds histogram',...kinds.flatMap(kind=>[...bounds.map((bound,index)=>`app_mixer_agent_operation_duration_seconds_bucket{kind="${kind}",le="${bound}"} ${data[kind].buckets[index]}`),`app_mixer_agent_operation_duration_seconds_bucket{kind="${kind}",le="+Inf"} ${data[kind].count}`,`app_mixer_agent_operation_duration_seconds_sum{kind="${kind}"} ${data[kind].sumSeconds}`,`app_mixer_agent_operation_duration_seconds_count{kind="${kind}"} ${data[kind].count}`]),''];await this.permit(who);return lines.join('\n');}
+}

@@ -95,7 +95,7 @@ export type {PostgresAgentRunSlotsOptions,AgentRunSlotLimits} from './postgres-r
 export type {PostgresAgentDefinitionsOptions,AgentDefinitionActor,AgentDefinitionAccess,PostgresAgentDefinitionQuery,AgentDefinitionAudit,AgentDefinitionTenantLimits} from './postgres-agent-definitions.js';
 export type {PersistentAgentManifest,AgentDefinitionVersion} from './persistent-definitions.js';
 export {createConfiguredAgentRun} from './configured-runtime.js';
-export type {ConfiguredAgentIdentity,ConfiguredAgentBinding,ConfiguredAgentOptions,AgentDelegation,AgentDelegationOptions} from './configured-runtime.js';
+export type {ConfiguredAgentIdentity,ConfiguredAgentBinding,ConfiguredAgentOptions,ConfiguredAgentOperationObservation,AgentDelegation,AgentDelegationOptions} from './configured-runtime.js';
 export {SqliteAgentRuns} from './durable-runs.js';
 export type {DurableAgentRun,AgentRunScope,AgentRunStatus} from './durable-runs.js';
 export {DurableAgentWorker} from './durable-worker.js';
@@ -256,3 +256,6 @@ export {createOpenAICapabilityPricedModel} from './openai-capability-priced-mode
 export type {OpenAICapabilityPricedModelOptions,OpenAICapabilityCountingRequest} from './openai-capability-priced-model.js';
 
 export {PostgresAgentSharedCostMetrics} from './postgres-shared-cost-metrics.js';
+
+export {ConfiguredAgentOperationMetrics} from './configured-agent-operation-metrics.js';
+export type {ConfiguredAgentOperationMetricsOptions,ConfiguredAgentOperationMetricsSnapshot} from './configured-agent-operation-metrics.js';
