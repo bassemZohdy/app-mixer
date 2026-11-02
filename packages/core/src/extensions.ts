@@ -30,6 +30,8 @@ export type ExtensionManifest = {
 export type ExtensionHost = {
   runtimeVersion: string;
   renderer: string;
+  /** Require every selected extension approval to pin its package digest. */
+  requireIntegrityPins?: boolean;
   /** An approval may pin `integrity`; the manifest must then declare exactly that digest. */
   approved: { id: string; version: string; scope: ExtensionManifest['scope']; permissions: string[]; integrity?: string }[];
 };
@@ -187,7 +189,7 @@ export function verifySignedExtensionManifest(input:unknown,policy:ExtensionSign
 
 /** Check metadata against explicit host approval and required registrations. */
 export function checkExtensionCompatibility(manifests: unknown, host: unknown, requirements: unknown): { compatible: boolean; errors: string[] } {
-  if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved']) || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
+  if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved', ...optional(host,['requireIntegrityPins'])]) || (Object.hasOwn(host,'requireIntegrityPins') && typeof host.requireIntegrityPins !== 'boolean') || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
   const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string}>();
   for (const a of host.approved) {
     if (!fields(a, ['id','version','scope','permissions', ...optional(a,['integrity'])]) || (Object.hasOwn(a,'integrity') && (typeof a.integrity !== 'string' || !integrityPattern.test(a.integrity))) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
@@ -200,7 +202,7 @@ export function checkExtensionCompatibility(manifests: unknown, host: unknown, r
     if (ids.has(m.id)) { errors.push(`Duplicate extension: ${m.id}`); continue; }
     ids.add(m.id);
     const approval=approvals.get(m.id);
-    if (!approval || approval.version !== m.version || approval.scope !== m.scope || m.permissions.some(p => !approval.permissions.includes(p)) || (approval.integrity !== undefined && approval.integrity !== m.integrity)) errors.push(`Extension not approved: ${m.id}`);
+    if (!approval || approval.version !== m.version || approval.scope !== m.scope || m.permissions.some(p => !approval.permissions.includes(p)) || (host.requireIntegrityPins === true && approval.integrity === undefined) || (approval.integrity !== undefined && approval.integrity !== m.integrity)) errors.push(`Extension not approved: ${m.id}`);
     if (!m.runtimeVersions.includes(host.runtimeVersion) || !m.renderers.includes(host.renderer)) errors.push(`Incompatible extension: ${m.id}`);
     for (const kind of ['components','tools','providers'] as const) for (const name of m[kind] as string[]) {
       if (registrations[kind].has(name)) errors.push(`Duplicate ${kind} registration: ${name}`);

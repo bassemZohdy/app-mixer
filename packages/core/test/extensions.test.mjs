@@ -19,6 +19,21 @@ test('rejects malformed manifests, approvals, and ambiguous versions',()=>{
  const h=host();h.approved.push(h.approved[0]);assert.throws(()=>check([manifest()],h,required()),/Invalid extension approval/);
 });
 
+test('optional host policy requires approved package integrity pins throughout publication',async()=>{
+ const {ExtensionRegistry,computeExtensionIntegrity,ApplicationStore}=await import('../dist/index.js');
+ const bytes=Buffer.from('approved package'),digest=computeExtensionIntegrity(bytes),m={...manifest(),integrity:digest},strict={...host(),requireIntegrityPins:true},fn=()=>{},bindings={components:{chart:fn},tools:{lookup:fn},providers:{}};
+ assert.equal(check([manifest()],strict,required()).compatible,false);
+ assert.equal(check([m],strict,required()).compatible,false);
+ const registry=new ExtensionRegistry(strict);assert.throws(()=>registry.register(m,bindings,{}, {packageBytes:bytes}),/compatibility/);assert.deepEqual(registry.getManifests(),[]);
+ strict.approved[0].integrity=digest;
+ const pinned=new ExtensionRegistry(strict);strict.approved[0].integrity=computeExtensionIntegrity(Buffer.from('different'));
+ assert.throws(()=>pinned.register(m,bindings,{}, {packageBytes:Buffer.from('different')}),/integrity/);pinned.register(m,bindings,{}, {packageBytes:bytes});
+ const guard=pinned.createPublicationGuard(()=>({components:[],tools:[],providers:[]})),ref={id:m.id,version:m.version,scope:m.scope},store=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,extensions:[ref],pages:[]},guard);
+ assert.equal(store.publish(0).version,1);
+ for(const invalid of [null,1,'true',undefined])assert.throws(()=>check([], {...host(),requireIntegrityPins:invalid},{components:[],tools:[],providers:[]}),/Invalid/);
+ assert.equal(check([manifest()],host(),required()).compatible,true);
+});
+
 test('publication guards enforce compatibility atomically in memory and SQLite', async () => {
  const { ApplicationStore, SqliteApplicationStore, createExtensionPublicationGuard } = await import('../dist/index.js');
  const initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',title:'Home',route:'/',components:[]}]};
@@ -422,6 +437,7 @@ test('signed extension policy binds publisher, manifest, package and host approv
  const tampered=[{...signed,keyId:'unknown'},{...signed,keyId:'other'},{...signed,signature:'x'.repeat(86)},{...signed,signature:signed.signature+'='},{...signed,formatVersion:2},{...signed,extra:true},{...signed,manifest:{...m,version:'2.0.0'}},{...signed,manifest:{...m,permissions:[]}},{...signed,manifest:{...m,integrity:computeExtensionIntegrity(Buffer.from('other'))}},{...signed,manifest:{...m,configSchema:{theme:{type:'string',required:false,default:'dark'}}}}];
  for(const value of tampered){assert.throws(()=>registry.registerSigned(value,binding,{},bytes),/Invalid signed extension manifest/);assert.equal(registry.get('components','chart'),undefined);}assert.throws(()=>registry.registerSigned(signed,binding,{},Buffer.from('other')),/Invalid signed extension manifest/);assert.throws(()=>verifySignedExtensionManifest(signed,{trustedKeys:{publisher:other.publicKey}},bytes),/Invalid signed extension manifest/);
  trusted.publisher=other.publicKey;registry.registerSigned(signed,binding,{},bytes);signed.manifest.components.length=0;assert.equal(registry.get('components','chart')(),1);assert.deepEqual(registry.getConfiguration('example.chart'),{theme:'light'});assert.equal(registry.getManifests()[0].components[0],'chart');
+ const unpinnedHost={...host(),requireIntegrityPins:true},strictSigned=new ExtensionRegistry(unpinnedHost,{trustedKeys:{publisher:publisher.publicKey}}),strictManifest=signExtensionManifest(m,'publisher',publisher.privateKey);assert.throws(()=>strictSigned.registerSigned(strictManifest,binding,{},bytes),/compatibility failed/);unpinnedHost.approved[0].integrity=m.integrity;const pinnedSigned=new ExtensionRegistry(unpinnedHost,{trustedKeys:{publisher:publisher.publicKey}});pinnedSigned.registerSigned(strictManifest,binding,{},bytes);assert.equal(pinnedSigned.get('components','chart')(),1);
  const missingApproval=new ExtensionRegistry({...host(),approved:[]},{trustedKeys:{publisher:publisher.publicKey}}),fresh=signExtensionManifest(m,'publisher',publisher.privateKey);assert.throws(()=>missingApproval.registerSigned(fresh,binding,{},bytes),/compatibility failed/);assert.equal(missingApproval.get('components','chart'),undefined);
 });
 
