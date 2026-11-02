@@ -248,3 +248,6 @@ export type {SharedCostPendingCapabilityOptions} from './postgres-shared-cost-ca
 
 export {createPricedCostLimitedToolModel} from './priced-cost-model.js';
 export type {PricedCostLimitedToolModelOptions} from './priced-cost-model.js';
+
+export {createOpenAIPricedCostModel} from './openai-priced-cost-model.js';
+export type {OpenAIPricedCostModelOptions} from './openai-priced-cost-model.js';
