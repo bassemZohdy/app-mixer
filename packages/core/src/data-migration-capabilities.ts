@@ -7,6 +7,7 @@ type Plan={kind:'forward';fromVersion:number;toVersion:number;transform:DataMigr
 type Base={provider:SqliteDataProvider;scope:DataScope;collection:string;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
 type ApplyOptions=Base&{plan:Plan;authorizeApply:(actor:Actor,input:{digest:string;reference:string;outputDigest?:string})=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeApplyWithSignal?:(actor:Actor,input:{digest:string;reference:string;outputDigest?:string},signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number;requireOutputDigest?:boolean;clock?:()=>number};
 type RehearsalOptions=Base&{plan:DataMigrationRehearsal|Plan;authorizeRehearsal:(actor:Actor)=>boolean|Promise<boolean>};
+type StatusOptions=Base&{authorizeStatus:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number};
 type Page={after?:number;limit?:number};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const query=(input:unknown):Record<string,unknown>|undefined=>object(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&object(input.query)?input.query:undefined;
@@ -18,6 +19,12 @@ function snapshot(registry:CapabilityRegistry,options:Base,method:'GET'|'POST'){
 /** A scoped preview never exposes record values or migration code. */
 export function registerDataMigrationPreview(registry:CapabilityRegistry,options:Base):void{
  const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>c.authorize({...actor}),execute:()=>c.provider.previewMigration(c.scope,c.collection)});
+}
+/** Inspect one fixed collection's current generation without reading record values. */
+export function registerDataMigrationStatus(registry:CapabilityRegistry,options:StatusOptions):void{
+ const c=snapshot(registry,options,'GET');if(typeof options.authorizeStatus!=='function')throw Error('Invalid migration capability');const authorizeStatus=options.authorizeStatus,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid migration capability','Migration status unavailable');
+ const permit=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw Error('Migration status unavailable');};check();if(actor.tenantId!==c.scope.tenantId||await c.authorize({...actor})!==true)return false;check();const allowed=await authorizeStatus({...actor},signal)===true;check();return allowed;};
+ registry.register(c.candidate,{authorize:actor=>bounded(signal=>permit(actor,signal)),validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>bounded(signal=>permit(actor,signal)),execute:(_input,actor)=>bounded(async signal=>{if(!await permit(actor,signal))throw Error('Capability forbidden');const before=c.provider.getSchemaVersion(c.scope,c.collection);if(!await permit(actor,signal))throw Error('Capability forbidden');const after=c.provider.getSchemaVersion(c.scope,c.collection);if(before!==after)throw Error('Migration status unavailable');if(signal.aborted)throw Error('Migration status unavailable');return {schemaVersion:after};})});
 }
 /** Rehearse one host-fixed plan without returning records or transformed values. */
 export function registerDataMigrationRehearsal(registry:CapabilityRegistry,options:RehearsalOptions):void{
@@ -36,4 +43,4 @@ export function registerDataMigrationApply(registry:CapabilityRegistry,options:A
 export function registerDataMigrationAudit(registry:CapabilityRegistry,options:Base):void{
  const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>!!page(input),authorizeInput:actor=>c.authorize({...actor}),execute:input=>{const safe=page(input);if(!safe)throw Error('Invalid migration audit');return c.provider.migrationAudit(c.scope,c.collection,safe);}});
 }
-export type {Base as DataMigrationReadCapabilityOptions,ApplyOptions as DataMigrationApplyCapabilityOptions,RehearsalOptions as DataMigrationRehearsalCapabilityOptions,Plan as DataMigrationPlan};
+export type {Base as DataMigrationReadCapabilityOptions,StatusOptions as DataMigrationStatusCapabilityOptions,ApplyOptions as DataMigrationApplyCapabilityOptions,RehearsalOptions as DataMigrationRehearsalCapabilityOptions,Plan as DataMigrationPlan};
