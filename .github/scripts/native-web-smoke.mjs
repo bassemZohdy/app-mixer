@@ -110,5 +110,22 @@ try{
  const rowField=document.querySelector('[aria-label="Row field"]'),rowButton=document.querySelector('[role="button"]');assert.ok(rowField);assert.ok(rowButton);assert.equal(getComputedStyle(rowField.parentElement).flexShrink,'1');assert.equal(getComputedStyle(rowField.parentElement).flexGrow,'1');assert.equal(getComputedStyle(rowButton).flexShrink,'1');await React.act(()=>rowButton.click());assert.equal(actions.at(-1).action.name,'rowAction');
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Row',children:['nestedColumn','nestedCard']},{id:'nestedColumn',component:'Column',align:'center',children:['columnText']},{id:'columnText',component:'Text',text:'Nested column text'},{id:'nestedCard',component:'Card',child:'cardText'},{id:'cardText',component:'Text',text:'Nested card text'}]}}));
  for(const label of ['Nested column text','Nested card text']){const text=[...document.querySelectorAll('*')].find(node=>node.children.length===0&&node.textContent===label);assert.ok(text);assert.equal(getComputedStyle(text.parentElement).flexShrink,'1');assert.equal(getComputedStyle(text.parentElement).minWidth,'0px');}
+ const originalError=console.error,reactWarnings=[];console.error=(...args)=>reactWarnings.push(args);
+ try{
+  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+   {id:'root',component:'Column',children:['repeated','other','repeated']},
+   {id:'repeated',component:'TextField',label:'Repeated',value:{path:'/repeated'}},
+   {id:'other',component:'Text',text:'Other'}
+  ]}}));
+  const fields=[...document.querySelectorAll('[aria-label="Repeated"]')];assert.equal(fields.length,2);
+  await React.act(()=>{
+   Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(fields[1],'Shared');
+   fields[1].dispatchEvent(new window.Event('input',{bubbles:true}));
+  });
+  assert.deepEqual(fields.map(field=>field.value),['Shared','Shared']);
+  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['other','repeated','repeated']}]}}));
+  assert.deepEqual([...document.querySelectorAll('[aria-label="Repeated"]')],fields);
+  assert.deepEqual(reactWarnings,[]);assert.deepEqual(errors,[]);
+ }finally{console.error=originalError;}
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}

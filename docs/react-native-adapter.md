@@ -24,3 +24,5 @@ A host may register static leaf components with `NativeComponentRegistry.registe
 For application definitions, `registerDeclaredNativeExtensionComponent` from `@app-mixer/core` connects a host-approved `ExtensionRegistry` entry to a native registry only when the selected definition references its exact owner and declares that component on its page. The host must select a validated published definition, provide the component validator, and recreate the registry when the definition or approvals change. This bridge does not load code from definitions.
 
 Array updates reject noncanonical or out-of-range indices, including intermediate paths, and leave the model unchanged on rejection.
+
+Repeated references to the same component within a layout receive distinct, stable sibling identities. React Native for Web checks that repeated bound fields stay editable and retain their instances when an unrelated sibling is reordered. Removing an earlier occurrence can change which remaining occurrence retains its local editing state.

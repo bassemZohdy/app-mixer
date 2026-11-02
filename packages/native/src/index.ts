@@ -190,22 +190,23 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
       return ()=>{active=false;if(storeRef.current===store)storeRef.current=null;try{if(typeof stop==='function')stop();}catch(error){errors.current(error);}};
     },[subscribe]);
     const store=storeRef.current;
-    const render=(node:NativeNode,surface:NativeSurface,inButton=false,inRow=false):any=>{
+    const render=(node:NativeNode,surface:NativeSurface,inButton=false,inRow=false,key=node.id):any=>{
       const extension=installed.get(node.kind);
-      if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:inRow?{...textStyles[node.variant??'body'],flexShrink:1}:textStyles[node.variant??'body']},node.text);
-      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',...(inRow?{style:{flexShrink:1,minWidth:0}}:{}),disabled:!onAction,onPress:()=>{
+      const renderChildren=(insideButton:boolean,insideRow:boolean)=>{const occurrences=new Map<string,number>();return node.children.map(child=>{const occurrence=occurrences.get(child.id)??0;occurrences.set(child.id,occurrence+1);return render(child,surface,insideButton,insideRow,JSON.stringify([child.id,occurrence]));});};
+      if(extension)return React.createElement(extension.render,{...node.extensionProps,key});
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:inRow?{...textStyles[node.variant??'body'],flexShrink:1}:textStyles[node.variant??'body']},node.text);
+      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key,accessibilityRole:'button',...(inRow?{style:{flexShrink:1,minWidth:0}}:{}),disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
-      }},...node.children.map(child=>render(child,surface,true)));
-      if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id,...(inRow?{style:{flexShrink:1,flexGrow:1,minWidth:0}}:{})},
+      }},...renderChildren(true,false));
+      if(node.kind==='TextField')return React.createElement(primitives.View,{key,...(inRow?{style:{flexShrink:1,flexGrow:1,minWidth:0}}:{})},
         React.createElement(primitives.Text,null,node.label),
         React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{
           if(!store||storeRef.current!==store)return;
           try{store.writeField(surface.id,node.id,surface.revision,value);setSurfaces(store.snapshot());}catch(error){errors.current(error);}
         }}));
       const style={...(inRow?{flexShrink:1,minWidth:0}:{}),...(node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:{})};
-      return React.createElement(primitives.View,{key:node.id,style},...node.children.map(child=>render(child,surface,inButton,node.kind==='Row')));
+      return React.createElement(primitives.View,{key,style},...renderChildren(inButton,node.kind==='Row'));
     };
     return React.createElement(primitives.View,null,...surfaces.map(surface=>React.createElement(primitives.View,{key:surface.id},...(surface.root?[render(surface.root,surface)]:[]))));
   };
