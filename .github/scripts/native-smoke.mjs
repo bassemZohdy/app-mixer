@@ -9,10 +9,10 @@ globalThis.window=dom.window;globalThis.document=dom.window.document;
 Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const React=require('react');const {createRoot}=require('react-dom/client');
 const View=({children,style})=>React.createElement('div',{style},children);
-const Text=({children,accessibilityRole,style})=>React.createElement('span',{'data-role':accessibilityRole,style},children);
+const Text=({children,accessibilityRole,style,'aria-level':level})=>React.createElement('span',{'data-role':accessibilityRole,'data-level':level,style},children);
 let change;const TextInput=props=>{change=props.onChangeText;return React.createElement('input',{value:props.value,readOnly:true});};
 const Pressable=({children,onPress,disabled})=>React.createElement('button',{onClick:onPress,disabled},children);
-const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable});const root=createRoot(document.getElementById('app'));
+const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform:{OS:'android'}});const root=createRoot(document.getElementById('app'));
 let receive,unsubscribed=0;const errors=[],actions=[];
 const subscribe=callback=>{receive=callback;return ()=>{unsubscribed++;};};
 try{
@@ -46,6 +46,7 @@ try{
  const variants=[...document.querySelectorAll('span')];
  assert.deepEqual(variants.map(node=>node.style.fontSize),['32px','24px','18.72px','16px','13.28px','13.33px','16px','16px']);
  assert.deepEqual(variants.map(node=>node.dataset.role??''),['header','header','header','header','header','','','']);
+ assert.deepEqual(variants.map(node=>node.dataset.level??''),['','','','','','','','']);
  await React.act(()=>root.unmount());assert.equal(unsubscribed,3);newReceive({version:'invalid'});assert.equal(errors.length,2);
  const root2=createRoot(document.getElementById('app'));let next;const failures=[];
  const broken=()=>()=>{throw Error('cleanup failed');},replacement=callback=>{next=callback;};

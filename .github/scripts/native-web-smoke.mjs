@@ -9,8 +9,8 @@ globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.
 globalThis.Node=dom.window.Node;globalThis.ShadowRoot=dom.window.ShadowRoot;globalThis.getComputedStyle=dom.window.getComputedStyle;
 Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const React=require('react');const {createRoot}=require('react-dom/client');
-const {View,Text,TextInput,Pressable}=require('react-native-web');
-const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable});const root=createRoot(document.getElementById('app'));
+const {View,Text,TextInput,Pressable,Platform}=require('react-native-web');
+const Component=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform});const root=createRoot(document.getElementById('app'));
 let receive;const errors=[],actions=[];const subscribe=callback=>{receive=callback;};
 try{
  await React.act(()=>root.render(React.createElement(Component,{subscribe,onError:error=>errors.push(error),onAction:event=>actions.push(event)})));
@@ -89,11 +89,12 @@ try{
  await React.act(()=>receive({version:'v0.9.1',deleteSurface:{surfaceId:'other'}}));
  assert.equal(actions.length,2);assert.deepEqual(errors,[]);
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
-  {id:'root',component:'Column',children:['heading','caption']},
-  {id:'heading',component:'Text',text:'Heading',variant:'h1'},
+  {id:'root',component:'Column',children:['heading','heading2','heading3','heading4','heading5','caption']},
+  ...['h1','h2','h3','h4','h5'].map((variant,i)=>({id:i===0?'heading':`heading${i+1}`,component:'Text',text:i===0?'Heading':`Heading ${i+1}`,variant})),
   {id:'caption',component:'Text',text:'Caption',variant:'caption'}
  ]}}));
- const heading=document.querySelector('[role="heading"]');assert.ok(heading);
+ const headings=[...document.querySelectorAll('[role="heading"]')];assert.deepEqual(headings.map(node=>node.tagName),['H1','H2','H3','H4','H5']);
+ const heading=headings[0];assert.ok(heading);
  assert.equal(heading.style.fontSize,'32px');assert.equal(heading.style.fontWeight,'bold');
  const caption=[...document.querySelectorAll('*')].find(element=>element.textContent==='Caption' && element.children.length===0);
  assert.ok(caption);assert.equal(caption.style.fontSize,'13.33px');

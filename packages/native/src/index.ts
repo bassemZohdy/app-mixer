@@ -161,7 +161,7 @@ export class NativeSurfaceStore {
 type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;useRef:<T>(value:T)=>{current:T};useState:<T>(value:T)=>[T,(value:T)=>void];useEffect:(effect:()=>void|(()=>void),deps:unknown[])=>void};
 export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
-export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any},registry?:NativeComponentRegistry):(props:NativeA2UIProps)=>any {
+export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any;Platform?:{OS:string}},registry?:NativeComponentRegistry):(props:NativeA2UIProps)=>any {
   const installed=registry?.snapshot()??new Map<string,NativeExtension>();
   const fixedRegistry=new NativeComponentRegistry();for(const [name,entry] of installed)fixedRegistry.register(name,entry.render,entry.validate);
   // Approximate the browser's default heading scale for the supported text variants.
@@ -189,7 +189,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const render=(node:NativeNode,surface:NativeSurface):any=>{
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{}),style:textStyles[node.variant??'body']},node.text);
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header',...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:textStyles[node.variant??'body']},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}

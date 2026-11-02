@@ -2,7 +2,7 @@ import React, {useCallback, useState} from 'react';
 import {SafeAreaView, Text, TextInput, View, Pressable, Platform} from 'react-native';
 import {APP_MIXER_CATALOG, createReactNativeA2UIComponent} from './app-mixer';
 
-const Renderer = createReactNativeA2UIComponent(React, {View, Text, TextInput, Pressable});
+const Renderer = createReactNativeA2UIComponent(React, {View, Text, TextInput, Pressable, Platform});
 let publish,expectingRejection=false;
 const subscribe = receive => {
   publish=receive;
