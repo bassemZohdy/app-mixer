@@ -294,3 +294,25 @@ test('array contains constraints validate before saving and agree with server sc
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const unsupported of [{contains:{type:'string'}},{contains:{enum:[]}},{contains:{const:{x:1}}},{contains:{const:'red'},minContains:2,maxContains:1},{minContains:1}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tags:{type:'array',items:{type:'string'},...unsupported}}}}),/Unsupported/);}
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
+
+test('JSON Schema scalar descriptions are safely associated with controls in runtime and preview',async()=>{
+ const s=await setup();let dom;try{
+  const jsonSchema={type:'object',properties:{name:{type:'string',description:'Use <strong>plain text</strong>.'},count:{type:'integer',description:'Count of items'},tags:{type:'array',items:{type:'string',description:'Tag help'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
+  dom=new JSDOM('<!doctype html>');for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   const editor=factory(options),root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const name=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('name (optional)')),control=name.querySelector('input[type=text]'),help=root.querySelector('#'+control.getAttribute('aria-describedby'));assert.equal(help.textContent,'Use <strong>plain text</strong>.');assert.equal(help.querySelector('strong'),null);
+   const count=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('count (optional)')).querySelector('input');assert.notEqual(count.getAttribute('aria-describedby'),control.getAttribute('aria-describedby'));assert.equal(root.querySelector('#'+count.getAttribute('aria-describedby')).textContent,'Count of items');
+   for(const description of [42,'x'.repeat(1025)])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{name:{type:'string',description}}}}),/Unsupported/);
+   root.remove();
+  }
+ }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('JSON Schema descriptions remain associated with repeated array controls',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
+  const jsonSchema={type:'object',properties:{tags:{type:'array',items:{type:'string',description:'Enter a tag'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};let saved;
+  globalThis.fetch=async(path,request)=>path.endsWith('items.get')?{ok:true,json:async()=>({result:{id:'one',revision:1,value:{tags:['first','second']}}})}:{ok:true,json:async()=>{saved=JSON.parse(request.body).value;return {result:{id:'one',revision:2,value:saved}};}};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));[...root.querySelectorAll('button')].find(x=>x.textContent==='Load').click();await wait(()=>root.querySelector('[role=status]').textContent==='Record loaded.');
+  const controls=[...root.querySelectorAll('input[aria-describedby]')];assert.equal(controls.length,2);assert.notEqual(controls[0].getAttribute('aria-describedby'),controls[1].getAttribute('aria-describedby'));for(const control of controls)assert.equal(dom.window.document.getElementById(control.getAttribute('aria-describedby')).textContent,'Enter a tag');
+  [...root.querySelectorAll('button')].find(x=>x.textContent==='Save').click();await wait(()=>saved!==undefined);assert.deepEqual(saved,{tags:['first','second']});assert.equal(createRecordJsonSchemaValidator(jsonSchema)(saved),true);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
