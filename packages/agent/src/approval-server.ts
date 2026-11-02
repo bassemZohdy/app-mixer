@@ -43,7 +43,7 @@ export function createAgentApprovalServer(options:Options):Server{
    if(req.method==='POST'){if(url.search){reply(res,400,{error:'Invalid request'});return}let value;try{value=await decision(req)}catch(error){reply(res,error instanceof Error&&error.message==='size'?413:error instanceof Error&&error.message==='content'?415:400,{error:'Invalid decision'});return}reply(res,200,await store.decide(actor,actionId!,value));return}
    if(actionId){if(url.search){reply(res,400,{error:'Invalid request'});return}reply(res,200,{events:await store.history(actor,actionId)});return}
    if([...url.searchParams.keys()].some(k=>k!=='after')||url.searchParams.getAll('after').length>1){reply(res,400,{error:'Invalid request'});return}const after=url.searchParams.get('after');if(after!==null&&!valid(after)){reply(res,400,{error:'Invalid request'});return}reply(res,200,await store.list(actor,after===null?{}:{after}));
-  }catch(error){const m=error instanceof Error?error.message:'';const status=m==='Approval access denied'?403:m==='Approval not found'?404:['Approval already decided','Approval expired','Run is terminal'].includes(m)?409:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Decision unavailable':'Review unavailable'})}
+  }catch(error){const m=error instanceof Error?error.message:'';const status=m==='Approval access denied'?403:m==='Approval not found'?404:['Approval already decided','Approval expired','Approval changed','Run is terminal'].includes(m)?409:m==='Approval authorization unavailable'?503:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Decision unavailable':'Review unavailable'})}
  });
 }
 export type {Options as AgentApprovalServerOptions};

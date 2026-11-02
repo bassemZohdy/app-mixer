@@ -118,6 +118,33 @@ test('approval operations reject changed bindings and do not expose orphan histo
  }
 });
 
+test('bounded approval authorization fences late decisions and retains capacity',async()=>{
+ const s=setup();let restricted,release,entered,signal,block=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ try{
+  await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);
+  const options={scope,runId:'run',clock:()=>s.now,timeoutMs:100,maxPending:1,authorize:async(_actor,action,_approval,current)=>{if(action==='decide'&&block){signal=current;entered();await gate;}return true;}};
+  restricted=new SqliteAgentApprovals(s.path,options);options.timeoutMs=30000;options.maxPending=100;
+  const pending=restricted.decide(human,'action','approved');await ready;await assert.rejects(pending,/authorization unavailable/);assert.equal(signal.aborted,true);
+  await assert.rejects(restricted.decide(human,'action','approved'),/authorization unavailable/);assert.equal((await s.approvals.get(human,'action')).status,'pending');
+  block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await s.approvals.get(human,'action')).status,'pending');
+  assert.equal((await restricted.decide(human,'action','approved')).status,'approved');assert.deepEqual((await s.approvals.history(human,'action')).map(event=>event.event),['requested','approved']);
+ }finally{release();restricted?.close();close(s);}
+});
+
+test('bounded approval listing fails closed on a stalled item policy',async()=>{
+ const s=setup();let restricted,release,entered,signal,block=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ try{
+  await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);
+  restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>s.now,timeoutMs:100,maxPending:1,authorize:async(_actor,action,_approval,current)=>{if(action==='read'&&block){signal=current;entered();await gate;}return true;}});
+  const pending=restricted.list(human);await ready;await assert.rejects(pending,/authorization unavailable/);assert.equal(signal.aborted,true);await assert.rejects(restricted.list(human),/authorization unavailable/);
+  block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await restricted.list(human)).items.map(item=>item.actionId),['action']);
+ }finally{release();restricted?.close();close(s);}
+});
+
+test('approval policy limits require a valid deadline and capacity together',()=>{
+ const s=setup();try{const base={scope,runId:'run',authorize:()=>true};for(const extra of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:30001,maxPending:1},{timeoutMs:100,maxPending:0},{timeoutMs:100,maxPending:101}])assert.throws(()=>new SqliteAgentApprovals(s.path,{...base,...extra}),/Invalid approval configuration/);}finally{close(s);}
+});
+
 test('approval listing returns current decision after final scope authorization',async()=>{
  const s=setup();let restricted,entered,release,checks=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);try{await s.approvals.request(service,s.run.leaseToken,'action','pay',{amount:10},90);restricted=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>10,authorize:async(_actor,action)=>{if(action==='list'&&++checks===2){entered();await gate;}return true;}});const pending=restricted.list(human);await ready;await s.approvals.decide(human,'action','approved');release();assert.equal((await pending).items[0].status,'approved');}finally{release();restricted?.close();close(s);}
 });

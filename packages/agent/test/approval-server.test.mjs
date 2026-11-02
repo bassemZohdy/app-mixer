@@ -23,6 +23,28 @@ test('local review authenticates, scopes and authorizes decisions',async()=>{
  }finally{await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
 });
 
+test('review server bounds stalled approval policy and never commits a late decision',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'review-bounded-')),path=join(dir,'db'),scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},runs=new SqliteAgentRuns(path);let release,entered,signal,block=true;
+ const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);
+ const approvals=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>10,timeoutMs:100,maxPending:1,authorize:async(actor,access,_approval,current)=>{if(actor.principalId==='reviewer'&&access==='decide'&&block){signal=current;entered();await gate;}return true;}});
+ await approvals.request(service,run.leaseToken,'action','pay',{amount:10},90);const server=createAgentApprovalServer({authenticate:()=>({tenantId:'tenant',principalId:'reviewer'}),resolve:()=>approvals});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const base=`http://127.0.0.1:${server.address().port}`,url=base+'/api/agents/agent/runs/run/approvals/action/decision',post=()=>fetch(url,{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({decision:'approved'})});
+  const pending=post();await ready;assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await post()).status,503);
+  block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await approvals.get(service,'action')).status,'pending');assert.equal((await post()).status,200);assert.deepEqual((await approvals.history(service,'action')).map(event=>event.event),['requested','approved']);
+ }finally{release();await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('review server reports a changed approval without deciding it',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'review-race-')),path=join(dir,'db'),scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},runs=new SqliteAgentRuns(path);let release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
+ let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);
+ const approvals=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>10,authorize:async(actor,access,approval)=>{if(actor.principalId==='reviewer'&&access==='decide'&&approval.operationId==='unknown'){entered();await gate;}return true;}}),server=createAgentApprovalServer({authenticate:()=>({tenantId:'tenant',principalId:'reviewer'}),resolve:()=>approvals});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const base=`http://127.0.0.1:${server.address().port}`,pending=fetch(base+'/api/agents/agent/runs/run/approvals/action/decision',{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({decision:'approved'})});await ready;
+  await approvals.request(service,run.leaseToken,'action','pay',{amount:10},90);release();assert.equal((await pending).status,409);assert.equal((await approvals.get(service,'action')).status,'pending');
+ }finally{release();await new Promise(resolve=>server.close(resolve));approvals.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('review page renders untrusted input as text and keeps the reviewed run bound to its decision',async()=>{
  const {JSDOM}=await import('jsdom');const server=createAgentApprovalServer({authenticate:()=>undefined,resolve:()=>undefined});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${server.address().port}`;let dom;const requests=[];
  try{const html=await (await fetch(base+'/review')).text();dom=new JSDOM(html,{url:base+'/review',runScripts:'dangerously',beforeParse(window){window.fetch=async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>options.method==='POST'?{}:{items:[{actionId:'action',operationId:'pay',input:{value:'<img src=x onerror=alert(1)>'},status:'pending',definitionVersion:1,expiresAt:1000,requestedBy:'service'}]}}}}});
