@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AIMessage} from '@langchain/core/messages';
 import {CapabilityRegistry} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentActionJournal,SqliteAgentDefinitions,createConfiguredAgentRun,AgentActionRecoveryWorker,createActionHttpsVerifier} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentActionJournal,SqliteAgentDefinitions,createConfiguredAgentRun,AgentActionRecoveryWorker,AgentActionRecoveryMetrics,createAgentMetricsServer,createActionHttpsVerifier} from '../dist/index.js';
 const scope={tenantId:'tenant',agentId:'agent'};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'app-mixer-actions-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path);let now=10,run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:10000},0);run=runs.claim(scope,'run',run.revision,'worker',100,now);const journal=new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>now});return {dir,path,runs,journal,get run(){return run;},set run(value){run=value;},get now(){return now;},set now(value){now=value;}};}
 function close(s){s.journal.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
@@ -174,4 +174,22 @@ test('bounded action recovery fences late callbacks and preserves uncertain acti
 
 test('action recovery callback bounds require a valid pair',()=>{
  const s=setup();try{const config={journal:s.journal,maxPerPass:1,pollMs:100,onError:()=>{},authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>({outcome:'unknown'})};for(const invalid of [{callbackTimeoutMs:100},{maxPendingCallbacks:1},{callbackTimeoutMs:99,maxPendingCallbacks:1},{callbackTimeoutMs:100,maxPendingCallbacks:0},{callbackTimeoutMs:30001,maxPendingCallbacks:1}])assert.throws(()=>new AgentActionRecoveryWorker({...config,...invalid}),/Invalid action recovery worker/);}finally{close(s);}
+});
+
+
+test('recovery pass metrics capture outcomes without identifiers and enforce scrape authorization',async()=>{
+ const s=setup();let entered,release,blocking=false,allowed=true,server;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),metrics=new AgentActionRecoveryMetrics({authorize:actor=>allowed&&actor.principalId==='operator'});
+ try{for(const id of ['a','b'])await assert.rejects(s.journal.invoke(id,'op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,observe:metrics.observe,authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>{if(blocking){entered();await gate;}return {outcome:'applied',result:'ok'};},onError:()=>{}});assert.equal(await worker.runOnce(),1);blocking=true;const pending=worker.runOnce();await ready;const stopping=worker.stop();release();await stopping;assert.equal(await pending,0);const original=s.journal.list.bind(s.journal);s.journal.list=()=>{throw Error('list failed');};await assert.rejects(worker.runOnce(),/list failed/);s.journal.list=original;
+  const reader={tenantId:'tenant',principalId:'operator'},text=await metrics.render(reader);assert.match(text,/passes_total\{outcome="completed"\} 1/);assert.match(text,/passes_total\{outcome="stopped"\} 1/);assert.match(text,/passes_total\{outcome="failed"\} 1/);assert.match(text,/reconciled_total 1/);assert.match(text,/pass_seconds_count 3/);assert.doesNotMatch(text,/tenant|operator|run|case/);await assert.rejects(metrics.render({...reader,principalId:'other'}),/access denied/);
+  server=createAgentMetricsServer({metrics,timeoutMs:1000,maxPending:2,authenticate:req=>req.headers.authorization==='Bearer valid'?reader:undefined});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const url=`http://127.0.0.1:${server.address().port}/metrics`;assert.equal((await fetch(url)).status,401);assert.equal((await fetch(url,{headers:{authorization:'Bearer valid'}})).status,200);allowed=false;assert.equal((await fetch(url,{headers:{authorization:'Bearer valid'}})).status,403);await worker.stop();
+ }finally{release();if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}close(s);}
+});
+
+test('recovery metrics reject malformed observations and recheck aggregate permission',async()=>{
+ let permitted=true,checks=0;const metrics=new AgentActionRecoveryMetrics({authorize:()=>permitted&&++checks===1});for(const invalid of [{outcome:'unknown',reconciled:0,durationMs:1},{outcome:'completed',reconciled:-1,durationMs:1},{outcome:'failed',reconciled:0,durationMs:NaN}])assert.throws(()=>metrics.observe(invalid),/Invalid action recovery observation/);metrics.observe({outcome:'completed',reconciled:2,durationMs:100});await assert.rejects(metrics.render({tenantId:'tenant',principalId:'operator'}),/access denied/);permitted=false;
+});
+
+
+test('recovery observations cannot block reconciliation',async()=>{
+ for(const observe of [()=>{throw Error('observer');},()=>Promise.reject(Error('observer'))]){const s=setup();try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,observe,authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>({outcome:'applied',result:'ok'}),onError:()=>{}});assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('one').status,'succeeded');await worker.stop();}finally{close(s);}}
 });

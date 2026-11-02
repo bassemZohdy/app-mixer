@@ -185,7 +185,7 @@ export type {AgentRunExpiryWorkerOptions} from './agent-run-expiry.js';
 export {AgentActionRecoveryWorker} from './action-recovery-worker.js';
 export {createActionHttpsVerifier} from './action-https-verifier.js';
 export type {ActionHttpsVerifierOptions,ActionHttpsLookupContext} from './action-https-verifier.js';
-export type {AgentActionRecoveryWorkerOptions} from './action-recovery-worker.js';
+export type {AgentActionRecoveryWorkerOptions,AgentActionRecoveryObservation} from './action-recovery-worker.js';
 
 export {registerSemanticMemoryWrite} from './semantic-memory-write-capability.js';
 export type {SemanticMemoryWriteOptions,SemanticMemoryWriteInput,SemanticMemoryWriteMetadata} from './semantic-memory-write-capability.js';
@@ -265,3 +265,6 @@ export type {TelegramWebhookOptions} from './telegram-webhook.js';
 
 export {createLinearWebhookAdapter} from './linear-webhook.js';
 export type {LinearWebhookOptions} from './linear-webhook.js';
+
+export {AgentActionRecoveryMetrics} from './action-recovery-metrics.js';
+export type {AgentActionRecoveryMetricsOptions} from './action-recovery-metrics.js';
