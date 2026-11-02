@@ -42,3 +42,10 @@ test('staged capabilities cannot access another external operation and fail clos
   assert.throws(()=>registerStagedCapability(outer,external,store,{...base,candidate:{operationId:'bad',method:'POST',path:'/'},operation:'stage',authorizeInput:'bad'}),/Invalid/);
  } finally {store.close();}
 });
+
+test('revision-exhausted staged submission returns conflict without calling the external provider',async()=>{
+ const {mkdtempSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{DatabaseSync}=await import('node:sqlite');const dir=mkdtempSync(join(tmpdir(),'staged-limit-http-')),path=join(dir,'staging.sqlite'),outer=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),store=new SqliteStagedOperations(path),db=new DatabaseSync(path),scope={tenantId:'t',applicationId:'app'};let calls=0;
+ external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{calls++;}});registerStagedCapability(outer,external,store,{candidate:{operationId:'submit',method:'POST',path:'/staging'},applicationId:'app',externalOperationId:'pay',operation:'submit',authorize:()=>true,validate:()=>true});const op=store.stage(scope,'pay',{amount:10});db.prepare('UPDATE staged_business_operations SET state_revision=? WHERE tenant_id=? AND application_id=? AND id=?').run(Number.MAX_SAFE_INTEGER-2,scope.tenantId,scope.applicationId,op.id);
+ const server=createCapabilityServer(outer,()=>({tenantId:'t',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/submit/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{id:op.id}})});assert.equal(response.status,409);assert.equal(calls,0);assert.equal(store.get(scope,op.id).status,'staged');assert.deepEqual(store.listReconciliationEvidence(scope,op.id),[]);}finally{await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));db.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});
