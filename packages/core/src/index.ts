@@ -143,7 +143,7 @@ export type { ExtensionRuntimeBindings, ExtensionInvocationApproval, FlutterExte
 export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration, SignedExtensionManifest, ExtensionSigningPolicy } from './extensions.js';
 
 export { SqliteDataProvider } from './data-provider.js';
-export type { DataProvider, DataRecord, DataRecordPage, DataScope, DataMigration, DataRollback, DataRollbackEvent, DataMigrationEvidence, DataMigrationAuditEvent, MigrationPreview } from './data-provider.js';
+export type { DataProvider, DataRecord, DataRecordPage, DataScope, DataMigration, DataMigrationRehearsal, DataRollback, DataRollbackEvent, DataMigrationEvidence, DataMigrationAuditEvent, MigrationPreview } from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
 export type { StagedOperation, StagedOperationSummary, StagedOperationPage, StagedOperationCounts, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord, StagedRecoveryRecord, StagedSubmitterVerifier } from './staged-operations.js';
