@@ -1,0 +1,3 @@
+import {createActionHttpsVerifier} from '../../dist/index.js';
+const verifier=createActionHttpsVerifier({scope:{tenantId:'tenant',agentId:'agent'},runId:'run',operationId:'pay',url:process.env.TEST_LOOKUP_URL,bearerToken:'a'.repeat(32),timeoutMs:3000,maxPending:1,interpret:body=>({outcome:'applied',result:body})});
+const result=await verifier({scope:{tenantId:'tenant',agentId:'agent'},runId:'run',action:{actionId:'action',operationId:'pay',idempotencyKey:'key-1',status:'uncertain',attempts:1,maxAttempts:2},input:{private:'do-not-send'}});if(result.outcome!=='applied'||result.result.receipt!=='verified')throw Error('Unexpected lookup result');

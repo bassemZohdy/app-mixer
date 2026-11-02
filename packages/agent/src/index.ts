@@ -183,6 +183,8 @@ export {AgentRunExpiryWorker} from './agent-run-expiry.js';
 export type {AgentRunExpiryWorkerOptions} from './agent-run-expiry.js';
 
 export {AgentActionRecoveryWorker} from './action-recovery-worker.js';
+export {createActionHttpsVerifier} from './action-https-verifier.js';
+export type {ActionHttpsVerifierOptions,ActionHttpsLookupContext} from './action-https-verifier.js';
 export type {AgentActionRecoveryWorkerOptions} from './action-recovery-worker.js';
 
 export {registerSemanticMemoryWrite} from './semantic-memory-write-capability.js';
