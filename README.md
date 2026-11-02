@@ -15,6 +15,9 @@ cd demo-app
 npm run dev
 ```
 
+The test runner uses two concurrent test files on Windows and eight elsewhere. Set `APP_MIXER_TEST_CONCURRENCY` to an integer from 1 to 32 to adjust the limit for your machine.
+
+
 Visit http://localhost:3000. The generated app has a workspace and chat placeholder. The workspace uses an initial A2UI renderer subset. Chat can connect to the local AG-UI agent; see the agent guide for configuration.
 
 ## Specifications and tracking
