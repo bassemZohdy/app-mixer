@@ -20,6 +20,7 @@ function renderPreview(definition){
   rendered.replaceChildren();
   try{
     const registry=basicRegistry(),selected=new Map(),registered=new Map(),surfaceId='preview';
+    if(!definition||typeof definition!=='object'||![1,2].includes(definition.schemaVersion)||!Array.isArray(definition.pages))throw Error('Invalid application');
     if(!Array.isArray(definition.extensions??[])||(definition.extensions??[]).length>256)throw Error('Invalid extension references');
     for(const ref of definition.extensions??[]){
       if(!ref||typeof ref.id!=='string'||typeof ref.version!=='string'||!['platform','development','application'].includes(ref.scope)||Object.keys(ref).length!==3||selected.has(ref.id))throw Error('Invalid extension reference');
@@ -29,8 +30,11 @@ function renderPreview(definition){
     }
     const components=[{id:'root',component:'Column',children:[]}];
     for(const [i,page] of definition.pages.entries()){
+      if(!page||typeof page!=='object'||typeof page.title!=='string'||(definition.schemaVersion===1&&page.description!==undefined)||(definition.schemaVersion===2&&(typeof page.description!=='string'||page.description.length>10000))||!Array.isArray(page.components))throw Error('Invalid page');
       const title='page-'+i;components[0].children.push(title);components.push({id:title,component:'Text',text:page.title,variant:'h2'});
+      if(definition.schemaVersion===2&&page.description){const descriptionId='page-'+i+'-description';components[0].children.push(descriptionId);components.push({id:descriptionId,component:'Text',text:page.description});}
       for(const [j,item] of page.components.entries()){
+        if(!item||typeof item!=='object'||Array.isArray(item))throw Error('Invalid component');
         const id='page-'+i+'-item-'+j;components[0].children.push(id);
         if(item.type==='Text'){components.push({id,component:'Text',text:String(item.props?.text??'')});continue;}
         if(item.type==='Input'){const props=item.props;if(!props||typeof props!=='object'||Array.isArray(props)||Object.keys(props).some(key=>!['label','path','variant'].includes(key))||typeof props.label!=='string'||typeof props.path!=='string'||(props.variant!==undefined&&!['shortText','longText'].includes(props.variant)))throw Error('Invalid Input properties');components.push({id:id,component:'TextField',label:props.label,value:{path:props.path},...(props.variant===undefined?{}:{variant:props.variant})});continue;}
