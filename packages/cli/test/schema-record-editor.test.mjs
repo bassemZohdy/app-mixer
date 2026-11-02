@@ -599,6 +599,21 @@ test('nested dependent rules match object-array items consistently with server v
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
+test('positional array matching agrees with server tuple validation',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const jsonSchema={type:'object',$defs:{id:{type:'string',pattern:'^ID:'}},properties:{matrix:{type:'array',items:{type:'array',items:{type:'string'}},contains:{type:'array',prefixItems:[{$ref:'#/$defs/id'},{enum:['open','closed']}],items:false,minItems:2}}},required:['matrix']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={short:{matrix:[['ID:1']]},order:{matrix:[['open','ID:1']]},extra:{matrix:[['ID:1','open','extra']]},none:{matrix:[['bad','open']]},valid:{matrix:[['bad','open'],['ID:1','closed']]}},saved=[];
+  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+  for(const name of ['short','order','extra','none']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
+  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   assert.doesNotThrow(()=>factory(options));
+   for(const prefixItems of [[],[null],Array(41).fill(true),[{type:'string',format:'email'}],[{$ref:'#/$defs/missing'}]])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{matrix:{...jsonSchema.properties.matrix,contains:{type:'array',prefixItems}}}}}),/Unsupported/);
+  }
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
 test('JSON Schema scalar descriptions are safely associated with controls in runtime and preview',async()=>{
  const s=await setup();let dom;try{
   const jsonSchema={type:'object',properties:{name:{type:'string',description:'Use <strong>plain text</strong>.'},count:{type:'integer',description:'Count of items'},tags:{type:'array',items:{type:'string',description:'Tag help'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
