@@ -327,3 +327,6 @@ export type {SquareWebhookOptions} from './square-webhook.js';
 
 export {registerAgentDelegationCapability} from './agent-delegation-capability.js';
 export type {AgentDelegationCapabilityOptions,AgentDelegationCapabilityInput} from './agent-delegation-capability.js';
+
+export {createNotionWebhookAdapter} from './notion-webhook.js';
+export type {NotionWebhookOptions} from './notion-webhook.js';
