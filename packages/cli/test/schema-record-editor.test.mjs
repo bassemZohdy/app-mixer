@@ -217,7 +217,7 @@ test('dependent schema properties validate only when the trigger exists',async()
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('dependentSchemas rejects unsupported assertions and unknown fields in runtime and preview',async()=>{const s=await setup();try{for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const dependentSchemas of [{other:{required:['phone']}},{email:{required:['other']}},{email:{required:['phone','phone']}},{email:{properties:{phone:{type:'string',format:'email'}}}},{email:true},{email:{required:['phone'],additionalProperties:{type:'string'}}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentSchemas}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
+test('dependentSchemas rejects unsupported assertions and unknown fields in runtime and preview',async()=>{const s=await setup();try{for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const dependentSchemas of [{other:{required:['phone']}},{email:{required:['other']}},{email:{required:['phone','phone']}},{email:{properties:{phone:{type:'string',format:'email'}}}},{email:'invalid'},{email:{required:['phone'],additionalProperties:{type:'string'}}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentSchemas}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
 
 
 test('if/then/else validates conditional required fields against the assembled record',async()=>{
@@ -279,7 +279,7 @@ test('combined matching rules agree with server conditional and array validation
   for(const name of ['valid','valid2','validelse']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
-   for(const rule of [{allOf:[]},{anyOf:[true]},{oneOf:Array(41).fill({const:1})},{not:false},{anyOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{score:rule}},then:{required:['result']},else:undefined}}),/Unsupported/);
+   for(const rule of [{allOf:[]},{anyOf:[null]},{oneOf:Array(41).fill({const:1})},{not:null},{anyOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{score:rule}},then:{required:['result']},else:undefined}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
@@ -333,7 +333,7 @@ test('combined object rules validate records and object-array items',async()=>{
   for(const name of ['valid','valid2']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
    assert.doesNotThrow(()=>factory(options));
-   for(const rule of [{allOf:[]},{oneOf:[true]},{not:false},{anyOf:[{required:['missing']}]},{allOf:[{properties:{unknown:{const:1}}}]},{allOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,...rule}}),/Unsupported/);
+   for(const rule of [{allOf:[]},{oneOf:[null]},{not:null},{anyOf:[{required:['missing']}]},{allOf:[{properties:{unknown:{const:1}}}]},{allOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,...rule}}),/Unsupported/);
   }
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
@@ -349,7 +349,22 @@ test('combined conditional and dependent branches agree with server validation',
    for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
    for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
   }
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rule of [{anyOf:[]},{not:false},{allOf:[{required:['unknown']}]},{oneOf:[{properties:{unknown:{const:1}}}]}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,then:rule}}),/Unsupported/);
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rule of [{anyOf:[]},{not:null},{allOf:[{required:['unknown']}]},{oneOf:[{properties:{unknown:{const:1}}}]}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,then:rule}}),/Unsupported/);
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('boolean schemas and references agree with server validation',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;
+ try{
+  const conditional={type:'object',$defs:{yes:true,no:false},properties:{trigger:{type:'string'},label:{type:'string'},flags:{type:'array',items:{type:'boolean'},contains:{$ref:'#/$defs/no'},minContains:0,maxContains:0}},if:{$ref:'#/$defs/yes',title:'Always'},then:{required:['label']},else:false,dependentSchemas:{trigger:{$ref:'#/$defs/no'}},allOf:[true],oneOf:[true,false],not:false},names={type:'object',$defs:{no:false},properties:{label:{type:'string'}},propertyNames:{$ref:'#/$defs/no'}},nested={type:'object',properties:{matrix:{type:'array',items:{type:'array',items:{type:'string'}},contains:{type:'array',items:false}}},required:['matrix']},reverse={type:'object',properties:{label:{type:'string'}},if:false,then:false,else:{required:['label']}};
+  const scenarios=[{jsonSchema:conditional,records:{missing:{flags:[true]},trigger:{label:'ok',trigger:'x'},valid:{label:'ok',flags:[true,false]}},invalid:['missing','trigger'],valid:['valid']},{jsonSchema:names,records:{bad:{label:'x'},empty:{}},invalid:['bad'],valid:['empty']},{jsonSchema:nested,records:{bad:{matrix:[['a']]},valid:{matrix:[['a'],[]]}},invalid:['bad'],valid:['valid']},{jsonSchema:reverse,records:{missing:{},valid:{label:'ok'}},invalid:['missing'],valid:['valid']}],saved=[];
+  let records,validate;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
+  dom=new JSDOM('<!doctype html>');for(const scenario of scenarios){records=scenario.records;validate=createRecordJsonSchemaValidator(scenario.jsonSchema);const options={getOperation:'items.get',putOperation:'items.put',jsonSchema:scenario.jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
+   for(const name of scenario.invalid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();assert.equal(validate(records[name]),false);assert.equal(saved.length,before);assert.notEqual(status.textContent,'Record saved.');}
+   for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
+   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
+  }
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const bad of [{title:42},{description:'x'.repeat(1025)},{minimum:1}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,if:{$ref:'#/$defs/yes',...bad}}}),/Unsupported/);
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 

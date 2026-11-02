@@ -7,6 +7,7 @@ function decimalMultiple(value,divisor){
   return difference>=0?(numerator*10n**BigInt(difference))%denominator===0n:numerator%(denominator*10n**BigInt(-difference))===0n;
 }
 function matchesContains(rule,value){
+  if(typeof rule.always==='boolean')return rule.always;
   if(rule.allOf&&!rule.allOf.every(child=>matchesContains(child,value)))return false;
   if(rule.anyOf&&!rule.anyOf.some(child=>matchesContains(child,value)))return false;
   if(rule.oneOf&&rule.oneOf.filter(child=>matchesContains(child,value)).length!==1)return false;
@@ -64,7 +65,12 @@ function resolveFormSchema(root){
     if(!object(schema))return schema;
     if(Object.hasOwn(schema,'$ref')){
       if(Object.keys(schema).some(key=>!['$ref','title','description'].includes(key))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
-      const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);if(!object(resolved))throw Error('Unsupported record JSON Schema form');
+      const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);
+      if(typeof resolved==='boolean'){
+        if((schema.title!==undefined&&(typeof schema.title!=='string'||schema.title.length>120))||(schema.description!==undefined&&(typeof schema.description!=='string'||schema.description.length>1024)))throw Error('Unsupported record JSON Schema form');
+        return resolved;
+      }
+      if(!object(resolved))throw Error('Unsupported record JSON Schema form');
       return {...resolved,...(Object.hasOwn(schema,'title')?{title:schema.title}:{}),...(Object.hasOwn(schema,'description')?{description:schema.description}:{})};
     }
     if(Object.hasOwn(schema,'$defs')&&!object(schema.$defs))throw Error('Unsupported record JSON Schema form');
@@ -104,7 +110,9 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     return '{'+keys.map(key=>JSON.stringify(key)+':'+canonicalSchemaValue(value[key],next,depth+1)).join(',')+'}';
   }
   function compileContains(spec,depth){
-    if(++context.nodes>200||depth>5||!object(spec)||!ruleKeys(spec,['type','const','enum','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','properties','required','additionalProperties','minProperties','maxProperties','propertyNames','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains','allOf','anyOf','oneOf','not'])||(spec.type!==undefined&&!['string','number','integer','boolean','null','object','array'].includes(spec.type)))throw Error('Unsupported record JSON Schema form');
+    if(++context.nodes>200||depth>5)throw Error('Unsupported record JSON Schema form');
+    if(typeof spec==='boolean')return {always:spec};
+    if(!object(spec)||!ruleKeys(spec,['type','const','enum','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','properties','required','additionalProperties','minProperties','maxProperties','propertyNames','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains','allOf','anyOf','oneOf','not'])||(spec.type!==undefined&&!['string','number','integer','boolean','null','object','array'].includes(spec.type)))throw Error('Unsupported record JSON Schema form');
     const numeric=spec.type==='number'||spec.type==='integer',string=spec.type==='string';
     for(const key of ['minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf'])if(spec[key]!==undefined&&(!numeric||typeof spec[key]!=='number'||!Number.isFinite(spec[key])||(key==='multipleOf'&&spec[key]<=0)))throw Error('Unsupported record JSON Schema form');
     for(const key of ['minLength','maxLength'])if(spec[key]!==undefined&&(!string||!Number.isSafeInteger(spec[key])||spec[key]<0||spec[key]>1048576))throw Error('Unsupported record JSON Schema form');
@@ -136,7 +144,7 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     if(depth>5||!object(node)||!keys(node,depth===0?['$schema','type','description','properties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not']:['type','title','description','properties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not','_nullable'])||node.type!=='object'||!object(node.properties)||(node.title!==undefined&&(typeof node.title!=='string'||!node.title.trim()||node.title.length>120))||(node.description!==undefined&&(typeof node.description!=='string'||node.description.length>1024))||(node.additionalProperties!==undefined&&typeof node.additionalProperties!=='boolean')||(depth===0&&node.$schema!==undefined&&node.$schema!=='https://json-schema.org/draft/2020-12/schema'))throw Error('Unsupported record JSON Schema form');
     if((node.minProperties!==undefined&&(!Number.isSafeInteger(node.minProperties)||node.minProperties<0))||(node.maxProperties!==undefined&&(!Number.isSafeInteger(node.maxProperties)||node.maxProperties<0))||(node.minProperties!==undefined&&node.maxProperties!==undefined&&node.minProperties>node.maxProperties))throw Error('Unsupported record JSON Schema form');
     if(node.minProperties!==undefined||node.maxProperties!==undefined)propertyCounts.push({path:[...path],min:node.minProperties,max:node.maxProperties});
-    if(node.propertyNames!==undefined){const spec=node.propertyNames;if(!object(spec)||!ruleKeys(spec,['type','pattern','minLength','maxLength','enum','const'])||(spec.type!==undefined&&spec.type!=='string')||(spec.minLength!==undefined&&(!Number.isSafeInteger(spec.minLength)||spec.minLength<0||spec.minLength>1048576))||(spec.maxLength!==undefined&&(!Number.isSafeInteger(spec.maxLength)||spec.maxLength<0||spec.maxLength>1048576))||(spec.minLength!==undefined&&spec.maxLength!==undefined&&spec.minLength>spec.maxLength)||(spec.enum!==undefined&&(!Array.isArray(spec.enum)||!spec.enum.length||spec.enum.length>100||spec.enum.some(value=>typeof value!=='string'||value.length>1024)||new Set(spec.enum).size!==spec.enum.length))||(spec.const!==undefined&&(typeof spec.const!=='string'||spec.const.length>1024)))throw Error('Unsupported record JSON Schema form');propertyNames.push({path:[...path],pattern:pattern(spec.pattern,'string'),min:spec.minLength,max:spec.maxLength,choices:spec.enum===undefined?undefined:[...spec.enum],fixed:spec.const});}
+    if(node.propertyNames!==undefined){const spec=node.propertyNames;if(typeof spec==='boolean')propertyNames.push({path:[...path],always:spec});else {if(!object(spec)||!ruleKeys(spec,['type','pattern','minLength','maxLength','enum','const'])||(spec.type!==undefined&&spec.type!=='string')||(spec.minLength!==undefined&&(!Number.isSafeInteger(spec.minLength)||spec.minLength<0||spec.minLength>1048576))||(spec.maxLength!==undefined&&(!Number.isSafeInteger(spec.maxLength)||spec.maxLength<0||spec.maxLength>1048576))||(spec.minLength!==undefined&&spec.maxLength!==undefined&&spec.minLength>spec.maxLength)||(spec.enum!==undefined&&(!Array.isArray(spec.enum)||!spec.enum.length||spec.enum.length>100||spec.enum.some(value=>typeof value!=='string'||value.length>1024)||new Set(spec.enum).size!==spec.enum.length))||(spec.const!==undefined&&(typeof spec.const!=='string'||spec.const.length>1024)))throw Error('Unsupported record JSON Schema form');propertyNames.push({path:[...path],pattern:pattern(spec.pattern,'string'),min:spec.minLength,max:spec.maxLength,choices:spec.enum===undefined?undefined:[...spec.enum],fixed:spec.const});}}
     const required=node.required===undefined?[]:node.required;if(!Array.isArray(required)||required.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(required).size!==required.length)throw Error('Unsupported record JSON Schema form');
     const validNames=names=>Array.isArray(names)&&names.length<=40&&names.every(key=>typeof key==='string'&&Object.hasOwn(node.properties,key))&&new Set(names).size===names.length;
     const normalizeObjectRule=value=>{
@@ -159,6 +167,7 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     };
     const branch=value=>{
       if(value===undefined)return {required:[],predicates:[]};
+      if(typeof value==='boolean')return {required:[],predicates:[],objectRule:compileContains(value,0)};
       if(!object(value)||!ruleKeys(value,['required','properties','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'])||!['required','properties','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'].some(key=>Object.hasOwn(value,key))||(value.required!==undefined&&!validNames(value.required))||(value.properties!==undefined&&(!object(value.properties)||Object.keys(value.properties).length>40)))throw Error('Unsupported record JSON Schema form');
       const predicates=[];for(const [key,test] of Object.entries(value.properties??{})){if(!Object.hasOwn(node.properties,key))throw Error('Unsupported record JSON Schema form');predicates.push({key,rule:compileContains(test,0)});}
       return {required:[...(value.required??[])],predicates,objectRule:objectRuleFor(value,predicates)};
@@ -172,9 +181,15 @@ function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
     if(node.dependentSchemas!==undefined){if(!object(node.dependentSchemas)||Object.keys(node.dependentSchemas).length>40)throw Error('Unsupported record JSON Schema form');for(const [trigger,schema] of Object.entries(node.dependentSchemas)){if(!Object.hasOwn(node.properties,trigger)||schema===undefined)throw Error('Unsupported record JSON Schema form');dependencies.push({path:[...path],trigger,...branch(schema)});if(dependencies.length>40)throw Error('Unsupported record JSON Schema form');}}
     if(node.if!==undefined||node.then!==undefined||node.else!==undefined){
       const condition=node.if;
-      if(!object(condition)||!ruleKeys(condition,['properties','required','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'])||!['properties','required','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'].some(key=>Object.hasOwn(condition,key))||(node.then===undefined&&node.else===undefined)||(condition.required!==undefined&&!validNames(condition.required))||(condition.properties!==undefined&&(!object(condition.properties)||Object.keys(condition.properties).length>40)))throw Error('Unsupported record JSON Schema form');
-      const predicates=[];for(const [key,test] of Object.entries(condition.properties??{})){if(!Object.hasOwn(node.properties,key))throw Error('Unsupported record JSON Schema form');predicates.push({key,rule:compileContains(test,0)});}
-      conditions.push({path:[...path],predicates,required:[...(condition.required??[])],objectRule:objectRuleFor(condition,predicates),then:branch(node.then),else:branch(node.else)});if(conditions.length>40)throw Error('Unsupported record JSON Schema form');
+      if(node.then===undefined&&node.else===undefined)throw Error('Unsupported record JSON Schema form');
+      if(typeof condition==='boolean'){
+        conditions.push({path:[...path],predicates:[],required:[],objectRule:compileContains(condition,0),then:branch(node.then),else:branch(node.else)});
+      }else{
+        if(!object(condition)||!ruleKeys(condition,['properties','required','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'])||!['properties','required','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'].some(key=>Object.hasOwn(condition,key))||(condition.required!==undefined&&!validNames(condition.required))||(condition.properties!==undefined&&(!object(condition.properties)||Object.keys(condition.properties).length>40)))throw Error('Unsupported record JSON Schema form');
+        const predicates=[];for(const [key,test] of Object.entries(condition.properties??{})){if(!Object.hasOwn(node.properties,key))throw Error('Unsupported record JSON Schema form');predicates.push({key,rule:compileContains(test,0)});}
+        conditions.push({path:[...path],predicates,required:[...(condition.required??[])],objectRule:objectRuleFor(condition,predicates),then:branch(node.then),else:branch(node.else)});
+      }
+      if(conditions.length>40)throw Error('Unsupported record JSON Schema form');
     }
     if(depth){groups.push({path, label:labels.join(' / '), required:needed,nullable:node._nullable===true,description:node.description});if(groups.length>40)throw Error('Unsupported record JSON Schema form');}
     for(const [key,originalProperty] of Object.entries(node.properties)){
