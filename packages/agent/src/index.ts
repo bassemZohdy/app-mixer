@@ -212,3 +212,5 @@ export {SqliteAgentActionRecoveryDiscovery} from './action-recovery-discovery.js
 export type {AgentActionRecoveryDiscoveryActor,AgentActionRecoveryDiscoveryOptions,AgentActionRecoveryCandidate,AgentActionRecoveryPage} from './action-recovery-discovery.js';
 export {registerActionRecoveryDiscovery} from './action-recovery-discovery-capability.js';
 export type {ActionRecoveryDiscoveryCapabilityOptions} from './action-recovery-discovery-capability.js';
+export {AgentActionRecoveryCoordinator} from './action-recovery-coordinator.js';
+export type {AgentActionRecoveryCoordinatorOptions,AgentActionRecoverySession} from './action-recovery-coordinator.js';
