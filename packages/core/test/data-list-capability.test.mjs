@@ -230,3 +230,13 @@ test('not-equal filters compose with any-mode, scoped cursors and snapshotted po
   const second=await registry.invoke('neq-any.list',{filters:[...filters].reverse(),filterMode:'any',cursor:first.nextCursor,limit:10},alice);assert.deepEqual(second.items.map(x=>x.id),['b','c']);assert.equal(second.items.some(x=>x.id==='d'),false);assert.deepEqual((await registry.invoke('neq-any.list',{filters,limit:10},alice)).items,[]);
  }finally{provider.close();}
 });
+
+test('list final record authorization catches revocation during the last scope check',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let scopeChecks=0,recordAllowed=true;
+ try{provider.put(scope,'items','private',{text:'secret'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'checked.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,authorize:async()=>{if(++scopeChecks===3)recordAllowed=false;return true;},authorizeItem:()=>recordAllowed});await assert.rejects(registry.invoke('checked.list',{},alice),/forbidden/);}finally{provider.close();}
+});
+
+test('timed-out last list item recheck does not return a late page',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,signal,count=0;const gate=new Promise(resolve=>release=resolve);
+ try{provider.put(scope,'items','private',{text:'secret'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'checked.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,policyTimeoutMs:100,maxPendingPolicies:1,authorize:()=>true,authorizeItem:async(_actor,_item,currentSignal)=>{if(++count===3){signal=currentSignal;await gate;}return true;}});await assert.rejects(registry.invoke('checked.list',{},alice),/Data list unavailable/);assert.equal(signal.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await registry.invoke('checked.list',{},alice)).items.map(item=>item.id),['private']);}finally{release();provider.close();}
+});

@@ -108,3 +108,21 @@ test('record policy sees validated input, denies both origins and cannot mutate 
   assert.deepEqual(events,['attempt','denied','attempt','denied','attempt','invalid','attempt','succeeded']);
  } finally {provider.close();}
 });
+
+test('final record authorization catches revocation during the last scope check',async()=>{
+ for(const operation of ['get','put','delete']){
+  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),scope={tenantId:'tenant',applicationId:'app'};let scopeChecks=0,recordAllowed=true;
+  try{
+   if(operation!=='put')provider.put(scope,'items','one',{text:'before'},null);
+   registerDataCapability(registry,provider,{candidate:{operationId:'item',method:'POST',path:'/item'},applicationId:'app',collection:'items',operation,recheckAuthorization:true,authorize:async()=>{if(++scopeChecks===3)recordAllowed=false;return true;},authorizeRecord:()=>recordAllowed,validate:()=>true});
+   const input=operation==='put'?{id:'one',expectedRevision:null,value:{text:'new'}}:operation==='delete'?{id:'one',expectedRevision:1}:{id:'one'};
+   await assert.rejects(registry.invoke('item',input,{tenantId:'tenant',principalId:'alice',origin:'ui'}),/forbidden/);
+   assert.deepEqual(provider.get(scope,'items','one')?.value,operation==='put'?undefined:{text:'before'});
+  }finally{provider.close();}
+ }
+});
+
+test('timed-out last record authorization cannot perform a late write',async()=>{
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,signal,count=0;const gate=new Promise(resolve=>release=resolve);
+ try{registerDataCapability(registry,provider,{candidate:{operationId:'item',method:'PUT',path:'/item'},applicationId:'app',collection:'items',operation:'put',policyTimeoutMs:100,maxPendingPolicies:1,recheckAuthorization:true,authorize:()=>true,validate:()=>true,authorizeRecord:async(_actor,_input,currentSignal)=>{if(++count===3){signal=currentSignal;await gate;}return true;}});const input={id:'one',expectedRevision:null,value:{text:'value'}},actor={tenantId:'tenant',principalId:'alice',origin:'ui'};await assert.rejects(registry.invoke('item',input,actor),/Data capability unavailable/);assert.equal(signal.aborted,true);assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one'),undefined);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(provider.get({tenantId:'tenant',applicationId:'app'},'items','one'),undefined);assert.equal((await registry.invoke('item',input,actor)).revision,1);}finally{release();provider.close();}
+});

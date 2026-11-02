@@ -53,6 +53,7 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
         if(!await checkPolicy(signal=>authorize({...context},signal)))throw Error('Capability forbidden');
         if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw Error('Capability forbidden');
         if(!await checkPolicy(signal=>authorize({...context},signal)))throw Error('Capability forbidden');
+        if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw Error('Capability forbidden');
       }
       if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw Error('Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
       if(operation==='put')return provider.put(scope,collection,value.id,value.value,value.expectedRevision,value.expectedSchemaVersion);
