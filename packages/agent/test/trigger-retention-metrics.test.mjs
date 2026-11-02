@@ -5,7 +5,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentTriggerRetention,SqliteTriggerRetentionMetrics,createAgentMetricsServer} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentTriggerRetention,SqliteTriggerRetentionMetrics,SqliteAgentRunMetrics,createAgentMetricsServer} from '../dist/index.js';
 const scope={tenantId:'tenant-secret',agentId:'agent-secret'},actor={tenantId:'tenant-secret',principalId:'reader'},event={sourceId:'source',principalId:'sender',eventId:'event',eventType:'event',payload:{secret:'private-payload'}},settings={definitionVersion:1,maxAttempts:2,deadline:1000,maxPending:10};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'trigger-metrics-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),retention=new SqliteAgentTriggerRetention(path,{scope,authorize:()=>true,authorizeDiscovery:()=>true}),db=new DatabaseSync(path);return {dir,path,runs,triggers,retention,db};}
 function close(s){s.db.close();s.retention.close();s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
@@ -27,4 +27,15 @@ test('retention metrics handle empty scopes and reject invalid configuration or 
 
 test('receipt and completion metrics distinguish a recently completed long-running event',async()=>{
  const s=setup();let receipt,completion;try{add(s,'long-running',10,90);receipt=new SqliteTriggerRetentionMetrics(s.path,{scope,authorize:()=>true,minAgeMs:50,clock:()=>100});completion=new SqliteTriggerRetentionMetrics(s.path,{scope,authorize:()=>true,minAgeMs:50,ageFrom:'completion',clock:()=>100});assert.equal((await receipt.snapshot(actor)).eligible,1);assert.equal((await completion.snapshot(actor)).eligible,0);assert.equal((await completion.snapshot(actor)).notYetEligible,1);}finally{receipt?.close();completion?.close();close(s);}
+});
+
+
+test('combined run and retention gauges share one authorized read snapshot',async()=>{
+ const s=setup();let metrics,writer;try{const runId=add(s,'old',10,20);s.db.exec('PRAGMA journal_mode=WAL');writer=new DatabaseSync(s.path);let changed=false,calls=0;const retentionBacklog={minAgeMs:50,ageFrom:'receipt'};metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,retentionBacklog,clock:()=>{calls++;if(!changed){changed=true;writer.prepare("UPDATE agent_runs SET status='queued' WHERE tenant_id=? AND agent_id=? AND run_id=?").run(scope.tenantId,scope.agentId,runId);}return 100;}});retentionBacklog.minAgeMs=500;retentionBacklog.ageFrom='completion';const first=await metrics.render(actor);assert.equal(calls,1);assert.match(first,/app_mixer_agent_runs\{status="cancelled",archived="false"\} 1/);assert.match(first,/app_mixer_trigger_retention_candidates\{state="eligible"\} 1/);const second=await metrics.render(actor);assert.equal(calls,2);assert.match(second,/app_mixer_agent_runs\{status="queued",archived="false"\} 1/);assert.match(second,/app_mixer_trigger_retention_candidates\{state="eligible"\} 0/);
+ }finally{metrics?.close();writer?.close();close(s);}
+});
+
+test('combined retention gauges require valid configuration and whole-scope authorization',async()=>{
+ const s=setup();let metrics;try{add(s,'long',10,90);metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,retentionBacklog:{minAgeMs:50,ageFrom:'completion'},clock:()=>100});assert.match(await metrics.render(actor),/state="not_yet_eligible"} 1/);metrics.close();for(const retentionBacklog of [null,{minAgeMs:0},{minAgeMs:1,ageFrom:'invalid'}])assert.throws(()=>new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,retentionBacklog}),/configuration/);let checks=0;metrics=new SqliteAgentRunMetrics(s.path,{scope,retentionBacklog:{minAgeMs:1},clock:()=>100,authorize:()=>++checks===1});await assert.rejects(metrics.render(actor),/access denied/);assert.equal(checks,2);metrics.close();metrics=new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true});assert.doesNotMatch(await metrics.render(actor),/trigger_retention/);
+ }finally{metrics?.close();close(s);}
 });
