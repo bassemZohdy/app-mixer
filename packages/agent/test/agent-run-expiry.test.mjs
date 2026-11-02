@@ -45,3 +45,25 @@ test('stopping a manual expiry pass prevents a late transition and leaves it for
   const pass=worker.runOnce();await entered;const stopping=worker.stop();block=false;release();assert.equal(await pass,0);await stopping;assert.equal(s.runs.get(scope,'a').status,'queued');assert.equal(await worker.runOnce(),1);assert.equal(s.runs.get(scope,'a').status,'failed');
  }finally{close(s);}
 });
+
+test('bounded expiry authorization fences late callbacks and retains capacity until settlement',async()=>{
+ const s=setup(),errors=[];let release,entered,seenSignal,blocked=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
+ try{
+  s.runs.create(scope,'a',conf,0);s.runs.create(scope,'b',conf,0);
+  const worker=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:1,pollMs:100,clock:()=>100,authorizationTimeoutMs:100,maxPendingAuthorizations:1,onError:(error,id)=>errors.push([error.message,id]),authorize:async(run,signal)=>{if(blocked){seenSignal=signal;entered();await gate;}return true;}});
+  const first=worker.runOnce();await ready;assert.equal(await first,0);assert.equal(seenSignal.aborted,true);assert.equal(s.runs.get(scope,'a').status,'queued');assert.equal(await worker.runOnce(),0);assert.deepEqual(errors.map(x=>x[1]),['a','b']);
+  blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.runs.get(scope,'a').status,'queued');assert.equal(await worker.runOnce(),1);assert.equal(s.runs.get(scope,'a').status,'failed');assert.equal(await worker.runOnce(),1);assert.equal(s.runs.get(scope,'b').status,'failed');
+ }finally{release();close(s);}
+});
+
+test('bounded expiry stop aborts authorization and never applies its late decision',async()=>{
+ const s=setup();let release,entered,seenSignal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
+ try{
+  s.runs.create(scope,'a',conf,0);const worker=new AgentRunExpiryWorker({runs:s.runs,scope,maxPerPass:5,pollMs:100,clock:()=>100,authorizationTimeoutMs:1000,maxPendingAuthorizations:1,onError:()=>{},authorize:async(_run,signal)=>{if(block){seenSignal=signal;entered();await gate;}return true;}});
+  const pass=worker.runOnce();await ready;await worker.stop();assert.equal(await pass,0);assert.equal(seenSignal.aborted,true);assert.equal(s.runs.get(scope,'a').status,'queued');block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.runs.get(scope,'a').status,'queued');assert.equal(await worker.runOnce(),1);
+ }finally{release();close(s);}
+});
+
+test('expiry authorization limits must be paired and bounded',()=>{
+ const s=setup();try{const options={runs:s.runs,scope,maxPerPass:1,pollMs:100,onError:()=>{},authorize:()=>true};for(const extra of [{authorizationTimeoutMs:100},{maxPendingAuthorizations:1},{authorizationTimeoutMs:99,maxPendingAuthorizations:1},{authorizationTimeoutMs:100,maxPendingAuthorizations:101}])assert.throws(()=>new AgentRunExpiryWorker({...options,...extra}),/Invalid run expiry worker/);}finally{close(s);}
+});
