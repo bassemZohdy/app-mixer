@@ -225,5 +225,5 @@ export type { StagedListCapabilityOptions } from './staged-list-capability.js';
 
 export { registerStagedSummaryCapability } from './staged-summary-capability.js';
 export type { StagedSummaryCapabilityOptions } from './staged-summary-capability.js';
-export {registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability,registerOfflineRecoveryListCapability} from './offline-recovery-capabilities.js';
-export type {OfflineAbandonedRecoveryCapabilityOptions,OfflineVerificationCapabilityOptions,OfflineRecoveryEvidenceCapabilityOptions,OfflineRecoveryListCapabilityOptions} from './offline-recovery-capabilities.js';
+export {registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability,registerOfflineRecoveryListCapability,registerOfflineArchiveCapability,registerOfflineArchiveReadCapability} from './offline-recovery-capabilities.js';
+export type {OfflineAbandonedRecoveryCapabilityOptions,OfflineVerificationCapabilityOptions,OfflineRecoveryEvidenceCapabilityOptions,OfflineRecoveryListCapabilityOptions,OfflineArchiveCapabilityOptions,OfflineArchiveReadCapabilityOptions} from './offline-recovery-capabilities.js';

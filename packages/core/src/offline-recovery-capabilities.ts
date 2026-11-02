@@ -1,13 +1,39 @@
 import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
 import {createBoundedOperation} from './bounded-operation.js';
 import {checkKey} from './data-provider.js';
-import {SqliteOfflineQueue,type OfflineOperation} from './offline-queue.js';
+import {isDeepStrictEqual} from 'node:util';
+import {SqliteOfflineQueue,type OfflineOperation,type ArchivedOfflineOperation} from './offline-queue.js';
 type Actor={tenantId:string;principalId:string};
 type Common={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeOperation:(actor:Actor,operation:OfflineOperation,reference:string,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
 export type OfflineAbandonedRecoveryCapabilityOptions=Common&{verifyStopped:(actor:Actor,operation:OfflineOperation,signal:AbortSignal)=>boolean|Promise<boolean>};
 export type OfflineVerificationCapabilityOptions=Common&{verify:(actor:Actor,operation:OfflineOperation,signal:AbortSignal)=>'applied'|'not_applied'|'unknown'|Promise<'applied'|'not_applied'|'unknown'>};
 const id=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=256&&!/[\u0000-\u001f]/.test(x);
 const parse=(input:unknown):{id:string;reference:string}|undefined=>{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'id')||!Object.hasOwn(input,'reference'))return;const value=input as {id:unknown;reference:unknown};return id(value.id)&&id(value.reference)?{id:value.id,reference:value.reference}:undefined;};
+export type OfflineArchiveCapabilityOptions=Common;
+/** Retire a fixed owner's terminal operation after fresh, operation-specific authorization. */
+export function registerOfflineArchiveCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineArchiveCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function')throw Error('Invalid offline archive capability');
+ const {candidate,applicationId,queuePrincipalId,targetOperationId,authorize,authorizeOperation,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline archive capability','Offline archive unavailable');
+ registry.register(candidate,{authorize,validate:input=>!!parse(input),execute:async(input,context)=>{
+  const value=parse(input);if(!value)throw Error('Invalid capability input');const actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Offline archive unavailable');};const operation=queue.get(scope,queuePrincipalId,value.id);if(!operation||operation.operationId!==targetOperationId)throw Error('Operation not found');if(operation.status!=='succeeded'&&operation.status!=='discarded')throw Error('Invalid offline operation state');
+   const permit=async()=>{active();if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();if(await authorizeOperation({...actor},structuredClone(operation),value.reference,signal)!==true)throw Error('Capability forbidden');active();};
+   await permit();await permit();active();queue.archiveTerminal(scope,queuePrincipalId,value.id,{operatorId:actor.principalId,reference:value.reference},Date.now(),operation);return {archived:true};
+  });
+ }});
+}
+
+export type OfflineArchiveReadCapabilityOptions={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeArchived:(actor:Actor,operation:ArchivedOfflineOperation,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
+/** Read the immutable archive marker with separate authorization. */
+export function registerOfflineArchiveReadCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineArchiveReadCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeArchived!=='function')throw Error('Invalid offline archive read capability');
+ const {candidate,applicationId,queuePrincipalId,targetOperationId,authorize,authorizeArchived,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline archive read capability','Offline archive unavailable');
+ registry.register(candidate,{authorize,validate:input=>!!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'id')&&id((input as {id:unknown}).id),execute:async(input,context)=>{
+  const value=input as {id:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Offline archive unavailable');};const operation=queue.getArchived(scope,queuePrincipalId,value.id);if(!operation||operation.operationId!==targetOperationId)throw Error('Operation not found');const permit=async()=>{active();if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();if(await authorizeArchived({...actor},structuredClone(operation),signal)!==true)throw Error('Capability forbidden');active();};await permit();await permit();active();if(!isDeepStrictEqual(queue.getArchived(scope,queuePrincipalId,value.id),operation))throw Error('Stale offline archive');return operation;
+  });
+ }});
+}
 /** Host-confirmed stopped-submitter recovery; the caller cannot supply the decision. */
 export function registerOfflineAbandonedRecoveryCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineAbandonedRecoveryCapabilityOptions):void{
  if(!options||typeof options.verifyStopped!=='function')throw Error('Invalid offline recovery capability');register(registry,queue,options,'recover');
@@ -34,14 +60,14 @@ function register(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:O
 }
 
 
-export type OfflineRecoveryEvidenceCapabilityOptions={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeOperation:(actor:Actor,operation:OfflineOperation,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
+export type OfflineRecoveryEvidenceCapabilityOptions={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeOperation:(actor:Actor,operation:OfflineOperation,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeArchived?:(actor:Actor,operation:ArchivedOfflineOperation,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
 /** Read scoped recovery evidence only after separate host authorization. */
 export function registerOfflineRecoveryEvidenceCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineRecoveryEvidenceCapabilityOptions):void{
- if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function')throw Error('Invalid offline evidence capability');
- const {candidate,applicationId,queuePrincipalId,targetOperationId,authorize,authorizeOperation,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline evidence capability','Offline evidence unavailable');
+ if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeOperation!=='function'||(options.authorizeArchived!==undefined&&typeof options.authorizeArchived!=='function'))throw Error('Invalid offline evidence capability');
+ const {candidate,applicationId,queuePrincipalId,targetOperationId,authorize,authorizeOperation,authorizeArchived,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline evidence capability','Offline evidence unavailable');
  registry.register(candidate,{authorize,validate:input=>{if(!input||typeof input!=='object'||Array.isArray(input))return false;const value=input as Record<string,unknown>;return Object.keys(value).every(key=>['id','after','limit'].includes(key))&&Object.hasOwn(value,'id')&&id(value.id)&&(value.after===undefined||(Number.isSafeInteger(value.after)&&Number(value.after)>=0))&&(value.limit===undefined||(Number.isSafeInteger(value.limit)&&Number(value.limit)>=1&&Number(value.limit)<=99));},execute:async(input,context)=>{
   const value=input as {id:string;after?:number;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:context.tenantId,applicationId};return runBounded(async signal=>{
-   const active=()=>{if(signal.aborted)throw Error('Offline evidence unavailable');};const permit=async()=>{active();const operation=queue.get(scope,queuePrincipalId,value.id);if(!operation||operation.operationId!==targetOperationId)throw Error('Operation not found');if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();if(await authorizeOperation({...actor},structuredClone(operation),signal)!==true)throw Error('Capability forbidden');active();};
+   const active=()=>{if(signal.aborted)throw Error('Offline evidence unavailable');};const permit=async()=>{active();const operation=queue.get(scope,queuePrincipalId,value.id),archived=operation?undefined:queue.getArchived(scope,queuePrincipalId,value.id);if((operation??archived)?.operationId!==targetOperationId||(!operation&&!authorizeArchived))throw Error('Operation not found');if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();const allowed=operation?await authorizeOperation({...actor},structuredClone(operation),signal):await authorizeArchived!({...actor},structuredClone(archived!),signal);if(allowed!==true)throw Error('Capability forbidden');active();};
    await permit();const limit=value.limit??50,rows=queue.listRecoveryEvidence(scope,queuePrincipalId,value.id,{after:value.after,limit:limit+1});await permit();active();const items=rows.slice(0,limit);return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.id}:{})};
   });
  }});

@@ -85,10 +85,11 @@ export class SqliteOfflineQueue {
     return ids.map(row=>this.get(scope,principalId,row.id as string)!);
   }
   /** Retire only completed records; the immutable marker keeps request identities fenced. */
-  archiveTerminal(scope:DataScope,principalId:string,id:string,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):void {
+  archiveTerminal(scope:DataScope,principalId:string,id:string,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now(),expected?:OfflineOperation):void {
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);this.checkRecoveryEvidence(scope,evidence,recordedAt);
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if(expected&&!isDeepStrictEqual(this.get(scope,principalId,id),expected))throw Error('Stale offline operation');
       const result=this.db.prepare("INSERT INTO offline_archived_operations SELECT tenant_id,application_id,principal_id,id,operation_id,request_key,idempotency_key,status,?,?,? FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')").run(evidence.operatorId,evidence.reference,recordedAt,scope.tenantId,scope.applicationId,principalId,id);
       if(result.changes!==1)throw Error('Invalid offline operation state');
       const removed=this.db.prepare("DELETE FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')").run(scope.tenantId,scope.applicationId,principalId,id);
