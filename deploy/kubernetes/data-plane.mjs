@@ -49,7 +49,9 @@ if(floorMode==='postgres'){
 }else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
 const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
 metrics?.setPublicationVersion(snapshot.version);
-const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return releaseAllowed?await releaseAllowed():true;}catch{return false;}}}:{})},...(authenticate?{authorizePublication:async req=>!!await authenticate(req)&&(!releaseAllowed||await releaseAllowed())}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
+const authTimeout=process.env.APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS??'5000',authPending=process.env.APP_MIXER_PUBLICATION_AUTH_MAX_PENDING??'100';
+if(!/^[1-9][0-9]*$/.test(authTimeout)||Number(authTimeout)<100||Number(authTimeout)>30000||!/^[1-9][0-9]*$/.test(authPending)||Number(authPending)>100)throw Error('Invalid publication authorization limits');
+const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool?{check:async()=>{try{await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');return releaseAllowed?await releaseAllowed():true;}catch{return false;}}}:{})},...(authenticate?{publicationAuthorizationLimits:{timeoutMs:Number(authTimeout),maxPending:Number(authPending)},authorizePublication:async(req,_version,signal)=>{const actor=await authenticate(req);if(signal.aborted||!actor)return false;return !releaseAllowed||await releaseAllowed();}}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
 let tlsReloader;
 if(transport==='tls'){
  const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
