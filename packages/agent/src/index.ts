@@ -268,3 +268,6 @@ export type {LinearWebhookOptions} from './linear-webhook.js';
 
 export {AgentActionRecoveryMetrics} from './action-recovery-metrics.js';
 export type {AgentActionRecoveryMetricsOptions} from './action-recovery-metrics.js';
+
+export {AgentCombinedMetrics} from './agent-combined-metrics.js';
+export type {AgentCombinedMetricsOptions} from './agent-combined-metrics.js';
