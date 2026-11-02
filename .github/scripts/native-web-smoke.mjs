@@ -54,6 +54,40 @@ try{
  assert.ok([...document.querySelectorAll('*')].some(element=>element.children.length===0&&element.textContent==='First line\nSecond line'));
  await React.act(()=>document.querySelector('[role="button"]').click());
  assert.equal(actions.length,2);assert.equal(actions[1].action.name,'saveNotes');assert.deepEqual(actions[1].action.context,{notes:'First line\nSecond line'});assert.deepEqual(errors,[]);
+ await React.act(()=>{
+  receive({version:'v0.9.1',createSurface:{surfaceId:'other',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateDataModel:{surfaceId:'other',value:{notes:'Separate'}}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'other',components:[
+   {id:'root',component:'Column',children:['field','display']},
+   {id:'field',component:'TextField',label:'Other notes',value:{path:'/notes'},variant:'longText'},
+   {id:'display',component:'Text',text:{path:'/notes'}}
+  ]}});
+ });
+ assert.equal(document.querySelector('[aria-label="Notes"]').value,'First line\nSecond line');
+ assert.equal(document.querySelector('[aria-label="Other notes"]').value,'Separate');
+ await React.act(()=>receive({version:'v0.9.1',updateDataModel:{surfaceId:'other',path:'/notes',value:'Changed elsewhere'}}));
+ assert.equal(document.querySelector('[aria-label="Notes"]').value,'First line\nSecond line');
+ assert.equal(document.querySelector('[aria-label="Other notes"]').value,'Changed elsewhere');
+ const removed=document.querySelector('[aria-label="Other notes"]');
+ await React.act(()=>receive({version:'v0.9.1',deleteSurface:{surfaceId:'other'}}));
+ assert.equal(document.querySelector('[aria-label="Other notes"]'),null);
+ await React.act(()=>{
+  Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(removed,'Late input');
+  removed.dispatchEvent(new window.Event('input',{bubbles:true}));
+ });
+ assert.equal(document.querySelector('[aria-label="Notes"]').value,'First line\nSecond line');
+ await React.act(()=>{
+  receive({version:'v0.9.1',createSurface:{surfaceId:'other',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateDataModel:{surfaceId:'other',value:{notes:'Replacement'}}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'other',components:[{id:'root',component:'TextField',label:'Other notes',value:{path:'/notes'},variant:'longText'}]}});
+ });
+ await React.act(()=>{
+  Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(removed,'Stale after recreation');
+  removed.dispatchEvent(new window.Event('input',{bubbles:true}));
+ });
+ assert.equal(document.querySelector('[aria-label="Other notes"]').value,'Replacement');
+ await React.act(()=>receive({version:'v0.9.1',deleteSurface:{surfaceId:'other'}}));
+ assert.equal(actions.length,2);assert.deepEqual(errors,[]);
  await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
   {id:'root',component:'Column',children:['heading','caption']},
   {id:'heading',component:'Text',text:'Heading',variant:'h1'},
