@@ -50,7 +50,7 @@ export class BrowserOfflineWorker {
         let outcome:'succeed'|'conflict'|'uncertain'|'exhaust'|'requeue'='succeed';
         try{await this.options.dispatch(claimed.operationId,{idempotencyKey:claimed.idempotencyKey,payload:structuredClone(claimed.payload)},{...this.scope});}
         catch(error){
-          let classification:BrowserOfflineFailure='uncertain';try{const value=this.options.classify(error);if(value==='retry'||value==='conflict')classification=value;}catch{}
+          let classification:BrowserOfflineFailure='uncertain';if(!(error&&typeof error==='object'&&'code' in error&&error.code==='CAPABILITY_OUTCOME_UNCERTAIN'))try{const value=this.options.classify(error);if(value==='retry'||value==='conflict')classification=value;}catch{}
           outcome=classification==='retry'?(claimed.attempts>=this.options.maxAttempts?'exhaust':'requeue'):classification;
         }
         await this.queue.transition(claimed.id,claimed.version,outcome);

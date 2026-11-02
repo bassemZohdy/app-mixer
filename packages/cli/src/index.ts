@@ -141,7 +141,7 @@ export async function invokeCapability(operationId,input){
   if(typeof operationId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(operationId))throw Error('Invalid capability ID');
   const response=await fetch('/api/capabilities/'+operationId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
   const body=await response.json();
-  if(!response.ok){const error=new Error(body.error||'Capability invocation failed');error.status=response.status;throw error;}
+  if(!response.ok){const error=new Error(body.error||'Capability invocation failed');error.status=response.status;if(body.code==='CAPABILITY_OUTCOME_UNCERTAIN')error.code=body.code;throw error;}
   return body.result;
 }
 `;

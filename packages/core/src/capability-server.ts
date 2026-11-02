@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
-import { CapabilityRegistry } from './capabilities.js';
+import { CapabilityRegistry,CapabilityOutcomeUncertainError } from './capabilities.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 
 type Actor = {tenantId:string; principalId:string};
@@ -43,6 +43,7 @@ function createCapabilityHandler(registry:CapabilityRegistry, authenticate:Authe
         const result=await registry.invoke(operationId,value.input,{tenantId:actor.tenantId,principalId:actor.principalId,origin:value.origin});
         reply(res,200,{result});
       }catch(error){
+        if(error instanceof CapabilityOutcomeUncertainError){reply(res,503,{error:'Capability outcome uncertain',code:'CAPABILITY_OUTCOME_UNCERTAIN'});return;}
         const message=error instanceof Error?error.message:'';
         const status=['Data schema guard unavailable','Staged verification unavailable','Staged listing unavailable','Staged evidence unavailable','Staged summary unavailable','Staged recovery unavailable'].includes(message)?503:['Capability not found','Operation not found'].includes(message)?404:['Capability forbidden','Shared offline key forbidden'].includes(message)?403:message==='Invalid capability input'?400:['Data revision conflict','Data schema version conflict','Staging request conflict','Operation not staged','Invalid operation state','Stale staged verification','Stale staged recovery','Shared offline request conflict','Shared offline slot conflict','Shared offline operation in progress','Shared offline outcome uncertain'].includes(message)?409:500;
         reply(res,status,{error:status===500?'Capability invocation failed':message});

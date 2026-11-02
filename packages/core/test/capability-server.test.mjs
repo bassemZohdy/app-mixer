@@ -41,3 +41,8 @@ test('authentication audit failure blocks access without exposing internal error
     assert.equal(response.status,503);assert.ok(!(await response.text()).includes('internal secret'));
   }finally{await stop(server);}
 });
+
+test('post-execution audit failure returns an explicit uncertain outcome without audit details',async()=>{
+ const registry=new CapabilityRegistry(event=>{if(event.outcome==='succeeded')throw Error('private audit details');});let effects=0;registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:()=>true,validate:()=>true,execute:()=>{effects++;}});const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'person'}),()=>{});
+ try{const url=await start(server),response=await fetch(`${url}/capabilities/write/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Capability outcome uncertain',code:'CAPABILITY_OUTCOME_UNCERTAIN'});assert.equal(effects,1);}finally{await stop(server);}
+});
