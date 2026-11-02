@@ -127,6 +127,18 @@ test('optional history retirement handles failures, stale controls and refreshed
  }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('history exposes interrupted-operation controls only when explicitly configured',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-recovery-'));let dom,release;
+ try{
+  const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');
+  let item={id:'a'.repeat(64),version:2,operationId:'save',status:'running',payload:{}},calls=0,fail=true,started;const waiting=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),runtime={list:async()=>[item]};
+  const plain=mountGeneratedOfflineHistory(root,runtime);await plain.refresh();assert.equal(root.querySelectorAll('button').length,0);plain.dispose();
+  const panel=mountGeneratedOfflineHistory(root,runtime,{onAbandoned:async(id,version)=>{calls++;assert.equal(id,item.id);assert.equal(version,2);if(fail)throw Error('denied');item={...item,status:'uncertain',version:3};},onVerify:async(id,version)=>{calls++;assert.equal(id,item.id);assert.equal(version,3);started();await gate;item={...item,status:'succeeded',version:4};}});
+  await panel.refresh();let button=root.querySelector('button');assert.equal(button.textContent,'Check interrupted operation');button.click();await waitFor(()=>root.textContent.includes('Could not confirm recovery'));assert.equal(calls,1);fail=false;button.click();await waitFor(()=>root.textContent.includes('save — uncertain'));button.click();assert.equal(calls,2);
+  button=root.querySelector('button');assert.equal(button.textContent,'Verify operation outcome');button.click();await waiting;panel.dispose();release();await new Promise(resolve=>setImmediate(resolve));assert.equal(root.textContent,'');assert.equal(calls,3);
+ }finally{release?.();dom?.window.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('closing the runtime while identity is resolving prevents a later conflict lookup',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-close-check-'));let runtime,dom,release,started,paused=false,lookups=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
  try{
