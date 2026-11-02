@@ -26,9 +26,11 @@ spec:
         (!has(variables.pod.schedulerName) || variables.pod.schedulerName == 'default-scheduler') &&
         has(variables.pod.affinity) && has(variables.pod.affinity.podAntiAffinity) &&
         has(variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution) &&
-        variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.size() == 1 &&
+        variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.size() >= 1 &&
+        variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.size() <= 2 &&
+        variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.exists(term, term.topologyKey == 'kubernetes.io/hostname') &&
         variables.pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution.all(term,
-          term.topologyKey == 'kubernetes.io/hostname' &&
+          term.topologyKey in ['kubernetes.io/hostname', 'topology.kubernetes.io/zone'] &&
           (!has(term.namespaces) || term.namespaces.size() == 0) && !has(term.namespaceSelector) &&
           (!has(term.matchLabelKeys) || term.matchLabelKeys.size() == 0) &&
           (!has(term.mismatchLabelKeys) || term.mismatchLabelKeys.size() == 0) &&
