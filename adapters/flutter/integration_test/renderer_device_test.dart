@@ -24,6 +24,11 @@ void main() {
     try { await verifySurfaceEditingIdentity(tester); } finally { tester.testTextInput.unregister(); }
   });
 
+  testWidgets('external updates do not interrupt input composition on a mobile device', (tester) async {
+    tester.testTextInput.register();
+    try { await verifyInputComposition(tester); } finally { tester.testTextInput.unregister(); }
+  });
+
   testWidgets('narrow row remains usable on a mobile device', (tester) async {
     tester.testTextInput.register();
     try { await verifyNarrowRowParity(tester); } finally { tester.testTextInput.unregister(); }
