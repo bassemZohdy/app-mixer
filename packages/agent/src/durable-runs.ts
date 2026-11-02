@@ -41,6 +41,9 @@ export class SqliteAgentRuns {
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentRunTerminalSchema(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
+ /** True only for the same on-disk SQLite database; separate in-memory connections are not shared. */
+ isBackedByDatabase(filename:string):boolean{if(typeof filename!=='string'||!filename)return false;const row=this.db.prepare('PRAGMA database_list').all().find(item=>item.name==='main');return typeof row?.file==='string'&&row.file.length>0&&row.file===filename;}
+
  get(scope:RunScope,runId:string):DurableAgentRun|undefined {
   scopeKey(scope,runId);const row=this.db.prepare('SELECT * FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
   if(!row)return undefined;

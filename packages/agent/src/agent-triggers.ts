@@ -2,7 +2,7 @@ import {canonicalTriggerPayload} from './agent-trigger-payload.js';
 import {DatabaseSync} from 'node:sqlite';
 import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
 import {randomUUID,createHash} from 'node:crypto';
-import {type AgentRunScope} from './durable-runs.js';
+import {SqliteAgentRuns,type AgentRunScope} from './durable-runs.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 
 type EventInput={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown};
@@ -23,6 +23,9 @@ export class SqliteAgentTriggers {
   CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_update BEFORE UPDATE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_delete BEFORE DELETE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;`);if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_runs'").get())throw Error('Run registry unavailable');ensureTriggerReceiptSchema(this.db);}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
+ /** Only on-disk stores backed by the same SQLite database can share trigger identities. */
+ sharesRunDatabase(runs:SqliteAgentRuns):boolean{if(!(runs instanceof SqliteAgentRuns))return false;const row=this.db.prepare('PRAGMA database_list').all().find(item=>item.name==='main');return typeof row?.file==='string'&&row.file.length>0&&runs.isBackedByDatabase(row.file);}
+
  get(scope:AgentRunScope,runId:string):TriggerRecord|undefined{
   if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(runId))throw Error('Invalid trigger');
   const row=this.db.prepare('SELECT i.source_id,i.principal_id,i.event_id,i.event_type,i.payload,i.run_id,r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id=?').get(scope.tenantId,scope.agentId,runId);if(!row)return undefined;

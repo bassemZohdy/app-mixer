@@ -113,7 +113,7 @@ export type {TriggerRetentionMetricsOptions,TriggerRetentionMetricsSnapshot} fro
 export type {AgentTriggerRetentionWorkerOptions} from './agent-trigger-retention-worker.js';
 export type {AgentTriggerRetentionActor,AgentTriggerRetentionOptions,TriggerRedactionCandidate} from './agent-trigger-retention.js';
 export {createAgentEventIngress} from './event-ingress.js';
-export type {AgentEventIngressOptions,AgentEventSourceIdentity,AgentEventRequest,AgentEventIngressObservation} from './event-ingress.js';
+export type {AgentEventIngressOptions,AgentEventSourceIdentity,AgentEventRequest,AgentEventWakeupTarget,AgentEventIngressObservation} from './event-ingress.js';
 export {SqliteAgentSchedules} from './agent-schedules.js';
 export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFireOptions,AgentScheduleCursor,AgentSchedulePage} from './agent-schedules.js';
 export {SqliteAgentScheduleHistory} from './agent-schedule-history.js';
