@@ -5,7 +5,6 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {JSDOM} from 'jsdom';
-import {Ajv2020} from 'ajv/dist/2020.js';
 import {createProject} from '../dist/index.js';
 import {createRecordFieldValidator,createRecordJsonSchemaValidator} from '../../core/dist/index.js';
 import {RECORD_EDITOR_PREVIEW} from '../../core/dist/data-editor-preview.js';
@@ -630,13 +629,25 @@ test('tuple positions can contain editable nested arrays',async()=>{
 test('tuple forms preserve typed trailing items when an item is removed',async()=>{
  const s=await setup(),originalFetch=globalThis.fetch;let dom;
  try{
-  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'}],items:{type:'integer'},minItems:1,maxItems:4}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=new Ajv2020({strict:false}).compile(jsonSchema),record={tuple:['Ada',1,2]},saved=[];
+  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'}],items:{type:'integer'},minItems:1,maxItems:4}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={tuple:['Ada',1,2]},saved=[];
   globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
   dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
   const remove=()=>buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));assert.deepEqual(remove().map(x=>x.disabled),[true,false,false]);remove()[1].click();assert.deepEqual([...root.querySelectorAll('input[type=number]')].map(x=>x.value),['2']);save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:['Ada',2]});
   buttons().find(x=>x.textContent==='Add Tuple item').click();const numbers=[...root.querySelectorAll('input[type=number]')];numbers[1].value='3';numbers[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:['Ada',2,3]});
-  assert.throws(()=>createRecordJsonSchemaValidator(jsonSchema),/Invalid record JSON Schema/);
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('tuple forms save typed trailing items through the capability service',async()=>{
+ const {CapabilityRegistry,SqliteDataProvider,registerDataCapability,createCapabilityServer}=await import('../../core/dist/index.js'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
+ try{
+  const scope={tenantId:'tenant',applicationId:'app'},jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'}],items:{type:'integer'},minItems:1,maxItems:4}},required:['tuple']},common={applicationId:'app',collection:'items',authorize:actor=>actor.principalId==='user',validate:()=>true};
+  provider.put(scope,'items','one',{tuple:['Ada',1,2]},null);
+  for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,...(operation==='put'?{jsonSchema}:{}),candidate:{operationId:`items.${operation}`,method,path:'/items'}});
+  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,options)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});
+  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
+  const removes=buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));removes[1].click();const numbers=[...root.querySelectorAll('input[type=number]')];numbers[0].value='8';numbers[0].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>status.textContent==='Record saved.');assert.deepEqual(provider.get(scope,'items','one').value,{tuple:['Ada',8]});
+  await assert.rejects(registry.invoke('items.put',{id:'one',expectedRevision:2,value:{tuple:['Ada','bad']}},{tenantId:'tenant',principalId:'user',origin:'ui'}),/Invalid capability input/);assert.deepEqual(provider.get(scope,'items','one').value,{tuple:['Ada',8]});
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
 test('positional array matching agrees with server tuple validation',async()=>{

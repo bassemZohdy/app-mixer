@@ -17,6 +17,19 @@ test('schema registration rejects unsupported, unresolved, async and ambiguous c
  try{assert.throws(()=>registerDataCapability(registry,provider,{...options,fields:[{key:'name',label:'Name',type:'string'}]}),/schema/);assert.throws(()=>registerDataCapability(registry,provider,{...options,operation:'get'}),/schema/);}finally{provider.close();}
 });
 
+test('tuple schemas validate optional positions and typed trailing values',async()=>{
+ const jsonSchema={type:'object',properties:{tuple:{type:'array',prefixItems:[{type:'string'}],items:{type:'integer'},minItems:1,maxItems:4}},required:['tuple']},validate=createRecordJsonSchemaValidator(jsonSchema);
+ for(const value of [{tuple:['Ada']},{tuple:['Ada',1,2,3]}])assert.equal(validate(value),true);
+ for(const value of [{tuple:[]},{tuple:[1]},{tuple:['Ada','bad']},{tuple:['Ada',1,2,3,4]}])assert.equal(validate(value),false);
+ const optional=createRecordJsonSchemaValidator({type:'object',properties:{tuple:{type:'array',prefixItems:[{type:'string'},{type:'integer'}],items:false}}});
+ for(const value of [{tuple:[]},{tuple:['Ada']},{tuple:['Ada',2]}])assert.equal(optional(value),true);
+ for(const value of [{tuple:['Ada','bad']},{tuple:['Ada',2,3]}])assert.equal(optional(value),false);
+ for(const array of [{prefixItems:[]},{prefixItems:[{type:'invalid'}]},{prefixItems:[{type:'string'}],items:{type:'invalid'}}])assert.throws(()=>createRecordJsonSchemaValidator({type:'object',properties:{tuple:{type:'array',...array}}}),/Invalid record JSON Schema/);
+ const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),scope={tenantId:'tenant',applicationId:'app'};
+ registerDataCapability(registry,provider,{candidate:{operationId:'saveTuple',method:'PUT',path:'/tuples'},applicationId:'app',collection:'tuples',operation:'put',authorize:()=>true,validate:()=>true,jsonSchema});
+ try{const context={tenantId:'tenant',principalId:'operator',origin:'ui'};await assert.rejects(registry.invoke('saveTuple',{id:'one',expectedRevision:null,value:{tuple:['Ada','bad']}},context),/Invalid capability input/);assert.equal(provider.get(scope,'tuples','one'),undefined);await registry.invoke('saveTuple',{id:'one',expectedRevision:null,value:{tuple:['Ada',1,2]}},context);assert.deepEqual(provider.get(scope,'tuples','one').value,{tuple:['Ada',1,2]});}finally{provider.close();}
+});
+
 test('schema validation is enforced at the capability boundary before writes for UI and agent',async()=>{
  const provider=new SqliteDataProvider(':memory:'),audit=[],registry=new CapabilityRegistry(e=>audit.push(e.outcome));let calls=0;
  const options={candidate:{operationId:'save',method:'PUT',path:'/items'},applicationId:'app',collection:'items',operation:'put',authorize:()=>true,validate:()=>{calls++;return true;},jsonSchema:structuredClone(schema)};registerDataCapability(registry,provider,options);options.jsonSchema.required=[];

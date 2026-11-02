@@ -14,7 +14,8 @@ export function createRecordJsonSchemaValidator(schema:unknown):(value:unknown)=
  try{snapshot=typeof schema==='boolean'?schema:dataCopy(schema);}catch{throw Error('Invalid record JSON Schema');}
  try{
   if(typeof snapshot==='object'&&snapshot.$async===true)throw Error('Async schema unsupported');
-  const ajv=new Ajv2020({strict:true,strictTypes:false,strictRequired:false,allowUnionTypes:true,allErrors:false,validateFormats:true,ownProperties:true});
+  // JSON Schema permits optional tuple positions and typed trailing items; AJV's strict tuple check is an authoring warning.
+  const ajv=new Ajv2020({strict:true,strictTypes:false,strictRequired:false,strictTuples:false,allowUnionTypes:true,allErrors:false,validateFormats:true,ownProperties:true});
   ajv.removeKeyword('multipleOf');
   ajv.addKeyword({keyword:'multipleOf',type:'number',schemaType:'number',metaSchema:{type:'number',exclusiveMinimum:0},validate:(divisor:number,value:number)=>decimalMultiple(value,divisor)});
   const validate=ajv.compile(snapshot);
