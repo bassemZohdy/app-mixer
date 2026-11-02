@@ -61,8 +61,9 @@ export class DurableAgentWorker {
   const assertLeaseAsync=()=>validateLease(controller.signal);
   let pulsing:Promise<void>|undefined;const pulseStop=new AbortController(),pulseSignal=AbortSignal.any([controller.signal,pulseStop.signal]);
   const pulse=async()=>{
-   try{await validateLease(pulseSignal);const current=runs.get(scope,runId)!;run=runs.renew(scope,runId,current.revision,token,leaseMs,this.clock());if(shared&&slot&&!(await shared.renew(scope,runId,slot,leaseMs)))throw Error('Agent run slot lost');}
-   catch{if(!pulseStop.signal.aborted){lost=true;controller.abort();}}
+   try{await validateLease(pulseSignal);}catch{if(!pulseStop.signal.aborted||controller.signal.aborted){lost=true;controller.abort();}return;}
+   try{const current=runs.get(scope,runId)!;run=runs.renew(scope,runId,current.revision,token,leaseMs,this.clock());if(shared&&slot&&!(await shared.renew(scope,runId,slot,leaseMs)))throw Error('Agent run slot lost');}
+   catch{lost=true;controller.abort();}
   };
   const timer=setInterval(()=>{try{assertLocalLease();}catch{lost=true;controller.abort();return;}if(!pulsing)pulsing=pulse().finally(()=>{pulsing=undefined;});},pollMs);let outcome:Outcome='uncertain',started=false;
   try{

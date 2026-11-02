@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {AIMessage} from '@langchain/core/messages';
 import {CapabilityRegistry} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentDefinitions,DurableAgentWorker,createConfiguredAgentRun} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentDefinitions,DurableAgentWorker,PostgresAgentRunSlots,createConfiguredAgentRun} from '../dist/index.js';
 import {context,trace,ROOT_CONTEXT,SpanStatusCode} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {TracerProvider,SimpleSpanProcessor,InMemorySpanExporter} from '@opentelemetry/sdk-trace';
@@ -105,4 +105,9 @@ test('worker finishes without waiting for an obsolete renewal lookup', {timeout:
 
 test('worker aborts a blocked definition check when its lease expires', {timeout:5000}, async()=>{
  const s=setup();let release;try{let now=100,block=false,entered,seen;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),definitions={get:async(...args)=>s.definitions.get(...args),getWithSignal:async(tenant,agent,signal)=>{seen=signal;if(block){entered();await gate;}return s.definitions.get(tenant,agent);}},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,leaseMs:300,pollMs:20,clock:()=>now,execute:async(_run,{signal})=>{block=true;await new Promise(r=>signal.addEventListener('abort',r,{once:true}));return 'uncertain';}}),pending=worker.runOnce(scope,'one');await ready;now=401;await assert.rejects(pending,/lease lost/);assert.equal(seen.aborted,true);const current=s.runs.get(scope,'one');assert.equal(s.runs.recoverExpired(scope,'one',current.revision,now).status,'uncertain');release();await new Promise(r=>setImmediate(r));assert.equal(s.runs.get(scope,'one').status,'uncertain');}finally{release?.();s.runs.close();s.definitions.close();}
+});
+
+
+test('a failed shared slot renewal remains a failure when execution finishes', {timeout:5000}, async()=>{
+ for(const failure of ['lost','error']){const s=setup();let release,finish;try{let entered,released=0;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),done=new Promise(r=>finish=r),shared=new PostgresAgentRunSlots({enabled:true,query:async()=>({rows:[],rowCount:0}),transaction:async fn=>fn(async()=>({rows:[],rowCount:0}))});shared.acquire=async()=> 'slot';shared.renew=async()=>{entered();await gate;if(failure==='error')throw Error('database unavailable');return false;};shared.release=async()=>{released++;};const definitions={get:async(...args)=>s.definitions.get(...args)},worker=new DurableAgentWorker({...options(s),definitions,asyncDefinitions:true,sharedSlots:shared,execute:async()=>{await done;return 'succeeded';}}),pending=worker.runOnce(scope,'one');await ready;finish();await new Promise(r=>setImmediate(r));release();assert.equal((await pending).status,'uncertain');assert.equal(released,1);}finally{finish?.();release?.();s.runs.close();s.definitions.close();}}
 });

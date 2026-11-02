@@ -35,3 +35,10 @@ test('shared PostgreSQL slots enforce agent quotas across separate worker regist
   assert.ok(await slots.pruneStarts(1)>=0);
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
+
+
+test('shared slot loss during worker shutdown is not ignored',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ const schema='run_slots_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release,finish,runs,definitions;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);let entered;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),done=new Promise(r=>finish=r),slots=new PostgresAgentRunSlots({enabled:true,query:async(sql,args)=>{if(sql.startsWith('UPDATE app_mixer_agent_run_slots')){entered();await gate;}return pool.query(sql,args);},transaction:transaction(pool)});await slots.initialize();runs=new SqliteAgentRuns(':memory:');definitions=new SqliteAgentDefinitions(':memory:');definitions.save('t',manifest,0);runs.create(scope,'one',{definitionVersion:1,maxAttempts:3,deadline:Date.now()+10000});const worker=new DurableAgentWorker({runs,definitions:{get:async(...args)=>definitions.get(...args)},asyncDefinitions:true,workerId:'worker',leaseMs:1000,pollMs:25,authorizeStart:()=>true,sharedSlots:slots,execute:async()=>{await done;return 'succeeded';}}),pending=worker.runOnce(scope,'one');await ready;await pool.query('DELETE FROM app_mixer_agent_run_slots WHERE run_id=$1',['one']);finish();await new Promise(r=>setImmediate(r));release();assert.equal((await pending).status,'uncertain');assert.equal(await slots.active(scope),0);
+ }finally{finish?.();release?.();runs?.close();definitions?.close();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});
