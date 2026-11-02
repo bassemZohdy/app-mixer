@@ -34,6 +34,19 @@ export function registerOfflineArchiveReadCapability(registry:CapabilityRegistry
   });
  }});
 }
+
+export type OfflineArchiveListCapabilityOptions={candidate:CapabilityCandidate;applicationId:string;queuePrincipalId:string;targetOperationId:string;kind:'candidates'|'archived';authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeListing:(actor:Actor,selection:{tenantId:string;applicationId:string;principalId:string;operationId:string;kind:'candidates'|'archived'},signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
+/** List only metadata for one fixed owner, operation and archive phase. */
+export function registerOfflineArchiveListCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineArchiveListCapabilityOptions):void{
+ if(!(registry instanceof CapabilityRegistry)||!(queue instanceof SqliteOfflineQueue)||!options||typeof options.authorize!=='function'||typeof options.authorizeListing!=='function'||(options.kind!=='candidates'&&options.kind!=='archived'))throw Error('Invalid offline archive listing capability');
+ const {candidate,applicationId,queuePrincipalId,targetOperationId,kind,authorize,authorizeListing,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},targetOperationId,queuePrincipalId);const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid offline archive listing capability','Offline archive listing unavailable');
+ registry.register(candidate,{authorize,validate:input=>{if(!input||typeof input!=='object'||Array.isArray(input))return false;const value=input as Record<string,unknown>;return Object.keys(value).every(key=>['after','limit'].includes(key))&&(value.after===undefined||id(value.after))&&(value.limit===undefined||(Number.isSafeInteger(value.limit)&&Number(value.limit)>=1&&Number(value.limit)<=100));},execute:async(input,context)=>{
+  const value=input as {after?:string;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:context.tenantId,applicationId},selection={...scope,principalId:queuePrincipalId,operationId:targetOperationId,kind};return runBounded(async signal=>{
+   const active=()=>{if(signal.aborted)throw Error('Offline archive listing unavailable');};const permit=async()=>{active();if(await authorize({...actor})!==true)throw Error('Capability forbidden');active();if(await authorizeListing({...actor},{...selection},signal)!==true)throw Error('Capability forbidden');active();};
+   await permit();const page=queue.listArchiveRecords(scope,queuePrincipalId,targetOperationId,kind,value);await permit();active();return page;
+  });
+ }});
+}
 /** Host-confirmed stopped-submitter recovery; the caller cannot supply the decision. */
 export function registerOfflineAbandonedRecoveryCapability(registry:CapabilityRegistry,queue:SqliteOfflineQueue,options:OfflineAbandonedRecoveryCapabilityOptions):void{
  if(!options||typeof options.verifyStopped!=='function')throw Error('Invalid offline recovery capability');register(registry,queue,options,'recover');
