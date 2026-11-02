@@ -11,6 +11,7 @@ import { DEVELOPMENT_UI } from './development-ui.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
 import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
+import {createBoundedOperation} from './bounded-operation.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -220,12 +221,12 @@ export type DataPlaneTracingOptions=HttpServerTracingOptions;
 export type DataPlaneServer=Server & {beginDrain:()=>void};
 export type DataPlaneHttpsServer=HttpsServer & {beginDrain:()=>void};
 export type DataPlaneTlsOptions={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
-export type DataPlanePublicationAuthorization=(request:IncomingMessage,version:number|undefined)=>boolean|Promise<boolean>;
+export type DataPlanePublicationAuthorization=(request:IncomingMessage,version:number|undefined,signal:AbortSignal)=>boolean|Promise<boolean>;
 export type ControlPlaneTracingOptions=DataPlaneTracingOptions;
-export type DataPlaneOptions={health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization};
+export type DataPlaneOptions={health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization;publicationAuthorizationLimits?:{timeoutMs:number;maxPending:number}};
 export type DataPlanePublicationRepository={getPublished:(version?:number)=>{version:number;definition:ApplicationDefinition}|undefined|Promise<{version:number;definition:ApplicationDefinition}|undefined>};
 function createDataPlaneInternal(repository:DataPlanePublicationRepository,options?:DataPlaneOptions,tls?:HttpsOptions):DataPlaneServer|DataPlaneHttpsServer {
-  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');const authorizePublication=options?.authorizePublication;if(authorizePublication!==undefined&&typeof authorizePublication!=='function')throw Error('Invalid publication authorization');
+  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');const authorizePublication=options?.authorizePublication;if(authorizePublication!==undefined&&typeof authorizePublication!=='function')throw Error('Invalid publication authorization');const authorizationLimits=options?.publicationAuthorizationLimits;if(authorizationLimits!==undefined&&(!authorizationLimits||typeof authorizationLimits!=='object'||Array.isArray(authorizationLimits)||Object.keys(authorizationLimits).some(key=>!['timeoutMs','maxPending'].includes(key))||!authorizePublication||!Number.isSafeInteger(authorizationLimits.timeoutMs)||!Number.isSafeInteger(authorizationLimits.maxPending)))throw Error('Invalid publication authorization limits');const runAuthorization=createBoundedOperation(authorizationLimits?.timeoutMs,authorizationLimits?.maxPending,'Invalid publication authorization limits','Publication authorization unavailable');
   const tracing=options?.tracing;if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid data plane tracing configuration');
   const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined,checkTimer:ReturnType<typeof setTimeout>|undefined,draining=false,finishDrain:()=>void;
   const drainSignal=new Promise<boolean>(resolve=>{finishDrain=()=>resolve(false);});
@@ -257,7 +258,7 @@ function createDataPlaneInternal(repository:DataPlanePublicationRepository,optio
     const versionText = req.url === '/application' ? undefined : req.url!.split('/').at(-1);
     const version = versionText === undefined ? undefined : Number(versionText);
     if (version !== undefined && !Number.isSafeInteger(version)) throw new RequestError(400, 'Invalid version');
-    if(authorizePublication){let allowed:boolean;try{allowed=await authorizePublication(req,version)===true;}catch{respond(res,503,{error:'Authorization unavailable'});return;}if(!allowed){respond(res,403,{error:'Forbidden'});return;}}
+    if(authorizePublication){let allowed:boolean;const disconnected=new AbortController(),onClose=()=>disconnected.abort();res.once('close',onClose);try{allowed=await runAuthorization(async signal=>{const combined=AbortSignal.any([signal,disconnected.signal]);if(combined.aborted)return false;return await authorizePublication(req,version,combined)===true;});}catch{if(!res.destroyed)respond(res,503,{error:'Authorization unavailable'});return;}finally{res.off('close',onClose);}if(res.destroyed)return;if(!allowed){respond(res,403,{error:'Forbidden'});return;}}
     const published = await repository.getPublished(version);
     if (!published) { respond(res, 404, {error:'Publication not found'}); return; }
     const tag='"'+createHash('sha256').update(JSON.stringify(published)).digest('hex')+'"';
