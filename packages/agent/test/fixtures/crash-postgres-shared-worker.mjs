@@ -1,0 +1,16 @@
+import pg from 'pg';
+import {AIMessage} from '@langchain/core/messages';
+import {SqliteAgentDefinitions,createConfiguredAgentRun} from '../../dist/index.js';
+import {PostgresAgentRunLifecycleFoundation} from '../../dist/postgres-run-lifecycle-foundation.js';
+import {PostgresAgentActionJournalFoundation} from '../../dist/postgres-action-journal-foundation.js';
+import {PostgresAgentTokenBudgetFoundation} from '../../dist/postgres-token-budget-foundation.js';
+import {PostgresAgentCheckpointerFoundation} from '../../dist/postgres-checkpointer-foundation.js';
+import {PostgresAgentWorkerFoundation} from '../../dist/postgres-worker-foundation.js';
+const pool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL,options:`-c search_path=${process.env.TEST_SCHEMA}`}),scope={tenantId:'tenant',agentId:'agent'},runId=process.env.TEST_RUN_ID;
+const transaction=async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+const config={query:(sql,args)=>pool.query(sql,args),transaction},runs=new PostgresAgentRunLifecycleFoundation(config),definitions=new SqliteAgentDefinitions(':memory:');
+definitions.save('tenant',{manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:['send'],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}},0);
+try{
+ const worker=new PostgresAgentWorkerFoundation({runs,definitions,workerId:'crashed-worker',leaseMs:30000,pollMs:1000,authorizeStart:()=>true,execute:async(run,context)=>{const bound={...config,scope,runId,leaseToken:run.leaseToken},journal=new PostgresAgentActionJournalFoundation(bound),budget=new PostgresAgentTokenBudgetFoundation({...bound,maxTokens:100}),saver=new PostgresAgentCheckpointerFoundation(bound);const configured=await createConfiguredAgentRun({definitions,tenantId:'tenant',agentId:'agent',expectedVersion:1,bindings:[{operationId:'send',toolName:'send',description:'Send'}],registry:{invoke:async(_op,input)=>{await pool.query('INSERT INTO test_effects (idempotency_key) VALUES ($1)',[input.key]);process.send?.({ready:true});await new Promise(()=>{});}},authorizeRun:()=>true,authorizeCapability:()=>true,createModel:()=>({invoke:async()=>{throw Error('unlimited call');},invokeLimited:async()=>({message:new AIMessage({content:'',tool_calls:[{id:'call-1',name:'send',args:{}}]}),usedTokens:10})}),actionJournal:{journal,maxAttempts:3,prepareInput:(_op,input,key)=>({...input,key})},tokenBudget:{budget,maxTokensPerCall:40},checkpoint:{saver,threadId:runId,resume:false},sharedRunLease:run.leaseToken});for await(const _event of configured.run({threadId:'thread',runId,messages:[{role:'user',content:'Send'}]},{signal:context.signal})){}return 'uncertain';}});
+ await worker.runOnce(scope,runId);process.send?.({error:'worker returned before barrier'});
+}catch(error){if(process.send)process.send({error:String(error)});else {console.error(error);process.exitCode=1;}}finally{definitions.close();await pool.end();}

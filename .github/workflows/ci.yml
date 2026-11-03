@@ -36,6 +36,19 @@ jobs:
         run: node .github/scripts/browser-agent-definition-control-smoke.mjs
         env:
           APP_MIXER_TEST_POSTGRES_URL: postgresql://appmixer:test-only-password@127.0.0.1:5432/appmixer_test
+      - name: Experimental shared agent run integration tests
+        run: >-
+          node --test --test-concurrency=2
+          packages/agent/test/postgres-*-foundation.test.mjs
+          packages/agent/test/postgres-*-integration.test.mjs
+          packages/agent/test/postgres-action-recovery-worker.test.mjs
+          packages/agent/test/postgres-lease-recovery-worker.test.mjs
+          packages/agent/test/postgres-recovery-history-migration.test.mjs
+          packages/agent/test/postgres-run-expiry-worker.test.mjs
+          packages/agent/test/postgres-shared-worker-crash.test.mjs
+          packages/agent/test/postgres-worker-bounds.test.mjs
+        env:
+          APP_MIXER_TEST_POSTGRES_URL: postgresql://appmixer:test-only-password@127.0.0.1:5432/appmixer_test
   test:
     runs-on: ubuntu-latest
     strategy:

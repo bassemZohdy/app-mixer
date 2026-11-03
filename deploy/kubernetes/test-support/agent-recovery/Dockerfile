@@ -14,4 +14,6 @@ COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/web/package.json ./packages/web/package.json
 COPY --from=build /app/packages/web/dist ./packages/web/dist
 COPY deploy/kubernetes/test-support/agent-recovery/*.mjs ./deploy/kubernetes/test-support/agent-recovery/
+COPY packages/agent/test/fixtures/crash-postgres-shared-worker.mjs ./packages/agent/test/fixtures/crash-postgres-shared-worker.mjs
+COPY packages/agent/test/fixtures/replacement-postgres-shared-worker.mjs ./packages/agent/test/fixtures/replacement-postgres-shared-worker.mjs
 CMD ["node", "deploy/kubernetes/test-support/agent-recovery/recovery.mjs", "idle"]

@@ -1,0 +1,17 @@
+import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {PostgresAgentWorkerFoundation} from './postgres-worker-foundation.js';
+import type {AgentRunScope} from './durable-runs.js';
+
+type Options={runs:PostgresAgentRunLifecycleFoundation;worker:PostgresAgentWorkerFoundation;scope:AgentRunScope;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void};
+const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+/** Internal host-started dispatcher. Competing hosts rely on the shared claim transaction. */
+export class PostgresAgentDispatcherFoundation {
+ private readonly options:Options;private readonly scope:AgentRunScope;private active=false;private generation=0;private pending?:Promise<number>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;private cursor?:string;
+ constructor(options:Options){if(!options||!(options.runs instanceof PostgresAgentRunLifecycleFoundation)||!(options.worker instanceof PostgresAgentWorkerFoundation)||!options.worker.usesRegistry(options.runs)||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||!Number.isSafeInteger(options.maxPerPass)||options.maxPerPass<1||options.maxPerPass>100||!Number.isSafeInteger(options.pollMs)||options.pollMs<100||options.pollMs>3600000||typeof options.onError!=='function')throw Error('Invalid shared agent dispatcher');this.options={...options};this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};}
+ private report(error:unknown,runId?:string):void{try{this.options.onError(error,runId);}catch{}}
+ private async pass(keepGoing:()=>boolean,signal:AbortSignal):Promise<number>{const page=await this.options.runs.queuedPage(this.scope,{after:this.cursor,limit:this.options.maxPerPass});let processed=0;for(const runId of page.runIds){if(!keepGoing())return processed;try{await this.options.worker.runOnce(this.scope,runId,signal);if(keepGoing())processed++;}catch(error){if(keepGoing())this.report(error,runId);}finally{if(keepGoing())this.cursor=runId;}}if(keepGoing()&&!page.next)this.cursor=undefined;return processed;}
+ private begin(keepGoing:()=>boolean):Promise<number>{const controller=new AbortController();this.controller=controller;const pending=this.pass(()=>!controller.signal.aborted&&keepGoing(),controller.signal);this.pending=pending;void pending.finally(()=>{if(this.pending===pending)this.pending=undefined;if(this.controller===controller)this.controller=undefined;}).catch(()=>{});return pending;}
+ runOnce():Promise<number>{if(this.active||this.pending)throw Error('Agent dispatcher already running');const generation=this.generation;return this.begin(()=>this.generation===generation);}
+ start():void{if(this.active||this.pending)throw Error('Agent dispatcher already running');this.active=true;const generation=++this.generation,loop=()=>{if(!this.active||this.generation!==generation)return;const pending=this.begin(()=>this.active&&this.generation===generation);void pending.catch(error=>this.report(error)).finally(()=>{if(this.active&&this.generation===generation)this.timer=setTimeout(loop,this.options.pollMs);});};loop();}
+ async stop():Promise<void>{this.active=false;this.generation++;if(this.timer)clearTimeout(this.timer);this.timer=undefined;this.controller?.abort();const pending=this.pending;if(pending)try{await pending;}catch{}}
+}

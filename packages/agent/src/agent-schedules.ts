@@ -139,3 +139,5 @@ export class SqliteAgentSchedules {
  }
 }
 export type {ScheduleRule as AgentScheduleRule,ScheduleConfig as AgentScheduleConfig,FireOptions as AgentScheduleFireOptions};
+// Shared storage uses the same validation and recurrence semantics as SQLite.
+export {checkConfig as validateAgentScheduleConfig,next as nextAgentScheduleOccurrence};
