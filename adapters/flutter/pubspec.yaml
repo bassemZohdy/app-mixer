@@ -13,6 +13,3 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
-flutter:
-  assets:
-    - assets/incremental-missing-child.json

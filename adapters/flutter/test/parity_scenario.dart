@@ -1,16 +1,30 @@
-import 'dart:convert';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 
-Future<Map<String,dynamic>> _incrementalMissingChildFixture() async => jsonDecode(await rootBundle.loadString('packages/app_mixer_flutter/assets/incremental-missing-child.json')) as Map<String,dynamic>;
+// Keep this equivalent to assets/incremental-missing-child.json without a
+// runtime asset fetch inside testWidgets' fake-async zone.
+const incrementalMissingChildFixture=<String,dynamic>{
+  'create':{
+    'version':'v0.9.1',
+    'createSurface':{
+      'surfaceId':'main',
+      'catalogId':appMixerCatalog,
+    },
+  },
+  'children':[
+    {'id':'left','component':'Text','text':'Left'},
+    {'id':'right','component':'Text','text':'Right'},
+  ],
+  'root':{
+    'id':'root','component':'Row','children':['left','middle','right'],'align':'start',
+  },
+  'resolve':{'id':'middle','component':'Text','text':'Middle'},
+  'modes':['spaceBetween','spaceAround','spaceEvenly'],
+};
 
 Future<void> verifyIncrementalMissingChildSpacing(WidgetTester tester) async {
-  // Browser asset loading requires the real async event loop; testWidgets runs
-  // inside fake async, where the browser fetch never completes.
-  final fixture=await tester.runAsync(_incrementalMissingChildFixture);
-  if(fixture==null) throw StateError('Could not load incremental child fixture');
+  final fixture=incrementalMissingChildFixture;
   Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
   late void Function(Object?) receive;
   VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
