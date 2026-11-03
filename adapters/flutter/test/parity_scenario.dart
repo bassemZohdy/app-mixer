@@ -7,7 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 Future<Map<String,dynamic>> _incrementalMissingChildFixture() async => jsonDecode(await rootBundle.loadString('packages/app_mixer_flutter/assets/incremental-missing-child.json')) as Map<String,dynamic>;
 
 Future<void> verifyIncrementalMissingChildSpacing(WidgetTester tester) async {
-  final fixture=await _incrementalMissingChildFixture();
+  // Browser asset loading requires the real async event loop; testWidgets runs
+  // inside fake async, where the browser fetch never completes.
+  final fixture=await tester.runAsync(_incrementalMissingChildFixture);
+  if(fixture==null) throw StateError('Could not load incremental child fixture');
   Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
   late void Function(Object?) receive;
   VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
