@@ -200,7 +200,7 @@ def bounds(node):
 
 def host_node(nodes, direction):
     suffix = direction + '-layout-host'
-    return next((n for n in nodes if n.get('resource-id', '').endswith('/' + suffix)), None)
+    return next((n for n in nodes if n.get('resource-id', '').rsplit('/', 1)[-1] == suffix), None)
 
 for direction in ['ltr', 'rtl']:
     nodes = tree().iter('node')
@@ -213,6 +213,10 @@ for direction in ['ltr', 'rtl']:
     hx1, _, hx2, _ = bounds(host)
     lx1, _, lx2, _ = bounds(left)
     rx1, _, rx2, _ = bounds(right)
+    if not (hx1 <= lx1 <= lx2 <= hx2 and hx1 <= rx1 <= rx2 <= hx2):
+        raise AssertionError(direction + ' labels are outside their layout host')
+    if (direction == 'ltr' and lx1 >= rx1) or (direction == 'rtl' and lx1 <= rx1):
+        raise AssertionError(direction + ' child order does not follow the host direction')
     remaining = hx2 - hx1 - (lx2 - lx1) - (rx2 - rx1)
     expected_outer = remaining / 6  # space-around with three slots, including the empty child
     tolerance = max(3, round(3 * scale))
@@ -226,6 +230,11 @@ for direction in ['ltr', 'rtl']:
     labels = [wait_for(lambda current, direction=direction, word=word: find(current, text=direction.upper() + ' ' + word), direction + ' ' + word.lower()) for word in ['Left', 'Middle', 'Right']]
     hx1, _, hx2, _ = bounds(host)
     rects = sorted((bounds(label) for label in labels), key=lambda rect: rect[0])
+    if any(not (hx1 <= x1 <= x2 <= hx2) for x1, _, x2, _ in rects):
+        raise AssertionError(direction + ' resolved labels are outside their layout host')
+    expected_order = ['Left', 'Middle', 'Right'] if direction == 'ltr' else ['Right', 'Middle', 'Left']
+    if [labels[['Left', 'Middle', 'Right'].index(word)] for word in expected_order] != sorted(labels, key=lambda node: bounds(node)[0]):
+        raise AssertionError(direction + ' resolved children do not follow the host direction')
     remaining = hx2 - hx1 - sum(x2 - x1 for x1, _, x2, _ in rects)
     expected_outer, expected_gap = remaining / 6, remaining / 3
     tolerance = max(3, round(3 * scale))

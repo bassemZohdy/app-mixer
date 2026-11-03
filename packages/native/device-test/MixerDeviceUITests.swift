@@ -137,6 +137,8 @@ final class MixerDeviceUITests: XCTestCase {
       XCTAssertTrue(left.waitForExistence(timeout: 10))
       XCTAssertTrue(right.waitForExistence(timeout: 10))
       XCTAssertFalse(app.staticTexts["\(prefix) Middle"].exists)
+      if prefix == "LTR" { XCTAssertLessThan(left.frame.minX, right.frame.minX) }
+      else { XCTAssertGreaterThan(left.frame.minX, right.frame.minX) }
       let remaining = host.frame.width - left.frame.width - right.frame.width
       let expectedOuter = remaining / 6 // space-around with three slots, including the empty child
       XCTAssertEqual(left.frame.minX - host.frame.minX, expectedOuter, accuracy: 3, "\(prefix) unresolved left slot spacing")
@@ -149,7 +151,10 @@ final class MixerDeviceUITests: XCTestCase {
       let host = app.descendants(matching: .any).matching(identifier: hostID).firstMatch
       let labels = [app.staticTexts["\(prefix) Left"], app.staticTexts["\(prefix) Middle"], app.staticTexts["\(prefix) Right"]]
       for label in labels { XCTAssertTrue(label.waitForExistence(timeout: 10)) }
-      let ordered = labels.map(\.frame).sorted { $0.minX < $1.minX }
+      let orderedLabels = labels.sorted { $0.frame.minX < $1.frame.minX }
+      let expectedOrder = prefix == "LTR" ? ["Left", "Middle", "Right"] : ["Right", "Middle", "Left"]
+      XCTAssertEqual(orderedLabels.map(\.label), expectedOrder.map { "\(prefix) \($0)" })
+      let ordered = orderedLabels.map(\.frame)
       let remaining = host.frame.width - ordered.reduce(0) { $0 + $1.width }
       XCTAssertEqual(ordered[0].minX - host.frame.minX, remaining / 6, accuracy: 3, "\(prefix) resolved outer spacing")
       XCTAssertEqual(ordered[2].maxX - host.frame.maxX, -remaining / 6, accuracy: 3, "\(prefix) resolved outer spacing")
