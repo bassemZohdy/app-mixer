@@ -1,0 +1,16 @@
+{
+  "create": {
+    "version": "v0.9.1",
+    "createSurface": {
+      "surfaceId": "main",
+      "catalogId": "https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json"
+    }
+  },
+  "children": [
+    {"id": "left", "component": "Text", "text": "Left"},
+    {"id": "right", "component": "Text", "text": "Right"}
+  ],
+  "root": {"id": "root", "component": "Row", "children": ["left", "middle", "right"], "align": "start"},
+  "resolve": {"id": "middle", "component": "Text", "text": "Middle"},
+  "modes": ["spaceBetween", "spaceAround", "spaceEvenly"]
+}

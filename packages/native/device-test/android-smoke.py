@@ -189,4 +189,48 @@ signed = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=
 tap(signed)
 wait_for(lambda nodes: find(nodes, text='Verified signed extension'), 'signed extension rendering')
 wait_for(lambda nodes: find(nodes, text='Tampered plan rejected'), 'tampered signed plan rejection')
+incremental = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Check incremental layout' and n.get('clickable')=='true'), None), 'incremental layout button')
+tap(incremental)
+
+def bounds(node):
+    match = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.get('bounds', ''))
+    if not match:
+        raise AssertionError('Invalid layout bounds')
+    return tuple(map(int, match.groups()))
+
+def host_node(nodes, direction):
+    suffix = direction + '-layout-host'
+    return next((n for n in nodes if n.get('resource-id', '').endswith('/' + suffix)), None)
+
+for direction in ['ltr', 'rtl']:
+    nodes = tree().iter('node')
+    nodes = list(nodes)
+    host = wait_for(lambda current, direction=direction: host_node(current, direction), direction + ' host')
+    left = wait_for(lambda current, direction=direction: find(current, text=direction.upper() + ' Left'), direction + ' left child')
+    right = wait_for(lambda current, direction=direction: find(current, text=direction.upper() + ' Right'), direction + ' right child')
+    if find(nodes, text=direction.upper() + ' Middle'):
+        raise AssertionError(direction + ' unresolved child appeared before resolution')
+    hx1, _, hx2, _ = bounds(host)
+    lx1, _, lx2, _ = bounds(left)
+    rx1, _, rx2, _ = bounds(right)
+    remaining = hx2 - hx1 - (lx2 - lx1) - (rx2 - rx1)
+    expected_outer = remaining / 6  # space-around with three slots, including the empty child
+    tolerance = max(3, round(3 * scale))
+    if abs((lx1 - hx1) - expected_outer) > tolerance or abs((hx2 - rx2) - expected_outer) > tolerance:
+        raise AssertionError(direction + ' unresolved slot spacing differs: ' + str((hx1, lx1, rx2, hx2, expected_outer)))
+
+resolve = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Resolve missing child' and n.get('clickable')=='true'), None), 'resolve missing child button')
+tap(resolve)
+for direction in ['ltr', 'rtl']:
+    host = wait_for(lambda current, direction=direction: host_node(current, direction), direction + ' resolved host')
+    labels = [wait_for(lambda current, direction=direction, word=word: find(current, text=direction.upper() + ' ' + word), direction + ' ' + word.lower()) for word in ['Left', 'Middle', 'Right']]
+    hx1, _, hx2, _ = bounds(host)
+    rects = sorted((bounds(label) for label in labels), key=lambda rect: rect[0])
+    remaining = hx2 - hx1 - sum(x2 - x1 for x1, _, x2, _ in rects)
+    expected_outer, expected_gap = remaining / 6, remaining / 3
+    tolerance = max(3, round(3 * scale))
+    measured = [rects[0][0] - hx1, rects[1][0] - rects[0][2], rects[2][0] - rects[1][2], hx2 - rects[2][2]]
+    expected = [expected_outer, expected_gap, expected_gap, expected_outer]
+    if any(abs(actual - target) > tolerance for actual, target in zip(measured, expected)):
+        raise AssertionError(direction + ' resolved slot spacing differs: ' + str((measured, expected)))
 print('React Native Android device interaction passed')

@@ -16,6 +16,8 @@ void main() {
   testWidgets('narrow row remains usable', verifyNarrowRowParity);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
   testWidgets('row spacing modes place children consistently', verifyRowSpacing);
+  testWidgets('unresolved row references reserve flex slots until later updates resolve them', verifyIncrementalMissingChildSpacing);
+  testWidgets('unresolved column references reserve vertical flex slots until resolved', verifyIncrementalMissingColumnSpacing);
   testWidgets('row cross-axis alignment places children consistently', verifyRowAlignment);
   testWidgets('column cross-axis alignment places children consistently', verifyColumnAlignment);
   testWidgets('card does not add layout margins or decoration', verifyCardLayoutParity);

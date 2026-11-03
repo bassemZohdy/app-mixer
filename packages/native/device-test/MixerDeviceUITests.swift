@@ -126,5 +126,35 @@ final class MixerDeviceUITests: XCTestCase {
     signed.tap()
     XCTAssertTrue(app.staticTexts["Verified signed extension"].waitForExistence(timeout: 10))
     XCTAssertTrue(app.staticTexts["Tampered plan rejected"].waitForExistence(timeout: 10))
+    let incremental = app.buttons["Check incremental layout"]
+    XCTAssertTrue(incremental.waitForExistence(timeout: 10))
+    incremental.tap()
+    for (hostID, prefix) in [("ltr-layout-host", "LTR"), ("rtl-layout-host", "RTL")] {
+      let host = app.descendants(matching: .any).matching(identifier: hostID).firstMatch
+      let left = app.staticTexts["\(prefix) Left"]
+      let right = app.staticTexts["\(prefix) Right"]
+      XCTAssertTrue(host.waitForExistence(timeout: 10))
+      XCTAssertTrue(left.waitForExistence(timeout: 10))
+      XCTAssertTrue(right.waitForExistence(timeout: 10))
+      XCTAssertFalse(app.staticTexts["\(prefix) Middle"].exists)
+      let remaining = host.frame.width - left.frame.width - right.frame.width
+      let expectedOuter = remaining / 6 // space-around with three slots, including the empty child
+      XCTAssertEqual(left.frame.minX - host.frame.minX, expectedOuter, accuracy: 3, "\(prefix) unresolved left slot spacing")
+      XCTAssertEqual(host.frame.maxX - right.frame.maxX, expectedOuter, accuracy: 3, "\(prefix) unresolved right slot spacing")
+    }
+    let resolveMissing = app.buttons["Resolve missing child"]
+    XCTAssertTrue(resolveMissing.waitForExistence(timeout: 10))
+    resolveMissing.tap()
+    for (hostID, prefix) in [("ltr-layout-host", "LTR"), ("rtl-layout-host", "RTL")] {
+      let host = app.descendants(matching: .any).matching(identifier: hostID).firstMatch
+      let labels = [app.staticTexts["\(prefix) Left"], app.staticTexts["\(prefix) Middle"], app.staticTexts["\(prefix) Right"]]
+      for label in labels { XCTAssertTrue(label.waitForExistence(timeout: 10)) }
+      let ordered = labels.map(\.frame).sorted { $0.minX < $1.minX }
+      let remaining = host.frame.width - ordered.reduce(0) { $0 + $1.width }
+      XCTAssertEqual(ordered[0].minX - host.frame.minX, remaining / 6, accuracy: 3, "\(prefix) resolved outer spacing")
+      XCTAssertEqual(ordered[2].maxX - host.frame.maxX, -remaining / 6, accuracy: 3, "\(prefix) resolved outer spacing")
+      XCTAssertEqual(ordered[1].minX - ordered[0].maxX, remaining / 3, accuracy: 3, "\(prefix) resolved first gap")
+      XCTAssertEqual(ordered[2].minX - ordered[1].maxX, remaining / 3, accuracy: 3, "\(prefix) resolved second gap")
+    }
   }
 }

@@ -1,6 +1,71 @@
+import 'dart:convert';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
+
+Future<Map<String,dynamic>> _incrementalMissingChildFixture() async => jsonDecode(await rootBundle.loadString('packages/app_mixer_flutter/assets/incremental-missing-child.json')) as Map<String,dynamic>;
+
+Future<void> verifyIncrementalMissingChildSpacing(WidgetTester tester) async {
+  final fixture=await _incrementalMissingChildFixture();
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+  final errors=<Object>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+  for(final mode in fixture['modes'] as List){
+    receive(fixture['create']);
+    final root=Map<String,dynamic>.from(fixture['root'] as Map)..['justify']=mode;
+    receive(message('updateComponents',{'surfaceId':'main','components':[...(fixture['children'] as List),root]}));
+    await tester.pump();
+    final rowFinder=find.ancestor(of:find.text('Left'),matching:find.byType(Row)).first,row=tester.getRect(rowFinder),left=tester.getRect(find.text('Left')),pending=tester.getRect(find.byKey(const ValueKey(('middle',0)))),right=tester.getRect(find.text('Right'));
+    expect(row.width,closeTo(300,0.5),reason:'$mode row width');expect(pending.width,0,reason:'$mode missing slot width');expect(pending.height,0,reason:'$mode missing slot height');
+    final free=row.width-left.width-right.width,gap=mode=='spaceBetween'?free/2:mode=='spaceAround'?free/3:free/4,start=mode=='spaceAround'?gap/2:mode=='spaceEvenly'?gap:0.0;
+    expect(left.left-row.left,closeTo(start,1.0),reason:'$mode left position');
+    expect(pending.left-left.right,closeTo(gap,1.0),reason:'$mode gap to missing slot');
+    expect(right.left-pending.right,closeTo(gap,1.0),reason:'$mode gap after missing slot');
+    receive(message('updateComponents',{'surfaceId':'main','components':[fixture['resolve']]}));await tester.pump();
+    final middle=tester.getRect(find.text('Middle')),newLeft=tester.getRect(find.text('Left')),newRight=tester.getRect(find.text('Right')),resolvedFree=row.width-newLeft.width-middle.width-newRight.width,resolvedGap=mode=='spaceBetween'?resolvedFree/2:mode=='spaceAround'?resolvedFree/3:resolvedFree/4,resolvedStart=mode=='spaceAround'?resolvedGap/2:mode=='spaceEvenly'?resolvedGap:0.0;
+    expect(newLeft.left-row.left,closeTo(resolvedStart,1.0),reason:'$mode resolved left position');
+    expect(middle.left-newLeft.right,closeTo(resolvedGap,1.0),reason:'$mode resolved first gap');
+    expect(newRight.left-middle.right,closeTo(resolvedGap,1.0),reason:'$mode resolved second gap');
+    receive(message('deleteSurface',{'surfaceId':'main'}));await tester.pump();
+  }
+  expect(errors,isEmpty);expect(tester.takeException(),isNull);
+}
+
+Future<void> verifyIncrementalMissingColumnSpacing(WidgetTester tester) async {
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  final registry=FlutterComponentRegistry()..register('height-probe',(context,props)=>const SizedBox(key:ValueKey('height-probe'),width:1,height:300),(component)=>true);
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+  final errors=<Object>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:300,height:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add,extensions:registry))))));
+  for(final mode in ['spaceBetween','spaceAround','spaceEvenly']){
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Row','align':'stretch','justify':'start','children':['vertical','probe']},
+      {'id':'vertical','component':'Column','align':'stretch','justify':mode,'children':['top','middle','bottom']},
+      {'id':'top','component':'Text','text':'Top'},
+      {'id':'bottom','component':'Text','text':'Bottom'},
+      {'id':'probe','component':'height-probe'}
+    ]}));
+    await tester.pump();
+    final columnFinder=find.ancestor(of:find.text('Top'),matching:find.byType(Column)).first,column=tester.getRect(columnFinder),top=tester.getRect(find.text('Top')),pending=tester.getRect(find.byKey(const ValueKey(('middle',0)))),bottom=tester.getRect(find.text('Bottom'));
+    expect(column.height,closeTo(300,0.5),reason:'$mode column height');expect(pending.width,closeTo(column.width,0.5),reason:'$mode missing slot stretches across the cross axis');expect(pending.height,0,reason:'$mode missing slot has no main-axis size');
+    final free=column.height-top.height-bottom.height,gap=mode=='spaceBetween'?free/2:mode=='spaceAround'?free/3:free/4,start=mode=='spaceAround'?gap/2:mode=='spaceEvenly'?gap:0.0;
+    expect(top.top-column.top,closeTo(start,1.0),reason:'$mode top position');
+    expect(pending.top-top.bottom,closeTo(gap,1.0),reason:'$mode gap to missing slot');
+    expect(bottom.top-pending.bottom,closeTo(gap,1.0),reason:'$mode gap after missing slot');
+    receive(message('updateComponents',{'surfaceId':'main','components':[{'id':'middle','component':'Text','text':'Middle'}]}));await tester.pump();
+    final middle=tester.getRect(find.text('Middle')),newTop=tester.getRect(find.text('Top')),newBottom=tester.getRect(find.text('Bottom')),resolvedFree=column.height-newTop.height-middle.height-newBottom.height,resolvedGap=mode=='spaceBetween'?resolvedFree/2:mode=='spaceAround'?resolvedFree/3:resolvedFree/4,resolvedStart=mode=='spaceAround'?resolvedGap/2:mode=='spaceEvenly'?resolvedGap:0.0;
+    expect(newTop.top-column.top,closeTo(resolvedStart,1.0),reason:'$mode resolved top position');
+    expect(middle.top-newTop.bottom,closeTo(resolvedGap,1.0),reason:'$mode resolved first gap');
+    expect(newBottom.top-middle.bottom,closeTo(resolvedGap,1.0),reason:'$mode resolved second gap');
+    receive(message('deleteSurface',{'surfaceId':'main'}));await tester.pump();
+  }
+  expect(errors,isEmpty);expect(tester.takeException(),isNull);
+}
 
 Future<void> verifyRowSpacing(WidgetTester tester) async {
   Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};

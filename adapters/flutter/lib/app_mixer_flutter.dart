@@ -182,9 +182,11 @@ class FlutterComponentRegistry {
 }
 
 class NativeNode {
-  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.bindingPath, this.extensionProps});
+  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.bindingPath, this.extensionProps}) : _renderChildren=null;
+  const NativeNode._(this.id,this.kind,this.children,{this.text,this.variant,this.justify,this.align,this.label,this.value,this.bindingPath,this.extensionProps,List<NativeNode>? renderChildren}) : _renderChildren=renderChildren;
   final String id, kind;
   final List<NativeNode> children;
+  final List<NativeNode>? _renderChildren;
   final String? text, variant, justify, align, label, value, bindingPath;
   final Map<String, dynamic>? extensionProps;
 }
@@ -302,7 +304,7 @@ class FlutterSurfaceStore {
     var count = 0;
     NativeNode? visit(String id, Set<String> ancestors, int intrinsicDepth, bool tightWidth, bool tightHeight, bool inButton) {
       if (++count > 5000) throw FormatException('Component tree too large');
-      final c = components[id]; if (c == null) return null;
+      final c = components[id]; if (c == null) return NativeNode._(id,'__placeholder',const []);
       if (inButton && (c['component']=='Button' || c['component']=='TextField')) throw FormatException('Interactive component inside button');
       if (ancestors.contains(id) || ancestors.length >= 100) throw FormatException('Cyclic or deeply nested components');
       final next = {...ancestors, id};
@@ -319,7 +321,8 @@ class FlutterSurfaceStore {
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
+      final renderChildren=ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList();
+      return NativeNode._(id, c['component'] as String, renderChildren.where((child)=>child.kind!='__placeholder').toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props,renderChildren:renderChildren);
     }
     return visit('root', {}, 0, true, false, false);
   }
@@ -374,6 +377,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     }).toList());
   }
   Widget _widget(NativeNode node, SurfaceView surface, FlutterSurfaceStore store, int generation, String path, bool tightWidth, bool tightHeight, bool inButton) {
+    if(node.kind=='__placeholder') return const SizedBox.shrink();
     final extension=store._extensions[node.kind];
     if (extension!=null) return extension.builder(context, _object(_copy(node.extensionProps)));
     if (node.kind == 'Text') {
@@ -394,13 +398,13 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     final stretch=(node.kind=='Column'||node.kind=='Row')&&(node.align==null||node.align=='stretch');
     final childTightWidth=node.kind=='Column'&&stretch, childTightHeight=node.kind=='Row'&&stretch;
     final children=<Widget>[], occurrences=<String,int>{};
-    for (final child in node.children) {
+    for (final child in node._renderChildren ?? node.children) {
       final occurrence=occurrences.update(child.id,(value)=>value+1,ifAbsent:()=>0);
       final childPath='$path${child.id.length}:${child.id}:$occurrence;';
       final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight,inButton || node.kind=='Button');
       // Keep standalone row text separate from nearby control labels.
       final accessibleChild=node.kind=='Row' && child.kind=='Text' && !inButton ? Semantics(container:true,child:rendered) : rendered;
-      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:accessibleChild) : accessibleChild;
+      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:accessibleChild) : child.kind=='__placeholder'&&node.kind=='Row' ? SizedBox(width:0,child:accessibleChild) : child.kind=='__placeholder'&&node.kind=='Column' ? SizedBox(height:0,child:accessibleChild) : accessibleChild;
       // Preserve child state when another referenced component arrives or the order changes.
       children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }

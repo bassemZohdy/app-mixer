@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {View, Text, TextInput, Pressable, Platform} from 'react-native-web';
 import {createReactNativeA2UIComponent, APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
 import {A2UIRenderer} from '../../packages/web/dist/index.js';
+import missingChildFixture from '../../adapters/flutter/assets/incremental-missing-child.json' with {type:'json'};
 
 const Renderer=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform});
 const labels=['A long column label that needs to wrap','A long card label that needs to wrap','A long nested row label that needs to wrap'];
@@ -43,6 +44,14 @@ try {
     const nativeSubscribe=receive=>messages.forEach(receive);createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
     const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));columnComparisons.push({align,index,nativeHost,webHost});
   }
+  const missingComparisons=[];
+  for(const direction of ['ltr','rtl'])for(const mode of missingChildFixture.modes){
+    const nativeHost=document.createElement('div'),webHost=document.createElement('div');nativeHost.style.width=webHost.style.width='240px';nativeHost.dir=webHost.dir=direction;document.body.append(nativeHost,webHost);
+    const root={...missingChildFixture.root,justify:mode},messages=[missingChildFixture.create,{version:'v0.9.1',updateComponents:{surfaceId:'main',components:[...missingChildFixture.children,root]}}];let nativeReceive;
+    const nativeSubscribe=receive=>{nativeReceive=receive;messages.forEach(receive);};createRoot(nativeHost).render(React.createElement(Renderer,{subscribe:nativeSubscribe,onError:fail}));
+    const web=new A2UIRenderer(webHost);messages.forEach(message=>web.apply(message));
+    missingComparisons.push({direction,mode,nativeHost,webHost,sendNative:message=>{if(!nativeReceive)throw Error('Native layout subscription is not ready');nativeReceive(message);},web,resolve:missingChildFixture.resolve});
+  }
   const check=()=>{
     try {
       const host=document.getElementById('host'), bounds=host.getBoundingClientRect();
@@ -80,7 +89,43 @@ try {
           if(Math.abs(column.width-240)>1||box.width<=0||Math.abs(box.left-column.left-expected)>1||(align==='stretch'&&Math.abs(box.width-column.width)>1))throw Error(`${name} ${align} column alignment mismatch`);
         }
       }
-      report('pass');
+      const checkMissingLayout=(host,direction,mode,unresolved=true)=>{
+        const row=[...host.querySelectorAll('*')].find(element=>getComputedStyle(element).display==='flex'&&getComputedStyle(element).flexDirection==='row');
+        if(!row||row.children.length!==3)return undefined;
+        const children=[...row.children],rects=children.map(child=>child.getBoundingClientRect()),width=row.getBoundingClientRect().width,remaining=width-rects.reduce((sum,rect)=>sum+rect.width,0),count=children.length;
+        const outer=mode==='spaceBetween'?0:mode==='spaceAround'?remaining/(2*count):remaining/(count+1),gap=mode==='spaceBetween'?remaining/(count-1):mode==='spaceAround'?remaining/count:remaining/(count+1);
+        const offsets=rects.map(rect=>direction==='rtl'?row.getBoundingClientRect().right-rect.right:rect.left-row.getBoundingClientRect().left);
+        let expected=outer;
+        for(let index=0;index<count;index++){if(Math.abs(offsets[index]-expected)>1)throw Error(`${direction} ${mode} child ${index} spacing mismatch: ${offsets[index]} vs ${expected}`);expected+=rects[index].width+gap;}
+        if(unresolved&&rects[1].width>1)throw Error(`${direction} ${mode} unresolved slot should have zero width: ${rects[1].width}`);
+        return {row,rects};
+      };
+      const readyMissing=[];
+      for(const item of missingComparisons){
+        const {direction,mode,nativeHost,webHost}=item,nativeBefore=checkMissingLayout(nativeHost,direction,mode),webBefore=checkMissingLayout(webHost,direction,mode);
+        if(!nativeBefore||!webBefore){requestAnimationFrame(check);return;}
+        const nativeChildren=[...nativeBefore.row.children],webChildren=[...webBefore.row.children];
+        if(nativeChildren[1].textContent!==''||webChildren[1].textContent!=='')throw Error(`${direction} ${mode} placeholder should be empty`);
+        readyMissing.push(item);
+      }
+      const missingResolved=[];
+      for(const {direction,mode,nativeHost,webHost,sendNative,web,resolve} of readyMissing){
+        sendNative({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[resolve]}});web.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[resolve]}});
+        missingResolved.push({direction,mode,nativeHost,webHost});
+      }
+      const checkResolved=(attempt=0)=>requestAnimationFrame(()=>{
+        try{
+          let pending=false;
+          for(const {direction,mode,nativeHost,webHost} of missingResolved){
+            const nativeAfter=checkMissingLayout(nativeHost,direction,mode,false),webAfter=checkMissingLayout(webHost,direction,mode,false);
+            if(!nativeAfter||!webAfter){pending=true;continue;}
+            if(nativeAfter.row.children[1].textContent!=='Middle'||webAfter.row.children[1].textContent!=='Middle'){pending=true;continue;}
+          }
+          if(pending){if(attempt<30){checkResolved(attempt+1);return;}throw Error('Resolved child did not appear in its retained slot');}
+          report('pass');
+        }catch(error){fail(error);}
+      });
+      checkResolved();
     }catch(error){fail(error);}
   };
   requestAnimationFrame(check);

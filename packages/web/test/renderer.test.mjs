@@ -187,3 +187,19 @@ test('versioned catalog identifies exactly the built-in registered components', 
   const {renderer}=setup();
   renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'custom',catalogId:APP_MIXER_CATALOG}});
 });
+
+test('incremental missing layout references retain their web flex slot until resolved', async()=>{
+  const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/assets/incremental-missing-child.json',import.meta.url),'utf8'));
+  for(const mode of fixture.modes){
+    const {host,renderer}=setup();renderer.apply(fixture.create);
+    renderer.apply(components('main',[...fixture.children,{...fixture.root,justify:mode}]));
+    let row=host.children[0].children[0];
+    assert.equal(row.style.justifyContent,({spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'})[mode]);
+    assert.deepEqual(row.children.map(child=>child.tagName),['p','span','p']);
+    assert.equal(row.children[1].textContent,'');
+    renderer.apply(components('main',[fixture.resolve]));
+    row=host.children[0].children[0];
+    assert.deepEqual(row.children.map(child=>child.tagName),['p','p','p']);
+    assert.equal(row.children[1].textContent,'Middle');
+  }
+});
