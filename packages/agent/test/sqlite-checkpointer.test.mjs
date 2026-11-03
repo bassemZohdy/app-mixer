@@ -23,6 +23,21 @@ test('LangGraph checkpoint survives restart and resumes a completed tool step',a
  }finally{saver?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
+test('checkpointed graph persists a completed tool step before a later failure with an async saver',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'app-mixer-async-checkpoint-')),path=join(dir,'runs.sqlite');let runs,saver;
+ class DelayedSaver extends SqliteAgentCheckpointer {
+  async put(...args){await new Promise(resolve=>setTimeout(resolve,25));return super.put(...args);}
+  async putWrites(...args){await new Promise(resolve=>setTimeout(resolve,25));return super.putWrites(...args);}
+ }
+ try{
+  runs=new SqliteAgentRuns(path);let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:2,deadline:10000},0);run=runs.claim(scope,'run',run.revision,'worker',1000,10);saver=new DelayedSaver(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>20});let calls=0,turn=0;
+  const tool=createCapabilityTool({name:'lookup',description:'Lookup',invoke:async()=>{calls++;return 'found';}}),first={async invoke(){turn++;if(turn===1)return new AIMessage({content:'',tool_calls:[{id:'call-1',name:'lookup',args:{}}]});throw Error('model outage');}};
+  await assert.rejects(read(createToolCallingModel(first,[tool],{checkpoint:{saver,threadId:'run',resume:false}}).stream(messages)),/model outage/);assert.equal(calls,1);saver.close();saver=undefined;
+  saver=new SqliteAgentCheckpointer(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>20});const resumed={async invoke(history){assert.ok(history.some(message=>message._getType()==='tool'));return new AIMessage('Done');}};
+  assert.deepEqual(await read(createToolCallingModel(resumed,[tool],{checkpoint:{saver,threadId:'run',resume:true}}).stream(messages)),['Done']);assert.equal(calls,1);
+ }finally{saver?.close();runs?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('checkpoint writes are lease-fenced and bound to tenant, agent and run',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'app-mixer-checkpoint-')),path=join(dir,'runs.sqlite');let runs,saver,other;
  try{

@@ -63,7 +63,9 @@ export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], 
         .addEdge(START,'model')
         .addConditionalEdges('model',state=>{const last=state.messages.at(-1);return last&&isAIMessage(last)&&(last.tool_calls?.length??0)>0?'tools':END;},['tools',END])
         .addEdge('tools','model').compile(checkpoint?{checkpointer:checkpoint.saver}:{});
-      const config=checkpoint?{signal,configurable:{thread_id:checkpoint.threadId}}:{signal};
+      // Wait for each checkpoint before advancing: async stores can otherwise
+      // lose a completed tool step when a later graph step fails or the worker exits.
+      const config=checkpoint?{signal,durability:'sync' as const,configurable:{thread_id:checkpoint.threadId}}:{signal};
       if(checkpoint){const existing=await checkpoint.saver.getTuple(config);if(checkpoint.resume&&!existing)throw Error('Checkpoint unavailable');if(!checkpoint.resume&&existing)throw Error('Checkpoint already exists');}
       const result=await graph.invoke(checkpoint?.resume?null:{messages:initial,turns:0},config);
       const last=result.messages.at(-1);
