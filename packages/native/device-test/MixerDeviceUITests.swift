@@ -129,28 +129,33 @@ final class MixerDeviceUITests: XCTestCase {
     let incremental = app.buttons["Check incremental layout"]
     XCTAssertTrue(incremental.waitForExistence(timeout: 10))
     incremental.tap()
+    let textElement: (String) -> XCUIElement = { label in
+      let matches = app.staticTexts.matching(NSPredicate(format: "label == %@", label))
+      XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing text: \(label)")
+      return matches.element(boundBy: max(0, matches.count - 1))
+    }
     for (hostID, prefix) in [("ltr-layout-host", "LTR"), ("rtl-layout-host", "RTL")] {
       let host = app.descendants(matching: .any).matching(identifier: hostID).firstMatch
-      let left = app.staticTexts["\(prefix) Left"]
-      let right = app.staticTexts["\(prefix) Right"]
+      let left = textElement("\(prefix) Left")
+      let right = textElement("\(prefix) Right")
       XCTAssertTrue(host.waitForExistence(timeout: 10))
-      XCTAssertTrue(left.waitForExistence(timeout: 10))
-      XCTAssertTrue(right.waitForExistence(timeout: 10))
-      XCTAssertFalse(app.staticTexts["\(prefix) Middle"].exists)
+      XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label == %@", "\(prefix) Middle")).firstMatch.exists)
       if prefix == "LTR" { XCTAssertLessThan(left.frame.minX, right.frame.minX) }
       else { XCTAssertGreaterThan(left.frame.minX, right.frame.minX) }
-      let remaining = host.frame.width - left.frame.width - right.frame.width
+      let visible = [("Left", left.frame), ("Right", right.frame)].sorted { $0.1.minX < $1.1.minX }
+      let expectedOrder = prefix == "LTR" ? ["Left", "Right"] : ["Right", "Left"]
+      XCTAssertEqual(visible.map(\.0), expectedOrder)
+      let remaining = host.frame.width - visible.reduce(0) { $0 + $1.1.width }
       let expectedOuter = remaining / 6 // space-around with three slots, including the empty child
-      XCTAssertEqual(left.frame.minX - host.frame.minX, expectedOuter, accuracy: 3, "\(prefix) unresolved left slot spacing")
-      XCTAssertEqual(host.frame.maxX - right.frame.maxX, expectedOuter, accuracy: 3, "\(prefix) unresolved right slot spacing")
+      XCTAssertEqual(visible[0].1.minX - host.frame.minX, expectedOuter, accuracy: 3, "\(prefix) unresolved leading slot spacing")
+      XCTAssertEqual(host.frame.maxX - visible[1].1.maxX, expectedOuter, accuracy: 3, "\(prefix) unresolved trailing slot spacing")
     }
     let resolveMissing = app.buttons["Resolve missing child"]
     XCTAssertTrue(resolveMissing.waitForExistence(timeout: 10))
     resolveMissing.tap()
     for (hostID, prefix) in [("ltr-layout-host", "LTR"), ("rtl-layout-host", "RTL")] {
       let host = app.descendants(matching: .any).matching(identifier: hostID).firstMatch
-      let labels = [app.staticTexts["\(prefix) Left"], app.staticTexts["\(prefix) Middle"], app.staticTexts["\(prefix) Right"]]
-      for label in labels { XCTAssertTrue(label.waitForExistence(timeout: 10)) }
+      let labels = [textElement("\(prefix) Left"), textElement("\(prefix) Middle"), textElement("\(prefix) Right")]
       let orderedLabels = labels.sorted { $0.frame.minX < $1.frame.minX }
       let expectedOrder = prefix == "LTR" ? ["Left", "Middle", "Right"] : ["Right", "Middle", "Left"]
       XCTAssertEqual(orderedLabels.map(\.label), expectedOrder.map { "\(prefix) \($0)" })

@@ -215,13 +215,16 @@ for direction in ['ltr', 'rtl']:
     rx1, _, rx2, _ = bounds(right)
     if not (hx1 <= lx1 <= lx2 <= hx2 and hx1 <= rx1 <= rx2 <= hx2):
         raise AssertionError(direction + ' labels are outside their layout host')
-    if (direction == 'ltr' and lx1 >= rx1) or (direction == 'rtl' and lx1 <= rx1):
+    visible = sorted([('Left', bounds(left)), ('Right', bounds(right))], key=lambda item: item[1][0])
+    expected_visible_order = ['Left', 'Right'] if direction == 'ltr' else ['Right', 'Left']
+    if [name for name, _ in visible] != expected_visible_order:
         raise AssertionError(direction + ' child order does not follow the host direction')
-    remaining = hx2 - hx1 - (lx2 - lx1) - (rx2 - rx1)
+    remaining = hx2 - hx1 - sum(x2 - x1 for _, (x1, _, x2, _) in visible)
     expected_outer = remaining / 6  # space-around with three slots, including the empty child
     tolerance = max(3, round(3 * scale))
-    if abs((lx1 - hx1) - expected_outer) > tolerance or abs((hx2 - rx2) - expected_outer) > tolerance:
-        raise AssertionError(direction + ' unresolved slot spacing differs: ' + str((hx1, lx1, rx2, hx2, expected_outer)))
+    first_x, last_x = visible[0][1][0], visible[-1][1][2]
+    if abs((first_x - hx1) - expected_outer) > tolerance or abs((hx2 - last_x) - expected_outer) > tolerance:
+        raise AssertionError(direction + ' unresolved slot spacing differs: ' + str((hx1, first_x, last_x, hx2, expected_outer)))
 
 resolve = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Resolve missing child' and n.get('clickable')=='true'), None), 'resolve missing child button')
 tap(resolve)
@@ -233,7 +236,8 @@ for direction in ['ltr', 'rtl']:
     if any(not (hx1 <= x1 <= x2 <= hx2) for x1, _, x2, _ in rects):
         raise AssertionError(direction + ' resolved labels are outside their layout host')
     expected_order = ['Left', 'Middle', 'Right'] if direction == 'ltr' else ['Right', 'Middle', 'Left']
-    if [labels[['Left', 'Middle', 'Right'].index(word)] for word in expected_order] != sorted(labels, key=lambda node: bounds(node)[0]):
+    named_labels = sorted(zip(['Left', 'Middle', 'Right'], labels), key=lambda item: bounds(item[1])[0])
+    if [name for name, _ in named_labels] != expected_order:
         raise AssertionError(direction + ' resolved children do not follow the host direction')
     remaining = hx2 - hx1 - sum(x2 - x1 for x1, _, x2, _ in rects)
     expected_outer, expected_gap = remaining / 6, remaining / 3
