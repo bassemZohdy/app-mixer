@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {CapabilityRegistry, hadNoEffect, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
+import { AppMixerError } from './errors.js';
 
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
@@ -44,7 +45,7 @@ export class SqliteStagedOperations {
       if(requestKey!==undefined){
         const existing=this.db.prepare('SELECT id,operation_id,payload FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND request_key=?').get(scope.tenantId,scope.applicationId,requestKey);
         if(existing){
-          if(existing.operation_id!==operationId||!isDeepStrictEqual(JSON.parse(existing.payload as string),normalized))throw Error('Staging request conflict');
+          if(existing.operation_id!==operationId||!isDeepStrictEqual(JSON.parse(existing.payload as string),normalized))throw new AppMixerError('conflict','Staging request conflict');
           const result=this.get(scope,existing.id as string)!;this.db.exec('COMMIT');return result;
         }
       }
@@ -76,7 +77,7 @@ export class SqliteStagedOperations {
     if(!(registry instanceof CapabilityRegistry)||!context||context.tenantId!==scope.tenantId)throw Error('Invalid submission context');
     const snapshotScope={tenantId:scope.tenantId,applicationId:scope.applicationId};
     const claim=this.db.prepare("UPDATE staged_business_operations SET status='submitting',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='staged' AND state_revision<9007199254740991").run(snapshotScope.tenantId,snapshotScope.applicationId,id);
-    if(claim.changes!==1)throw Error('Operation not staged');
+    if(claim.changes!==1)throw new AppMixerError('conflict','Operation not staged');
     const operation=this.get(snapshotScope,id)!;
     try {
       const result=await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);

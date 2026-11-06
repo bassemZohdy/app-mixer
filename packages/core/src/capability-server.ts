@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { limitServer, TLS_POLICY } from './server-limits.js';
+import { refusalStatus } from './errors.js';
 import { CapabilityRegistry } from './capabilities.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 
@@ -44,9 +45,9 @@ function createCapabilityHandler(registry:CapabilityRegistry, authenticate:Authe
         const result=await registry.invoke(operationId,value.input,{tenantId:actor.tenantId,principalId:actor.principalId,origin:value.origin});
         reply(res,200,{result});
       }catch(error){
-        const message=error instanceof Error?error.message:'';
-        const status=message==='Data schema guard unavailable'?503:message==='Capability not found'?404:['Capability forbidden','Shared offline key forbidden'].includes(message)?403:message==='Invalid capability input'?400:['Data revision conflict','Data schema version conflict','Staging request conflict','Operation not staged','Shared offline request conflict','Shared offline slot conflict','Shared offline operation in progress','Shared offline outcome uncertain'].includes(message)?409:500;
-        reply(res,status,{error:status===500?'Capability invocation failed':message});
+        // Expected refusals carry a code and keep their (client-safe) message; anything else is a generic failure.
+        const status=refusalStatus(error)??500;
+        reply(res,status,{error:status===500||!(error instanceof Error)?'Capability invocation failed':error.message});
       }
     })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,{error:'Internal server error'});else if(!res.destroyed)res.destroy();});};
     if(dispatch)dispatch(req,res,run);else run();

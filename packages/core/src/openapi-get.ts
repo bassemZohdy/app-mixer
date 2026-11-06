@@ -1,4 +1,5 @@
 import { importOpenAPI, type CapabilityCandidate } from './capabilities.js';
+import { AppMixerError } from './errors.js';
 
 type PolicyContext = {tenantId:string;principalId:string};
 type Parameter = {name:string; location:'path'|'query'; required:boolean; type:'string'|'integer'|'number'|'boolean'; minimum?:number; maximum?:number; minLength?:number; maxLength?:number};
@@ -54,7 +55,7 @@ export function createOpenAPIGetBinding(document:unknown, operationId:string, op
     return true;
   }
   return {candidate,binding:{authorize:options.authorize,validate,async execute(raw){
-    if(!validate(raw))throw Error('Invalid capability input');
+    if(!validate(raw))throw new AppMixerError('invalid','Invalid capability input');
     const input=raw as Input,target=new URL(base.href);
     const path=candidate.path.replace(/\{([^}]+)\}/g,(_match,name:string)=>encodeURIComponent(String(input.path![name])));
     target.pathname=base.pathname.replace(/\/$/,'')+path;

@@ -2,6 +2,7 @@ import {createRecordJsonSchemaValidator} from './record-json-schema.js';
 import {createRecordFieldValidator,type RecordField} from './record-field-validator.js';
 import {CapabilityRegistry, type CapabilityCandidate} from './capabilities.js';
 import {checkKey, type DataProvider} from './data-provider.js';
+import { AppMixerError } from './errors.js';
 
 type PolicyContext={tenantId:string;principalId:string};
 export type DataCapabilityOptions={
@@ -42,7 +43,7 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
     execute:(input,context)=>{
       const value=input as {id:string;expectedRevision:number|null;value:Record<string,unknown>;expectedSchemaVersion?:number};
       const scope={tenantId:context.tenantId,applicationId};
-      if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw Error('Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
+      if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw new AppMixerError('unavailable','Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
       if(operation==='put')return provider.put(scope,collection,value.id,value.value,value.expectedRevision,value.expectedSchemaVersion);
       provider.delete(scope,collection,value.id,value.expectedRevision as number,value.expectedSchemaVersion);return null;
     }

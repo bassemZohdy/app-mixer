@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
+import { AppMixerError } from './errors.js';
 
 export type DataScope = {tenantId:string; applicationId:string};
 export type DataRecord = {id:string; revision:number; value:Record<string,unknown>};
@@ -105,7 +106,7 @@ export class SqliteDataProvider implements DataProvider {
   }
   private requireSchema(scope:DataScope,collection:string,expected:number|undefined):void {
     if(expected!==undefined&&(!Number.isSafeInteger(expected)||expected<0))throw Error('Invalid schema version');
-    if((expected??0)!==this.getSchemaVersion(scope,collection))throw Error('Data schema version conflict');
+    if((expected??0)!==this.getSchemaVersion(scope,collection))throw new AppMixerError('conflict','Data schema version conflict');
   }
   private snapshot(scope:DataScope,collection:string):{preview:MigrationPreview;rows:DataRecord[]} {
     const version=this.getSchemaVersion(scope,collection),rows:DataRecord[]=[];let bytes=0;
@@ -186,7 +187,7 @@ export class SqliteDataProvider implements DataProvider {
     try {
       this.requireSchema(scope,collection,expectedSchemaVersion);
       const current=this.db.prepare('SELECT revision,deleted FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=?').get(scope.tenantId,scope.applicationId,collection,id);
-      if((current && Number(current.deleted)===0 ? Number(current.revision) : null)!==expectedRevision)throw Error('Data revision conflict');
+      if((current && Number(current.deleted)===0 ? Number(current.revision) : null)!==expectedRevision)throw new AppMixerError('conflict','Data revision conflict');
       const prior=current ? Number(current.revision) : 0;
       if(!Number.isSafeInteger(prior)||prior>=Number.MAX_SAFE_INTEGER)throw Error('Invalid revision');
       const revision=prior+1;
@@ -200,7 +201,7 @@ export class SqliteDataProvider implements DataProvider {
     this.db.exec('BEGIN IMMEDIATE');
     try {this.requireSchema(scope,collection,expectedSchemaVersion);
       const result=this.db.prepare("UPDATE business_records SET revision=revision+1,deleted=1,value='{}' WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND revision=? AND deleted=0").run(scope.tenantId,scope.applicationId,collection,id,expectedRevision);
-      if(result.changes!==1)throw Error('Data revision conflict');this.db.exec('COMMIT');
+      if(result.changes!==1)throw new AppMixerError('conflict','Data revision conflict');this.db.exec('COMMIT');
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   /**

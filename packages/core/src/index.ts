@@ -121,7 +121,7 @@ export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions
 export { DevelopmentProposals } from './proposals.js';
 export { SqliteDevelopmentProposals } from './sqlite-proposals.js';
 export type { Proposal, ProposalStore } from './proposals.js';
-export { AppMixerError, httpStatus } from './errors.js';
+export { AppMixerError, httpStatus, refusalStatus } from './errors.js';
 export type { AppMixerErrorCode } from './errors.js';
 export { importOpenAPI, CapabilityRegistry, CAPABILITY_EFFECT, markNoEffect, hadNoEffect } from './capabilities.js';
 export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';

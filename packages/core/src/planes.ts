@@ -13,7 +13,7 @@ import { inlineHashes } from './csp.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
 import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
-import { AppMixerError, httpStatus } from './errors.js';
+import { AppMixerError, refusalStatus } from './errors.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -91,7 +91,7 @@ function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promis
     const run=():void=>{void handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof AppMixerError) respond(res, httpStatus(error)!, {error:error.message});
+      else if (error instanceof Error && refusalStatus(error) !== undefined) respond(res, refusalStatus(error)!, {error:error.message});
       else respond(res, 500, {error:'Internal server error'});
     });};
     if(dispatch)dispatch(req,res,run);else run();
