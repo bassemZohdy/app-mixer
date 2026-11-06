@@ -3,6 +3,7 @@ import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {createReactA2UIComponent} from '../../packages/web/dist/react.js';
 import {APP_MIXER_CATALOG} from '../../packages/web/dist/index.js';
+import {replayFixtures} from './fixture-tree.mjs';
 
 if(!process.env.REACT_SMOKE_DEPS)throw Error('REACT_SMOKE_DEPS is required');
 const require=createRequire(resolve(process.env.REACT_SMOKE_DEPS,'package.json'));
@@ -42,4 +43,9 @@ try{
  assert.deepEqual(failures,['cleanup failed']);
  await React.act(()=>{next({version:'v0.9.1',createSurface:{surfaceId:'after',catalogId:APP_MIXER_CATALOG}});next({version:'v0.9.1',updateComponents:{surfaceId:'after',components:[{id:'root',component:'Text',text:'Connected'}]}});});
  assert.match(document.getElementById('app').textContent,/Connected/);await React.act(()=>root2.unmount());
+ // The shared layout and variants fixtures render through the React bridge exactly as on the other adapters.
+ const root3=createRoot(document.getElementById('app'));let fixtureReceive;const fixtureErrors=[],fixtureActions=[];
+ await React.act(()=>root3.render(React.createElement(A2UI,{subscribe:callback=>{fixtureReceive=callback;return ()=>{};},onAction:message=>fixtureActions.push(message),onError:error=>fixtureErrors.push(error)})));
+ const deliver=message=>React.act(()=>fixtureReceive(message));deliver.click=element=>React.act(()=>element.click());deliver.type=(element,value)=>React.act(()=>{element.value=value;element.dispatchEvent(new window.Event('input',{bubbles:true}));});
+ await replayFixtures(deliver,document.getElementById('app'),{actions:()=>fixtureActions,errors:()=>fixtureErrors});await React.act(()=>root3.unmount());
 }finally{dom.window.close();}

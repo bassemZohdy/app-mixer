@@ -17,14 +17,14 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 
   | Component | Shared fixtures that render it | Web | React Native store | Flutter VM | React, Angular |
   | --- | --- | --- | --- | --- | --- |
-  | Text | bindings, layout, actions, text-field, variants (all seven variants and the default) | yes | yes | yes | through the web renderer only |
-  | Column | layout, text-field, variants (every `justify` and `align` value) | yes | yes | yes | through the web renderer only |
-  | Row | layout, variants (every `justify` and `align` value) | yes | yes | yes | through the web renderer only |
-  | Card | layout | yes | yes | yes | through the web renderer only |
-  | TextField | text-field (render, input, variant, removal); variants (both variants and the default); rejections | yes | yes | yes | through the web renderer only |
-  | Button | actions; variants (every variant accepted and kept; no adapter draws them differently); rejections | yes | yes | yes | through the web renderer only |
+  | Text | bindings, layout, actions, text-field, variants (all seven variants and the default) | yes | yes | yes | yes (CI smoke) |
+  | Column | layout, text-field, variants (every `justify` and `align` value) | yes | yes | yes | yes (CI smoke) |
+  | Row | layout, variants (every `justify` and `align` value) | yes | yes | yes | yes (CI smoke) |
+  | Card | layout | yes | yes | yes | yes (CI smoke) |
+  | TextField | text-field (render, input, variant, removal); variants (both variants and the default); rejections | yes | yes | yes | yes (CI smoke) |
+  | Button | actions; variants (every variant accepted and kept; no adapter draws them differently); rejections | yes | yes | yes | yes (CI smoke) |
 
-  The React and Angular bridges wrap the web renderer and do not load the fixtures themselves. The React Native column covers the shared store, not React Native components on a device.
+  The React and Angular bridges replay the layout, variants, text-field, bindings, actions and rejections fixtures in their CI smoke tests (`.github/scripts/react-smoke.mjs` and `angular-smoke.mjs`, with real React 19.2 and Angular 19.2 in jsdom), comparing the DOM with the same expected trees through `.github/scripts/fixture-tree.mjs`. The React Native column covers the shared store, not React Native components on a device.
 
 ### P2-02 Extension SDK and compatibility manifests
 - **Verified locally:** manifest and configuration validation, package digest verification (canonical spelling only), approval pinning and revocation lifecycle, hostile-key tests.

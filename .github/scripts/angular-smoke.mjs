@@ -14,6 +14,7 @@ const {TestBed}=await load('@angular/core/testing');
 const {BrowserDynamicTestingModule,platformBrowserDynamicTesting}=await load('@angular/platform-browser-dynamic/testing');
 const {A2UIComponent}=await import(pathToFileURL(resolve(dir,'dist/index.js')).href);
 const {APP_MIXER_CATALOG}=await import(pathToFileURL(resolve('packages/web/dist/index.js')).href);
+const {replayFixtures}=await import(pathToFileURL(resolve('.github/scripts/fixture-tree.mjs')).href);
 TestBed.initTestEnvironment(BrowserDynamicTestingModule,platformBrowserDynamicTesting());
 TestBed.configureTestingModule({imports:[A2UIComponent]});
 const fixture=TestBed.createComponent(A2UIComponent);let receive,late,unsubscribed=0;const actions=[],errors=[];
@@ -32,4 +33,9 @@ try {
  receive({version:'v0.9.1',updateComponents:{surfaceId:'new',components:[{id:'root',component:'Text',text:'Connected'}]}});
  assert.match(fixture.nativeElement.textContent,/Connected/);
  fixture.destroy();assert.equal(unsubscribed,2);receive({version:'invalid'});assert.equal(errors.length,2);
+ // The shared layout and variants fixtures render through the Angular bridge exactly as on the other adapters.
+ const shared=TestBed.createComponent(A2UIComponent);let receiveShared;const sharedErrors=[],sharedActions=[];shared.componentInstance.error.subscribe(error=>sharedErrors.push(error));shared.componentInstance.action.subscribe(message=>sharedActions.push(message));
+ shared.componentRef.setInput('subscribe',fn=>{receiveShared=fn;return ()=>{};});shared.detectChanges();await shared.whenStable();
+ const deliver=message=>{receiveShared(message);};deliver.click=element=>{element.click();};deliver.type=(element,value)=>{element.value=value;element.dispatchEvent(new window.Event('input',{bubbles:true}));};
+ await replayFixtures(deliver,shared.nativeElement,{actions:()=>sharedActions,errors:()=>sharedErrors});shared.destroy();
 }finally{TestBed.resetTestingModule();dom.window.close();}
