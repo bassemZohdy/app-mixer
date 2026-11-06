@@ -21,6 +21,8 @@ function parse(row:Record<string,unknown>):PostgresAgentRun{return {tenantId:Str
  * and reconciliation see unresolved actions. Approval and delegation waits, token budgets, traces and expiry audit
  * are not part of this registry. The host authenticates and authorizes every call.
  */
+export {NOW as POSTGRES_NOW};
+export type {Query as PostgresRunQuery};
 export class PostgresAgentRuns {
  private readonly query:Query;private readonly transaction:PostgresAgentRunsOptions['transaction'];
  constructor(options:PostgresAgentRunsOptions){if(!options||options.enabled!==true||typeof options.query!=='function'||typeof options.transaction!=='function')throw Error('Invalid agent run registry configuration');this.query=options.query;this.transaction=options.transaction;}
@@ -30,6 +32,8 @@ export class PostgresAgentRuns {
   await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))',[]);
   await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_first_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id))',[]);
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_agent_actions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL CHECK (status IN ('ready','dispatching','uncertain','succeeded','failed')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id))",[]);
+  await this.query("CREATE TABLE IF NOT EXISTS app_mixer_agent_cost_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,day BIGINT NOT NULL,reserved BIGINT NOT NULL,used BIGINT,status TEXT NOT NULL CHECK (status IN ('reserved','settled')),PRIMARY KEY(tenant_id,agent_id,run_id,call_id))",[]);
+  await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_cost_calls_day ON app_mixer_agent_cost_calls(tenant_id,agent_id,day)',[]);
  }
  async get(scope:AgentRunScope,runId:string):Promise<PostgresAgentRun|undefined>{const {tenantId,agentId}=scopeKey(scope,runId);const row=(await this.query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3',[tenantId,agentId,runId])).rows[0];return row?parse(row):undefined;}
  /** Create a queued run. A run ID is created once: a second create fails with `Run already exists`. */
@@ -57,7 +61,7 @@ export class PostgresAgentRuns {
    return run;
   });
  }
- private async unresolvedActions(query:Query,run:PostgresAgentRun):Promise<boolean>{return (await query("SELECT 1 FROM app_mixer_agent_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status IN ('dispatching','uncertain') LIMIT 1",[run.tenantId,run.agentId,run.runId])).rows.length>0;}
+ private async unresolvedActions(query:Query,run:PostgresAgentRun):Promise<boolean>{return (await query("SELECT 1 FROM app_mixer_agent_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status IN ('dispatching','uncertain') UNION ALL SELECT 1 FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status='reserved' LIMIT 1",[run.tenantId,run.agentId,run.runId])).rows.length>0;}
  private checkLease(run:PostgresAgentRun,token:string,now:number):void{if(!LEASED.includes(run.status)||run.leaseToken!==token||run.leaseUntil===null||now>=run.leaseUntil)throw Error('Invalid or expired lease');}
  /** Lease a queued run. Concurrency and daily limits are counted across all nodes under one per-agent lock. */
  async claim(scope:AgentRunScope,runId:string,revision:number,workerId:string,leaseMs:number,limits:PostgresRunClaimLimits={}):Promise<PostgresAgentRun>{

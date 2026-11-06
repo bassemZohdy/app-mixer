@@ -149,3 +149,20 @@ Several workers on different nodes can run supervisors on the same scope. Claims
 Tests:
 - `packages/agent/test/postgres-run-nodes.test.mjs`: the node-failure processes run this supervisor. A drain test stops a worker while two runs are in flight; it finishes both, claims nothing new and exits cleanly.
 - `deploy/kubernetes/test-support/agent-recovery/run-supervisor.sh` (run by the agent pod recovery workflow in kind): schedules the supervisor as a two-replica Deployment against PostgreSQL with 60 runs. It crashes one worker process with SIGKILL while it holds a run, so the container restarts in place, then rolls the Deployment so every old pod drains on SIGTERM. Every run succeeds, the external system, which does not deduplicate, records exactly 180 effects, and at least one run was recovered after the crash.
+
+## Shared cost budget across nodes
+
+`SqliteAgentTokenBudget` caps one run. `PostgresAgentCostBudget({enabled: true, query, transaction})` caps what an agent spends per UTC day, by the database clock, across every run and node sharing a `PostgresAgentRuns` database. Call `initialize()` after the registry's `initialize()`, and set the limit with `configure(scope, {currency, maxMicrosPerDay})`.
+
+- **`reserve(scope, runId, leaseToken, callId, costMicros)`** reserves the worst-case cost of one model call before it is made. It requires the caller's live run lease and admits the reservation under one per-agent lock, so nodes reserving at the same moment cannot together pass the limit (`Cost budget exhausted`).
+- **`settle(...)`** records the provider-reported cost.
+- **Provider overrun.** If a call cost more than it reserved, every node is refused for the rest of that day (`Cost provider limit violated`).
+- **Open reservations.** A run settled with a reservation still open becomes uncertain. `reconcile(scope, runId, callId, usedMicros)` records the actual cost once the old worker has stopped.
+- **`summary(scope, day?)`** reports the limit, committed and reserved spend, and whether an overrun occurred.
+
+`packages/agent/test/postgres-cost-budget-nodes.test.mjs` (run in the PostgreSQL CI job) starts four processes, each with its own pool and four concurrent callers.
+- One 100,000-micro budget admits exactly 100 calls of 1,000 micros, spread across all four nodes.
+- Thirty further rounds release all 16 callers at once against a three-call budget. Each round admits exactly three calls and commits exactly the limit.
+- Without the per-agent lock, the nodes overspend in the first round.
+
+The host still configures limits, reconciles open reservations, and enforces provider-side caps on each model provider.

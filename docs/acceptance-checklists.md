@@ -153,7 +153,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** concurrency and daily-run limits, token and cost reservation ledger with uncertain-call reconciliation, lifecycle history, authorized gauges (including schedule backlog and actions awaiting reconciliation), cross-process reservation race test.
 - **Still to prove:**
   - [ ] Provider-specific enforcement of limits on each model provider used.
-  - [ ] Production-wide cost controls across nodes.
+  - [x] Production-wide cost controls across nodes. `PostgresAgentCostBudget` caps an agent's daily spend across every run and node sharing one PostgreSQL primary. Four processes with 16 concurrent callers admit exactly the budget in every one of 31 rounds, and a provider overrun stops all nodes ([durable-agent-runs.md](durable-agent-runs.md#shared-cost-budget-across-nodes)).
   - [ ] Production trace propagation and retention.
   - [ ] Broader metrics and production coordination.
 - **Evidence:** a provider overrun test showing the provider-side cap holds and a multi-node cost test showing the budget is not exceeded.
