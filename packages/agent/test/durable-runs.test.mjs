@@ -40,3 +40,20 @@ test('deadlines, tokens and invalid lifecycle transitions fail closed',()=>{
   run=store.recoverExpired(scope,'one',run.revision,1000);assert.throws(()=>store.reconcile(scope,'one',run.revision,'retry',1000),/retried/);assert.throws(()=>store.archive(scope,'one',run.revision),/state/);
  }finally{store.close();}
 });
+
+test('run-start history is pruned by age and daily quotas keep counting the current day',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'run-starts-')),path=join(dir,'runs.sqlite'),store=new SqliteAgentRuns(path),DAY=86400000;
+ try{
+  const scope={tenantId:'tenant',agentId:'agent'},DAY0=10*DAY;
+  for(const [id,at] of [['old',DAY0-3*DAY],['recent',DAY0-DAY/2],['today',DAY0+1000]]){const run=store.create(scope,id,{definitionVersion:1,maxAttempts:3,deadline:DAY0+DAY},0);const claimed=store.claim(scope,id,run.revision,'worker',1000,at,3,10);store.settle(scope,id,claimed.revision,claimed.leaseToken,'succeeded',at+1);}
+  for(const bad of [0,-1,3661,1.5,'1'])assert.throws(()=>store.pruneStarts(bad,DAY0),/Invalid retention/);
+  assert.throws(()=>store.pruneStarts(1,-1),/Invalid retention/);
+  assert.equal(store.pruneStarts(2,DAY0+2000),1,'only the three-day-old record is older than two days');
+  assert.equal(store.pruneStarts(2,DAY0+2000),0);
+  assert.equal(store.pruneStarts(1,DAY0+DAY/2+1),1,'the half-day-old record is older than a day half a day later');
+  const next=store.create(scope,'next',{definitionVersion:1,maxAttempts:3,deadline:DAY0+DAY},0);
+  // One start remains today ("today"); with a limit of two a second run still starts and a third is refused.
+  const started=store.claim(scope,'next',next.revision,'worker',1000,DAY0+3000,3,2);assert.equal(started.status,'running');store.settle(scope,'next',started.revision,started.leaseToken,'succeeded',DAY0+3500);
+  const third=store.create(scope,'third',{definitionVersion:1,maxAttempts:3,deadline:DAY0+DAY},0);assert.throws(()=>store.claim(scope,'third',third.revision,'worker',1000,DAY0+4000,3,2),/limit|daily/i);
+ }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+});

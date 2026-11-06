@@ -33,6 +33,14 @@ export class SqliteAgentRuns {
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
+ /**
+  * Delete run-start records older than `retainDays` (1 to 3,660) from `now`, for every tenant and agent of this database, and return how many were removed.
+  * Daily quotas only count today's starts, so records older than a day are history; a run that is retried after its record was pruned counts as a new start.
+  */
+ pruneStarts(retainDays:number,now=Date.now()):number{
+  if(!Number.isSafeInteger(retainDays)||retainDays<1||retainDays>3660||!Number.isSafeInteger(now)||now<0)throw Error('Invalid retention');
+  return Number(this.db.prepare('DELETE FROM agent_run_starts WHERE started_at<?').run(Math.max(0,now-retainDays*86400000)).changes);
+ }
  close():void{this.db.close();}
  get(scope:RunScope,runId:string):DurableAgentRun|undefined {
   scopeKey(scope,runId);const row=this.db.prepare('SELECT * FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);

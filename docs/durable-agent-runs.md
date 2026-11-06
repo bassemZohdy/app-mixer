@@ -166,3 +166,7 @@ Tests:
 - Without the per-agent lock, the nodes overspend in the first round.
 
 The host still configures limits, reconciles open reservations, and enforces provider-side caps on each model provider.
+
+## Run-start history retention
+
+`SqliteAgentRuns` records one start per run for the daily run quota. `pruneStarts(retainDays, now?)` (the SQLite counterpart of `PostgresAgentRunSlots.pruneStarts`) deletes records older than `retainDays` (1 to 3,660) for every tenant and agent in the database and returns the count. Quotas only count the current day, so older records are history; a run that is retried after its record was pruned counts as a new start. The host decides who may call it and how long to keep history.

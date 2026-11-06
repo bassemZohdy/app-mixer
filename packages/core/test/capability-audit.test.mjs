@@ -27,3 +27,23 @@ test('unavailable audit blocks capability execution',async()=>{
  const sink=new SqliteCapabilityAudit(':memory:'),registry=new CapabilityRegistry(sink.record);let calls=0;registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:()=>true,validate:()=>true,execute:()=>++calls});sink.close();
  await assert.rejects(registry.invoke('write',{}, {tenantId:'t',principalId:'u',origin:'service'}));assert.equal(calls,0);
 });
+
+test('capability audit retention removes only old events of one tenant up to a reviewed sequence',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'capability-audit-prune-')),path=join(dir,'audit.sqlite');let now=100;const sink=new SqliteCapabilityAudit(path,{clock:()=>now});
+ try{
+  const event=(tenantId,n)=>({invocationId:'i'+n,operationId:'op',tenantId,principalId:'p',outcome:'succeeded'});
+  for(let n=0;n<6;n++){now=100+n*10;sink.record(event(n%2?'other':'tenant',n));}
+  now=1000;sink.record(event('tenant',6));
+  const before=sink.list('tenant').map(item=>item.sequence);assert.equal(before.length,4);
+  for(const bad of [{before:2000,through:7,limit:10},{before:100,through:0,limit:10},{before:100,through:7,limit:0},{before:100,through:7,limit:1001},{before:-1,through:7,limit:1},null])assert.throws(()=>sink.prune('tenant',bad),/Invalid capability audit retention query/);
+  assert.throws(()=>sink.prune('',{before:100,through:7,limit:10}),/Invalid/);
+  // Events recorded before 125 (sequences 1-3) of the tenant: sequences 1 and 3 belong to 'tenant'? Only even n are 'tenant'.
+  assert.equal(sink.prune('tenant',{before:125,through:7,limit:1}),1,'the limit bounds one pass');
+  assert.equal(sink.prune('tenant',{before:125,through:7,limit:10}),1,'the second old event of the tenant');
+  assert.equal(sink.prune('tenant',{before:125,through:7,limit:10}),0,'nothing old is left');
+  assert.deepEqual(sink.list('other').map(item=>item.invocationId),['i1','i3','i5'],'another tenant is untouched');
+  assert.deepEqual(sink.list('tenant').map(item=>item.invocationId),['i4','i6'],'newer events remain');
+  assert.equal(sink.prune('tenant',{before:1000,through:5,limit:10}),1,'through pins the newest sequence that may be removed: i4 (sequence 5) goes, i6 (sequence 7) stays');
+  assert.deepEqual(sink.list('tenant').map(item=>item.invocationId),['i6']);
+ }finally{sink.close();rmSync(dir,{recursive:true,force:true});}
+});

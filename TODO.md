@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**29 / 68 tasks complete (43%)**
+**30 / 69 tasks complete (43%)**
 
 `█████████░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 15 / 37 | 22 (P4-03, P4-05, P4-07, P4-09..P4-12, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-37) |
+| P4 fixes and improvements from the 2026-11-06 code review | 16 / 38 | 22 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-12, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-38) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -110,8 +110,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: 26 SQLite stores and 17 PostgreSQL stores create their tables with `CREATE TABLE IF NOT EXISTS` on open or `initialize()`; only `SqliteStagedOperations` adds missing columns, nothing records a schema version, and the PostgreSQL stores need DDL privileges at runtime. Fix: a schema version (`PRAGMA user_version` / an `app_mixer_schema` table), one migration runner per database (`node packages/cli migrate`), a documented least-privilege runtime role, and a test that opens a database written by the previous release.
 - [ ] P4-10 Use WAL mode and one shared SQLite connection per database
   - Found: every store opens its own `DatabaseSync` on the same file (runs, journal, approvals, delegations, budget, notices, checkpointer, …) with `BEGIN IMMEDIATE` and the default rollback journal, so concurrent workers contend on the file lock. Fix: `PRAGMA journal_mode=WAL` with `synchronous=NORMAL`, an optional shared-connection constructor, a contention benchmark with the kill tests, and documentation of the WAL file layout for backups.
-- [ ] P4-11 Give the SQLite stores the retention their PostgreSQL counterparts have
-  - Found: `SqliteAgentRuns.agent_run_starts` grows forever (`PostgresAgentRunSlots.pruneStarts` exists), `SqliteCapabilityAudit` has no `prune` (`PostgresCapabilityAudit` has), business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history are documented as growing until the database is retired. Fix: bounded, authorized prune methods with audit records, and a retention section in each store's doc.
+- [x] P4-11 Give the SQLite stores the retention their PostgreSQL counterparts have
+  - Found: `SqliteAgentRuns.agent_run_starts` grows forever (`PostgresAgentRunSlots.pruneStarts` exists), `SqliteCapabilityAudit` has no `prune` (`PostgresCapabilityAudit` has), business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history are documented as growing until the database is retired. Fixed 2026-11-06 for the two stores with a PostgreSQL counterpart: `SqliteCapabilityAudit.prune` (same contract as the PostgreSQL sink: tenant, `before`, `through`, `limit`) and `SqliteAgentRuns.pruneStarts`, with tests and doc sections; the host authorizes callers. Business-record tombstones and notice, receipt and delivery history are P4-38.
+- [ ] P4-38 Retention for business-record tombstones and notice, receipt and delivery history
+  - Found while fixing P4-11: SQLite business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history grow until the database is retired. Fix: bounded, authorized prune methods per store (tombstones after an owner-chosen horizon, delivered notices and receipts older than a retention window) with tests and a retention section in each store's doc.
 - [ ] P4-12 Add operator listings for stranded work
   - Found: `SqliteStagedOperations` has no listing by status, so `submitting`/`uncertain` operations can only be found with raw SQL; the offline queue lists one principal at a time; uncertain PostgreSQL offline executions have no scan. Fix: paginated, authorized `list({status})` on each store and a runbook entry that uses them.
 

@@ -15,6 +15,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- SQLite retention: `SqliteCapabilityAudit.prune` (bounded, tenant-scoped, pinned to a reviewed sequence) and `SqliteAgentRuns.pruneStarts`, matching the PostgreSQL stores; the run-start table no longer grows without bound.
 - The development review page, the approval review page and the generated app's page no longer use `'unsafe-inline'`: their inline script and style are allowed by hash, and the pages gain `base-uri`, `frame-ancestors` and `Referrer-Policy` headers; tests check the headers and (opt-in, run in CI) that the scripts run in a real browser.
 - Every HTTP server in core, agent and the generated app has header, request, keep-alive and idle timeouts (`limitServer`), and the HTTPS servers and TLS reloader share a `TLS_POLICY` (TLS 1.2+, forward-secret AEAD cipher suites, server cipher order); a slow-body test checks that a stalled client is cut off.
 - The shared TypeScript configuration also enables `noFallthroughCasesInSwitch`, `noImplicitOverride` and `verbatimModuleSyntax` (no fallout in any package); a test keeps them on.

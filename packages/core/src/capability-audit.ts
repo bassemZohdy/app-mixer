@@ -26,5 +26,14 @@ export class SqliteCapabilityAudit {
   const rows=this.db.prepare('SELECT sequence,recorded_at,invocation_id,operation_id,tenant_id,principal_id,outcome FROM capability_audit WHERE tenant_id=? AND sequence>? ORDER BY sequence LIMIT ?').all(tenantId,options.after??0,options.limit??100);
   return rows.map(row=>({sequence:Number(row.sequence),recordedAt:Number(row.recorded_at),invocationId:String(row.invocation_id),operationId:String(row.operation_id),tenantId:String(row.tenant_id),principalId:String(row.principal_id),outcome:row.outcome as CapabilityAuditEvent['outcome']}));
  }
+ /**
+  * Host-driven retention, like the PostgreSQL sink: delete at most `limit` of a tenant's events recorded before `before` (not after now) with a sequence of
+  * at most `through`, oldest first, and return how many were removed. The host authorizes the tenant and chooses the horizon; `through` pins the newest sequence
+  * a caller has exported or reviewed, so events recorded since cannot be removed by a stale decision.
+  */
+ prune(tenantId:string,options:{before:number;through:number;limit:number}):number{
+  const now=this.clock();if(!text(tenantId)||!integer(now)||!options||!integer(options.before)||options.before>now||!integer(options.through)||options.through<1||!integer(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid capability audit retention query');
+  return Number(this.db.prepare('DELETE FROM capability_audit WHERE sequence IN (SELECT sequence FROM capability_audit WHERE tenant_id=? AND recorded_at<? AND sequence<=? ORDER BY recorded_at,sequence LIMIT ?)').run(tenantId,options.before,options.through,options.limit).changes);
+ }
  close():void{this.db.close();}
 }
