@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {actionJSON,type AgentAction,type ActionVerification,type ActionVerificationRequest} from './action-journal.js';
+import {actionJSON,hadNoEffect,type AgentAction,type ActionVerification,type ActionVerificationRequest} from './action-journal.js';
 import type {AgentRunScope,AgentRunStatus,DurableAgentRun} from './durable-runs.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
@@ -149,6 +149,8 @@ export class PostgresAgentActionJournal {
    await this.transaction(async query=>{await this.lockRun(query,'lease');const row=await this.row(query,actionId,true);if(!row||row.status!=='dispatching')throw Error('Action state conflict');await query("UPDATE app_mixer_agent_actions SET status='succeeded',result_json=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4",[...this.args(),actionId,result]);});
    return JSON.parse(result);
   }catch(error){
+   // A refusal before any effect goes back to `ready` (or `failed` once attempts are exhausted) and is rethrown as is; anything else is uncertain.
+   if(hadNoEffect(error)){let settled=false;try{await this.transaction(async query=>{await this.lockRun(query,'lease');const row=await this.row(query,actionId,true);if(row?.status!=='dispatching')return;await query('UPDATE app_mixer_agent_actions SET status=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4',[...this.args(),actionId,Number(row.attempts)>=Number(row.max_attempts)?'failed':'ready']);settled=true;});}catch{}if(settled)throw error;}
    try{await this.transaction(async query=>{await this.lockRun(query,'lease');const row=await this.row(query,actionId,true);if(row?.status==='dispatching')await query("UPDATE app_mixer_agent_actions SET status='uncertain' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4",[...this.args(),actionId]);});}catch{}
    throw Error('Action outcome uncertain',{cause:error});
   }

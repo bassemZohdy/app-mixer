@@ -133,3 +133,29 @@ test('stopping a recovery worker prevents a late verifier result from changing t
  const s=setup();let entered,release;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);try{await assert.rejects(s.journal.invoke('one','op',{},2,async()=>{throw Error('lost')}),/uncertain/);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'uncertain',20);const worker=new AgentActionRecoveryWorker({journal:s.journal,maxPerPass:1,pollMs:100,onError:()=>{},authorize:()=>true,evidence:()=>({principalId:'operator',reference:'case'}),verify:async()=>{entered();await gate;return {outcome:'applied',result:'verified'};}});worker.start();await started;const stopping=worker.stop();release();await stopping;assert.equal(s.journal.get('one').status,'uncertain');assert.deepEqual(s.journal.listReconciliations(),[]);assert.equal(await worker.runOnce(),1);assert.equal(s.journal.get('one').status,'succeeded');assert.equal(s.journal.listReconciliations().length,1);
  }finally{close(s);}
 });
+
+test('a refusal before any effect frees the action for another attempt instead of leaving it uncertain',async()=>{
+ const refusal=()=>Object.defineProperty(Error('Capability forbidden'),Symbol.for('app-mixer.effect'),{value:'none'});
+ const s=setup();try{
+  let dispatches=0,key;await assert.rejects(s.journal.invoke('call','op',{x:1},2,async()=>{dispatches++;throw refusal();}),{message:'Capability forbidden'});
+  assert.equal(s.journal.get('call').status,'ready');assert.equal(s.journal.get('call').attempts,1);
+  assert.deepEqual(await s.journal.invoke('call','op',{x:1},2,async(_input,k)=>{dispatches++;key=k;return {ok:true};}),{ok:true});assert.equal(dispatches,2);assert.equal(s.journal.get('call').idempotencyKey,key,'the retry keeps the idempotency key');assert.equal(s.journal.get('call').attempts,2);
+  await assert.rejects(s.journal.invoke('last','op',{},1,async()=>{throw refusal();}),{message:'Capability forbidden'});assert.equal(s.journal.get('last').status,'failed','an exhausted refusal is terminal');
+  let later=0;await assert.rejects(s.journal.invoke('last','op',{},1,async()=>{later++;return null;}),/reconciliation/);assert.equal(later,0);
+  s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'failed',20);assert.equal(s.run.status,'failed','no action needs reconciliation');
+ }finally{close(s);}
+ const plain=setup();try{await assert.rejects(plain.journal.invoke('call','op',{},2,async()=>{throw Error('Capability forbidden');}),/outcome uncertain/);assert.equal(plain.journal.get('call').status,'uncertain','an unmarked error stays ambiguous');}finally{close(plain);}
+});
+
+test('a capability refusal inside a configured run is a failed attempt, not an uncertain action',async()=>{
+ const manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'model'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
+ for(const refusedBy of ['registry','runtime']){const s=setup();let definitions;try{
+  definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);
+  let calls=0;const registry=new CapabilityRegistry(()=>{});registry.register({operationId:'lookup',method:'POST',path:'/lookup'},{authorize:()=>refusedBy!=='registry',validate:()=>true,execute:()=>{calls++;return {ok:true};}});
+  const run=await createConfiguredAgentRun({definitions,tenantId:'tenant',agentId:'agent',expectedVersion:1,bindings:[{operationId:'lookup',toolName:'lookup',description:'Lookup'}],registry,authorizeRun:()=>true,authorizeCapability:()=>refusedBy!=='runtime',actionJournal:{journal:s.journal,maxAttempts:2,prepareInput:(_operation,value,key)=>({...value,idempotencyKey:key})},createModel:()=>({async invoke(){return new AIMessage({content:'',tool_calls:[{id:'call-1',name:'lookup',args:{}}]});}})});
+  const events=[];for await(const event of run.run({threadId:'thread',runId:'run',messages:[{role:'user',content:'Do it'}]}))events.push(event);
+  assert.equal(events.at(-1).type,'RUN_ERROR',refusedBy);assert.equal(calls,0,refusedBy);
+  if(refusedBy==='registry'){assert.equal(s.journal.get('call-1').status,'ready');assert.equal(s.journal.get('call-1').attempts,1);}else assert.equal(s.journal.get('call-1'),undefined,'the runtime refuses before the action is journaled');
+  s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'failed',20);assert.equal(s.run.status,'failed',refusedBy);
+ }finally{definitions?.close();close(s);}}
+});

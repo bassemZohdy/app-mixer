@@ -46,6 +46,12 @@ test('the shared PostgreSQL run registry keeps the SQLite lifecycle, limits and 
   await assert.rejects(journal.invoke('x','op',{n:2},2,dispatch),/identity conflict/);
   await assert.rejects(journal.invoke('y','op',{},2,async()=>{throw Error('network');}),/Action outcome uncertain/);
   await assert.rejects(journal.invoke('y','op',{},2,dispatch),/requires reconciliation/);
+  // A refusal before any effect (as the capability registry marks it) is retried with the same key or fails once attempts are exhausted; it never needs reconciliation.
+  const refusal=()=>Object.defineProperty(Error('Capability forbidden'),Symbol.for('app-mixer.effect'),{value:'none'});
+  await assert.rejects(journal.invoke('w','op',{n:3},2,async()=>{throw refusal();}),{message:'Capability forbidden'});assert.equal((await journal.get('w')).status,'ready');
+  const freed=await journal.invoke('w','op',{n:3},2,dispatch);assert.equal(freed.ok,3);assert.equal((await journal.get('w')).attempts,2);
+  await assert.rejects(journal.invoke('v','op',{n:4},1,async()=>{throw refusal();}),{message:'Capability forbidden'});assert.equal((await journal.get('v')).status,'failed');
+  await assert.rejects(journal.invoke('v','op',{n:4},1,dispatch),/requires reconciliation/);
   // Settling with an unresolved action makes the run uncertain; it cannot be retried until the action is decided.
   const uncertain=await runs.settle(scope,'r1',renewed.revision,lease.leaseToken,'succeeded');assert.equal(uncertain.status,'uncertain');
   await assert.rejects(journal.invoke('z','op',{},2,dispatch),/Action lease unavailable/,'a released lease fences the old worker');

@@ -102,7 +102,7 @@ export {DurableAgentWorker} from './durable-worker.js';
 export type {DurableAgentWorkerOptions,DurableAgentWorkerOutcome} from './durable-worker.js';
 export {SqliteAgentCheckpointer} from './sqlite-checkpointer.js';
 export type {AgentCheckpointerOptions} from './sqlite-checkpointer.js';
-export {SqliteAgentActionJournal} from './action-journal.js';
+export {SqliteAgentActionJournal,markNoEffect,hadNoEffect} from './action-journal.js';
 export type {AgentAction,AgentActionJournalOptions,AgentActionStatus,ActionVerification,ActionVerificationRequest,AgentActionPage,ActionVerificationPass,ActionReconciliationEvidence,ActionReconciliationEvent} from './action-journal.js';
 export {SqliteAgentTriggers} from './agent-triggers.js';
 export type {TriggerRecord,AgentTriggerInput,AgentTriggerEnqueueOptions} from './agent-triggers.js';

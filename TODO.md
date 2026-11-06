@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**16 / 65 tasks complete (25%)**
+**17 / 65 tasks complete (26%)**
 
 `█████░░░░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 2 / 34 | 32 (P4-02..P4-28, P4-30..P4-34) |
+| P4 fixes and improvements from the 2026-11-06 code review | 3 / 34 | 31 (P4-03..P4-28, P4-30..P4-34) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -88,8 +88,8 @@ Each item names what was found and where, and the fix. An item is done when the 
 ### Bugs and correctness
 - [x] P4-01 Fix the CLI entry point on Windows
   - Found: `packages/cli/src/index.ts` detected the entry with `process.argv[1]?.endsWith('/dist/index.js')`; on Windows `argv[1]` uses backslashes, so `node packages\cli\dist\index.js create demo` exited 0 and created nothing (reproduced 2026-11-06). Fixed 2026-11-06: the entry is compared by resolved path (case-insensitively on Windows), and a test runs the command through absolute and relative paths, the usage error and an invalid name (verified on Windows and in CI).
-- [ ] P4-02 Stop recording pre-effect failures as uncertain actions
-  - Found: `SqliteAgentActionJournal.invoke` and `PostgresAgentActionJournal.invoke` mark the action `uncertain` for any error thrown by `dispatch`, including `Capability forbidden`, `Invalid capability input`, `Capability not found` and delegation refusals that `CapabilityRegistry.invoke` raises before `execute` (and audits as `denied`/`invalid`/`not_found`). The run then settles `uncertain` and needs manual reconciliation although nothing was applied. Fix: let the registry throw typed pre-effect errors (see P4-16), classify them as `not_applied` (or `failed` when attempts are exhausted) in both journals, keep every other error uncertain, and test each class.
+- [x] P4-02 Stop recording pre-effect failures as uncertain actions
+  - Found: `SqliteAgentActionJournal.invoke` and `PostgresAgentActionJournal.invoke` mark the action `uncertain` for any error thrown by `dispatch`, including `Capability forbidden`, `Invalid capability input`, `Capability not found` and delegation refusals that `CapabilityRegistry.invoke` raises before `execute` (and audits as `denied`/`invalid`/`not_found`). The run then settles `uncertain` and needs manual reconciliation although nothing was applied. Fixed 2026-11-06: the registry marks every error thrown before `execute` with the non-enumerable `Symbol.for('app-mixer.effect') === 'none'` (`markNoEffect`/`hadNoEffect`, usable without a package dependency), the configured runtime marks its own activity and delegation refusals, and both journals return a marked action to `ready` (or `failed` once attempts are exhausted) and rethrow the original error; unmarked errors stay uncertain. Tests cover each refusal class in core, the SQLite and PostgreSQL journals and a configured run refused by the registry and by the runtime. Typed error classes remain P4-16.
 - [ ] P4-03 Replace lifetime caps that count terminal rows with retention
   - Found: `SqliteOfflineQueue.enqueue` counts every row for the principal (succeeded and discarded included), so a principal is refused after 1,000 operations ever and nothing can remove rows; `EncryptedBrowserQueue.enqueue` has the same 1,000 cap per partition and no purge; `SqliteAgentMemory`/`PostgresAgentMemory.put` refuse new IDs once history (tombstones included) reaches `10 × maxEntries`, with no compaction. Fix: authorized, audited retention (`purge(scope, principal, {olderThan, statuses, limit})` for both queues; tombstone compaction for memory after an owner-chosen horizon), count only live rows toward quotas, document the retention policy, and add tests that a queue keeps accepting work after 1,000 settled operations.
 - [ ] P4-04 Let the Development Agent work on schema version 2 drafts and extension patches
