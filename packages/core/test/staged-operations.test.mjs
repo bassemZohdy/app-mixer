@@ -131,3 +131,26 @@ test('provider verification fails closed and stale results cannot resolve a late
   assert.equal(await second.verifyAndReconcile(scope,op.id,()=> 'not_applied'),'not_applied');assert.equal(first.get(scope,op.id).status,'staged');
  }finally{first.close();second.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('operators can list staged operations by status with pagination to find stranded work',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'app-mixer-staged-list-')),store=new SqliteStagedOperations(join(dir,'db.sqlite'));
+ try{
+  const registry=new CapabilityRegistry(()=>{});let release;const gate=new Promise(resolve=>release=resolve);
+  registry.register({operationId:'ok',method:'POST',path:'/ok'},{authorize:()=>true,validate:()=>true,execute:()=>({done:true})});
+  registry.register({operationId:'hang',method:'POST',path:'/hang'},{authorize:()=>true,validate:()=>true,execute:()=>gate});
+  registry.register({operationId:'fail',method:'POST',path:'/fail'},{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('provider failed');}});
+  const ids={};for(const [name,operation] of [['staged','ok'],['done','ok'],['pending','hang'],['lost','fail'],['second','ok']])ids[name]=store.stage(scope,operation,{name}).id;
+  await store.submit(scope,ids.done,registry,context);
+  const pending=store.submit(scope,ids.pending,registry,context);await assert.rejects(store.submit(scope,ids.lost,registry,context),/provider failed/);
+  const names=page=>page.items.map(item=>item.payload.name).sort();
+  assert.deepEqual(names(store.list(scope,{status:'submitting'})),['pending'],'an in-flight submission is listed as submitting');
+  assert.deepEqual(names(store.list(scope,{status:'uncertain'})),['lost'],'a failed submission is listed as uncertain');
+  assert.deepEqual(names(store.list(scope,{status:'staged'})),['second','staged']);assert.deepEqual(names(store.list(scope,{status:'succeeded'})),['done']);
+  assert.equal(store.list(scope).items.length,5);assert.deepEqual(store.list({...scope,tenantId:'other'}).items,[],'listings are tenant-scoped');assert.deepEqual(store.list({...scope,applicationId:'other'}).items,[]);
+  const seen=[];let page=store.list(scope,{limit:2});assert.equal(page.items.length,2);assert.ok(page.next);
+  while(true){seen.push(...page.items.map(item=>item.id));if(!page.next)break;page=store.list(scope,{limit:2,after:page.next});}
+  assert.deepEqual(seen,Object.values(ids).sort(),'pages cover every operation once in id order');
+  for(const bad of [{status:'unknown'},{limit:0},{limit:101},{after:'x'.repeat(257)},null])assert.throws(()=>store.list(scope,bad),/Invalid/);
+  release({});await pending;assert.equal(store.get(scope,ids.pending).status,'succeeded');
+ }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+});

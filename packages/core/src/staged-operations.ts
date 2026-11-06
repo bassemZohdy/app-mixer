@@ -59,6 +59,18 @@ export class SqliteStagedOperations {
     if(!row)return undefined;
     return {id,operationId:row.operation_id as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:row.status as StagedStatus};
   }
+  /**
+   * Operator listing for one tenant and application, optionally by status (for example `uncertain` or `submitting` to find stranded work), in id order with keyset
+   * pagination: pass `next` from the previous page as `after`. The host authorizes access; payloads are returned as by `get`.
+   */
+  list(scope:DataScope,options:{status?:StagedStatus;after?:string;limit?:number}={}):{items:StagedOperation[];next?:string} {
+    checkKey(scope,'staged','list');const status=options?.status,after=options?.after??'',limit=options?.limit??50;
+    if(!options||(status!==undefined&&!['staged','submitting','uncertain','succeeded'].includes(status))||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid staged operation query');
+    if(after!=='')checkKey(scope,'staged',after);
+    const rows=this.db.prepare(`SELECT id,operation_id,idempotency_key,payload,status FROM staged_business_operations WHERE tenant_id=? AND application_id=? AND id>?${status!==undefined?' AND status=?':''} ORDER BY id LIMIT ?`).all(...[scope.tenantId,scope.applicationId,after,...(status!==undefined?[status]:[]),limit+1] as (string|number)[]);
+    const items=rows.slice(0,limit).map(row=>({id:row.id as string,operationId:row.operation_id as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:row.status as StagedStatus}));
+    return rows.length>limit?{items,next:items[items.length-1]!.id}:{items};
+  }
   async submit(scope:DataScope,id:string,registry:CapabilityRegistry,context:InvocationContext):Promise<unknown> {
     checkKey(scope,'staged',id);
     if(!(registry instanceof CapabilityRegistry)||!context||context.tenantId!==scope.tenantId)throw Error('Invalid submission context');

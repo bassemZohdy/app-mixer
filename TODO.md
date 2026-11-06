@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**30 / 69 tasks complete (43%)**
+**31 / 71 tasks complete (44%)**
 
 `█████████░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 16 / 38 | 22 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-12, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-38) |
+| P4 fixes and improvements from the 2026-11-06 code review | 17 / 40 | 23 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-40) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -114,10 +114,14 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `SqliteAgentRuns.agent_run_starts` grows forever (`PostgresAgentRunSlots.pruneStarts` exists), `SqliteCapabilityAudit` has no `prune` (`PostgresCapabilityAudit` has), business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history are documented as growing until the database is retired. Fixed 2026-11-06 for the two stores with a PostgreSQL counterpart: `SqliteCapabilityAudit.prune` (same contract as the PostgreSQL sink: tenant, `before`, `through`, `limit`) and `SqliteAgentRuns.pruneStarts`, with tests and doc sections; the host authorizes callers. Business-record tombstones and notice, receipt and delivery history are P4-38.
 - [ ] P4-38 Retention for business-record tombstones and notice, receipt and delivery history
   - Found while fixing P4-11: SQLite business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history grow until the database is retired. Fix: bounded, authorized prune methods per store (tombstones after an owner-chosen horizon, delivered notices and receipts older than a retention window) with tests and a retention section in each store's doc.
-- [ ] P4-12 Add operator listings for stranded work
-  - Found: `SqliteStagedOperations` has no listing by status, so `submitting`/`uncertain` operations can only be found with raw SQL; the offline queue lists one principal at a time; uncertain PostgreSQL offline executions have no scan. Fix: paginated, authorized `list({status})` on each store and a runbook entry that uses them.
+- [x] P4-12 Add operator listings for stranded work
+  - Found: `SqliteStagedOperations` has no listing by status, so `submitting`/`uncertain` operations can only be found with raw SQL; the offline queue lists one principal at a time; uncertain PostgreSQL offline executions have no scan. Fixed 2026-11-06 for the staged operations: `SqliteStagedOperations.list(scope, {status?, after?, limit?})` (keyset pages, tenant and application scoped, tested for each status and for page coverage) and a runbook entry; the offline queue and PostgreSQL offline execution scans are P4-39.
 
 ### Security hardening
+- [ ] P4-39 Cross-principal listings for the offline queue and PostgreSQL offline executions
+  - Found while fixing P4-12: `SqliteOfflineQueue` lists one principal at a time and uncertain PostgreSQL offline executions have no scan. Fix: paginated, host-authorized `list({status})` over a tenant for both, tests per status and a runbook entry.
+- [ ] P4-40 Treat pre-effect refusals as not applied in staged and offline submission
+  - Found while fixing P4-02: `SqliteStagedOperations.submit` and the offline execution stores mark an operation `uncertain` for any error, including the capability refusals that `CapabilityRegistry` now marks with `Symbol.for('app-mixer.effect') === 'none'`. Fix: return such an operation to `staged`/`pending` (keeping the idempotency key), keep every other error uncertain, update `docs/business-data.md`, and test each class.
 - [x] P4-13 Remove `'unsafe-inline'` scripts and add headers to the generated app
   - Found: the development review page (`planes.ts`) and the approval review page (`approval-server.ts`) ship inline scripts under `script-src 'unsafe-inline'`; the generated `server.mjs` serves `/` with no Content-Security-Policy, Referrer-Policy or frame-ancestors. Fixed 2026-11-06 with hashes rather than separate modules (each page has exactly one inline script and style block, no handlers or style attributes): the CSP lists their SHA-256 hashes, computed from the served HTML at start-up, so `'unsafe-inline'` is gone; the generated `server.mjs` now sends a policy (`default-src 'none'`, own-origin script, connect, worker and image sources, `base-uri`, `frame-ancestors`) and `Referrer-Policy` on `index.html`; `packages/cli/test/csp.test.mjs` hashes the served blocks independently and, in a real browser (a negative control without the hashes fails), checks the pages' scripts still run.
 - [x] P4-14 Harden the HTTP and TLS servers that core creates

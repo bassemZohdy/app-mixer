@@ -93,3 +93,11 @@ The failure drill in `packages/cli/test/alert-rules.test.mjs` (`APP_MIXER_TEST_P
 **Check:** that the worker holding the run's lease is gone.
 
 **Resolve:** stop the old worker, move the run to `uncertain` (`recoverExpired`), call `markUncertain` for the stranded dispatches, then reconcile as for uncertain actions. Do not mark a dispatch uncertain while its worker may still be running.
+
+## Stranded staged business operations
+
+**Meaning:** a staged external operation stayed `submitting` or `uncertain`, so the customer may or may not have the effect and nothing will retry it.
+
+**Check:** `staged.list(scope, {status: 'submitting'})` and `{status: 'uncertain'}` (paginate with `next`). For each, confirm in the external system whether the effect with the operation's idempotency key happened; for `submitting`, first confirm that the submitting process is gone.
+
+**Resolve:** call `recoverAbandoned` for a `submitting` record whose process is gone, then `reconcileWithEvidence` (or `reconcile`) with `applied` or `not_applied`. `not_applied` makes the intent eligible for a new submission with the same key; never mark it so without evidence.
