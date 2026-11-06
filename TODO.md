@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**28 / 68 tasks complete (41%)**
+**29 / 68 tasks complete (43%)**
 
-`████████░░░░░░░░░░░░`
+`█████████░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 14 / 37 | 23 (P4-03, P4-05, P4-07, P4-09..P4-13, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-37) |
+| P4 fixes and improvements from the 2026-11-06 code review | 15 / 37 | 22 (P4-03, P4-05, P4-07, P4-09..P4-12, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-37) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -116,8 +116,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `SqliteStagedOperations` has no listing by status, so `submitting`/`uncertain` operations can only be found with raw SQL; the offline queue lists one principal at a time; uncertain PostgreSQL offline executions have no scan. Fix: paginated, authorized `list({status})` on each store and a runbook entry that uses them.
 
 ### Security hardening
-- [ ] P4-13 Remove `'unsafe-inline'` scripts and add headers to the generated app
-  - Found: the development review page (`planes.ts`) and the approval review page (`approval-server.ts`) ship inline scripts under `script-src 'unsafe-inline'`; the generated `server.mjs` serves `/` with no Content-Security-Policy, Referrer-Policy or frame-ancestors. Fix: serve the page scripts as separate modules (or nonces), set a strict CSP and the other headers in the generated server, and assert them in the browser smoke tests.
+- [x] P4-13 Remove `'unsafe-inline'` scripts and add headers to the generated app
+  - Found: the development review page (`planes.ts`) and the approval review page (`approval-server.ts`) ship inline scripts under `script-src 'unsafe-inline'`; the generated `server.mjs` serves `/` with no Content-Security-Policy, Referrer-Policy or frame-ancestors. Fixed 2026-11-06 with hashes rather than separate modules (each page has exactly one inline script and style block, no handlers or style attributes): the CSP lists their SHA-256 hashes, computed from the served HTML at start-up, so `'unsafe-inline'` is gone; the generated `server.mjs` now sends a policy (`default-src 'none'`, own-origin script, connect, worker and image sources, `base-uri`, `frame-ancestors`) and `Referrer-Policy` on `index.html`; `packages/cli/test/csp.test.mjs` hashes the served blocks independently and, in a real browser (a negative control without the hashes fails), checks the pages' scripts still run.
 - [x] P4-14 Harden the HTTP and TLS servers that core creates
   - Found: `createControlPlane`, `createDataPlane(Https)`, `createCapabilityServer`, `createAGUIServer`, the generated `server.mjs` and `deploy/local/service.mjs` leave Node's default `requestTimeout`/`headersTimeout`/`keepAliveTimeout`; only `deploy/kubernetes/data-plane.mjs` sets them. The HTTPS variants set `minVersion: 'TLSv1.2'` with no cipher policy. Fixed 2026-11-06: `limitServer` (core and an agent copy, since agent does not import core) applies 10 s header, 30 s request, 5 s keep-alive and 30 s idle timeouts to every server factory and to the generated `server.mjs` (the local service uses the factories); `TLS_POLICY` adds ECDHE AEAD `ciphers` and `honorCipherOrder` to the HTTPS servers and the credential reloader; a test stalls a request body and checks the connection is closed promptly. Found while testing: Node only checks timeouts every 30 s (and ignored `connectionsCheckingInterval` here), so the idle timeout is the prompt cut-off; the AG-UI event stream is exempt from it.
 - [x] P4-15 Keep validated identifiers out of SQL text
