@@ -27,7 +27,8 @@ function cron(expression:string){
  if(typeof expression!=='string'||expression.length>200)throw Error('Invalid cron expression');const parts=expression.trim().split(/\s+/);if(parts.length!==5)throw Error('Invalid cron expression');
  return {minutes:field(parts[0],0,59),hours:field(parts[1],0,23),days:field(parts[2],1,31),months:field(names(parts[3],monthNames,1),1,12),weekdays:new Set([...field(names(parts[4],weekdayNames,0),0,7,6)].map(day=>day%7)),dayAny:parts[2]==='*',weekdayAny:parts[4]==='*'};
 }
-function checkConfig(config:ScheduleConfig):ScheduleConfig{
+/** Shared with the PostgreSQL schedule store so both apply the same rules. */
+export function checkConfig(config:ScheduleConfig):ScheduleConfig{
  if(!config||typeof config!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(config))||(typeof config.rule==='object'&&config.rule!==null&&![Object.prototype,null].includes(Object.getPrototypeOf(config.rule)))||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
  if(config.rule.kind==='interval'){if(Object.keys(config.rule).length!==2||!integer(config.rule.intervalMs)||config.rule.intervalMs<1000||config.rule.intervalMs>30*86400000)throw Error('Invalid schedule');return structuredClone(config);}
  if(config.rule.kind==='cron'){if(Object.keys(config.rule).some(key=>!['kind','expression','timeZone','excludeDates'].includes(key)))throw Error('Invalid schedule');cron(config.rule.expression);if(config.rule.timeZone!==undefined)checkZone(config.rule.timeZone);if(config.rule.excludeDates!==undefined)checkExcludedDates(config.rule.excludeDates);return structuredClone(config);}
@@ -56,7 +57,7 @@ function nextZoned(expression:string,zone:string,after:number,excluded:Set<strin
  }
  if(best!==undefined)return best;throw Error('Cron has no occurrence within nine years');
 }
-function next(rule:ScheduleRule,after:number):number{
+export function next(rule:ScheduleRule,after:number):number{
  if(rule.kind==='interval'){const value=after+rule.intervalMs;if(!Number.isSafeInteger(value))throw Error('Invalid schedule time');return value;}
  const excluded=new Set(rule.excludeDates??[]);if(rule.timeZone!==undefined)return nextZoned(rule.expression,rule.timeZone,after,excluded);
  const c=cron(rule.expression),start=Math.floor(after/60000)*60000+60000,date=new Date(start);if(!Number.isFinite(date.getTime()))throw Error('Invalid schedule time');

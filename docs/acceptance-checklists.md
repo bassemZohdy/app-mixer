@@ -80,7 +80,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Each provider adapter against that provider's live or sandbox delivery, including a retry.
   - [ ] Additional providers the product commits to supporting.
-  - [ ] Distributed coordination of schedule firing across nodes.
+  - [x] Distributed coordination of schedule firing across nodes. `PostgresAgentSchedules` fires each occurrence once across nodes; two processes with one killed mid-run fire every one-second occurrence exactly once with no gaps ([agent-schedules.md](agent-schedules.md#shared-schedules-across-nodes)). Handing a fired run to an executor is at least once until a shared run registry exists (P2-07).
 - **Evidence:** one captured live delivery per provider verified by the adapter, and a two-node schedule test showing a single fire per occurrence.
 
 ### P2-09 Action journal and reconciliation

@@ -111,6 +111,8 @@ export type {AgentTriggerRetentionActor,AgentTriggerRetentionOptions} from './ag
 export {createAgentEventIngress} from './event-ingress.js';
 export type {AgentEventIngressOptions,AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
 export {SqliteAgentSchedules} from './agent-schedules.js';
+export {PostgresAgentSchedules} from './postgres-agent-schedules.js';
+export type {PostgresAgentSchedulesOptions,AgentScheduledRun,AgentScheduledRunClaim,AgentScheduleHistoryEvent,AgentScheduleFirePass} from './postgres-agent-schedules.js';
 export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFireOptions,AgentScheduleCursor,AgentSchedulePage} from './agent-schedules.js';
 export {SqliteAgentScheduleHistory} from './agent-schedule-history.js';
 export type {AgentScheduleEvent,AgentScheduleHistoryOptions,AgentScheduleHistoryActor} from './agent-schedule-history.js';
