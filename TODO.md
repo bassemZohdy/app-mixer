@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**67 / 94 tasks complete (71%)**
+**68 / 94 tasks complete (72%)**
 
 `██████████████░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 53 / 63 | 10 (P4-07, P4-09, P4-19, P4-20, P4-38, P4-41, P4-41, P4-42, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 54 / 63 | 9 (P4-07, P4-19, P4-20, P4-38, P4-41, P4-41, P4-42, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -108,8 +108,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: every conflict sets `progressed` and rescans from the first page with no limit, so heavy contention or a long catch-up can loop until `maxFires` with unbounded scans. Fixed 2026-11-06: `maxScans` (default `maxFires + 100`) caps the rescans, the pass reports `scans` and `backlog`, and a PostgreSQL test checks both limits, two concurrent nodes (no occurrence fired twice) and a pass with nothing due.
 
 ### Durability and operations
-- [ ] P4-09 Version every store schema and run migrations deliberately
-  - Found: 26 SQLite stores and 17 PostgreSQL stores create their tables with `CREATE TABLE IF NOT EXISTS` on open or `initialize()`; only `SqliteStagedOperations` adds missing columns, nothing records a schema version, and the PostgreSQL stores need DDL privileges at runtime. Fix: a schema version (`PRAGMA user_version` / an `app_mixer_schema` table), one migration runner per database (`node packages/cli migrate`), a documented least-privilege runtime role, and a test that opens a database written by the previous release.
+- [x] P4-09 Version every store schema and run migrations deliberately
+  - Found: 26 SQLite stores and 17 PostgreSQL stores create their tables with `CREATE TABLE IF NOT EXISTS` on open or `initialize()`; only `SqliteStagedOperations` adds missing columns, nothing records a schema version, and the PostgreSQL stores need DDL privileges at runtime. Fix: a schema version (`PRAGMA user_version` / an `app_mixer_schema` table), one migration runner per database (`node packages/cli migrate`), a documented least-privilege runtime role, and a test that opens a database written by the previous release. Done 2026-11-06 as a mechanism plus its first adopters, not for all 43 stores: `app_mixer_schema` (component, version), `assertSchemaSupported`/`recordSchemaVersion` helpers for SQLite and equivalent queries for PostgreSQL, applied to the two stores that already migrate (`agent_runs` on both backends, `staged_operations`); an older database is upgraded and recorded, a newer one is refused (SQLite and PostgreSQL tests); `docs/schema-versions.md` documents the policy and how to add a migration. A `migrate` CLI command and a least-privilege runtime role are not implemented: stores still migrate when they open, and the role split is documented as guidance. Remaining stores adopt the helpers when they next change layout, which is the point at which a version matters.
 - [x] P4-10 Use WAL mode and one shared SQLite connection per database
   - Found: every store opens its own `DatabaseSync` on the same file (runs, journal, approvals, delegations, budget, notices, checkpointer, …) with `BEGIN IMMEDIATE` and the default rollback journal, so concurrent workers contend on the file lock. Fixed 2026-11-06 for WAL: every store opens with `journal_mode=WAL` (all 26 files, enforced by a test) and keeps `synchronous=FULL` on purpose: with `NORMAL` a power loss could drop a committed `dispatching` journal record and allow a duplicate effect, which the action journal exists to prevent. The full suite and the Docker S3 crash tests (SIGKILL mid-journal) pass unchanged, and `docs/sqlite-stores.md` documents the three files and consistent backups. The optional shared-connection constructor and a contention benchmark are P4-45.
 - [x] P4-45 Shared SQLite connections and a contention benchmark

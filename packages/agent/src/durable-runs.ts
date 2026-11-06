@@ -4,6 +4,7 @@ import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {AgentError} from './errors.js';
+import {assertSchemaSupported,recordSchemaVersion} from './schema-version.js';
 
 type RunScope={tenantId:string;agentId:string};
 type RunStatus='queued'|'running'|'pause_requested'|'cancel_requested'|'paused'|'uncertain'|'succeeded'|'failed'|'cancelled';
@@ -38,8 +39,10 @@ export class SqliteAgentRuns {
  private ensureCreationOrder():void{
   this.db.exec('BEGIN IMMEDIATE');
   try{
+   assertSchemaSupported(this.db,'agent_runs',2);
    if(!this.db.prepare('PRAGMA table_info(agent_runs)').all().some(column=>column.name==='created_seq'))this.db.exec('ALTER TABLE agent_runs ADD COLUMN created_seq INTEGER NOT NULL DEFAULT 0;UPDATE agent_runs SET created_seq=rowid;');
    this.db.exec('CREATE INDEX IF NOT EXISTS agent_runs_created ON agent_runs(created_seq);CREATE INDEX IF NOT EXISTS agent_runs_queued_order ON agent_runs(tenant_id,agent_id,status,archived,created_seq,run_id);CREATE TRIGGER IF NOT EXISTS agent_runs_sequence AFTER INSERT ON agent_runs WHEN NEW.created_seq=0 BEGIN UPDATE agent_runs SET created_seq=(SELECT COALESCE(MAX(created_seq),0)+1 FROM agent_runs) WHERE rowid=NEW.rowid; END;');
+   recordSchemaVersion(this.db,'agent_runs',2);
    this.db.exec('COMMIT');
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }

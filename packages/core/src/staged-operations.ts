@@ -4,6 +4,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {CapabilityRegistry, hadNoEffect, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 import { AppMixerError } from './errors.js';
+import {assertSchemaSupported,recordSchemaVersion} from './schema-version.js';
 
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
@@ -20,6 +21,7 @@ export class SqliteStagedOperations {
     try {
       this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; BEGIN IMMEDIATE');
       try {
+        assertSchemaSupported(this.db,'staged_operations',2);
         this.db.exec(`CREATE TABLE IF NOT EXISTS staged_business_operations (
           tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, id TEXT NOT NULL,
           operation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, payload TEXT NOT NULL,
@@ -31,6 +33,7 @@ export class SqliteStagedOperations {
         if(!columns.some(column=>column.name==='state_revision'))this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN state_revision INTEGER NOT NULL DEFAULT 0');
         this.db.exec(`CREATE TABLE IF NOT EXISTS staged_reconciliation_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN ('applied','not_applied')),recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));`);
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
+        recordSchemaVersion(this.db,'staged_operations',2);
         this.db.exec('COMMIT');
       } catch(error){this.db.exec('ROLLBACK');throw error;}
     }catch(error){this.db.close();throw error;}

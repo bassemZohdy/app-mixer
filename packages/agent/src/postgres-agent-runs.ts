@@ -28,6 +28,10 @@ export class PostgresAgentRuns {
  private readonly query:Query;private readonly transaction:PostgresAgentRunsOptions['transaction'];
  constructor(options:PostgresAgentRunsOptions){if(!options||options.enabled!==true||typeof options.query!=='function'||typeof options.transaction!=='function')throw Error('Invalid agent run registry configuration');this.query=options.query;this.transaction=options.transaction;}
  async initialize():Promise<void>{
+  // Schema version of this component: refuse a database written by a newer release, record this layout (2: queue order sequence) once migrated.
+  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_schema (component TEXT PRIMARY KEY, version INTEGER NOT NULL)',[]);
+  const recorded=(await this.query("SELECT version FROM app_mixer_schema WHERE component='agent_runs'",[])).rows[0];
+  if(recorded!==undefined&&Number(recorded.version)>2)throw Error(`The agent_runs database schema is version ${Number(recorded.version)}, newer than this release supports (2); upgrade the software before opening it`);
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_agent_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,revision BIGINT NOT NULL,status TEXT NOT NULL CHECK (status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(tenant_id,agent_id,run_id))",[]);
   // Runs start in creation order: an identity column numbers every run (existing rows are numbered when the column is added).
   await this.query('ALTER TABLE app_mixer_agent_runs ADD COLUMN IF NOT EXISTS sequence BIGINT GENERATED ALWAYS AS IDENTITY',[]);
@@ -38,6 +42,7 @@ export class PostgresAgentRuns {
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_agent_actions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL CHECK (status IN ('ready','dispatching','uncertain','succeeded','failed')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id))",[]);
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_agent_cost_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,day BIGINT NOT NULL,reserved BIGINT NOT NULL,used BIGINT,status TEXT NOT NULL CHECK (status IN ('reserved','settled')),PRIMARY KEY(tenant_id,agent_id,run_id,call_id))",[]);
   await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_cost_calls_day ON app_mixer_agent_cost_calls(tenant_id,agent_id,day)',[]);
+  await this.query("INSERT INTO app_mixer_schema (component,version) VALUES ('agent_runs',2) ON CONFLICT (component) DO UPDATE SET version=GREATEST(app_mixer_schema.version,2)",[]);
  }
  async get(scope:AgentRunScope,runId:string):Promise<PostgresAgentRun|undefined>{const {tenantId,agentId}=scopeKey(scope,runId);const row=(await this.query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3',[tenantId,agentId,runId])).rows[0];return row?parse(row):undefined;}
  /** Create a queued run. A run ID is created once: a second create fails with `Run already exists`. */

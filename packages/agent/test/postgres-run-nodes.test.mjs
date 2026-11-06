@@ -172,5 +172,8 @@ test('queued runs start in creation order across two nodes and a registry create
   const started=[];const limits={maxConcurrentRuns:100,maxRunsPerDay:1000};
   for(let turn=0;turn<53;turn++){const node=turn%2?second:first,head=(await node.queued(scope,1))[0];const lease=await node.claim(scope,head.runId,head.revision,'node-'+turn%2,60000,limits);started.push(lease.runId);}
   assert.deepEqual(started,['zulu','alpha','mike',...ids]);
+  // The component's schema version is recorded, and a database written by a newer release is refused.
+  assert.equal(Number((await db.pool.query("SELECT version FROM app_mixer_schema WHERE component='agent_runs'")).rows[0].version),2);
+  await db.pool.query("UPDATE app_mixer_schema SET version=3 WHERE component='agent_runs'");await assert.rejects(new PostgresAgentRuns(db.options).initialize(),/newer than this release supports \(2\)/);
  }finally{await db.close();}
 });
