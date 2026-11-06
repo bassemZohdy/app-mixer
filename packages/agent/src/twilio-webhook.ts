@@ -2,9 +2,10 @@ import {createHash} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import {validTwilioSignature} from './twilio-signature.js';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type TwilioMessageWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;accountSid:string;url:string;authToken:string;previousAuthTokens?:string[]};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const token=(x:unknown):x is string=>typeof x==='string'&&/^[a-fA-F0-9]{32}$/.test(x);
 function form(body:Buffer):Record<string,string>{
  const raw=new TextDecoder('utf-8',{fatal:true}).decode(body),result:Record<string,string>=Object.create(null),parts=raw.split('&');

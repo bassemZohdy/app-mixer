@@ -1,9 +1,10 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type GitlabWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;eventType:string;signingToken:string;previousSigningTokens?:string[];clock?:()=>number;toleranceSeconds?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const token=(x:unknown):x is string=>{if(typeof x!=='string'||!/^whsec_[A-Za-z0-9+/]+={0,2}$/.test(x)||x.length>1400)return false;const encoded=x.slice(6),key=Buffer.from(encoded,'base64');return key.length===32&&key.toString('base64')===encoded;};
 
 /** One GitLab project or group webhook bound to a host-selected source and event type. */

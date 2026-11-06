@@ -1,7 +1,8 @@
 import {AgentSemanticMemory,validSimilarity} from './semantic-memory.js';
 import {type AgentMemoryScope} from './agent-memory.js';
+import {isIdentifier} from './validation.js';
 
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 type Context={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(context:Context)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>;execute:(input:unknown,context:Context)=>unknown|Promise<unknown>})=>void};
 type Options={memory:AgentSemanticMemory;scope:AgentMemoryScope;operationId:string;path:string;limit:number;mode?:'semantic'|'hybrid'|'indexed'|'lexical';minSimilarity?:number|undefined;maxCandidates?:number;authorize:(context:Context)=>boolean|Promise<boolean>};

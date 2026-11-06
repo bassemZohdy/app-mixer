@@ -5,13 +5,14 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {AgentError} from './errors.js';
 import {assertSchemaSupported,recordSchemaVersion} from './schema-version.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type RunScope={tenantId:string;agentId:string};
 type RunStatus='queued'|'running'|'pause_requested'|'cancel_requested'|'paused'|'uncertain'|'succeeded'|'failed'|'cancelled';
 export type AgentRunExpiryEvidence={principalId:string;reference:string};
 export type DurableAgentRun={tenantId:string;agentId:string;runId:string;definitionVersion:number;revision:number;status:RunStatus;attempts:number;maxAttempts:number;deadline:number;leaseOwner:string|null;leaseToken:string|null;leaseUntil:number|null;archived:boolean;delegationWait:{grantId:string;revision:number;principalId:string}|null;approvalWait:{actionId:string}|null};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const number=isNonNegativeInteger;
 function scopeKey(scope:RunScope,runId:string):void{if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(runId))throw Error('Invalid run scope');}
 
 /** Local lifecycle registry. Host must authenticate, authorize, and reconcile external effects. */

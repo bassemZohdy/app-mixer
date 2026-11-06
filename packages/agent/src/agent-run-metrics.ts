@@ -1,6 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
 import {AgentError} from './errors.js';
+import {isIdentifier} from './validation.js';
 
 const statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'] as const;
 export type AgentRunMetricStatus=typeof statuses[number];
@@ -12,7 +13,7 @@ export type AgentActionMetricStatus=typeof actionStatuses[number];
 export type AgentScheduleMetric={due:number;oldestDueSeconds:number};
 export type AgentActionMetric={status:AgentActionMetricStatus;count:number};
 export type AgentRunMetricsOptions={scope:AgentRunScope;authorize:(actor:AgentRunMetricsActor,scope:AgentRunScope)=>boolean|Promise<boolean>;includeOperational?:boolean;includeSchedules?:boolean;includeActions?:boolean;clock?:()=>number};
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 
 /** Authorized current-state aggregates for one tenant and agent; no run identifiers are returned. */
 export class SqliteAgentRunMetrics {

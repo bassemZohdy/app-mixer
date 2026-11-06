@@ -1,10 +1,11 @@
 import type {IncomingMessage} from 'node:http';
 import type {JSONWebKeySet} from 'jose';
 import type {createJwtCapabilityAuthenticator,JwtCapabilityActor} from './jwt-capability-auth.js';
+import {isNonNegativeInteger} from './validation.js';
 
 type Authenticator=ReturnType<typeof createJwtCapabilityAuthenticator>;
 export type JwtJwksManagerOptions={authenticator:Authenticator;jwksUrl:string;pollMs:number;maxStaleMs:number;timeoutMs:number;onError:(error:unknown)=>void;allowLoopbackHttp?:boolean|undefined;clock?:(()=>number)|undefined};
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const integer=isNonNegativeInteger;
 /** Select only supported public signing keys from a heterogeneous issuer key set. */
 function compatibleKeys(value:unknown):JSONWebKeySet{
  if(!value||typeof value!=='object'||Array.isArray(value)||!Array.isArray((value as JSONWebKeySet).keys)||(value as JSONWebKeySet).keys.length<1||(value as JSONWebKeySet).keys.length>100)throw Error('Invalid JWKS');

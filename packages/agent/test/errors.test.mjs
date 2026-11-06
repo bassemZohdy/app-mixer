@@ -45,3 +45,15 @@ test('the run supervisor ignores lost races by error code, whatever the message 
  for(const error of [other,plain,new Error('database down')]){failure=error;await supervisor.runOnce();}
  assert.equal(reported.length,3,'only lost_race errors are ignored: reworded or look-alike messages are not');
 });
+
+test('identifier and integer validation live in one module and are not copied again',async()=>{
+ const {isIdentifier,isNonNegativeInteger}=await import('../dist/validation.js');
+ for(const good of ['a','A1','tenant-1','run_2','x'.repeat(128),'a.b:c@d/e'])assert.equal(isIdentifier(good),true,good);
+ for(const bad of ['','-a','.a','a b','x'.repeat(129),'a\n','é',1,null,undefined,{}])assert.equal(isIdentifier(bad),false,String(bad));
+ for(const good of [0,1,Number.MAX_SAFE_INTEGER])assert.equal(isNonNegativeInteger(good),true);
+ for(const bad of [-1,1.5,Number.MAX_SAFE_INTEGER+1,NaN,'1',null])assert.equal(isNonNegativeInteger(bad),false);
+ const dir=fileURLToPath(new URL('../src/',import.meta.url));let identifiers=0,integers=0;
+ for(const name of readdirSync(dir).filter(file=>file.endsWith('.ts'))){const text=readFileSync(join(dir,name),'utf8');identifiers+=(text.match(/\^\[A-Za-z0-9\]\[A-Za-z0-9\._:@\/-\]\{0,127\}\$/g)??[]).length;integers+=(text.match(/Number\.isSafeInteger\(\w+\)&&Number\(\w+\)>=0/g)??[]).length;}
+ assert.ok(identifiers<=4,`${identifiers} copies of the identifier pattern (limit 4: validation.ts, zod, two inline uses); import isIdentifier instead`);
+ assert.ok(integers<=2,`${integers} copies of the integer check (limit 2: validation.ts and the bounded cost-budget variant); import isNonNegativeInteger instead`);
+});

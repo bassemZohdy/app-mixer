@@ -9,12 +9,13 @@ import {SqliteAgentActionJournal,markNoEffect} from './action-journal.js';
 import {SqliteAgentApprovals} from './agent-approvals.js';
 import {type BaseCheckpointSaver} from '@langchain/langgraph-checkpoint';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
+import {isIdentifier} from './validation.js';
 
 type AgentIdentity={tenantId:string;agentId:string;definitionVersion:number;servicePrincipalId:string};
 type Binding={operationId:string;toolName:string;description:string};
 type Delegation={tenantId:string;agentId:string;runId:string;principalId:string;grantId:string;permissionVersion:string;expiresAt:number;revision?:number};
 type DelegationOptions={grant:Delegation;authorize:(identity:AgentIdentity,grant:Delegation,operationId:string,input:unknown)=>boolean|Promise<boolean>;clock?:()=>number};
-const validId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const validId=isIdentifier;
 type Tool=ReturnType<typeof createCapabilityTool>;
 type Options={
  definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};

@@ -2,6 +2,7 @@ import {AgentError} from './errors.js';
 import type {ActionVerification,ActionVerificationRequest} from './action-journal.js';
 import type {AgentRunScope} from './durable-runs.js';
 import type {PostgresAgentActionJournal,PostgresAgentRun,PostgresAgentRuns,PostgresRunClaimLimits} from './postgres-agent-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Outcome='succeeded'|'failed'|'stopped'|'uncertain';
 export type PostgresRunExecution={run:PostgresAgentRun;journal:PostgresAgentActionJournal;signal:AbortSignal};
@@ -17,7 +18,7 @@ export type PostgresRunSupervisorOptions={
  onError:(error:unknown)=>void;onEvent?:(event:PostgresRunSupervisorEvent)=>void;
  leaseMs?:number;pollMs?:number;maxConcurrent?:number;limits?:PostgresRunClaimLimits;recoveryGraceMs?:number;
 };
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const bounded=(value:unknown,min:number,max:number)=>Number.isSafeInteger(value)&&Number(value)>=min&&Number(value)<=max;
 // Losing a race to another worker or node is routine: the store reports it as a `lost_race` error (stale revision, lease held, state moved on, a limit reached) and the next pass re-reads.
 const lostRace=(error:unknown):boolean=>error instanceof AgentError&&(error.code==='lost_race');

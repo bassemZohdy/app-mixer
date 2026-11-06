@@ -1,13 +1,14 @@
 import {DatabaseSync} from 'node:sqlite';
 import {type AgentDelegation} from './configured-runtime.js';
 import {type AgentRunScope} from './durable-runs.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Access='issue'|'read'|'renew'|'revoke'|'verify'|'history';
 type RecordValue={grant:AgentDelegation;revision:number;revoked:boolean};
 type Options={scope:AgentRunScope;runId:string;authorize:(actor:Actor,access:Access,grant:AgentDelegation)=>boolean|Promise<boolean>;clock?:()=>number};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const valid=isIdentifier;
+const integer=isNonNegativeInteger;
 /** A local, host-authorized grant registry bound to one tenant, agent and run. */
 export class SqliteAgentDelegations {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly runId:string;private readonly authorize:Options['authorize'];private readonly clock:()=>number;

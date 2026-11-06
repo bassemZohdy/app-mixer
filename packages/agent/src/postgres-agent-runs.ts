@@ -2,14 +2,15 @@ import {createHash,randomUUID} from 'node:crypto';
 import {actionJSON,hadNoEffect,type AgentAction,type ActionVerification,type ActionVerificationRequest} from './action-journal.js';
 import type {AgentRunScope,AgentRunStatus,DurableAgentRun} from './durable-runs.js';
 import {AgentError} from './errors.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 export type PostgresAgentRunsOptions={enabled:true;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
 export type PostgresAgentRun=Omit<DurableAgentRun,'delegationWait'|'approvalWait'>;
 export type PostgresRunClaimLimits={maxConcurrentRuns?:number;maxRunsPerDay?:number};
 
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const number=isNonNegativeInteger;
 const NOW='(extract(epoch from clock_timestamp())*1000)::bigint';
 const LEASED=['running','pause_requested','cancel_requested'];
 function scopeKey(scope:AgentRunScope,runId:string):AgentRunScope{if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(runId))throw Error('Invalid run scope');return {tenantId:scope.tenantId,agentId:scope.agentId};}

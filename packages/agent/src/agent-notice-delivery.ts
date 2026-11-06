@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
 import {AgentError} from './errors.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Status='pending'|'sending'|'uncertain'|'delivered';
@@ -10,7 +11,7 @@ export type AgentNoticeMessage={noticeId:number;tenantId:string;agentId:string;r
 export type AgentNoticeDeliveryEvent={id:number;deliveryId:number;revision:number;action:'queued'|'sending'|'delivered'|'uncertain'|'recovered'|'reconciled_delivered'|'reconciled_not_delivered';principalId:string;observedAt:number};
 type Access='queue'|'read'|'dispatch'|'recover'|'reconcile';
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:Access,delivery:AgentNoticeDelivery,message:AgentNoticeMessage)=>boolean|Promise<boolean>;authorizeList?:(actor:Actor,scope:AgentRunScope)=>boolean|Promise<boolean>;clock?:()=>number};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const valid=isIdentifier;
 const positive=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>0;
 
 /** Explicit host-driven outbox. Transport and recipient authorization are host responsibilities. */

@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**58 / 80 tasks complete (73%)**
+**59 / 80 tasks complete (74%)**
 
 `███████████████░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 44 / 49 | 5 (P4-07, P4-20, P4-41, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 45 / 49 | 4 (P4-07, P4-41, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -152,8 +152,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `BrowserOfflineWorker.pass` calls `EncryptedBrowserQueue.list()`, which unseals every envelope (up to 1,000 AES-GCM decrypts) each interval. Fix: an in-memory cache keyed by `(id, version)` invalidated by the counter, or a pending-only index, with a test that a 1,000-item queue dispatches within a bound.
 
 ### Maintainability Measured 2026-11-06 instead of optimized: listing a full 1,000-item queue (every envelope unsealed with AES-GCM, state digest verified) takes about 36 ms in Node with a real WebCrypto, so a worker pass costs a few percent of one core at a one-second interval and far less at the usual intervals. A cache keyed by `(id, version)` would have to be invalidated against the authenticated counter and anchor, which is exactly the tamper-detection path, for a saving that is not needed. Decision: no cache; a test asserts that listing 1,000 encrypted items stays under 1.5 s so a regression is caught.
-- [ ] P4-20 Share the validation and HTTP helpers
-  - Found: the identifier regex, `object`/`record`, `integer`, single-header lookup, JSON body readers and `reply` are copied into about 40 files with small differences (for example `text()` allows 256 characters where `id()` allows 128). Fix: an internal `@app-mixer/core/internal` module (not a public export) used by both packages, with one test for the shared limits.
+- [x] P4-20 Share the validation and HTTP helpers
+  - Found: the identifier regex, `object`/`record`, `integer`, single-header lookup, JSON body readers and `reply` are copied into about 40 files with small differences (for example `text()` allows 256 characters where `id()` allows 128). Fixed 2026-11-06 for the helpers that were really identical: `validation.ts` in each package (the agent package does not import core, so there is no shared internal module) exports `isIdentifier` (replacing 49 copies of the same regex) and `isNonNegativeInteger` (replacing 22 across both packages); the variants that differ on purpose stay (the 256-character `text`, the bounded cost-budget integer, the zod identifier) and a test checks the validators and caps the remaining copies. The per-server `reply` and body readers differ in size limits, content types and status texts by design and were not merged.
 - [x] P4-21 Generate the editor previews from the CLI templates
   - Found: `packages/core/src/data-editor-preview.ts` and `staged-editor-preview.ts` embed hand-maintained copies of `packages/cli/templates/data-editor.mjs` (286 lines) and `staged-editor.mjs`; a test only checks that the copies agree. Fixed 2026-11-06 for what is actually duplicated: the preview is an inert variant of the editor, not a copy (the editor invokes business capabilities, the preview does not), so only the JSON-Schema parser section is shared. `scripts/sync-editor-previews.mjs` (`npm run previews`) now copies that section from the template into the preview with template-literal escaping (it reproduced the existing copy byte for byte), a test fails when the preview is stale and checks escaping, and nothing is copied by hand any more. The staged editor preview shares no section with its template.
 - [x] P4-22 Drop the `twilio` SDK dependency

@@ -1,10 +1,11 @@
 import type {CapabilityAuditEvent} from './capabilities.js';
 import type {StoredCapabilityAuditEvent} from './capability-audit.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+import {isNonNegativeInteger} from './validation.js';
 
 type Options={query:PostgresJwtRevocationQuery;clock?:()=>number};
 const text=(value:unknown):value is string=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const integer=isNonNegativeInteger;
 const outcomes=new Set(['attempt','not_found','denied','invalid','succeeded','failed']);
 
 /** Shared PostgreSQL audit sink; authorization, database and connection lifecycle remain host-owned. */

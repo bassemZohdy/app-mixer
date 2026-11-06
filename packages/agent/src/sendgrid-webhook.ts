@@ -1,9 +1,10 @@
 import {createHash,createPublicKey,verify,type KeyObject} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type SendGridWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;verificationKey:string;previousVerificationKeys?:string[];clock?:()=>number;toleranceSeconds?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const object=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x);
 function header(req:IncomingMessage,name:string):string|undefined{let value:string|undefined;for(let i=0;i<req.rawHeaders.length;i+=2)if(req.rawHeaders[i].toLowerCase()===name){if(value!==undefined)return undefined;value=req.rawHeaders[i+1];}return value;}
 function events(body:Buffer):Record<string,unknown>[]{

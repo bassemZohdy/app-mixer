@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
 import {checkConfig,next,type AgentSchedule,type AgentScheduleConfig,type AgentScheduleCursor,type AgentScheduleFireOptions,type AgentSchedulePage} from './agent-schedules.js';
 import {AgentError} from './errors.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 export type PostgresAgentSchedulesOptions={enabled:true;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
@@ -12,8 +13,8 @@ export type AgentScheduleHistoryEvent={id:number;scheduleId:string;kind:'created
 /** `backlog` is true when the pass stopped at `maxFires` or `maxScans` while schedules may still be due; poll again. */
 export type AgentScheduleFirePass={fired:{scheduleId:string;runId:string;scheduledAt:number}[];conflicts:number;scans:number;backlog:boolean};
 
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 const NOW='(extract(epoch from clock_timestamp())*1000)::bigint';
 const ACTIVE="status IN ('pending','claimed')";
 

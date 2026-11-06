@@ -1,8 +1,9 @@
 import {SqliteAgentRuns,type AgentRunScope,type DurableAgentRun,type AgentRunExpiryEvidence} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Cursor={deadline:number;runId:string};
 type Options={runs:SqliteAgentRuns;scope:AgentRunScope;authorize:(run:DurableAgentRun)=>boolean|Promise<boolean>;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string|undefined)=>void;clock?:()=>number;evidence?:AgentRunExpiryEvidence};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Explicit host-driven cleanup of expired, unleased runs. */
 export class AgentRunExpiryWorker{
  private readonly runs:SqliteAgentRuns;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly clock:()=>number;private readonly onError:Options['onError'];private readonly evidence:AgentRunExpiryEvidence|undefined;private active=false;private pending?:Promise<number>|undefined;private timer?:ReturnType<typeof setTimeout>|undefined;private cursor?:Cursor|undefined;

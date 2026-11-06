@@ -1,4 +1,5 @@
 import {validateAgentManifest,type AgentDefinitionVersion,type PersistentAgentManifest} from './persistent-definitions.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Action='read'|'list'|'write'|'audit';
@@ -9,8 +10,8 @@ type Options={enabled:boolean;query:Query;transaction:<T>(operation:(query:Query
 const limitKeys=['maxAgents','maxVersionsPerAgent','maxConcurrentRuns','maxTokensPerRun','maxRunsPerDay'] as const;
 export type AgentDefinitionAudit={agentId:string;version:number;principalId:string;observedAt:number};
 class Denied extends Error{constructor(){super('Agent definition access denied');}}
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const number=isNonNegativeInteger;
 
 /** Shared, versioned definitions. Hosts supply trusted PostgreSQL connections and identity policy. */
 export class PostgresAgentDefinitions {

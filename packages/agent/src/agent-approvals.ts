@@ -4,13 +4,14 @@ import {createHash} from 'node:crypto';
 import {actionJSON} from './action-journal.js';
 import {type AgentRunScope} from './durable-runs.js';
 import {AgentError} from './errors.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type ApprovalStatus='pending'|'approved'|'rejected'|'cancelled'|'expired';
 export type AgentApproval={actionId:string;operationId:string;input:unknown;inputHash:string;definitionVersion:number;status:ApprovalStatus;expiresAt:number;requestedBy:string;authority:string|null;decidedBy:string|null;decidedAt:number|null};
 type ApprovalAccess='request'|'read'|'list'|'decide'|'cancel'|'expire'|'history';
 type Options={scope:AgentRunScope;runId:string;authorize:(actor:Actor,action:ApprovalAccess,approval:{tenantId:string;agentId:string;runId:string;actionId:string;operationId:string})=>boolean|Promise<boolean>;clock?:()=>number};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const valid=isIdentifier;
 /** Host-authenticated decision records; request creation requires the active run lease. */
 export class SqliteAgentApprovals {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly runId:string;private readonly authorize:Options['authorize'];private readonly clock:()=>number;

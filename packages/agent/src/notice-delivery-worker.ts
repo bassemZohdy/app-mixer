@@ -1,7 +1,8 @@
 import {SqliteAgentNoticeDelivery,type AgentNoticeDeliveryActor,type AgentNoticeMessage} from './agent-notice-delivery.js';
+import {isIdentifier} from './validation.js';
 
 type Options={outbox:SqliteAgentNoticeDelivery;actor:AgentNoticeDeliveryActor;send:(message:AgentNoticeMessage,destinationId:string,idempotencyKey:string)=>Promise<void>;maxPerPass:number;pollMs:number;onError:(error:unknown,deliveryId?:number)=>void};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 
 /** Explicit host-operated delivery of already queued notices. */
 export class AgentNoticeDeliveryWorker {

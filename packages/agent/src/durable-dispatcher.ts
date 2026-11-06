@@ -1,8 +1,9 @@
 import {SqliteAgentRuns,type AgentRunScope} from './durable-runs.js';
 import {DurableAgentWorker} from './durable-worker.js';
+import {isIdentifier} from './validation.js';
 
 type Options={runs:SqliteAgentRuns;worker:DurableAgentWorker;scope:AgentRunScope;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string|undefined)=>void};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Explicitly started local dispatcher; run policy and side effects remain with the worker. */
 export class DurableAgentDispatcher {
  private readonly scope:AgentRunScope;private active=false;private pending?:Promise<number>|undefined;private timer?:ReturnType<typeof setTimeout>|undefined;private cursor?:string|undefined;

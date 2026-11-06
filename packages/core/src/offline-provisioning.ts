@@ -1,5 +1,6 @@
 import {KeyObject,sign,verify} from 'node:crypto';
 import {verifyPublicationRelease,type PublicationReleaseKey,type SignedPublicationRelease} from './signed-publication.js';
+import {isNonNegativeInteger} from './validation.js';
 
 /** What a device that has never been online needs to start: who it acts for, for how long, and which signed release. */
 export type OfflineProvisioningGrant={deviceId:string;tenantId:string;applicationId:string;principalId:string;environment:string;issuedAt:number;notAfter:number;release:SignedPublicationRelease};
@@ -7,7 +8,7 @@ export type SignedOfflineProvisioning={formatVersion:1;keyId:string;grant:Offlin
 export const MAX_OFFLINE_PROVISIONING_MS=30*86400000;
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/.test(value);
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-const time=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const time=isNonNegativeInteger;
 const FIELDS='applicationId,deviceId,environment,issuedAt,notAfter,principalId,release,tenantId';
 /** The exact signed bytes; the device recomputes them from the grant as delivered. */
 const bytes=(keyId:string,grant:OfflineProvisioningGrant)=>Buffer.from(JSON.stringify(['app-mixer-offline-provisioning-v1',keyId,grant]),'utf8');

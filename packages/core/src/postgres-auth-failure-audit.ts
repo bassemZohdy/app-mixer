@@ -1,11 +1,12 @@
 import {createHmac} from 'node:crypto';
 import {isIP} from 'node:net';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+import {isNonNegativeInteger} from './validation.js';
 
 export type AuthenticationFailureEvent={reason:'unauthenticated';remoteAddress?:string|undefined};
 export type StoredAuthenticationFailure={sequence:number;recordedAt:number;reason:'unauthenticated';addressHash:string|null};
 type Options={query:PostgresJwtRevocationQuery;clock?:()=>number;addressKey?:Uint8Array};
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const integer=isNonNegativeInteger;
 
 /** Global security audit for requests without an authenticated tenant or principal. */
 export class PostgresAuthenticationFailureAudit {

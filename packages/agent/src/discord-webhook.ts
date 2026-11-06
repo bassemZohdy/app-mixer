@@ -1,9 +1,10 @@
 import {createPublicKey,verify,type KeyObject} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type DiscordWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;applicationId:string;publicKey:string;clock?:()=>number;toleranceSeconds?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const snowflake=(x:unknown):x is string=>typeof x==='string'&&/^[1-9][0-9]{0,19}$/.test(x);
 const object=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x);
 const decode=(body:Buffer):Record<string,unknown>=>{const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));if(!object(value))throw Error('Invalid Discord interaction payload');return value;};

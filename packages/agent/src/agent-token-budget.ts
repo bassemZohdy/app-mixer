@@ -1,11 +1,12 @@
 import {DatabaseSync} from 'node:sqlite';
 import {type AgentRunScope} from './durable-runs.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;maxTokens:number;cost?:{currency:string;maxMicros:number};clock?:()=>number};
 export type AgentTokenUsage={callId:string;reserved:number;used:number|null;status:'reserved'|'settled'};
 export type AgentCostUsage={callId:string;currency:string;reserved:number;used:number|null;status:'reserved'|'settled'};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const valid=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Lease-fenced local token reservations; hosts must authenticate and authorize operations. */
 export class SqliteAgentTokenBudget {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly runId:string;private readonly leaseToken:string;private readonly maxTokens:number;private readonly clock:()=>number;private readonly cost:{currency:string;maxMicros:number}|undefined;

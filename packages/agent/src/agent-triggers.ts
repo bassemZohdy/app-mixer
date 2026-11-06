@@ -3,11 +3,12 @@ import {randomUUID,createHash} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {AgentError} from './errors.js';
+import {isIdentifier} from './validation.js';
 
 type EventInput={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown};
 type EnqueueOptions={definitionVersion:number;maxAttempts:number;deadline:number;maxPending:number;traceParent?:string};
 export type TriggerRecord={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown;runId:string;payloadRedacted?:true};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 function canonical(value:unknown):string {
  let count=0;const ancestors=new Set<object>();
  const copy=(x:unknown,depth:number):unknown=>{

@@ -5,6 +5,7 @@ import {SqliteAgentTriggers} from './agent-triggers.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
 import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '@opentelemetry/api';
+import {isIdentifier} from './validation.js';
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
@@ -22,7 +23,7 @@ type Options={
  tracing?:{tracer:Tracer;propagateToRun?:boolean};
  maxPending:number;clock?:()=>number;
 };
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const reply=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));};
 async function readBytes(req:IncomingMessage,contentType?:Options['contentType']):Promise<Buffer>{
  if(req.rawHeaders.filter((_,i)=>i%2===0&&req.rawHeaders[i].toLowerCase()==='content-type').length!==1)throw Error('CONTENT_TYPE');

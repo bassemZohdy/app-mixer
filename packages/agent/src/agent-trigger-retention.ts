@@ -1,9 +1,10 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'redact'|'read',runId:string)=>boolean|Promise<boolean>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 
 /** Explicit host-authorized payload redaction for terminal local agent runs. */
 export class SqliteAgentTriggerRetention {

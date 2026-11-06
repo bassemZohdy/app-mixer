@@ -1,10 +1,11 @@
 import type {AgentRunScope} from './durable-runs.js';
 import {POSTGRES_NOW as NOW,type PostgresAgentRunsOptions,type PostgresRunQuery as Query} from './postgres-agent-runs.js';
 import {AgentError} from './errors.js';
+import {isIdentifier} from './validation.js';
 
 export type PostgresCostCall={runId:string;callId:string;day:number;reserved:number;used:number|null;status:'reserved'|'settled'};
 export type PostgresCostSummary={currency:string;limit:number;day:number;committed:number;reserved:number;overrun:boolean};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const micros=(value:unknown,max=100000000000):value is number=>Number.isSafeInteger(value)&&Number(value)>=0&&Number(value)<=max;
 const DAY=86400000;
 function key(scope:AgentRunScope):[string,string]{if(!scope||!id(scope.tenantId)||!id(scope.agentId))throw Error('Invalid cost scope');return [scope.tenantId,scope.agentId];}
