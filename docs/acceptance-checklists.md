@@ -76,10 +76,10 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Evidence:** a node-failure test report showing runs recovered exactly once and no duplicated external effect.
 
 ### P2-08 Event, webhook and scheduler activation
-- **Verified locally:** signed ingress with key rotation and deduplication; GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle and Standard Webhooks adapters; cron schedules with time zones, names and exclusions; process-kill schedule tests; a two-process race test showing schedule workers that share one store fire each occurrence once.
+- **Verified locally:** signed ingress with key rotation and deduplication; GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle, Standard Webhooks, Discord (Ed25519) and SendGrid (ECDSA P-256) adapters; cron schedules with time zones, names and exclusions; process-kill schedule tests; a two-process race test showing schedule workers that share one store fire each occurrence once.
 - **Still to prove:**
   - [ ] Each provider adapter against that provider's live or sandbox delivery, including a retry.
-  - [ ] Additional providers the product commits to supporting.
+  - [ ] Additional providers the product commits to supporting. Discord interactions and the SendGrid Event Webhook were added as the first asymmetric-signature adapters ([agent-event-ingress.md](agent-event-ingress.md)). Still to do: the owner must list the providers the product commits to.
   - [x] Distributed coordination of schedule firing across nodes. `PostgresAgentSchedules` fires each occurrence once across nodes; two processes with one killed mid-run fire every one-second occurrence exactly once with no gaps ([agent-schedules.md](agent-schedules.md#shared-schedules-across-nodes)). Handing a fired run to an executor is at least once until a shared run registry exists (P2-07). `PostgresAgentRuns.create` now refuses a second run for a reclaimed request.
 - **Evidence:** one captured live delivery per provider verified by the adapter, and a two-node schedule test showing a single fire per occurrence.
 

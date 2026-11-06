@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHmac} from 'node:crypto';
-import {createLinearWebhookAdapter,createPagerDutyWebhookAdapter,createPaddleWebhookAdapter,createSentryWebhookAdapter,createShopifyWebhookAdapter,createSlackWebhookAdapter,createGithubWebhookAdapter,createGitlabWebhookAdapter,createStripeWebhookAdapter,createStandardWebhookAdapter,createTwilioMessageWebhookAdapter} from '../dist/index.js';
+import {createHmac,generateKeyPairSync} from 'node:crypto';
+import {createLinearWebhookAdapter,createPagerDutyWebhookAdapter,createPaddleWebhookAdapter,createSentryWebhookAdapter,createShopifyWebhookAdapter,createSlackWebhookAdapter,createGithubWebhookAdapter,createGitlabWebhookAdapter,createStripeWebhookAdapter,createStandardWebhookAdapter,createTwilioMessageWebhookAdapter,createDiscordWebhookAdapter,createSendGridWebhookAdapter} from '../dist/index.js';
 
 const identity={tenantId:'tenant',principalId:'sender',sourceId:'source'},secret='s'.repeat(32),now=1_700_000_000_000;
 const adapters={
+ discord:{adapter:createDiscordWebhookAdapter({identity,agentId:'agent',applicationId:'123456789012345678',publicKey:Buffer.from(generateKeyPairSync('ed25519').publicKey.export({format:'jwk'}).x,'base64url').toString('hex'),clock:()=>now}),header:'x-signature-ed25519',extra:[['x-signature-timestamp',String(now/1000)]]},
+ sendgrid:{adapter:createSendGridWebhookAdapter({identity,agentId:'agent',verificationKey:generateKeyPairSync('ec',{namedCurve:'prime256v1'}).publicKey.export({type:'spki',format:'der'}).toString('base64'),clock:()=>now}),header:'x-twilio-email-event-webhook-signature',extra:[['x-twilio-email-event-webhook-timestamp',String(now/1000)]]},
  linear:{adapter:createLinearWebhookAdapter({identity,agentId:'agent',organizationId:'11111111-2222-3333-4444-555555555555',secret,clock:()=>now}),header:'linear-signature'},
  pagerduty:{adapter:createPagerDutyWebhookAdapter({identity,agentId:'agent',secret}),header:'x-pagerduty-signature'},
  paddle:{adapter:createPaddleWebhookAdapter({identity,agentId:'agent',secret,clock:()=>now}),header:'paddle-signature'},
