@@ -19,7 +19,16 @@ const manifestSchema=z.object({
 }).strict();
 export type PersistentAgentManifest=z.infer<typeof manifestSchema>;
 export type AgentDefinitionVersion={version:number;manifest:PersistentAgentManifest};
+/** Manifests are JSON data: only plain objects and arrays, no accessors, bounded depth. Inherited fields must not satisfy validation. */
+function plainData(value:unknown,depth=0):boolean{
+ if(value===null||typeof value!=='object')return true;
+ if(depth>16)return false;
+ if(Array.isArray(value)){if(Object.getPrototypeOf(value)!==Array.prototype)return false;return value.every(item=>plainData(item,depth+1));}
+ if(![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
+ return Reflect.ownKeys(value).every(name=>{const descriptor=Object.getOwnPropertyDescriptor(value,name)!;return typeof name==='string'&&'value' in descriptor&&plainData(descriptor.value,depth+1);});
+}
 export function validateAgentManifest(value:unknown):PersistentAgentManifest {
+ if(!plainData(value))throw Error('Invalid agent manifest');
  const result=manifestSchema.safeParse(value);if(!result.success)throw Error('Invalid agent manifest');
  const manifest=result.data;if(Buffer.byteLength(JSON.stringify(manifest),'utf8')>65536)throw Error('Invalid agent manifest');return structuredClone(manifest);
 }

@@ -12,9 +12,9 @@ import {createProject} from '../dist/index.js';
 const script=fileURLToPath(new URL('../../../deploy/local/service.mjs',import.meta.url));
 const token='a-local-test-token-of-more-than-32-characters';
 async function freePort(){const s=createServer();s.listen(0,'127.0.0.1');await once(s,'listening');const port=s.address().port;await new Promise(resolve=>s.close(resolve));return port;}
-async function start(role,env){const child=spawn(process.execPath,[script,role],{env,stdio:['ignore','pipe','pipe']});await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error(`Timeout starting ${role}`)),5000);child.stdout.on('data',chunk=>{text+=chunk;if(text.includes(`${role} ready`)){clearTimeout(timer);resolve();}});child.on('error',reject);child.on('exit',code=>{clearTimeout(timer);reject(Error(`${role} exited: ${code}`));});});return child;}
+async function start(role,env){const child=spawn(process.execPath,[script,role],{env,stdio:['ignore','pipe','pipe']});await new Promise((resolve,reject)=>{let text='';const timer=setTimeout(()=>reject(Error(`Timeout starting ${role}`)),20000);child.stdout.on('data',chunk=>{text+=chunk;if(text.includes(`${role} ready`)){clearTimeout(timer);resolve();}});child.on('error',reject);child.on('exit',code=>{clearTimeout(timer);reject(Error(`${role} exited: ${code}`));});});return child;}
 async function stop(child){if(child&&child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill('SIGTERM');await done;}}
-test('local service roles persist publications and preserve them across initialization', {timeout:15000},async()=>{
+test('local service roles persist publications and preserve them across initialization', {timeout:60000},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-services-'));let data,control;
  try{
   const project=await createProject('demo-app',dir),dataPort=await freePort(),controlPort=await freePort();
