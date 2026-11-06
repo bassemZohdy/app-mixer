@@ -294,3 +294,29 @@ test('array contains constraints validate before saving and agree with server sc
   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const unsupported of [{contains:{type:'string'}},{contains:{enum:[]}},{contains:{const:{x:1}}},{contains:{const:'red'},minContains:2,maxContains:1},{minContains:1}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tags:{type:'array',items:{type:'string'},...unsupported}}}}),/Unsupported/);}
  }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
+
+test('scalar field descriptions render as accessible help text in runtime and preview',async()=>{
+ const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
+  const jsonSchema={type:'object',properties:{code:{type:'string',title:'Code',description:'Two capital letters, for example GB.',pattern:'^[A-Z]{2}$'},count:{type:['integer','null'],description:'Leave empty to keep the default.'},plain:{type:'boolean',title:'Plain'}},required:['code']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;
+  globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};
+  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
+   dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=factory({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,document);document.body.appendChild(root);
+   const label=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('Code (required)')),control=label.querySelector('input'),help=document.getElementById(control.getAttribute('aria-describedby'));
+   assert.equal(help.textContent,'Two capital letters, for example GB.');assert.equal(document.getElementById(control.getAttribute('aria-labelledby')).textContent,'Code (required)');
+   const count=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('count (optional)')).querySelector('input');assert.equal(document.getElementById(count.getAttribute('aria-describedby')).textContent,'Leave empty to keep the default.');assert.notEqual(count.getAttribute('aria-describedby'),control.getAttribute('aria-describedby'));
+   const plain=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('Plain (')).querySelector('select');assert.equal(plain.hasAttribute('aria-describedby'),false);assert.equal(plain.hasAttribute('aria-labelledby'),false);
+   if(factory===s.runtime.createRecordEditor){const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.startsWith('New record'));control.value='GB';save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{code:'GB'});}
+   dom.window.close();dom=undefined;
+  }
+ }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+});
+
+test('field descriptions reject values that cannot be shown as help text in runtime and preview',async()=>{const s=await setup();try{const bad=[{type:'string',description:7},{type:'string',description:''},{type:'string',description:'   '},{type:'string',description:'x'.repeat(501)},{type:'array',items:{type:'string'},description:'List help'},{type:'array',items:{type:'string',description:'Item help'}},{type:'object',properties:{inner:{type:'string'}},description:'Group help'}];for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){for(const field of bad)assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{value:field}}}),/Unsupported/,JSON.stringify(field));assert.doesNotThrow(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{value:{type:'string',description:'x'.repeat(500)}}}}));}}finally{await rm(s.dir,{recursive:true,force:true});}});
+
+test('the generated editor and the inert preview share an identical schema parser',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const section=source=>{const text=source.replace(/\r\n/g,'\n'),start=text.indexOf('function normalizeFields('),parser=text.indexOf('function fieldsFromJsonSchema(',start),end=text.indexOf('\nfunction ',parser+1);assert.ok(start>=0&&parser>start&&end>parser);return text.slice(start,end);};
+ const runtime=await readFile(new URL('../templates/data-editor.mjs',import.meta.url),'utf8');
+ // Divergence would let the preview accept a schema the editor rejects, or the reverse.
+ assert.equal(section(RECORD_EDITOR_PREVIEW),section(runtime));
+});
