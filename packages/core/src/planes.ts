@@ -7,7 +7,7 @@ import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenan
 import { isValidExtensionReferences, isValidExtensionOperations } from './index.js';
 import {createPromotionPackage,validEnvironment,type PromotionPackage} from './promotion.js';
 import type {PromotionSignatureEvidence,VerifiedPromotion,SignedPromotionPackage} from './signed-promotion.js';
-import { DevelopmentProposals } from './proposals.js';
+import { DevelopmentProposals, type ProposalStore } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
 import { inlineHashes } from './csp.js';
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
@@ -104,7 +104,7 @@ export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition
 export type DevelopmentPreviewOptions = {extensionModule?: string};
 export type PromotionImportPolicy = {verify:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>PromotionPackage;verifyWithEvidence?:never}|{verify?:never;verifyWithEvidence:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>VerifiedPromotion};
 export type PromotionExportSigner = (pkg:PromotionPackage,targetEnvironment:string,expectedVersion:number)=>SignedPromotionPackage|Promise<SignedPromotionPackage>;
-export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: DevelopmentProposals, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy, exportSigner?:PromotionExportSigner, tracing?:ControlPlaneTracingOptions): Server {
+export function createControlPlane(repository: DefinitionRepository, token: string, proposals?: ProposalStore, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy, exportSigner?:PromotionExportSigner, tracing?:ControlPlaneTracingOptions): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
   if(promotionPolicy!==undefined&&(!promotionPolicy||(typeof promotionPolicy.verify==='function')===(typeof promotionPolicy.verifyWithEvidence==='function')))throw Error('Invalid promotion policy');
@@ -280,7 +280,7 @@ export function createDataPlaneHttps(repository:DataPlanePublicationRepository,t
 }
 
 /** Proposal-only endpoint for an agent; it cannot apply, approve or publish. */
-export function createProposalPlane(proposals: DevelopmentProposals, token: string): Server {
+export function createProposalPlane(proposals: ProposalStore, token: string): Server {
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Proposal token must contain at least 32 characters');
   return server(async (req,res) => {
     if (!authorized(req,token)) { respond(res,401,{error:'Unauthorized'}); return; }
@@ -291,8 +291,8 @@ export function createProposalPlane(proposals: DevelopmentProposals, token: stri
   });
 }
 /** Construct both local-development planes with distinct credentials. */
-export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy) {
+export function createDevelopmentPlanes(repository: DefinitionRepository, developerToken: string, agentToken: string, develop?: DevelopmentRunner, preview?: DevelopmentPreviewOptions, promotionPolicy?: PromotionImportPolicy, proposalStore?: ProposalStore) {
   if (developerToken === agentToken) throw Error('Developer and agent tokens must differ');
-  const proposals = new DevelopmentProposals(repository);
+  const proposals = proposalStore ?? new DevelopmentProposals(repository);
   return {control:createControlPlane(repository,developerToken,proposals,develop,preview,promotionPolicy), proposal:createProposalPlane(proposals,agentToken)};
 }

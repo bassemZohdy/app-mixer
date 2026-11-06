@@ -39,3 +39,7 @@ A host extension module that imports `./data-editor.mjs` can preview the generat
 Only pending proposals count toward the proposal limit (default 100). The newest `settledLimit` (default 100) approved or rejected proposals stay readable through `get`; older settled proposals are evicted and then report `Proposal not found`, so a long history never blocks new proposals. Proposals are still held in memory and are lost on restart.
 
 `DevelopmentAgent` accepts schema version 1 and version 2 drafts. For a version 2 draft its prompt also offers `setPageDescription`, `setExtensions`, `setExtensionOperations` and `Extension` components; a version 1 draft keeps the basic operation list. Any other version is refused.
+
+## Durable proposals
+
+`new SqliteDevelopmentProposals(path, repository, limit?, settledLimit?)` has the same contract as `DevelopmentProposals` (same limits, errors and eviction) but keeps proposals in SQLite, so a pending proposal survives a restart and can be approved by the next process. Pass it as the last argument of `createDevelopmentPlanes(..., proposalStore)`. Approval applies the patches to the repository first and then records the decision; if the process stops between the two, the proposal stays pending and approving it again fails with a revision conflict, so reject it. Only pending proposals count toward the limit and the newest `settledLimit` approved or rejected proposals stay readable.

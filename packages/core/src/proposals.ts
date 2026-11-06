@@ -8,11 +8,19 @@ export type Proposal = {
   status:'pending'|'approved'|'rejected'; approvedRevision?:number;
 };
 
+/** What the control and proposal planes need from a proposal workflow; `DevelopmentProposals` (memory) and `SqliteDevelopmentProposals` implement it. */
+export interface ProposalStore {
+  propose(baseRevision: number, patches: unknown): Proposal;
+  get(id: string): Proposal | undefined;
+  approve(id: string): Proposal;
+  reject(id: string): Proposal;
+}
+
 /**
  * Local, in-memory proposal workflow. Proposal authority must be separated from approval authority by the host.
  * Only pending proposals count toward `limit`; the newest `settledLimit` approved or rejected proposals stay readable and older ones are evicted.
  */
-export class DevelopmentProposals {
+export class DevelopmentProposals implements ProposalStore {
   private readonly proposals = new Map<string, Proposal>();
   constructor(private readonly repository: DefinitionRepository, private readonly limit = 100, private readonly settledLimit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(settledLimit) || settledLimit < 0) throw Error('Invalid proposal limit');

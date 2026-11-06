@@ -119,7 +119,8 @@ export { createControlPlane, createDataPlane, createDataPlaneHttps, createPropos
 export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationRepository, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
-export type { Proposal } from './proposals.js';
+export { SqliteDevelopmentProposals } from './sqlite-proposals.js';
+export type { Proposal, ProposalStore } from './proposals.js';
 export { AppMixerError, httpStatus } from './errors.js';
 export type { AppMixerErrorCode } from './errors.js';
 export { importOpenAPI, CapabilityRegistry, CAPABILITY_EFFECT, markNoEffect, hadNoEffect } from './capabilities.js';
