@@ -192,3 +192,29 @@ test('an instance without the anchor makes anchored instances report tampering',
  const anchored=await EncryptedBrowserQueue.open({...options(factory,queueKey),rollbackAnchor:anchor}),plain=await EncryptedBrowserQueue.open(options(factory,queueKey));
  try{await anchored.enqueue('save','one',{n:1});await plain.enqueue('save','two',{n:2});await assert.rejects(anchored.list(),/tampering detected/);}finally{anchored.close();plain.close();}
 });
+
+test('purge frees a full queue of settled items, keeps live work and stays consistent with the rollback anchor',{timeout:120000},async()=>{
+ const factory=new IDBFactory(),secret=await key();let floor=0;const anchor={read:async()=>floor,advance:async value=>{floor=Math.max(floor,value);}};
+ const open=()=>EncryptedBrowserQueue.open({...options(factory,secret),rollbackAnchor:anchor});
+ let queue=await open();
+ try{
+  const items=[];for(let n=0;n<1000;n++)items.push(await queue.enqueue('orders.create','request-'+n,{n}));
+  await assert.rejects(queue.enqueue('orders.create','one-too-many',{}),/Offline queue (full|too large)/);
+  // Settle three: two succeed, one is discarded while still pending.
+  for(const item of items.slice(0,2)){const claimed=await queue.transition(item.id,1,'claim');await queue.transition(item.id,claimed.version,'succeed');}
+  await queue.transition(items[2].id,1,'discard');
+  for(const bad of [{statuses:[],limit:1},{statuses:['pending'],limit:1},{statuses:['succeeded','succeeded'],limit:1},{statuses:['succeeded'],limit:0},{statuses:['succeeded'],limit:1001},{statuses:'succeeded',limit:1},null])await assert.rejects(queue.purge(bad),/Invalid offline retention query/);
+  const rawStore=async mode=>{const db=await new Promise((resolve,reject)=>{const open=factory.open('offline-test');open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});const tx=db.transaction('offline',mode);return {store:tx.objectStore('offline'),tx,db};};
+  const saved=await (async()=>{const {store,tx,db}=await rawStore('readonly');const value=await request(store.get(items[0].id));await done(tx);db.close();return value;})();
+  assert.equal(await queue.purge({statuses:['succeeded','discarded'],limit:2}),2,'the limit bounds one pass');
+  const room=await queue.enqueue('orders.create','after-purge',{});assert.equal(room.status,'pending','a purged queue accepts work again');
+  assert.equal(await queue.purge({statuses:['succeeded','discarded','exhausted'],limit:1000}),1,'the remaining settled item');assert.equal(await queue.purge({statuses:['succeeded'],limit:1000}),0);
+  assert.equal((await queue.list()).length,998,'997 live items and the new one remain: live work was never removed');
+  assert.ok(floor>1000,'every write, purge included, advanced the host floor');
+  // The counter and state digest describe the purged queue, so a reopen succeeds.
+  queue.close();queue=await open();assert.equal((await queue.list()).length,998);
+  // Putting a purged envelope back (an attacker restoring old state) no longer matches the authenticated state digest.
+  {const {store,tx,db}=await rawStore('readwrite');store.put(saved);await done(tx);db.close();}
+  await assert.rejects(queue.list(),/tampering|counter|rollback/i);
+ }finally{queue.close();}
+});

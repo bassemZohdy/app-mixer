@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- `EncryptedBrowserQueue` can be freed once it holds 1,000 items: a new `purge` deletes settled items in bounded passes while keeping the authenticated counter, state digest and rollback anchor consistent (a restored purged envelope is still detected).
 - A `Text` bound to a number or boolean no longer renders as an empty string on the web, React Native and Flutter renderers: finite numbers and booleans are shown in their JSON spelling, and the shared accessibility fixture checks `3`, `2.5`, `4`, `true` and `false`.
 - Request handlers that are async functions are wrapped (`guard`) so a rejection that escapes them ends the response instead of becoming an unhandled rejection; found by the new lint baseline together with an unawaited promise in the control plane's request runner.
 - Queued agent runs start in creation order instead of run ID order (random UUIDs started them in random order): `SqliteAgentRuns` adds a `created_seq` column and `PostgresAgentRuns` an identity `sequence` column, both backfilled for existing databases.

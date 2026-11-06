@@ -111,9 +111,9 @@ export class EncryptedBrowserQueue {
     const current=await this.snapshot(),local=current.counter?.counter??0;if(local<floor)throw Error('Offline queue rollback detected');await this.verifyState(current);if(local>floor)await this.anchor.advance(local);
   }
   /** Verify the current state, then seal the next counter over the envelopes as they will be after `changes`; returns undefined when no anchor is configured. */
-  private async prepareCounter(changes:Envelope[],key:CryptoKey=this.key):Promise<PreparedCounter|undefined>{
+  private async prepareCounter(changes:Envelope[],key:CryptoKey=this.key,removals:string[]=[]):Promise<PreparedCounter|undefined>{
     if(!this.anchor)return undefined;const current=await this.snapshot();await this.verifyState(current);const value=(current.counter?.counter??0)+1;if(!Number.isSafeInteger(value))throw Error('Invalid offline queue counter');
-    const next=new Map(current.entries.map(entry=>[entry.id,entry]));for(const change of changes)next.set(change.id,change);
+    const next=new Map(current.entries.map(entry=>[entry.id,entry]));for(const change of changes)next.set(change.id,change);for(const id of removals)next.delete(id);
     return {current:current.counter,next:await this.sealCounter(value,key,await this.stateDigest([...next.values()]))};
   }
   /** Inside a write transaction: require the counter observed during preparation, then advance it with the write. */
@@ -216,6 +216,24 @@ export class EncryptedBrowserQueue {
     await this.applyCounter(store,tx,done,prepared);store.put(originalEnvelope);store.add(replacementEnvelope);await done;await this.advanceAnchor(prepared);return structuredClone(replacement);
   }
   /** Compare-and-swap transitions prevent two tabs from claiming the same entry. */
+  /**
+   * Host-authorized retention: delete at most `limit` (1 to 1,000) settled items (`succeeded`, `discarded` or `exhausted`), oldest id first, and return the count.
+   * The queue cap counts every stored item and a status is only visible after decryption, so a full queue ("Offline queue full") is freed by purging settled items.
+   * Deletion advances the authenticated counter and state digest like any other write, so the rollback anchor and tamper checks stay valid. A purged item's request
+   * key is forgotten: purge only history the client can no longer resubmit.
+   */
+  async purge(options:{statuses:('succeeded'|'discarded'|'exhausted')[];limit:number}):Promise<number>{
+    if(!record(options)||!Array.isArray(options.statuses)||options.statuses.length<1||options.statuses.length>3||new Set(options.statuses).size!==options.statuses.length||!options.statuses.every(status=>['succeeded','discarded','exhausted'].includes(status))||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid offline retention query');
+    return this.retry(()=>this.purgeOnce(options.statuses,options.limit));
+  }
+  private async purgeOnce(statuses:string[],limit:number):Promise<number>{
+    const selected=(await this.list()).filter(item=>statuses.includes(item.status)).sort((a,b)=>a.id<b.id?-1:1).slice(0,limit);
+    if(!selected.length)return 0;
+    const prepared=await this.prepareCounter([],this.key,selected.map(item=>item.id));
+    const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);
+    for(const item of selected){const latest=await req(store.get(item.id)) as Envelope|undefined;if(!latest||latest.partition!==this.partition||latest.version!==item.version){tx.abort();try{await done;}catch{}throw Error(COUNTER_CHANGED);}}
+    await this.applyCounter(store,tx,done,prepared);for(const item of selected)store.delete(item.id);await done;await this.advanceAnchor(prepared);return selected.length;
+  }
   async transition(id:string,expectedVersion:number,action:BrowserQueueAction):Promise<BrowserQueueItem>{return this.retry(()=>this.transitionOnce(id,expectedVersion,action));}
   private async transitionOnce(id:string,expectedVersion:number,action:BrowserQueueAction):Promise<BrowserQueueItem>{
     if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||expectedVersion>=Number.MAX_SAFE_INTEGER)throw Error('Invalid offline version');
