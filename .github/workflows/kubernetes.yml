@@ -95,8 +95,9 @@ jobs:
           grep -q 'status 200' "$RUNNER_TEMP/scrape-ok.log"
           scrape scraper-no-token "app-mixer-metrics-scraper=true" "" | tee "$RUNNER_TEMP/scrape-no-token.log" || true
           grep -q 'status 401' "$RUNNER_TEMP/scrape-no-token.log"
-          # A pod without the label is refused when the cluster's network plugin enforces NetworkPolicy (kindnet may not); report which case this run is.
-          if scrape scraper-other "app=other" "$METRICS_TOKEN" > "$RUNNER_TEMP/scrape-other.log" 2>&1; then echo "NOTE: this cluster's network plugin does not enforce NetworkPolicy; the label rule is untested here"; else grep -q unreachable "$RUNNER_TEMP/scrape-other.log" && echo "NetworkPolicy refused an unlabelled pod"; fi
+          # A pod without the label is refused by the NetworkPolicy (kind's network plugin enforces it).
+          if scrape scraper-other "app=other" "$METRICS_TOKEN" > "$RUNNER_TEMP/scrape-other.log" 2>&1; then echo 'An unlabelled pod reached the metrics listener'; exit 1; fi
+          grep -q unreachable "$RUNNER_TEMP/scrape-other.log"
           kubectl scale -n app-mixer-test deployment/app-mixer-revocations --replicas=0
           kubectl rollout status -n app-mixer-test deployment/app-mixer-revocations --timeout=120s
           for i in $(seq 1 30); do [ "$(curl --cacert packages/core/test/fixtures/capability-tls/ca-cert.pem -s -o /dev/null -w '%{http_code}' https://127.0.0.1:13002/health/ready)" = 503 ] && break || sleep 1; done
