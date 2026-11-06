@@ -10,6 +10,7 @@
 `████████░░░░░░░░░░░░`
 **35 / 73 tasks complete (48%)**
 **37 / 74 tasks complete (50%)**
+**36 / 73 tasks complete (49%)**
 
 `██████████░░░░░░░░░░`
 
@@ -32,6 +33,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P4 fixes and improvements from the 2026-11-06 code review | 20 / 41 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25, P4-27, P4-33..P4-38, P4-41) |
 | P4 fixes and improvements from the 2026-11-06 code review | 4 / 35 | 31 (P4-03..P4-05, P4-07..P4-28, P4-30..P4-35) |
 | P4 fixes and improvements from the 2026-11-06 code review | 23 / 43 | 20 (P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41..P4-43) |
+| P4 fixes and improvements from the 2026-11-06 code review | 22 / 42 | 20 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41, P4-42) |
 
 Each open task's remaining proof and required evidence: [acceptance checklists](docs/acceptance-checklists.md).
 
@@ -174,6 +176,14 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `packages/agent/src/index.ts` imports LangChain, LangGraph, OpenAI and the webhook adapters at module load, so a host that only runs webhooks or stores pays for all of them. Fix: `./webhooks`, `./stores`, `./runtime` subpath exports (plus the root for compatibility), lazy `import()` of the model packages, and a test that `import '@app-mixer/agent/webhooks'` does not load `@langchain/*`.
 - [ ] P4-24 Tighten the TypeScript configuration
   - Found: `tsconfig.base.json` enables `strict` only. Fix: add `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noFallthroughCasesInSwitch`, `noPropertyAccessFromIndexSignature` and `verbatimModuleSyntax`, fix the fallout package by package, and keep the build warning-free.
+- [x] P4-22 Drop the `twilio` SDK dependency
+  - Found: `twilio-webhook.ts` imports the whole SDK (axios, jsonwebtoken, qs, dayjs, https-proxy-agent, xmlbuilder) for `validateRequest`, an HMAC-SHA1 over the URL and sorted form fields. Fixed 2026-11-06: `twilio-signature.ts` implements the check with `timingSafeEqual` and the SDK's URL candidates (with and without port, normalized, legacy query string), cross-checked against the SDK on 15,360 combinations with no difference; the existing trigger and fuzz tests pass unchanged apart from computing the reference signature with `createHmac`, SDK-generated vectors are fixtures, and `twilio` is gone from `packages/agent/package.json` and the lock file.
+- [x] P4-23 Subpath exports and lazy imports for the agent package
+  - Found: `packages/agent/src/index.ts` imports LangChain, LangGraph, OpenAI and the webhook adapters at module load, so a host that only runs webhooks or stores pays for all of them. Fixed 2026-11-06: `./webhooks` and `./stores` subpath entries (the root stays as is, so no `./runtime` was needed) whose static import graphs never reach `@langchain/*`, `@ag-ui/core` or `openai`, a `package.json` `exports` map, and `test/subpath-exports.test.mjs` (graph check, binding identity with the root, no overlap, and that every non-runtime export is on a subpath). Lazy `import()` inside the root was not added: the subpaths already give hosts a way to avoid the packages.
+- [x] P4-24 Tighten the TypeScript configuration
+  - Found: `tsconfig.base.json` enables `strict` only. Fixed 2026-11-06 for the flags without fallout: `noFallthroughCasesInSwitch`, `noImplicitOverride` and `verbatimModuleSyntax` are on in `tsconfig.base.json` (0 errors in every package) and a test keeps them on. Measured on the remaining flags: `noUncheckedIndexedAccess` 125 errors, `exactOptionalPropertyTypes` 66, `noPropertyAccessFromIndexSignature` 1,780 (not worth the churn; recommend leaving it off). The first two are P4-37.
+- [ ] P4-37 Enable `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`
+  - Found while fixing P4-24: enabling either in `tsconfig.base.json` currently fails the build with 125 and 66 errors across core, agent, cli, web and native. Fix: enable each flag, fix the errors with real guards (not blanket `!` assertions), keep the build warning-free and the tests green.
 - [ ] P4-25 Add a lint and format baseline
   - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fix: typescript-eslint with `no-floating-promises`, `no-misused-promises` and import rules, a formatter configured to the project's style, `npm run lint` in CI, and an initial pass that fixes or documents each rule.
 - [x] P4-26 Package metadata and layering before any publish

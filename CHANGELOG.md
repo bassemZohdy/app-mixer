@@ -111,6 +111,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- `@app-mixer/agent/webhooks` and `@app-mixer/agent/stores` subpath entries that never load LangChain, LangGraph, AG-UI or OpenAI (the root entry is unchanged); a test checks their import graphs and coverage.
 - `.github/dependabot.yml` (weekly, grouped npm, GitHub Actions and Docker updates), `npm audit --omit=dev` in CI (0 vulnerabilities today) and the `jose` patch update (6.2.13 to 6.2.15).
 - Package metadata: every package declares `license`, `repository` (with its directory) and `files`, `@app-mixer/core` declares `types`, internal dependencies use one exact version, and a test checks the metadata and that `npm pack --dry-run` ships the build output, templates and catalog but no sources or tests.
 - Operator scans for stranded offline work: `SqliteOfflineQueue.listAll` (across principals, by status, paginated) and `PostgresOfflineExecutions.list` (by status, paginated, no payloads), with a runbook entry.
