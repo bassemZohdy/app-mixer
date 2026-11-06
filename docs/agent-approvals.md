@@ -59,4 +59,17 @@ For a sender whose response was lost, the receiver also accepts authenticated PO
 
 Process-kill acceptance tests exercise a certificate-verified local HTTPS receiver with separate sender and receiver databases. They stop the sender before receiver commit and after receiver commit but before its HTTP response, reopen the stores and verify recovery and tenant isolation. Before commit the sender remains uncertain; after commit it can reconcile from the stored receipt without a second send. These tests do not establish production provider, node-failure or distributed-storage guarantees.
 
+## End-to-end with an OpenID Connect provider
+
+`keycloak-identity.test.mjs` (opt-in with `APP_MIXER_TEST_KEYCLOAK=docker`, run in CI) starts Keycloak 26.6.4 over certificate-validated HTTPS with the realm in `test/fixtures/keycloak-realm.json`. That realm has three users, one CLI client using the password grant, two service clients using client credentials and one introspection client. Every identity comes from a Keycloak access token (RFC 9068 `at+jwt`, RS256). The token is verified by `createJwtCapabilityAuthenticator` with keys from `createOidcJwtJwksManager`. The host maps the user's single group to the tenant and gives users and service clients distinct principals. Its `isTokenActive` callback introspects the presented token at Keycloak, so revocation at the provider takes effect on the next request. Keycloak 26 answers introspection only for tokens whose audience includes the introspecting client, so each issuing client adds that audience.
+
+The test checks:
+
+- **Delegation:** a user delegates to the agent's service principal. Another tenant and another user cannot issue the grant. The service principal re-authenticates on every delegated call.
+- **Expiry and revocation mid-run:** with two tool calls per run, the delegation's expiry, the user's own revocation through their token, and disabling the service client in Keycloak each stop the second call. Five effects are made across four runs. Logging the user out at Keycloak stops their existing token. The grant history records the user as the actor of the issue, renewal and revocation.
+- **Notice delivery:** the service principal requests approval. The approval notice is delivered over HTTPS to a `SqliteAgentNoticeReceiver` with a token obtained from Keycloak by the notifier client, and positively verified. An agent-audience token is refused by the receiver, and the notice carries no approval input.
+- **Approval:** anonymous, other-tenant, non-reviewer and logged-out requests get 401, 404, 403 and 401 from the review API. The reviewer approves with their own token, and the exported history records the worker's request and the reviewer's approval.
+
+Mutation checks: ignoring introspection, or accepting a revoked grant, fails the test. The provider, users and clients are local fixtures. Production identity, the production notice channel and real approvers remain owner work.
+
 The kind acceptance workflow also runs the HTTPS sender and receiver in separate pods, deletes both at those two boundaries, remounts a single-node host-path volume and verifies the persisted state over TLS after receiver restart. The workflow uses temporary test-only certificates and credentials. It exercises pod replacement on one node, not node loss, production storage, high availability or a third-party notification service.

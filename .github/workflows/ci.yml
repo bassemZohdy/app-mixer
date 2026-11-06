@@ -86,6 +86,11 @@ jobs:
         env:
           APP_MIXER_TEST_PROMETHEUS: docker
         run: node --test packages/cli/test/alert-rules.test.mjs
+      - name: Delegation, approval and notices with a real OIDC provider
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_KEYCLOAK: docker
+        run: node --test packages/agent/test/keycloak-identity.test.mjs
       - name: Browser smoke test
         run: |
           node .github/scripts/browser-smoke.mjs

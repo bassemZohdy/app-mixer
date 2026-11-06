@@ -1,0 +1,46 @@
+{
+  "realm": "app-mixer",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "groups": [{"name": "tenant"}, {"name": "other"}],
+  "users": [
+    {"username": "alice", "enabled": true, "email": "alice@example.test", "emailVerified": true, "firstName": "Alice", "lastName": "Delegator", "groups": ["/tenant"], "credentials": [{"type": "password", "value": "alice-local-test-only", "temporary": false}]},
+    {"username": "reviewer", "enabled": true, "email": "reviewer@example.test", "emailVerified": true, "firstName": "Rene", "lastName": "Reviewer", "groups": ["/tenant"], "credentials": [{"type": "password", "value": "reviewer-local-test-only", "temporary": false}]},
+    {"username": "mallory", "enabled": true, "email": "mallory@example.test", "emailVerified": true, "firstName": "Mallory", "lastName": "Outsider", "groups": ["/other"], "credentials": [{"type": "password", "value": "mallory-local-test-only", "temporary": false}]},
+    {"username": "service-account-agent-service", "enabled": true, "serviceAccountClientId": "agent-service", "groups": ["/tenant"]},
+    {"username": "service-account-agent-notifier", "enabled": true, "serviceAccountClientId": "agent-notifier", "groups": ["/tenant"]}
+  ],
+  "clients": [
+    {
+      "clientId": "app-mixer-cli", "publicClient": true, "directAccessGrantsEnabled": true, "standardFlowEnabled": false,
+      "attributes": {"access.token.header.type.rfc9068": "true"},
+      "protocolMappers": [
+        {"name": "gateway audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.client.audience": "agent-gateway", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "https://agents.app-mixer.test/", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper", "config": {"claim.name": "groups", "full.path": "false", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false"}},
+        {"name": "client id", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": {"claim.name": "client_id", "claim.value": "app-mixer-cli", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false"}}
+      ]
+    },
+    {
+      "clientId": "agent-service", "publicClient": false, "secret": "agent-service-local-test-only", "serviceAccountsEnabled": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
+      "attributes": {"access.token.header.type.rfc9068": "true"},
+      "protocolMappers": [
+        {"name": "client id", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": {"claim.name": "client_id", "claim.value": "agent-service", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "gateway audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.client.audience": "agent-gateway", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "https://agents.app-mixer.test/", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper", "config": {"claim.name": "groups", "full.path": "false", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false"}}
+      ]
+    },
+    {
+      "clientId": "agent-notifier", "publicClient": false, "secret": "agent-notifier-local-test-only", "serviceAccountsEnabled": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
+      "attributes": {"access.token.header.type.rfc9068": "true"},
+      "protocolMappers": [
+        {"name": "client id", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": {"claim.name": "client_id", "claim.value": "agent-notifier", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "gateway audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.client.audience": "agent-gateway", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "https://notices.app-mixer.test/", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper", "config": {"claim.name": "groups", "full.path": "false", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false"}}
+      ]
+    },
+    {"clientId": "agent-gateway", "publicClient": false, "secret": "agent-gateway-local-test-only", "serviceAccountsEnabled": false, "standardFlowEnabled": false, "directAccessGrantsEnabled": false}
+  ]
+}

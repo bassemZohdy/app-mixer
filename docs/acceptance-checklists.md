@@ -62,7 +62,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-06 Persistent-agent entity and manifest
 - **Verified locally:** manifest validation, immutable tenant-scoped versions, optimistic concurrency, PostgreSQL store with audit and quotas, process-kill tests.
 - **Still to prove:**
-  - [ ] Production identity for administrators and service principals.
+  - [ ] Production identity for administrators and service principals. A service principal authenticated with Keycloak client credentials now runs delegated calls end to end, and disabling its client at the provider stops the next call mid-run ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)). Still pending: the production provider and administrator identities.
   - [x] Distributed run-quota enforcement across nodes. Two processes with separate PostgreSQL pools exceed the concurrency and daily limits at the same instant for 20 rounds (1,200 attempts); every round admits exactly the limit and the database records exactly that ([durable-agent-runs.md](durable-agent-runs.md#shared-run-slots)).
 - **Evidence:** a multi-node quota test that exceeds the limit from two nodes simultaneously and a record that exactly the limit was admitted.
 
@@ -138,15 +138,15 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P3-05 Service principals and delegated user identity
 - **Verified locally:** scoped delegation with expiry and revocation checks, revisioned grant registry, request inbox and notification outbox, process-kill grant tests.
 - **Still to prove:**
-  - [ ] Production delivery of requests and notices.
-  - [ ] Production identity for delegated users.
+  - [ ] Production delivery of requests and notices. An approval notice is delivered over certificate-validated HTTPS with a Keycloak-issued client credential and verified at the receiver ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)). Still pending: the production channel.
+  - [ ] Production identity for delegated users. With a real OIDC provider (Keycloak, introspected tokens), a user's delegation, the delegation's expiry, the user's revocation and revocation at the provider each take effect on the next call of a running agent ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)). Still pending: the production provider and users.
 - **Evidence:** an end-to-end delegation with the real identity provider, including expiry and revocation taking effect during a run.
 
 ### P3-06 Durable human approval and consent
 - **Verified locally:** SQLite approvals with expiry, history and exact-action gating, notification outbox, HTTPS receiver with scoped JWT, process-kill approval tests.
 - **Still to prove:**
-  - [ ] Production delivery of approval notices.
-  - [ ] Production identity for approvers.
+  - [ ] Production delivery of approval notices. Covered end to end with a Keycloak client credential over HTTPS ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)); the production channel is still pending.
+  - [ ] Production identity for approvers. A reviewer approves with their own Keycloak token through the review API; other tenants, non-reviewers and logged-out tokens are refused, and the history is exported ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)). Still pending: real approvers on the production provider.
 - **Evidence:** a real approver completing an approval through the production channel, with the audit record exported.
 
 ### P3-07 Trace, metrics, audit, quotas and budgets

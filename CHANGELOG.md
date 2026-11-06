@@ -9,6 +9,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- An opt-in end-to-end identity test against Keycloak (run in CI): delegation, expiry and revocation during a run, revocation at the provider, approval through the review API and HTTPS notice delivery, all with provider-issued tokens.
 - A draft labelled memory evaluation set (pending owner review) and a PostgreSQL test that reports every retrieval mode among 900 distractors, compares HNSW with exact search and checks proposed floors.
 - Discord interactions (Ed25519) and SendGrid Event Webhook (ECDSA P-256, with key rotation) adapters for agent event ingress, covered by ingress tests and the hostile-input fuzz test.
 - Disconnected replication: `exportDisconnectedPromotion` writes a signed, version-bound promotion document for transfer on removable media, and `createDisconnectedPromotionImporter` applies it on a target with no connection to the source, refusing replays, older, altered or foreign documents and restored targets.
