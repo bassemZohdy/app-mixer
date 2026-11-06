@@ -29,11 +29,11 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Evidence:** the list of unsupported keywords with the decision for each, and a provider sandbox transcript showing an ambiguous result reconciled without a duplicate effect.
 
 ### P2-04 Offline-first queue
-- **Verified locally:** durable queue, deduplication, bounded retries, conflict and uncertain states, process-kill recovery, encrypted browser storage with key rotation and cross-tab fencing, PostgreSQL shared keys.
+- **Verified locally:** durable queue, deduplication, bounded retries, conflict and uncertain states, process-kill recovery, encrypted browser storage with key rotation and cross-tab fencing, a rollback anchor with an authenticated digest of all queue envelopes, PostgreSQL shared keys.
 - **Still to prove:**
   - [ ] Offline provisioning of a device that has never been online.
   - [ ] Mobile storage on iOS and Android, including eviction and backup/restore.
-  - [ ] Rollback protection for the offline stores that lack it, and detection of selective tampering.
+  - [ ] Rollback protection for the offline stores that lack it (the request-identity and generation databases). Selective substitution or deletion of queue envelopes is now detected when the rollback anchor is configured.
   - [ ] Migration of clients older than the fixed-version IndexedDB fence.
   - [ ] Production identity for shared request keys.
 - **Evidence:** device recordings or logs for each scenario and a migration test against a retained legacy client build.

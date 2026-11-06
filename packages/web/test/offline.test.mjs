@@ -150,3 +150,45 @@ test('rollback counter serializes contending tabs without losing writes',async()
  const factory=new IDBFactory(),queueKey=await key();let floor=0;const anchor={read:async()=>floor,advance:async n=>{floor=Math.max(floor,n);}},tabs=await Promise.all(Array.from({length:4},()=>EncryptedBrowserQueue.open({...options(factory,queueKey),rollbackAnchor:anchor})));
  try{const results=await Promise.all(Array.from({length:24},(_,i)=>tabs[i%4].enqueue('save','request-'+i,{i})));assert.equal(new Set(results.map(item=>item.id)).size,24);assert.equal(floor,24);assert.equal((await tabs[0].list()).length,24);}finally{for(const tab of tabs)tab.close();}
 });
+
+test('rollback anchor detects selective substitution and deletion of item envelopes',async()=>{
+ const factory=new IDBFactory(),queueKey=await key(),floor={value:0},anchor={read:async()=>floor.value,advance:async n=>{floor.value=Math.max(floor.value,n);}},open=(k=queueKey)=>EncryptedBrowserQueue.open({...options(factory,k),rollbackAnchor:anchor});
+ const snapshot=async()=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readonly'),all=request(tx.objectStore('offline').getAll());await done(tx);return await all;}finally{db.close();}};
+ const write=async(put,remove=[])=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readwrite'),store=tx.objectStore('offline');for(const value of put)store.put(value);for(const id of remove)store.delete(id);await done(tx);}finally{db.close();}};
+ let queue=await open();const first=await queue.enqueue('save','one',{n:1}),second=await queue.enqueue('save','two',{n:2});
+ const oldFirst=(await snapshot()).find(value=>value.id===first.id);
+ await queue.transition(first.id,1,'claim');await queue.transition(first.id,2,'succeed');queue.close();
+ const current=await snapshot(),currentFirst=current.find(value=>value.id===first.id);
+ // An older envelope for one item, kept beside the current counter record, decrypts and authenticates on its own; the state digest exposes it.
+ await write([oldFirst]);await assert.rejects(open(),/tampering detected/);
+ await write([currentFirst],[second.id]);await assert.rejects(open(),/tampering detected/);
+ await write(current);queue=await open();assert.equal((await queue.list()).length,2);
+ // Substitution while a queue is open is caught by the next list or write.
+ await write([oldFirst]);await assert.rejects(queue.list(),/tampering detected/);await assert.rejects(queue.enqueue('save','three',{n:3}),/tampering detected/);await assert.rejects(queue.transition(second.id,1,'claim'),/tampering detected/);
+ await write([currentFirst]);assert.equal((await queue.enqueue('save','three',{n:3})).status,'pending');
+ // Rotation reseals the digest with the new key, and the protection still holds afterwards.
+ const nextKey=await key();assert.equal(await queue.rotateKey(nextKey),3);queue=await open(nextKey);const rotated=await snapshot();assert.equal((await queue.list()).length,3);queue.close();
+ const rotatedSecond=rotated.find(value=>value.id===second.id);await write([{...rotatedSecond,iv:new Uint8Array(12)}]);await assert.rejects(open(nextKey),/tampering detected/);await write([rotatedSecond]);(await open(nextKey)).close();
+});
+
+test('a legacy counter without a state digest is accepted and upgraded by the next write',async()=>{
+ const factory=new IDBFactory(),queueKey=await key(),floor={value:0},anchor={read:async()=>floor.value,advance:async n=>{floor.value=Math.max(floor.value,n);}},open=()=>EncryptedBrowserQueue.open({...options(factory,queueKey),rollbackAnchor:anchor});
+ const snapshot=async()=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readonly'),all=request(tx.objectStore('offline').getAll());await done(tx);return await all;}finally{db.close();}};
+ const write=async put=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readwrite'),store=tx.objectStore('offline');for(const value of put)store.put(value);await done(tx);}finally{db.close();}};
+ let queue=await open();const item=await queue.enqueue('save','one',{n:1});const oldItem=(await snapshot()).find(value=>value.id===item.id);await queue.transition(item.id,1,'claim');queue.close();
+ const counter=(await snapshot()).find(value=>String(value.id).startsWith('@queue-counter:')),partition=counter.partition.slice('@meta:'.length),iv=webcrypto.getRandomValues(new Uint8Array(12));
+ assert.match(counter.state,/^[a-f0-9]{64}$/);
+ const legacy={id:counter.id,partition:counter.partition,counter:counter.counter,iv,ciphertext:await webcrypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode(JSON.stringify(['queue-counter-v1',partition,counter.counter]))},queueKey,new TextEncoder().encode('queue-counter-v1'))};
+ // A counter written before state digests existed carries no digest, so a substitution made before the upgrade is not detected.
+ await write([legacy,oldItem]);queue=await open();assert.equal((await queue.get(item.id)).status,'pending');
+ await queue.transition(item.id,1,'claim');const upgraded=(await snapshot()).find(value=>String(value.id).startsWith('@queue-counter:'));assert.match(upgraded.state,/^[a-f0-9]{64}$/);assert.equal(upgraded.counter,counter.counter+1);queue.close();
+ await write([oldItem]);await assert.rejects(open(),/tampering detected/);
+ // The digest is authenticated: changing it on the counter record fails authentication.
+ await write([{...upgraded,state:'0'.repeat(64)}]);await assert.rejects(open(),/Invalid offline queue counter/);
+});
+
+test('an instance without the anchor makes anchored instances report tampering',async()=>{
+ const factory=new IDBFactory(),queueKey=await key(),floor={value:0},anchor={read:async()=>floor.value,advance:async n=>{floor.value=Math.max(floor.value,n);}};
+ const anchored=await EncryptedBrowserQueue.open({...options(factory,queueKey),rollbackAnchor:anchor}),plain=await EncryptedBrowserQueue.open(options(factory,queueKey));
+ try{await anchored.enqueue('save','one',{n:1});await plain.enqueue('save','two',{n:2});await assert.rejects(anchored.list(),/tampering detected/);}finally{anchored.close();plain.close();}
+});

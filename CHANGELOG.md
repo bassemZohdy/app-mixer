@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- The offline queue's rollback anchor now detects selective substitution or deletion of individual item envelopes, not only whole-partition restores. The counter record carries an authenticated digest of every envelope, checked at open, on `list()` and before each write.
 - Run and schedule configuration must be own plain data; schedules reject inherited fields with the controlled error instead of a raw TypeError.
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
