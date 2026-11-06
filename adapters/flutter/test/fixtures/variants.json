@@ -1,0 +1,1660 @@
+[
+  {
+    "message": {
+      "version": "v0.9.1",
+      "createSurface": {
+        "surfaceId": "main",
+        "catalogId": "https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json"
+      }
+    },
+    "tree": null
+  },
+  {
+    "message": {
+      "version": "v0.9.1",
+      "updateComponents": {
+        "surfaceId": "main",
+        "components": [
+          {
+            "id": "root",
+            "component": "Column",
+            "children": [
+              "text-0",
+              "text-1",
+              "text-2",
+              "text-3",
+              "text-4",
+              "text-5",
+              "text-6",
+              "text-7",
+              "column-justify-0",
+              "column-justify-1",
+              "column-justify-2",
+              "column-justify-3",
+              "column-justify-4",
+              "column-justify-5",
+              "column-align-0",
+              "column-align-1",
+              "column-align-2",
+              "column-align-3",
+              "row-justify-0",
+              "row-justify-1",
+              "row-justify-2",
+              "row-justify-3",
+              "row-justify-4",
+              "row-justify-5",
+              "row-align-0",
+              "row-align-1",
+              "row-align-2",
+              "row-align-3",
+              "field-short",
+              "field-long",
+              "field-default",
+              "button-0",
+              "button-1",
+              "button-2",
+              "button-3"
+            ]
+          },
+          {
+            "id": "text-0",
+            "component": "Text",
+            "text": "Text h1",
+            "variant": "h1"
+          },
+          {
+            "id": "text-1",
+            "component": "Text",
+            "text": "Text h2",
+            "variant": "h2"
+          },
+          {
+            "id": "text-2",
+            "component": "Text",
+            "text": "Text h3",
+            "variant": "h3"
+          },
+          {
+            "id": "text-3",
+            "component": "Text",
+            "text": "Text h4",
+            "variant": "h4"
+          },
+          {
+            "id": "text-4",
+            "component": "Text",
+            "text": "Text h5",
+            "variant": "h5"
+          },
+          {
+            "id": "text-5",
+            "component": "Text",
+            "text": "Text body",
+            "variant": "body"
+          },
+          {
+            "id": "text-6",
+            "component": "Text",
+            "text": "Text caption",
+            "variant": "caption"
+          },
+          {
+            "id": "text-7",
+            "component": "Text",
+            "text": "Text default"
+          },
+          {
+            "id": "column-justify-0",
+            "component": "Column",
+            "children": [
+              "column-justify-0-label"
+            ],
+            "justify": "start"
+          },
+          {
+            "id": "column-justify-0-label",
+            "component": "Text",
+            "text": "Column justify start"
+          },
+          {
+            "id": "column-justify-1",
+            "component": "Column",
+            "children": [
+              "column-justify-1-label"
+            ],
+            "justify": "center"
+          },
+          {
+            "id": "column-justify-1-label",
+            "component": "Text",
+            "text": "Column justify center"
+          },
+          {
+            "id": "column-justify-2",
+            "component": "Column",
+            "children": [
+              "column-justify-2-label"
+            ],
+            "justify": "end"
+          },
+          {
+            "id": "column-justify-2-label",
+            "component": "Text",
+            "text": "Column justify end"
+          },
+          {
+            "id": "column-justify-3",
+            "component": "Column",
+            "children": [
+              "column-justify-3-label"
+            ],
+            "justify": "spaceBetween"
+          },
+          {
+            "id": "column-justify-3-label",
+            "component": "Text",
+            "text": "Column justify spaceBetween"
+          },
+          {
+            "id": "column-justify-4",
+            "component": "Column",
+            "children": [
+              "column-justify-4-label"
+            ],
+            "justify": "spaceAround"
+          },
+          {
+            "id": "column-justify-4-label",
+            "component": "Text",
+            "text": "Column justify spaceAround"
+          },
+          {
+            "id": "column-justify-5",
+            "component": "Column",
+            "children": [
+              "column-justify-5-label"
+            ],
+            "justify": "spaceEvenly"
+          },
+          {
+            "id": "column-justify-5-label",
+            "component": "Text",
+            "text": "Column justify spaceEvenly"
+          },
+          {
+            "id": "column-align-0",
+            "component": "Column",
+            "children": [
+              "column-align-0-label"
+            ],
+            "align": "start"
+          },
+          {
+            "id": "column-align-0-label",
+            "component": "Text",
+            "text": "Column align start"
+          },
+          {
+            "id": "column-align-1",
+            "component": "Column",
+            "children": [
+              "column-align-1-label"
+            ],
+            "align": "center"
+          },
+          {
+            "id": "column-align-1-label",
+            "component": "Text",
+            "text": "Column align center"
+          },
+          {
+            "id": "column-align-2",
+            "component": "Column",
+            "children": [
+              "column-align-2-label"
+            ],
+            "align": "end"
+          },
+          {
+            "id": "column-align-2-label",
+            "component": "Text",
+            "text": "Column align end"
+          },
+          {
+            "id": "column-align-3",
+            "component": "Column",
+            "children": [
+              "column-align-3-label"
+            ],
+            "align": "stretch"
+          },
+          {
+            "id": "column-align-3-label",
+            "component": "Text",
+            "text": "Column align stretch"
+          },
+          {
+            "id": "row-justify-0",
+            "component": "Row",
+            "children": [
+              "row-justify-0-label"
+            ],
+            "justify": "start"
+          },
+          {
+            "id": "row-justify-0-label",
+            "component": "Text",
+            "text": "Row justify start"
+          },
+          {
+            "id": "row-justify-1",
+            "component": "Row",
+            "children": [
+              "row-justify-1-label"
+            ],
+            "justify": "center"
+          },
+          {
+            "id": "row-justify-1-label",
+            "component": "Text",
+            "text": "Row justify center"
+          },
+          {
+            "id": "row-justify-2",
+            "component": "Row",
+            "children": [
+              "row-justify-2-label"
+            ],
+            "justify": "end"
+          },
+          {
+            "id": "row-justify-2-label",
+            "component": "Text",
+            "text": "Row justify end"
+          },
+          {
+            "id": "row-justify-3",
+            "component": "Row",
+            "children": [
+              "row-justify-3-label"
+            ],
+            "justify": "spaceBetween"
+          },
+          {
+            "id": "row-justify-3-label",
+            "component": "Text",
+            "text": "Row justify spaceBetween"
+          },
+          {
+            "id": "row-justify-4",
+            "component": "Row",
+            "children": [
+              "row-justify-4-label"
+            ],
+            "justify": "spaceAround"
+          },
+          {
+            "id": "row-justify-4-label",
+            "component": "Text",
+            "text": "Row justify spaceAround"
+          },
+          {
+            "id": "row-justify-5",
+            "component": "Row",
+            "children": [
+              "row-justify-5-label"
+            ],
+            "justify": "spaceEvenly"
+          },
+          {
+            "id": "row-justify-5-label",
+            "component": "Text",
+            "text": "Row justify spaceEvenly"
+          },
+          {
+            "id": "row-align-0",
+            "component": "Row",
+            "children": [
+              "row-align-0-label"
+            ],
+            "align": "start"
+          },
+          {
+            "id": "row-align-0-label",
+            "component": "Text",
+            "text": "Row align start"
+          },
+          {
+            "id": "row-align-1",
+            "component": "Row",
+            "children": [
+              "row-align-1-label"
+            ],
+            "align": "center"
+          },
+          {
+            "id": "row-align-1-label",
+            "component": "Text",
+            "text": "Row align center"
+          },
+          {
+            "id": "row-align-2",
+            "component": "Row",
+            "children": [
+              "row-align-2-label"
+            ],
+            "align": "end"
+          },
+          {
+            "id": "row-align-2-label",
+            "component": "Text",
+            "text": "Row align end"
+          },
+          {
+            "id": "row-align-3",
+            "component": "Row",
+            "children": [
+              "row-align-3-label"
+            ],
+            "align": "stretch"
+          },
+          {
+            "id": "row-align-3-label",
+            "component": "Text",
+            "text": "Row align stretch"
+          },
+          {
+            "id": "field-short",
+            "component": "TextField",
+            "label": "field-short",
+            "value": {
+              "path": "/field-short"
+            },
+            "variant": "shortText"
+          },
+          {
+            "id": "field-long",
+            "component": "TextField",
+            "label": "field-long",
+            "value": {
+              "path": "/field-long"
+            },
+            "variant": "longText"
+          },
+          {
+            "id": "field-default",
+            "component": "TextField",
+            "label": "field-default",
+            "value": {
+              "path": "/field-default"
+            }
+          },
+          {
+            "id": "button-0",
+            "component": "Button",
+            "child": "button-0-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            },
+            "variant": "default"
+          },
+          {
+            "id": "button-0-label",
+            "component": "Text",
+            "text": "Button default"
+          },
+          {
+            "id": "button-1",
+            "component": "Button",
+            "child": "button-1-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            },
+            "variant": "primary"
+          },
+          {
+            "id": "button-1-label",
+            "component": "Text",
+            "text": "Button primary"
+          },
+          {
+            "id": "button-2",
+            "component": "Button",
+            "child": "button-2-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            },
+            "variant": "borderless"
+          },
+          {
+            "id": "button-2-label",
+            "component": "Text",
+            "text": "Button borderless"
+          },
+          {
+            "id": "button-3",
+            "component": "Button",
+            "child": "button-3-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            }
+          },
+          {
+            "id": "button-3-label",
+            "component": "Text",
+            "text": "Button default"
+          }
+        ]
+      }
+    },
+    "tree": {
+      "kind": "Column",
+      "justify": null,
+      "align": null,
+      "children": [
+        {
+          "kind": "Text",
+          "variant": "h1",
+          "text": "Text h1",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h2",
+          "text": "Text h2",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h3",
+          "text": "Text h3",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h4",
+          "text": "Text h4",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h5",
+          "text": "Text h5",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "body",
+          "text": "Text body",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "caption",
+          "text": "Text caption",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "body",
+          "text": "Text default",
+          "children": []
+        },
+        {
+          "kind": "Column",
+          "justify": "flex-start",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "center",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "flex-end",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "space-between",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify spaceBetween",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "space-around",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify spaceAround",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "space-evenly",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify spaceEvenly",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "flex-start",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "center",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "flex-end",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "stretch",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align stretch",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "flex-start",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "center",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "flex-end",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "space-between",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify spaceBetween",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "space-around",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify spaceAround",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "space-evenly",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify spaceEvenly",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "flex-start",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "center",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "flex-end",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "stretch",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align stretch",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "TextField",
+          "variant": "shortText",
+          "label": "field-short",
+          "children": []
+        },
+        {
+          "kind": "TextField",
+          "variant": "longText",
+          "label": "field-long",
+          "children": []
+        },
+        {
+          "kind": "TextField",
+          "variant": "shortText",
+          "label": "field-default",
+          "children": []
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button default",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button primary",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button borderless",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button default",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "message": {
+      "version": "v0.9.1",
+      "updateComponents": {
+        "surfaceId": "main",
+        "components": [
+          {
+            "id": "root",
+            "component": "Column",
+            "children": [
+              "text-0",
+              "text-1",
+              "text-2",
+              "text-3",
+              "text-4",
+              "text-5",
+              "text-6",
+              "text-7",
+              "column-justify-0",
+              "column-justify-1",
+              "column-justify-2",
+              "column-justify-3",
+              "column-justify-4",
+              "column-justify-5",
+              "column-align-0",
+              "column-align-1",
+              "column-align-2",
+              "column-align-3",
+              "row-justify-0",
+              "row-justify-1",
+              "row-justify-2",
+              "row-justify-3",
+              "row-justify-4",
+              "row-justify-5",
+              "row-align-0",
+              "row-align-1",
+              "row-align-2",
+              "row-align-3",
+              "field-short",
+              "field-long",
+              "field-default",
+              "button-0",
+              "button-1",
+              "button-2",
+              "button-3"
+            ]
+          },
+          {
+            "id": "text-0",
+            "component": "Text",
+            "text": "Text caption",
+            "variant": "caption"
+          },
+          {
+            "id": "text-1",
+            "component": "Text",
+            "text": "Text body",
+            "variant": "body"
+          },
+          {
+            "id": "text-2",
+            "component": "Text",
+            "text": "Text h5",
+            "variant": "h5"
+          },
+          {
+            "id": "text-3",
+            "component": "Text",
+            "text": "Text h4",
+            "variant": "h4"
+          },
+          {
+            "id": "text-4",
+            "component": "Text",
+            "text": "Text h3",
+            "variant": "h3"
+          },
+          {
+            "id": "text-5",
+            "component": "Text",
+            "text": "Text h2",
+            "variant": "h2"
+          },
+          {
+            "id": "text-6",
+            "component": "Text",
+            "text": "Text h1",
+            "variant": "h1"
+          },
+          {
+            "id": "text-7",
+            "component": "Text",
+            "text": "Text default"
+          },
+          {
+            "id": "column-justify-0",
+            "component": "Column",
+            "children": [
+              "column-justify-0-label"
+            ],
+            "justify": "center"
+          },
+          {
+            "id": "column-justify-0-label",
+            "component": "Text",
+            "text": "Column justify center"
+          },
+          {
+            "id": "column-justify-1",
+            "component": "Column",
+            "children": [
+              "column-justify-1-label"
+            ],
+            "justify": "end"
+          },
+          {
+            "id": "column-justify-1-label",
+            "component": "Text",
+            "text": "Column justify end"
+          },
+          {
+            "id": "column-justify-2",
+            "component": "Column",
+            "children": [
+              "column-justify-2-label"
+            ],
+            "justify": "spaceBetween"
+          },
+          {
+            "id": "column-justify-2-label",
+            "component": "Text",
+            "text": "Column justify spaceBetween"
+          },
+          {
+            "id": "column-justify-3",
+            "component": "Column",
+            "children": [
+              "column-justify-3-label"
+            ],
+            "justify": "spaceAround"
+          },
+          {
+            "id": "column-justify-3-label",
+            "component": "Text",
+            "text": "Column justify spaceAround"
+          },
+          {
+            "id": "column-justify-4",
+            "component": "Column",
+            "children": [
+              "column-justify-4-label"
+            ],
+            "justify": "spaceEvenly"
+          },
+          {
+            "id": "column-justify-4-label",
+            "component": "Text",
+            "text": "Column justify spaceEvenly"
+          },
+          {
+            "id": "column-justify-5",
+            "component": "Column",
+            "children": [
+              "column-justify-5-label"
+            ],
+            "justify": "start"
+          },
+          {
+            "id": "column-justify-5-label",
+            "component": "Text",
+            "text": "Column justify start"
+          },
+          {
+            "id": "column-align-0",
+            "component": "Column",
+            "children": [
+              "column-align-0-label"
+            ],
+            "align": "center"
+          },
+          {
+            "id": "column-align-0-label",
+            "component": "Text",
+            "text": "Column align center"
+          },
+          {
+            "id": "column-align-1",
+            "component": "Column",
+            "children": [
+              "column-align-1-label"
+            ],
+            "align": "end"
+          },
+          {
+            "id": "column-align-1-label",
+            "component": "Text",
+            "text": "Column align end"
+          },
+          {
+            "id": "column-align-2",
+            "component": "Column",
+            "children": [
+              "column-align-2-label"
+            ],
+            "align": "stretch"
+          },
+          {
+            "id": "column-align-2-label",
+            "component": "Text",
+            "text": "Column align stretch"
+          },
+          {
+            "id": "column-align-3",
+            "component": "Column",
+            "children": [
+              "column-align-3-label"
+            ],
+            "align": "start"
+          },
+          {
+            "id": "column-align-3-label",
+            "component": "Text",
+            "text": "Column align start"
+          },
+          {
+            "id": "row-justify-0",
+            "component": "Row",
+            "children": [
+              "row-justify-0-label"
+            ],
+            "justify": "center"
+          },
+          {
+            "id": "row-justify-0-label",
+            "component": "Text",
+            "text": "Row justify center"
+          },
+          {
+            "id": "row-justify-1",
+            "component": "Row",
+            "children": [
+              "row-justify-1-label"
+            ],
+            "justify": "end"
+          },
+          {
+            "id": "row-justify-1-label",
+            "component": "Text",
+            "text": "Row justify end"
+          },
+          {
+            "id": "row-justify-2",
+            "component": "Row",
+            "children": [
+              "row-justify-2-label"
+            ],
+            "justify": "spaceBetween"
+          },
+          {
+            "id": "row-justify-2-label",
+            "component": "Text",
+            "text": "Row justify spaceBetween"
+          },
+          {
+            "id": "row-justify-3",
+            "component": "Row",
+            "children": [
+              "row-justify-3-label"
+            ],
+            "justify": "spaceAround"
+          },
+          {
+            "id": "row-justify-3-label",
+            "component": "Text",
+            "text": "Row justify spaceAround"
+          },
+          {
+            "id": "row-justify-4",
+            "component": "Row",
+            "children": [
+              "row-justify-4-label"
+            ],
+            "justify": "spaceEvenly"
+          },
+          {
+            "id": "row-justify-4-label",
+            "component": "Text",
+            "text": "Row justify spaceEvenly"
+          },
+          {
+            "id": "row-justify-5",
+            "component": "Row",
+            "children": [
+              "row-justify-5-label"
+            ],
+            "justify": "start"
+          },
+          {
+            "id": "row-justify-5-label",
+            "component": "Text",
+            "text": "Row justify start"
+          },
+          {
+            "id": "row-align-0",
+            "component": "Row",
+            "children": [
+              "row-align-0-label"
+            ],
+            "align": "center"
+          },
+          {
+            "id": "row-align-0-label",
+            "component": "Text",
+            "text": "Row align center"
+          },
+          {
+            "id": "row-align-1",
+            "component": "Row",
+            "children": [
+              "row-align-1-label"
+            ],
+            "align": "end"
+          },
+          {
+            "id": "row-align-1-label",
+            "component": "Text",
+            "text": "Row align end"
+          },
+          {
+            "id": "row-align-2",
+            "component": "Row",
+            "children": [
+              "row-align-2-label"
+            ],
+            "align": "stretch"
+          },
+          {
+            "id": "row-align-2-label",
+            "component": "Text",
+            "text": "Row align stretch"
+          },
+          {
+            "id": "row-align-3",
+            "component": "Row",
+            "children": [
+              "row-align-3-label"
+            ],
+            "align": "start"
+          },
+          {
+            "id": "row-align-3-label",
+            "component": "Text",
+            "text": "Row align start"
+          },
+          {
+            "id": "field-short",
+            "component": "TextField",
+            "label": "field-short",
+            "value": {
+              "path": "/field-short"
+            },
+            "variant": "longText"
+          },
+          {
+            "id": "field-long",
+            "component": "TextField",
+            "label": "field-long",
+            "value": {
+              "path": "/field-long"
+            },
+            "variant": "shortText"
+          },
+          {
+            "id": "field-default",
+            "component": "TextField",
+            "label": "field-default",
+            "value": {
+              "path": "/field-default"
+            }
+          },
+          {
+            "id": "button-0",
+            "component": "Button",
+            "child": "button-0-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            },
+            "variant": "default"
+          },
+          {
+            "id": "button-0-label",
+            "component": "Text",
+            "text": "Button default"
+          },
+          {
+            "id": "button-1",
+            "component": "Button",
+            "child": "button-1-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            },
+            "variant": "primary"
+          },
+          {
+            "id": "button-1-label",
+            "component": "Text",
+            "text": "Button primary"
+          },
+          {
+            "id": "button-2",
+            "component": "Button",
+            "child": "button-2-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            },
+            "variant": "borderless"
+          },
+          {
+            "id": "button-2-label",
+            "component": "Text",
+            "text": "Button borderless"
+          },
+          {
+            "id": "button-3",
+            "component": "Button",
+            "child": "button-3-label",
+            "action": {
+              "event": {
+                "name": "press"
+              }
+            }
+          },
+          {
+            "id": "button-3-label",
+            "component": "Text",
+            "text": "Button default"
+          }
+        ]
+      }
+    },
+    "tree": {
+      "kind": "Column",
+      "justify": null,
+      "align": null,
+      "children": [
+        {
+          "kind": "Text",
+          "variant": "caption",
+          "text": "Text caption",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "body",
+          "text": "Text body",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h5",
+          "text": "Text h5",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h4",
+          "text": "Text h4",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h3",
+          "text": "Text h3",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h2",
+          "text": "Text h2",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "h1",
+          "text": "Text h1",
+          "children": []
+        },
+        {
+          "kind": "Text",
+          "variant": "body",
+          "text": "Text default",
+          "children": []
+        },
+        {
+          "kind": "Column",
+          "justify": "center",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "flex-end",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "space-between",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify spaceBetween",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "space-around",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify spaceAround",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "space-evenly",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify spaceEvenly",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": "flex-start",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column justify start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "center",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "flex-end",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "stretch",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align stretch",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Column",
+          "justify": null,
+          "align": "flex-start",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Column align start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "center",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "flex-end",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "space-between",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify spaceBetween",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "space-around",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify spaceAround",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "space-evenly",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify spaceEvenly",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": "flex-start",
+          "align": null,
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row justify start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "center",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align center",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "flex-end",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align end",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "stretch",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align stretch",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Row",
+          "justify": null,
+          "align": "flex-start",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Row align start",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "TextField",
+          "variant": "longText",
+          "label": "field-short",
+          "children": []
+        },
+        {
+          "kind": "TextField",
+          "variant": "shortText",
+          "label": "field-long",
+          "children": []
+        },
+        {
+          "kind": "TextField",
+          "variant": "shortText",
+          "label": "field-default",
+          "children": []
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button default",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button primary",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button borderless",
+              "children": []
+            }
+          ]
+        },
+        {
+          "kind": "Button",
+          "children": [
+            {
+              "kind": "Text",
+              "variant": "body",
+              "text": "Button default",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

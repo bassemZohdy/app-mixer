@@ -178,6 +178,24 @@ test('shared invalid messages leave web and native surfaces unchanged',async()=>
  for(const invalid of fixture){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
 });
 
+test('shared variants fixture renders every catalog variant and layout value alike on web and native',async()=>{
+ const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/variants.json',import.meta.url),'utf8'));
+ const textTags={h1:'h1',h2:'h2',h3:'h3',h4:'h4',h5:'h5',small:'caption',p:'body'};
+ // Reads the variant back from what the web renderer drew: the heading or paragraph tag, textarea versus input.
+ const webTree=node=>{
+  if(node.tagName==='section')return {kind:'Card',children:node.children.map(webTree)};
+  if(node.tagName==='div')return {kind:node.style.flexDirection==='row'?'Row':'Column',justify:node.style.justifyContent??null,align:node.style.alignItems??null,children:node.children.map(webTree)};
+  if(node.tagName==='label')return {kind:'TextField',variant:node.children[1].tagName==='textarea'?'longText':'shortText',label:node.children[0].textContent,children:[]};
+  if(node.tagName==='button')return {kind:'Button',children:node.children.map(webTree)};
+  assert.ok(Object.hasOwn(textTags,node.tagName),'unexpected element '+node.tagName);return {kind:'Text',variant:textTags[node.tagName],text:node.textContent,children:[]};
+ };
+ const nativeVariants=node=>({kind:node.kind,...(node.kind==='Text'?{variant:node.variant??'body',text:node.text}:{}),...(node.kind==='TextField'?{variant:node.variant??'shortText',label:node.label}:{}),...(node.kind==='Row'||node.kind==='Column'?{justify:node.justify?styleValues[node.justify]:null,align:node.align?styleValues[node.align]:null}:{}),children:node.kind==='TextField'?[]:node.children.map(nativeVariants)});
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0],nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?webTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeVariants(nativeRoot):null,step.tree);}
+ // Button variants are accepted and kept by the native store; no adapter draws them differently.
+ const buttons=native.snapshot()[0].root.children.filter(node=>node.kind==='Button').map(node=>node.variant??null);assert.deepEqual(buttons,['default','primary','borderless',null]);
+});
+
 test('shared Flutter text field fixture matches web and native rendering and input',async()=>{
  const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/text-field.json',import.meta.url),'utf8'));
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();

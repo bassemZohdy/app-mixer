@@ -17,12 +17,12 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 
   | Component | Shared fixtures that render it | Web | React Native store | Flutter VM | React, Angular |
   | --- | --- | --- | --- | --- | --- |
-  | Text | bindings, layout, actions, text-field | yes | yes | yes | through the web renderer only |
-  | Column | layout, text-field | yes | yes | yes | through the web renderer only |
-  | Row | layout | yes | yes | yes | through the web renderer only |
+  | Text | bindings, layout, actions, text-field, variants (all seven variants and the default) | yes | yes | yes | through the web renderer only |
+  | Column | layout, text-field, variants (every `justify` and `align` value) | yes | yes | yes | through the web renderer only |
+  | Row | layout, variants (every `justify` and `align` value) | yes | yes | yes | through the web renderer only |
   | Card | layout | yes | yes | yes | through the web renderer only |
-  | TextField | text-field (render, input, variant, removal); rejections | yes | yes | yes | through the web renderer only |
-  | Button | actions; rejections | yes | yes | yes | through the web renderer only |
+  | TextField | text-field (render, input, variant, removal); variants (both variants and the default); rejections | yes | yes | yes | through the web renderer only |
+  | Button | actions; variants (every variant accepted and kept; no adapter draws them differently); rejections | yes | yes | yes | through the web renderer only |
 
   The React and Angular bridges wrap the web renderer and do not load the fixtures themselves. The React Native column covers the shared store, not React Native components on a device.
 

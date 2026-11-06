@@ -139,6 +139,22 @@ void main() {
     for(final step in steps){store.apply(step['message']);expect(store.snapshot().single?.text, step['text']);}
   });
 
+  test('shared variants fixture covers every catalog variant and layout value', () {
+    const styles={'start':'flex-start','center':'center','end':'flex-end','stretch':'stretch','spaceBetween':'space-between','spaceAround':'space-around','spaceEvenly':'space-evenly'};
+    Map<String,dynamic> tree(NativeNode node) => {
+      'kind':node.kind,
+      if(node.kind=='Text') ...{'variant':node.variant??'body','text':node.text},
+      if(node.kind=='TextField') ...{'variant':node.variant??'shortText','label':node.label},
+      if(node.kind=='Row'||node.kind=='Column') ...{'justify':styles[node.justify],'align':styles[node.align]},
+      'children':node.kind=='TextField'?<Object>[]:node.children.map(tree).toList()
+    };
+    final steps=jsonDecode(File('test/fixtures/variants.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();
+    for(final step in steps){store.apply(step['message']);final root=store.snapshot().single;expect(root==null?null:tree(root),step['tree']);}
+    // Button variants are accepted and kept; the renderer draws every variant as the same TextButton, as web and React Native do.
+    expect(store.snapshot().single!.children.where((node)=>node.kind=='Button').map((node)=>node.variant).toList(),['default','primary','borderless',null]);
+  });
+
   test('shared text field fixture matches expected output', () {
     final steps=jsonDecode(File('test/fixtures/text-field.json').readAsStringSync()) as List;
     final store=FlutterSurfaceStore();
