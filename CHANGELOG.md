@@ -15,6 +15,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- The shared TypeScript configuration also enables `noFallthroughCasesInSwitch`, `noImplicitOverride` and `verbatimModuleSyntax` (no fallout in any package); a test keeps them on.
 - The Twilio webhook adapter verifies signatures with a local HMAC-SHA1 implementation instead of the `twilio` SDK, removing it and its transitive dependencies (about 600 lines of lock file) from the agent package; the implementation was cross-checked against the SDK on 15,360 signature and URL combinations and keeps SDK-generated reference vectors as fixtures.
 - The Data Plane image installs and builds only the `core` and `web` workspaces (about 330 MB instead of about 500 MB), has a transport-neutral `HEALTHCHECK`, and the kind workflow fails when the image grows past 400 MB.
 - A generated documentation index (`npm run docs` writes `docs/README.md`), linked from the README, and a test that every Markdown file under `docs/` is reachable from the README; the stale M0 roadmap, requirements and architecture stubs were removed (the specifications under `docs/specs` remain) and the README status paragraph was refreshed.

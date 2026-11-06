@@ -50,3 +50,8 @@ test('the Data Plane image installs only its workspaces, has a healthcheck and C
  assert.doesNotMatch(dockerfile,/npm run build\s*&&|npm run build --workspaces/,'only core and web are built');
  assert.match(dockerfile,/^HEALTHCHECK /m);assert.match(workflow,/docker image inspect app-mixer-data-plane:test[^\n]*\.Size/);assert.match(workflow,/test "\$size" -le \d+/);
 });
+
+test('the shared TypeScript configuration keeps its strictness flags',()=>{
+ const options=JSON.parse(read('tsconfig.base.json')).compilerOptions;
+ for(const flag of ['strict','noFallthroughCasesInSwitch','noImplicitOverride','verbatimModuleSyntax'])assert.equal(options[flag],true,flag);
+});
