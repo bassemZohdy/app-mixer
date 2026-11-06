@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {generateKeyPairSync,verify as verifySignature} from 'node:crypto';
 import {createReactNativeA2UIComponent,NativeComponentRegistry,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
@@ -158,4 +159,19 @@ try{
  const reference={id:'example.chart',version:'1.0.0',scope:'application'},manifest={manifestVersion:1,...reference,runtimeVersions:['0.1.0'],renderers:['react-native'],components:['chart'],tools:[],providers:[],permissions:[]},extension=props=>React.createElement(Text,null,props.label),validator=component=>typeof component.label==='string',extensions=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react-native',approved:[{...reference,permissions:[]}]});
  extensions.register(manifest,{components:{chart:extension},tools:{},providers:{}});const application={id:'demo',schemaVersion:1,revision:1,extensions:[reference],pages:[{id:'home',title:'Home',route:'/',components:[{id:'c',type:'Extension',extensionId:reference.id,name:'chart'}]}]},keys=generateKeyPairSync('ed25519'),plan=signNativeExtensionPlanFromRegistry(application,extensions,{tenantId:'tenant',environment:'test',keyId:'key',privateKey:keys.privateKey,issuedAt:100,expiresAt:200}),nativeRegistry=await NativeComponentRegistry.fromSignedPlan(plan,[{...reference,components:{chart:{render:extension,validate:validator}}}],{tenantId:'tenant',environment:'test',applicationId:'demo',revision:1,clock:()=>150},({keyId,signingInput,signature})=>keyId==='key'&&verifySignature(null,Buffer.from(signingInput,'utf8'),keys.publicKey,Buffer.from(signature,'base64url'))),NativeWithExtensions=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform},nativeRegistry),extensionRoot=createRoot(document.getElementById('app')),extensionErrors=[];let receiveExtension;
  await React.act(()=>extensionRoot.render(React.createElement(NativeWithExtensions,{subscribe:callback=>{receiveExtension=callback;},onError:error=>extensionErrors.push(error)})));await React.act(()=>{receiveExtension({version:'v0.9.1',createSurface:{surfaceId:'extension',catalogId:APP_MIXER_CATALOG}});receiveExtension({version:'v0.9.1',updateComponents:{surfaceId:'extension',components:[{id:'root',component:'chart',label:'Native sales'}]}});});assert.match(document.getElementById('app').textContent,/Native sales/);await React.act(()=>receiveExtension({version:'v0.9.1',updateComponents:{surfaceId:'extension',components:[{id:'root',component:'chart',label:42}]}}));assert.equal(extensionErrors.length,1);assert.match(document.getElementById('app').textContent,/Native sales/);await React.act(()=>extensionRoot.unmount());
+ // The shared accessibility and typography reference, also checked on the web renderer and on Flutter.
+ const a11yReference=JSON.parse(readFileSync(new URL('../../adapters/flutter/test/fixtures/accessibility.json',import.meta.url),'utf8'));
+ const a11yRoot=createRoot(document.getElementById('app'));let a11yReceive;const a11yErrors=[];
+ await React.act(()=>a11yRoot.render(React.createElement(Component,{subscribe:callback=>{a11yReceive=callback;},onError:error=>a11yErrors.push(error),onAction:()=>{}})));
+ await React.act(()=>{for(const message of a11yReference.messages)a11yReceive(message);});
+ const app=document.getElementById('app'),leaf=text=>[...app.querySelectorAll('*')].find(element=>element.children.length===0&&element.textContent===text);
+ for(const expected of a11yReference.semantics){
+  if(expected.role==='heading'){const element=leaf(expected.name);assert.equal(element?.tagName,'H'+expected.level,expected.name);continue;}
+  if(expected.role==='text'){const element=leaf(expected.name);assert.ok(element,expected.name);assert.equal(element.closest('h1,h2,h3,h4,h5,h6,button,[role="button"],[role="heading"]'),null,expected.name);continue;}
+  if(expected.role==='textbox'){const element=app.querySelector(`[aria-label="${expected.name}"]`);assert.equal(element?.tagName,expected.multiline?'TEXTAREA':'INPUT',expected.name);assert.equal(element.value,expected.value,expected.name);continue;}
+  if(expected.role==='button'){const element=[...app.querySelectorAll('[role="button"],button')].find(item=>item.textContent===expected.name);assert.ok(element,expected.name);assert.equal(element.getAttribute('aria-disabled')==='true'||element.disabled===true,!expected.enabled,expected.name);continue;}
+  assert.fail('unknown role '+expected.role);
+ }
+ for(const expected of a11yReference.typography){const style=leaf(expected.text).getAttribute('style')??'',size=Number(/font-size: ([\d.]+)px/.exec(style)?.[1]);assert.ok(Math.abs(size-expected.fontSize)<0.01,`${expected.text} font size ${size}`);assert.equal(/font-weight: (bold|700)/.test(style),expected.bold,`${expected.text} weight`);}
+ assert.deepEqual(a11yErrors,[]);await React.act(()=>a11yRoot.unmount());
 }finally{dom.window.close();}
