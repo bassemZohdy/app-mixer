@@ -70,6 +70,11 @@ jobs:
         env:
           APP_MIXER_TEST_OTEL_COLLECTOR: docker
         run: node --test packages/cli/test/otel-collector-trace.test.mjs
+      - name: Offline rollback anchor in a real browser
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_BROWSER: '1'
+        run: node --test packages/cli/test/browser-rollback-anchor.test.mjs
       - name: Prometheus alert rules failure drill
         if: matrix.node == '22'
         env:

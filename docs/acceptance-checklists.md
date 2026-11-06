@@ -45,7 +45,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Offline provisioning of a device that has never been online.
   - [ ] Mobile storage on iOS and Android, including eviction and backup/restore.
-  - [ ] Rollback protection verified against a real host floor (a server record or platform secure storage) in a browser. The queue, request-identity and generation databases all detect restored or partly restored storage when given a rollback anchor; the identity stores' counters are not authenticated because those stores hold no key.
+  - [x] Rollback protection verified against a real host floor (a server record or platform secure storage) in a browser. A real headless browser with a restored copy of its own profile is refused by the queue and the request-identity store against floors held by a server ([offline-queue.md](offline-queue.md#real-browser-restore-test)). The queue, request-identity and generation databases all detect restored or partly restored storage when given a rollback anchor; the identity stores' counters are not authenticated because those stores hold no key.
   - [ ] Migration of clients older than the fixed-version IndexedDB fence.
   - [ ] Production identity for shared request keys.
 - **Evidence:** device recordings or logs for each scenario and a migration test against a retained legacy client build.

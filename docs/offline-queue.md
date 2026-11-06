@@ -58,6 +58,18 @@ A counter written before state digests existed has no digest. It is accepted, an
 
 Retries use the same external idempotency key and occur no more than once per polling pass, up to the configured attempt limit. A worker does not automatically recover claims left running by a closed tab; the host must establish the previous dispatcher has stopped and reconcile uncertain external outcomes. Browser timers can be delayed or suspended, so this is not a guaranteed background service. The host still owns key lifecycle and must explicitly enable offline storage. Mobile storage, cross-device conflict presentation, and production identity remain open.
 
+### Real-browser restore test
+
+`packages/cli/test/browser-rollback-anchor.test.mjs` (opt-in with `APP_MIXER_TEST_BROWSER=1`, run in CI) checks the anchors in headless Chrome or Edge against floors kept by an HTTP server, outside the browser profile. The server keeps the largest counter each store reports, as `advance` requires. The test serves a generated app's `offline.js` and `offline-runtime.mjs` and runs these steps:
+
+1. It opens the encrypted queue and the persistent request-identity store with those anchors and writes one value.
+2. It copies the whole browser profile directory, then writes a second value.
+3. It checks that reopening the current profile succeeds and does not move either floor.
+4. It puts the older profile copy back. Both stores then refuse to open: the queue with a rollback error and the identity store with `Offline request identity rollback detected`.
+5. As a control, it clears the server floors and opens the same restored profile again. Both stores open and the queue holds only the first value. This shows the restore was real and that the floor outside the profile is what catches it.
+
+The test server is a stand-in: it does not authenticate callers. A production floor must be scoped to the tenant, application and principal and protected like any other server record.
+
 ## Rotating a browser queue key
 
 A trusted host may call `await queue.rotateKey(nextKey)` to re-encrypt an existing identity partition with a new non-extractable AES-GCM key. The method authenticates every entry, rejects running operations, prepares replacement ciphertext, then checks the complete partition and writes all replacements in one IndexedDB transaction. A concurrent enqueue or transition aborts rotation without changing any entry. Rotation preserves IDs, payloads, statuses, attempts, idempotency keys and conflict links, and advances every item version so stale operations cannot overwrite the new ciphertext. A retry of an already completed conflict resolution can still use the original expected version when its replacement request and payload match. A successful rotation returns the number of entries and closes the old queue handle; reopen with the new key and refresh displayed versions. An empty partition returns zero and still installs a key marker and closes the old handle. Rotation is limited to 1,000 entries and 64 MiB of ciphertext.
