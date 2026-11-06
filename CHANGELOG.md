@@ -97,6 +97,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- A generated documentation index (`npm run docs` writes `docs/README.md`), linked from the README, and a test that every Markdown file under `docs/` is reachable from the README; the stale M0 roadmap, requirements and architecture stubs were removed (the specifications under `docs/specs` remain) and the README status paragraph was refreshed.
 - CI hygiene: superseded runs on the same ref are cancelled, every job has a timeout, and the Kubernetes, agent pod recovery, Flutter and React Native workflows also run on pushes to `main` and weekly; a test checks all three.
 - `CONTRIBUTING.md` (build, test and the opt-in test matrix with the commands CI runs), `SECURITY.md`, `.github/CODEOWNERS`, `.nvmrc` and issue and pull request templates; a test fails when a documented opt-in variable goes missing from the guide.
 - `npm run todo` (`scripts/todo-progress.mjs`) derives the TODO progress header, bar and phase table from the task checkboxes; `--check` fails when the file is stale, and a test enforces it.

@@ -22,6 +22,8 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 
 ## Specifications and tracking
 
+Every guide, specification and decision record is listed in the [documentation index](docs/README.md).
+
 - [Requirements](docs/specs/requirements.md)
 - [Architecture](docs/specs/architecture.md)
 - [Application definition model](docs/specs/application-model.md)
@@ -45,6 +47,6 @@ Visit http://localhost:3000. The generated app has a workspace and chat placehol
 
 `packages/core` provides in-memory and SQLite-backed versioned application definition stores. The SQLite store persists drafts and immutable published versions; it is a local prototype, not a production security boundary. `packages/cli` scaffolds a minimal standalone HTTP application. Local development Control Plane and Data Plane HTTP server factories are available in core; see the API guide for security limits. The CLI is for developer tooling only. The future Control Plane is optional; the Data Plane must execute published apps independently.
 
-This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Initial Angular and React DOM bridges, React Native and Flutter renderer subsets, restricted OpenAPI GET integration, and local publication caches are available. Full renderer parity, offline sync, general OpenAPI support, production authorization and Kubernetes packaging remain future work.
+This project is independent of Super App Agent, open-workflow-agent and open-workflow-agentic. Initial Angular and React DOM bridges, React Native and Flutter renderer subsets, restricted OpenAPI GET integration, and local publication caches are available. Durable agent runs, memory, approvals, schedules, an offline queue, JWT capability authorization, a Kubernetes Data Plane package and observability are implemented as reference foundations (see the [documentation index](docs/README.md) and the acceptance checklists); full renderer parity, general OpenAPI support and a production-ready authorization and deployment story remain open work tracked in [TODO](TODO.md).
 
 Licensed under [Apache-2.0](LICENSE). See the [foundation review](docs/foundation-review.md) for dependency licenses and prototype limitations.

@@ -8,7 +8,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspace @app-mixer/web && npm run build --workspace @app-mixer/core && npm run build --workspaces",
-    "test": "npm run build && node scripts/run-tests.mjs"
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "docs": "node scripts/docs-index.mjs"
   },
   "engines": {
     "node": ">=22.13.0"
