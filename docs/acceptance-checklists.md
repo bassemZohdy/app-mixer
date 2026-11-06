@@ -11,11 +11,11 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Broader React Native device tests on Android and iOS beyond the current nested-binding, rejection and bound-field-action cases.
   - [ ] Flutter exact layout dimensions, typography and accessibility parity against the web reference, measured on devices.
-  - [ ] Every catalog component and behavior present in the web catalog has a fixture exercised on all four adapters.
+  - [x] Every catalog component and behavior present in the web catalog has a fixture exercised on all four adapters (2026-11-06). The fixtures cover all six components and every enum value, typing, bindings, actions and rejections. They run against the web renderer, the React and Angular bridges, the React Native store and its components through react-native-web, and the Flutter store. Flutter widgets and React Native on devices are checked separately (the items above).
 - **Evidence:** CI run URLs per platform and a parity table listing each catalog component against each adapter.
 - **Current fixture coverage** (shared fixtures in `adapters/flutter/test/fixtures/`; web and React Native store run in `packages/native/test/parity.test.mjs`, Flutter VM in `adapters/flutter/test/renderer_test.dart`):
 
-  | Component | Shared fixtures that render it | Web | React Native store | Flutter VM | React, Angular |
+  | Component | Shared fixtures that render it | Web | React Native store and components | Flutter VM | React, Angular |
   | --- | --- | --- | --- | --- | --- |
   | Text | bindings, layout, actions, text-field, variants (all seven variants and the default) | yes | yes | yes | yes (CI smoke) |
   | Column | layout, text-field, variants (every `justify` and `align` value) | yes | yes | yes | yes (CI smoke) |
@@ -24,7 +24,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   | TextField | text-field (render, input, variant, removal); variants (both variants and the default); rejections | yes | yes | yes | yes (CI smoke) |
   | Button | actions; variants (every variant accepted and kept; no adapter draws them differently); rejections | yes | yes | yes | yes (CI smoke) |
 
-  The React and Angular bridges replay the layout, variants, text-field, bindings, actions and rejections fixtures in their CI smoke tests (`.github/scripts/react-smoke.mjs` and `angular-smoke.mjs`, with real React 19.2 and Angular 19.2 in jsdom), comparing the DOM with the same expected trees through `.github/scripts/fixture-tree.mjs`. The React Native column covers the shared store, not React Native components on a device.
+  The React and Angular bridges replay the layout, variants, text-field, bindings, actions and rejections fixtures in their CI smoke tests (`.github/scripts/react-smoke.mjs` and `angular-smoke.mjs`, with real React 19.2 and Angular 19.2 in jsdom), comparing the DOM with the same expected trees through `.github/scripts/fixture-tree.mjs`. `native-web-smoke.mjs` replays the same six fixtures through the React Native components rendered by react-native-web 0.21, reading layout from their inline styles and text variants from their text styles. The React Native column covers the shared store and the components on react-native-web, not React Native on a device.
 
 ### P2-02 Extension SDK and compatibility manifests
 - **Verified locally:** manifest and configuration validation, package digest verification (canonical spelling only), approval pinning and revocation lifecycle, hostile-key tests.

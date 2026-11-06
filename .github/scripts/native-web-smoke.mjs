@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {createReactNativeA2UIComponent,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
+import {replayFixtures,nativeWebSurfaceRoot,nativeWebTree} from './fixture-tree.mjs';
 if(!process.env.REACT_SMOKE_DEPS)throw Error('REACT_SMOKE_DEPS is required');
 const require=createRequire(resolve(process.env.REACT_SMOKE_DEPS,'package.json'));
 const {JSDOM}=require('jsdom');const dom=new JSDOM('<!doctype html><div id="app"></div>',{url:'http://localhost/',pretendToBeVisual:true});
@@ -47,4 +48,11 @@ try{
  const caption=[...document.querySelectorAll('*')].find(element=>element.textContent==='Caption' && element.children.length===0);
  assert.ok(caption);assert.equal(caption.style.fontSize,'13.33px');
  await React.act(()=>root.unmount());
+ // The shared fixtures render through the React Native components (via react-native-web) as on the other adapters.
+ const fixtureRoot=createRoot(document.getElementById('app'));let fixtureReceive;const fixtureErrors=[],fixtureActions=[];
+ await React.act(()=>fixtureRoot.render(React.createElement(Component,{subscribe:callback=>{fixtureReceive=callback;},onError:error=>fixtureErrors.push(error),onAction:event=>fixtureActions.push(event)})));
+ const deliver=message=>React.act(()=>fixtureReceive(message));deliver.click=element=>React.act(()=>element.click());
+ deliver.type=(element,value)=>React.act(()=>{Object.getOwnPropertyDescriptor(element.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new window.Event('input',{bubbles:true}));});
+ await replayFixtures(deliver,document.getElementById('app'),{actions:()=>fixtureActions,errors:()=>fixtureErrors,root:nativeWebSurfaceRoot,tree:nativeWebTree});
+ await React.act(()=>fixtureRoot.unmount());
 }finally{dom.window.close();}

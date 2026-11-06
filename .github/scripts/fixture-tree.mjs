@@ -21,10 +21,24 @@ export function domTree(node,variants){
 }
 // The root component of the only surface inside a bridge's container, or null before one exists.
 export function surfaceRoot(container){const surface=container.querySelector('[data-surface-id]');return surface?.firstElementChild??null;}
+
+// The React Native components rendered by react-native-web: one view holds the surfaces, each surface is a view.
+export function nativeWebSurfaceRoot(container){const surfaces=container.querySelector('[class^="css-view"]');return surfaces?.firstElementChild?.firstElementChild??null;}
+// Text variants come back from the text styles the React Native renderer applies (bold separates h4 from body).
+const nativeTextVariant=node=>{const size=node.style.fontSize,bold=node.style.fontWeight==='bold';return {'32px':'h1','24px':'h2','18.72px':'h3','13.28px':'h5','13.33px':'caption'}[size]??(size==='16px'?(bold?'h4':'body'):'unknown '+size);};
+export function nativeWebTree(node,variants){
+ const children=()=>[...node.children].map(child=>nativeWebTree(child,variants));
+ if(node.getAttribute('role')==='button')return {kind:'Button',children:children()};
+ if((node.getAttribute('class')??'').startsWith('css-text')){const variant=nativeTextVariant(node);assert.equal(node.getAttribute('role')==='heading',variant.startsWith('h'),'heading role matches the variant');return {kind:'Text',...(variants?{variant}:{}),text:node.textContent,children:[]};}
+ const field=node.children[1];if(field&&(field.tagName==='INPUT'||field.tagName==='TEXTAREA'))return {kind:'TextField',variant:field.tagName==='TEXTAREA'?'longText':'shortText',label:field.getAttribute('aria-label'),children:[]};
+ if(node.style.flexDirection)return {kind:node.style.flexDirection==='row'?'Row':'Column',justify:style(node.style.justifyContent),align:style(node.style.alignItems),children:children()};
+ return {kind:'Card',children:children()};
+}
 const remove={version:'v0.9.1',deleteSurface:{surfaceId:'main'}};
+const surfaceRootOf=container=>surfaceRoot(container),domTreeOf=(node,variants)=>domTree(node,variants);
 // Replays the shared fixtures through a bridge: deliver(message) feeds its subscription, actions() and errors() return
 // what its action and error callbacks received so far. The DOM is checked after every step.
-export async function replayFixtures(deliver,container,{actions,errors}){
+export async function replayFixtures(deliver,container,{actions,errors,root:surfaceRoot=surfaceRootOf,tree:domTree=domTreeOf}){
  for(const [name,variants] of [['layout',false],['variants',true]]){
   for(const step of fixtureSteps(name)){await deliver(step.message);const root=surfaceRoot(container);assert.deepEqual(root?domTree(root,variants):null,step.tree,name);}
   await deliver(remove);
