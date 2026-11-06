@@ -1,5 +1,5 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
-import {limitServer} from './server-limits.js';
+import {limitServer,guard} from './server-limits.js';
 import {SqliteAgentTriggers} from './agent-triggers.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
@@ -43,7 +43,7 @@ export function createAgentEventIngress(options:Options):Server {
  if((options?.contentType!==undefined||options?.acknowledgement!==undefined)&&(options.contentType!=='application/x-www-form-urlencoded'||options.acknowledgement!=='twiml'||typeof options.authenticateRaw!=='function'||typeof options.mapAuthenticatedBody!=='function'||options.challengeAuthenticatedBody!==undefined))throw Error('Invalid event ingress');
  if(!options||!(options.triggers instanceof SqliteAgentTriggers)||!options.definitions||typeof options.definitions.get!=='function'||(typeof options.authenticate==='function')===(typeof options.authenticateRaw==='function')||typeof options.authorize!=='function'||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>10000||(options.clock!==undefined&&typeof options.clock!=='function')||(options.traceParent!==undefined&&typeof options.traceParent!=='function')||(options.mapAuthenticatedBody!==undefined&&(typeof options.mapAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.challengeAuthenticatedBody!==undefined&&(typeof options.challengeAuthenticatedBody!=='function'||typeof options.authenticateRaw!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagateToRun!==undefined&&typeof options.tracing.propagateToRun!=='boolean'))))throw Error('Invalid event ingress');
  const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
- return limitServer(createServer(async(req,res)=>{
+ return limitServer(createServer(guard(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
   let source:SourceIdentity|undefined,raw:Buffer|undefined;
   if(authenticate){try{source=await authenticate(req);}catch{}
@@ -69,6 +69,6 @@ export function createAgentEventIngress(options:Options):Server {
    let result:{runId:string;duplicate:boolean};try{result=triggers.enqueue({tenantId:source.tenantId,agentId:event.agentId},{sourceId:source.sourceId,principalId:source.principalId,eventId:event.eventId,eventType:event.eventType,payload:event.payload},{definitionVersion:definition.version,maxAttempts:definition.manifest.lifecycle.maxAttempts,deadline,maxPending,...(parent?{traceParent:parent}:{})},now);try{span?.setAttribute('app_mixer.agent.event.outcome',result.duplicate?'duplicate':'accepted');}catch{}}catch(error){try{span?.setStatus({code:SpanStatusCode.ERROR});span?.setAttribute('error.type','agent_event_enqueue_failed');}catch{}throw error;}finally{try{span?.end();}catch{}}
    if(acknowledgement==='twiml'){res.writeHead(200,{'content-type':'text/xml; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');}else reply(res,result.duplicate?200:202,result);
   }catch(error){const message=error instanceof Error?error.message:'';reply(res,message==='Trigger identity conflict'?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:message==='Trigger identity conflict'?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
- }));
+ })));
 }
 export type {Options as AgentEventIngressOptions,SourceIdentity as AgentEventSourceIdentity,EventRequest as AgentEventRequest};

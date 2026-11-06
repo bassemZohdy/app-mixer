@@ -1,5 +1,5 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
-import {limitServer} from './server-limits.js';
+import {limitServer,guard} from './server-limits.js';
 import {inlineHashes} from './csp.js';
 import {SqliteAgentNotices} from './agent-notices.js';
 import {SqliteAgentApprovals,type AgentApprovalActor} from './agent-approvals.js';
@@ -23,7 +23,7 @@ async function decision(req:IncomingMessage):Promise<'approved'|'rejected'|'canc
 /** Local loopback review server. The host authenticates reviewers and authorizes store access. */
 export function createAgentApprovalServer(options:Options):Server{
  if(!options||typeof options.authenticate!=='function'||typeof options.resolve!=='function'||(options.resolveNotices!==undefined&&typeof options.resolveNotices!=='function'))throw Error('Invalid approval server');
- return limitServer(createServer(async(req,res)=>{
+ return limitServer(createServer(guard(async(req,res)=>{
   const host=req.headers.host,port=req.socket.localPort;if(host!==`127.0.0.1:${port}`&&host!==`localhost:${port}`){reply(res,400,{error:'Invalid host'});return}
   let url:URL;try{url=new URL(req.url??'',`http://${host}`)}catch{reply(res,400,{error:'Invalid request'});return}
   if(req.method==='GET'&&url.pathname==='/review'&&!url.search){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; "+CSP,'referrer-policy':'no-referrer'});res.end(html);return}
@@ -48,7 +48,7 @@ export function createAgentApprovalServer(options:Options):Server{
    if(actionId){if(url.search){reply(res,400,{error:'Invalid request'});return}reply(res,200,{events:await store.history(actor,actionId)});return}
    if([...url.searchParams.keys()].some(k=>k!=='after')||url.searchParams.getAll('after').length>1){reply(res,400,{error:'Invalid request'});return}const after=url.searchParams.get('after');if(after!==null&&!valid(after)){reply(res,400,{error:'Invalid request'});return}reply(res,200,await store.list(actor,after===null?{}:{after}));
   }catch(error){const m=error instanceof Error?error.message:'';const status=m==='Approval access denied'?403:m==='Approval not found'?404:['Approval already decided','Approval expired','Run is terminal'].includes(m)?409:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Decision unavailable':'Review unavailable'})}
- }));
+ })));
 }
 export type {Options as AgentApprovalServerOptions};
 

@@ -1,4 +1,4 @@
-import type {Server} from 'node:http';
+import type {IncomingMessage,Server,ServerResponse} from 'node:http';
 
 /**
  * Conservative defaults for the HTTP servers this package creates. Node waits 60 s for headers and 300 s for a request by default, but only checks
@@ -12,4 +12,9 @@ export function limitServer<T extends Server>(server:T,limits:{headersTimeoutMs?
  server.headersTimeout=headersTimeoutMs;server.requestTimeout=requestTimeoutMs;server.keepAliveTimeout=keepAliveTimeoutMs;
  server.setTimeout(idleTimeoutMs);
  return server;
+}
+
+/** Wrap an async request handler so a rejection that escapes it ends the response instead of becoming an unhandled rejection that stops the process. */
+export function guard(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>):(req:IncomingMessage,res:ServerResponse)=>void{
+ return (req,res)=>{void handler(req,res).catch(()=>{try{if(!res.headersSent)res.writeHead(500,{'content-type':'text/plain; charset=utf-8'});res.end();}catch{res.destroy();}});};
 }

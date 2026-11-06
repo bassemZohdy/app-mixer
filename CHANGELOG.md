@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- Request handlers that are async functions are wrapped (`guard`) so a rejection that escapes them ends the response instead of becoming an unhandled rejection; found by the new lint baseline together with an unawaited promise in the control plane's request runner.
 - Queued agent runs start in creation order instead of run ID order (random UUIDs started them in random order): `SqliteAgentRuns` adds a `created_seq` column and `PostgresAgentRuns` an identity `sequence` column, both backfilled for existing databases.
 - Agent memory scopes no longer become permanently unwritable after `10 x maxEntries` writes and deletes: `compactTombstones` (SQLite and PostgreSQL, `purge` permission, audited) removes tombstones in bounded passes.
 - `SqliteOfflineQueue` no longer refuses a principal after 1,000 operations ever: only live operations count toward the cap, and a host-authorized `purge` removes settled history.
@@ -19,6 +20,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- A lint baseline (`npm run lint`, run in CI): typescript-eslint with `no-floating-promises`, `no-misused-promises`, `await-thenable` and unused variables over every package's sources, plus an `.editorconfig`. The first run found six issues, all fixed.
 - `@app-mixer/agent/webhooks` and `@app-mixer/agent/stores` subpath entries that never load LangChain, LangGraph, AG-UI or OpenAI (the root entry is unchanged); a test checks their import graphs and coverage.
 - `.github/dependabot.yml` (weekly, grouped npm, GitHub Actions and Docker updates), `npm audit --omit=dev` in CI (0 vulnerabilities today) and the `jose` patch update (6.2.13 to 6.2.15).
 - Package metadata: every package declares `license`, `repository` (with its directory) and `files`, `@app-mixer/core` declares `types`, internal dependencies use one exact version, and a test checks the metadata and that `npm pack --dry-run` ships the build output, templates and catalog but no sources or tests.

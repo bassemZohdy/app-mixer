@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**38 / 74 tasks complete (51%)**
+**39 / 74 tasks complete (53%)**
 
-`██████████░░░░░░░░░░`
+`███████████░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 24 / 43 | 19 (P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41..P4-43) |
+| P4 fixes and improvements from the 2026-11-06 code review | 25 / 43 | 18 (P4-07, P4-09, P4-10, P4-16..P4-21, P4-33..P4-38, P4-41..P4-43) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -154,8 +154,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `tsconfig.base.json` enables `strict` only. Fixed 2026-11-06 for the flags without fallout: `noFallthroughCasesInSwitch`, `noImplicitOverride` and `verbatimModuleSyntax` are on in `tsconfig.base.json` (0 errors in every package) and a test keeps them on. Measured on the remaining flags: `noUncheckedIndexedAccess` 125 errors, `exactOptionalPropertyTypes` 66, `noPropertyAccessFromIndexSignature` 1,780 (not worth the churn; recommend leaving it off). The first two are P4-37.
 - [ ] P4-37 Enable `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`
   - Found while fixing P4-24: enabling either in `tsconfig.base.json` currently fails the build with 125 and 66 errors across core, agent, cli, web and native. Fix: enable each flag, fix the errors with real guards (not blanket `!` assertions), keep the build warning-free and the tests green.
-- [ ] P4-25 Add a lint and format baseline
-  - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fix: typescript-eslint with `no-floating-promises`, `no-misused-promises` and import rules, a formatter configured to the project's style, `npm run lint` in CI, and an initial pass that fixes or documents each rule.
+- [x] P4-25 Add a lint and format baseline
+  - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fixed 2026-11-06 for the lint half: ESLint 10 with typescript-eslint (`no-floating-promises`, `no-misused-promises`, `await-thenable`, unused variables, fallthrough) over every package's `src`, `npm run lint` in CI on Node 22, `.editorconfig`, and the six findings fixed (three async server handlers now wrapped in `guard`, an unmarked promise in the plane request runner, an unused binding); a negative control confirmed the floating-promise rule fires. No formatter was added because reformatting the dense one-line style would touch nearly every line; import rules were not added because the codebase has no import-order convention to enforce.
 - [x] P4-26 Package metadata and layering before any publish
   - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fixed 2026-11-06 for the metadata: `license`, `repository`, `files` and `types` are declared, the web dependency is `0.1.0` in both core and cli, and `packages/cli/test/package-metadata.test.mjs` (run by `npm test` in CI) checks them and `npm pack --dry-run` contents. The layering change is P4-41.
 - [ ] P4-41 Move the web-serving and ComponentRegistry glue out of core

@@ -87,7 +87,7 @@ function authorized(req: IncomingMessage, token: string): boolean {
 }
 function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void):RequestListener {
   return (req, res) => {
-    const run=()=>handler(req, res).catch(error => {
+    const run=():void=>{void handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
       else if (error instanceof Error && ['Revision conflict','Unsupported schema migration','Migration would lose page descriptions','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
@@ -95,7 +95,7 @@ function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promis
       else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
       else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal','Invalid promotion package','Invalid page description','Invalid migration request'].includes(error.message)) respond(res, 400, {error:error.message});
       else respond(res, 500, {error:'Internal server error'});
-    });
+    });};
     if(dispatch)dispatch(req,res,run);else run();
   };
 }

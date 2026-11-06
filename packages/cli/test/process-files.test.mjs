@@ -60,3 +60,8 @@ test('dependency updates are automated and production vulnerabilities fail CI',(
  const dependabot=read('.github/dependabot.yml');for(const ecosystem of ['npm','github-actions','docker'])assert.match(dependabot,new RegExp('package-ecosystem: '+ecosystem));
  assert.match(dependabot,/interval: weekly/);assert.match(read('.github/workflows/ci.yml'),/run: npm audit --omit=dev/);
 });
+
+test('the lint baseline is configured, scripted and run in CI',()=>{
+ const config=read('eslint.config.mjs');for(const rule of ['no-floating-promises','no-misused-promises','await-thenable','no-unused-vars'])assert.match(config,new RegExp(rule));
+ assert.equal(JSON.parse(read('package.json')).scripts.lint,'eslint "packages/*/src/**/*.ts"');assert.match(read('.github/workflows/ci.yml'),/run: npm run lint/);assert.ok(existsSync(join(root,'.editorconfig')));
+});
