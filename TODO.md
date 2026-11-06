@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**60 / 92 tasks complete (65%)**
+**62 / 92 tasks complete (67%)**
 
 `█████████████░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 46 / 61 | 15 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45, P4-46, P4-46) |
+| P4 fixes and improvements from the 2026-11-06 code review | 48 / 61 | 13 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -193,8 +193,8 @@ Persistent-agent details: [requirements and architecture](docs/specs/persistent-
 
 A checked item means documentation or implementation is verified; future requirements are not completed merely by being described.
 
-- [ ] P4-46 Specify and implement renderer style variants and stable test hooks
-  - Found while fixing P4-34: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter, and rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fix: specify the visual meaning of each variant in `docs/a2ui-renderer.md` and the catalog, implement it on all adapters through the shared fixtures, add `data-component-id` (and the equivalent keys on React Native and Flutter), and extend the parity tests.
+- [x] P4-46 Specify and implement renderer style variants and stable test hooks
+  - Found while fixing P4-34: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter, and rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fixed 2026-11-06 by decision: the renderers carry no theme, so variants are style hooks the host maps (web `data-variant`; React Native `variantStyles` prop; Flutter `primary` is `FilledButton`, the others the text button) and every component exposes its ID (`data-component-id`, `testID`, `ValueKey('a2ui:<id>')`); specified in `docs/a2ui-renderer.md`, tested on web and in the react smoke test, and in a Flutter widget test (verified by the Flutter workflows).
 - [x] P4-25 Add a lint and format baseline
   - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fixed 2026-11-06 for the lint half: ESLint 10 with typescript-eslint (`no-floating-promises`, `no-misused-promises`, `await-thenable`, unused variables, fallthrough) over every package's `src`, `npm run lint` in CI on Node 22, `.editorconfig`, and the six findings fixed (three async server handlers now wrapped in `guard`, an unmarked promise in the plane request runner, an unused binding); a negative control confirmed the floating-promise rule fires. No formatter was added because reformatting the dense one-line style would touch nearly every line; import rules were not added because the codebase has no import-order convention to enforce.
 - [x] P4-26 Package metadata and layering before any publish
@@ -228,5 +228,5 @@ Persistent-agent details: [requirements and architecture](docs/specs/persistent-
 
 A checked item means documentation or implementation is verified; future requirements are not completed merely by being described.
 
-- [ ] P4-46 Specify and implement renderer style variants and stable test hooks
+- [x] P4-46 Specify and implement renderer style variants and stable test hooks
   - Found while fixing P4-34: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter, and rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fix: specify the visual meaning of each variant in `docs/a2ui-renderer.md` and the catalog, implement it on all adapters through the shared fixtures, add `data-component-id` (and the equivalent keys on React Native and Flutter), and extend the parity tests.

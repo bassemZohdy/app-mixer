@@ -178,3 +178,18 @@ test('versioned catalog identifies exactly the built-in registered components', 
   const {renderer}=setup();
   renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'custom',catalogId:APP_MIXER_CATALOG}});
 });
+
+test('every rendered component carries its ID and variant as stable hooks',()=>{
+ const {host,renderer}=setup();
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{form:{name:'Ada'}}}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+  {id:'root',component:'Column',children:['title','field','buy']},{id:'title',component:'Text',text:'Hi',variant:'h2'},
+  {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'},variant:'longText'},
+  {id:'buy',component:'Button',variant:'primary',child:'buyLabel',action:{event:{name:'buy'}}},{id:'buyLabel',component:'Text',text:'Buy'}]}});
+ const surface=host.children[0],root=surface.children[0],[title,field,buy]=root.children;
+ assert.equal(root.dataset.componentId,'root');assert.equal(root.dataset.variant,undefined);
+ assert.deepEqual([title.dataset.componentId,title.dataset.variant],['title','h2']);
+ assert.deepEqual([field.dataset.componentId,field.dataset.variant],['field','longText']);
+ assert.deepEqual([buy.dataset.componentId,buy.dataset.variant],['buy','primary']);assert.equal(buy.children[0].dataset.componentId,'buyLabel');
+});

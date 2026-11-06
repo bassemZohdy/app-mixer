@@ -153,7 +153,7 @@ void main() {
     final steps=jsonDecode(File('test/fixtures/variants.json').readAsStringSync()) as List;
     final store=FlutterSurfaceStore();
     for(final step in steps){store.apply(step['message']);final root=store.snapshot().single;expect(root==null?null:tree(root),step['tree']);}
-    // Button variants are accepted and kept; the renderer draws every variant as the same TextButton, as web and React Native do.
+    // Button variants are accepted and kept in the model; the widget mapping is covered by the stable-hooks test below.
     expect(store.snapshot().single!.children.where((node)=>node.kind=='Button').map((node)=>node.variant).toList(),['default','primary','borderless',null]);
   });
 
@@ -461,4 +461,29 @@ void main() {
     expect(store.snapshot().single?.text,'Safe');
   });
 
+  testWidgets('components carry stable keys and a primary button is the filled button', (tester) async {
+    late void Function(Object?) receive;
+    VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}
+    final actions=<Map<String,dynamic>>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:AppMixerA2UI(subscribe:subscribe,onError:(_){},onAction:actions.add))));
+    receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+    receive(message('updateComponents',{'surfaceId':'main','components':[
+      {'id':'root','component':'Column','children':['title','card','plain','strong','quiet']},
+      {'id':'title','component':'Text','text':'Hello'},
+      {'id':'card','component':'Card','child':'inside'},
+      {'id':'inside','component':'Text','text':'Inside'},
+      {'id':'plain','component':'Button','child':'plainLabel','action':{'event':{'name':'plain'}}},
+      {'id':'plainLabel','component':'Text','text':'Plain'},
+      {'id':'strong','component':'Button','variant':'primary','child':'strongLabel','action':{'event':{'name':'strong'}}},
+      {'id':'strongLabel','component':'Text','text':'Strong'},
+      {'id':'quiet','component':'Button','variant':'borderless','child':'quietLabel','action':{'event':{'name':'quiet'}}},
+      {'id':'quietLabel','component':'Text','text':'Quiet'}
+    ]}));
+    await tester.pump();
+    for(final id in ['root','title','card','inside','plain','strong','quiet']){expect(find.byKey(ValueKey('a2ui:$id')),findsOneWidget,reason:id);}
+    expect(find.byType(FilledButton),findsOneWidget);expect(tester.widget<FilledButton>(find.byType(FilledButton)).key,const ValueKey('a2ui:strong'));
+    expect(find.byType(TextButton),findsNWidgets(2),reason:'default and borderless are the text button');
+    await tester.tap(find.byKey(const ValueKey('a2ui:strong')));await tester.pump();
+    expect(((actions.single['action'] as Map)['name']),'strong');
+  });
 }

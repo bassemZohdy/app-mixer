@@ -31,3 +31,14 @@ Protocol references: [A2UI v0.9.1 quickstart](https://a2ui.org/quickstart/) and 
 CI also starts a generated app and checks its rendered workspace in headless Chrome. This is a smoke test, not full protocol conformance.
 
 Pass an `onAction` callback as the third argument to `A2UIRenderer` to receive v0.9.1 action messages. Buttons are disabled without a callback. Callbacks from buttons superseded by a component update or surface recreation are ignored. Only explicitly mapped event context is included; actions are never sent to a server by the renderer. The caller must authorize and route actions.
+
+## Variants and stable hooks
+
+The renderers do not impose a theme: colors, borders and fonts belong to the host. Variants and component IDs are exposed so a host can style and select them.
+
+| | Web | React Native | Flutter |
+| --- | --- | --- | --- |
+| Component ID | `data-component-id` on the component's root element | `testID` | `ValueKey('a2ui:<id>')` |
+| Variant | `data-variant` (`h1`-`h5`, `body`, `caption`, `shortText`, `longText`, `default`, `primary`, `borderless`) | `variantStyles={{Button:{primary:...},TextField:{longText:...}}}` prop, applied as `style` | `primary` is Material's filled button; `default` and `borderless` are the text button; `longText` is a multi-line field |
+
+Example (web): `button[data-variant="primary"] { background: #1a56db; color: white }`, or select a component in a test with `[data-component-id="save"]`. Text variants also keep their element or text-theme mapping.

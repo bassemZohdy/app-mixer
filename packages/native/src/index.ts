@@ -159,7 +159,9 @@ export class NativeSurfaceStore {
   }
 }
 type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;useRef:<T>(value:T)=>{current:T};useState:<T>(value:T)=>[T,(value:T)=>void];useEffect:(effect:()=>void|(()=>void),deps:unknown[])=>void};
-export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void};
+export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void;
+  /** Host theme: styles per component and variant (`Button`: default, primary, borderless; `TextField`: shortText, longText). The renderer sets no colors or borders of its own. */
+  variantStyles?:{Button?:Record<string,unknown>;TextField?:Record<string,unknown>}|undefined};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
 export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any},registry?:NativeComponentRegistry):(props:NativeA2UIProps)=>any {
   const installed=registry?.snapshot()??new Map<string,NativeExtension>();
@@ -174,7 +176,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   };
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
-  return function NativeA2UI({subscribe,onError,onAction}:NativeA2UIProps):any{
+  return function NativeA2UI({subscribe,onError,onAction,variantStyles}:NativeA2UIProps):any{
     const [surfaces,setSurfaces]=React.useState<NativeSurface[]>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null);
     React.useEffect(()=>{errors.current=onError;actions.current=onAction;},[onError,onAction]);
     React.useEffect(()=>{
@@ -191,19 +193,19 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
       // Heading levels match the web renderer's h1-h5 elements; react-native-web renders them as h1-h5.
-      if(node.kind==='Text'){const level=headingLevels[node.variant??''];return React.createElement(primitives.Text,{key:node.id,...(level?{accessibilityRole:'header','aria-level':level}:{}),style:textStyles[node.variant??'body']},node.text);}
-      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
+      if(node.kind==='Text'){const level=headingLevels[node.variant??''];return React.createElement(primitives.Text,{key:node.id,testID:node.id,...(level?{accessibilityRole:'header','aria-level':level}:{}),style:textStyles[node.variant??'body']},node.text);}
+      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,testID:node.id,accessibilityRole:'button',disabled:!onAction,...(variantStyles?.Button?.[node.variant??'default']?{style:variantStyles.Button[node.variant??'default']}:{}),onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
       }},...node.children.map(child=>render(child,surface)));
-      if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id},
+      if(node.kind==='TextField')return React.createElement(primitives.View,{key:node.id,testID:node.id},
         React.createElement(primitives.Text,null,node.label),
-        React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{
+        React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,...(variantStyles?.TextField?.[node.variant??'shortText']?{style:variantStyles.TextField[node.variant??'shortText']}:{}),multiline:node.variant==='longText',onChangeText:(value:string)=>{
           if(!store||storeRef.current!==store)return;
           try{store.writeField(surface.id,node.id,surface.revision,value);setSurfaces(store.snapshot());}catch(error){errors.current(error);}
         }}));
       const style=node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:undefined;
-      return React.createElement(primitives.View,{key:node.id,style},...node.children.map(child=>render(child,surface)));
+      return React.createElement(primitives.View,{key:node.id,testID:node.id,style},...node.children.map(child=>render(child,surface)));
     };
     return React.createElement(primitives.View,null,...surfaces.map(surface=>React.createElement(primitives.View,{key:surface.id},...(surface.root?[render(surface.root,surface)]:[]))));
   };

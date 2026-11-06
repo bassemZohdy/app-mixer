@@ -258,7 +258,11 @@ export class A2UIRenderer {
           this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
         }
       };
-      return this.registry.get(c.component as string)!(c, child => render(child, next), data, doc, interaction);
+      const element = this.registry.get(c.component as string)!(c, child => render(child, next), data, doc, interaction);
+      // Stable hooks for host styling and test selection: the component ID and, when given, its variant. Colors and borders are the host's theme.
+      element.dataset.componentId = c.id as string;
+      if (typeof c.variant === 'string') element.dataset.variant = c.variant;
+      return element;
     };
     // Construct detached first, so invalid updates leave the previous UI and state intact.
     const root = components.has('root') ? render('root', new Set()) : undefined;
