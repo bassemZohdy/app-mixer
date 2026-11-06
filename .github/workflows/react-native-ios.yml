@@ -23,6 +23,7 @@ jobs:
           npm run build --workspace @app-mixer/native
           npx --yes @react-native-community/cli@20.0.2 init MixerDevice --version 0.83.1 --skip-install --skip-git-init --directory "$RUNNER_TEMP/MixerDevice"
           cp packages/native/device-test/App.js "$RUNNER_TEMP/MixerDevice/App.js"
+          cp adapters/flutter/test/fixtures/accessibility.json "$RUNNER_TEMP/MixerDevice/accessibility.json"
           cp packages/native/dist/index.js "$RUNNER_TEMP/MixerDevice/app-mixer.js"
           cd "$RUNNER_TEMP/MixerDevice"
           npm install --no-audit --no-fund

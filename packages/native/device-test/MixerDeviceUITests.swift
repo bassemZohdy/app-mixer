@@ -42,5 +42,18 @@ final class MixerDeviceUITests: XCTestCase {
     save.tap()
     XCTAssertTrue(app.staticTexts["Saved Grace"].waitForExistence(timeout: 10))
     XCTAssertFalse(save.isEnabled)
+
+    // The shared accessibility reference replaces the interactive surface.
+    app.buttons["Show reference"].tap()
+    XCTAssertTrue(app.staticTexts["Account"].waitForExistence(timeout: 10))
+    for text in ["Profile", "Contact details", "Preferences", "Advanced", "Body copy", "Small print", "Inside a card"] {
+      XCTAssertTrue(app.staticTexts[text].exists, text)
+    }
+    XCTAssertEqual(app.textFields["Name"].value as? String, "Ada")
+    XCTAssertEqual(app.textViews["Notes"].value as? String, "Line one")
+    XCTAssertTrue(app.buttons["Save"].isEnabled)
+    let heights = ["Account", "Profile", "Contact details", "Body copy", "Small print"].map { app.staticTexts[$0].frame.height }
+    XCTAssertEqual(heights, heights.sorted(by: >), "Text heights follow the reference sizes")
+    XCTAssertEqual(Set(heights).count, heights.count, "Each size is distinct")
   }
 }

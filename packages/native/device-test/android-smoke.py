@@ -96,4 +96,17 @@ button = wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=
 tap(button)
 wait_for(lambda nodes: find(nodes, text='Saved Grace'), 'action with updated value')
 wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' and n.get('enabled')=='false'), None), 'disabled save button')
+# The shared accessibility reference replaces the interactive surface.
+tap(wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Show reference' and n.get('clickable')=='true'), None), 'reference button'))
+for text in ['Account', 'Profile', 'Contact details', 'Preferences', 'Advanced', 'Body copy', 'Small print', 'Inside a card']:
+    wait_for(lambda nodes, text=text: find(nodes, **{'class':'android.widget.TextView', 'text':text}), 'reference text ' + text)
+wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Ada'}), 'reference single-line field')
+wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Notes', 'text':'Line one'}), 'reference multiline field')
+wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' and n.get('clickable')=='true' and n.get('enabled')=='true'), None), 'reference enabled button')
+sizes = wait_for(lambda nodes: (lambda found: found if all(found.values()) else None)({text: next((n for n in nodes if n.get('text')==text), None) for text in ['Account', 'Profile', 'Contact details', 'Body copy', 'Small print']}), 'reference text bounds')
+heights = {text: (lambda m: int(m.group(4))-int(m.group(2)))(re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.get('bounds'))) for text, node in sizes.items()}
+# Line heights follow the reference sizes: h1 > h2 > h3 > body > caption.
+if not heights['Account'] > heights['Profile'] > heights['Contact details'] > heights['Body copy'] > heights['Small print']:
+    raise AssertionError('Text heights do not follow the reference sizes: ' + repr(heights))
+print('React Native Android reference parity passed: ' + repr(heights))
 print('React Native Android device interaction passed')

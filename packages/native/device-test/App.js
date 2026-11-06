@@ -1,6 +1,7 @@
 import React, {useCallback, useState} from 'react';
 import {SafeAreaView, Text, TextInput, View, Pressable, Platform} from 'react-native';
 import {APP_MIXER_CATALOG, createReactNativeA2UIComponent} from './app-mixer';
+import reference from './accessibility.json';
 
 const Renderer = createReactNativeA2UIComponent(React, {View, Text, TextInput, Pressable});
 let publish,expectingRejection=false;
@@ -23,12 +24,15 @@ const subscribe = receive => {
   ]}});
   return ()=>{if(publish===receive)publish=undefined;};
 };
+// The shared accessibility and typography reference (adapters/flutter/test/fixtures/accessibility.json).
+const subscribeReference = receive => {for(const message of reference.messages)receive(message);return ()=>{};};
 export default function App(){
+  const [showReference,setShowReference]=useState(false);
   const [result,setResult]=useState('Waiting');
   const [rejection,setRejection]=useState('');
   const onAction=useCallback(event=>{const name=event?.action?.context?.name;setResult(event?.action?.name==='save'&&name==='Grace'?'Saved Grace':'FAIL action');},[]);
   const onError=useCallback(()=>{if(expectingRejection)setRejection('Rejected safely');else setResult('FAIL renderer');},[]);
   const update=()=>publish?.({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/profile/name',value:'Lin'}});
   const reject=()=>{expectingRejection=true;try{publish?.({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'title',component:'Text',text:'Wrong heading'},{id:'bad',component:'Text',text:42}]}});}finally{expectingRejection=false;}};
-  return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{flexDirection:'row',justifyContent:'space-between'}}><Pressable accessibilityRole="button" style={{padding:8}} onPress={update}><Text>Update data</Text></Pressable><Pressable accessibilityRole="button" style={{padding:8}} onPress={reject}><Text>Reject invalid</Text></Pressable></View><Renderer subscribe={subscribe} onError={onError} onAction={result==='Waiting'?onAction:undefined}/><Text>{rejection}</Text><Text>{result}</Text></SafeAreaView>;
+  return <SafeAreaView style={{paddingTop:Platform.OS==='android'?32:0}}><View style={{flexDirection:'row',justifyContent:'space-between'}}><Pressable accessibilityRole="button" style={{padding:8}} onPress={update}><Text>Update data</Text></Pressable><Pressable accessibilityRole="button" style={{padding:8}} onPress={reject}><Text>Reject invalid</Text></Pressable><Pressable accessibilityRole="button" style={{padding:8}} onPress={()=>setShowReference(true)}><Text>Show reference</Text></Pressable></View>{showReference?<Renderer subscribe={subscribeReference} onError={()=>setResult('FAIL reference')} onAction={()=>{}}/>:<Renderer subscribe={subscribe} onError={onError} onAction={result==='Waiting'?onAction:undefined}/>}<Text>{rejection}</Text><Text>{result}</Text></SafeAreaView>;
 }
