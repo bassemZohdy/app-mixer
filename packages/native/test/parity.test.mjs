@@ -263,3 +263,17 @@ test('web and native fields bind a non-root path containing a line break',()=>{
  assert.equal(native.snapshot()[0].root.value,'Ada');assert.equal(host.children[0].children[0].children[1].value,'Ada');
  const revision=native.snapshot()[0].revision;native.writeField('main','root',revision,'Grace');assert.equal(native.snapshot()[0].root.value,'Grace');
 });
+
+test('web and native reject sparse child lists without changing the rendered tree',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['one']},{id:'one',component:'Text',text:'One'}]}));
+ const before=domTree(host.children[0].children[0]),nativeBefore=nativeTree(native.snapshot()[0].root);
+ for(const kind of ['Column','Row']){
+  // Array holes are skipped by Array.prototype.every, so validation must not rely on it alone.
+  const children=['one','one'];delete children[0];const sparse=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:kind,children}]});
+  assert.throws(()=>web.apply(sparse),error=>error instanceof Error&&!(error instanceof TypeError));assert.throws(()=>native.apply(sparse),error=>error instanceof Error&&!(error instanceof TypeError));
+  assert.deepEqual(domTree(host.children[0].children[0]),before);assert.deepEqual(nativeTree(native.snapshot()[0].root),nativeBefore);
+ }
+});

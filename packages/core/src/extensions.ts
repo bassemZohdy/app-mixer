@@ -41,6 +41,8 @@ export type ExtensionSigningPolicy = {trustedKeys:Record<string,KeyObject>;allow
 const idPattern = /^[a-z][a-z0-9.-]{0,127}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const integrityPattern = /^sha256-[A-Za-z0-9+/]{43}=$/;
+/** A digest must be the canonical base64 spelling: non-zero padding bits would decode to the same bytes. */
+const validIntegrity = (x: unknown): x is string => typeof x === 'string' && integrityPattern.test(x) && Buffer.from(x.slice(7), 'base64').toString('base64') === x.slice(7);
 const optional = (x: unknown, names: string[]) => record(x) ? names.filter(name => Object.hasOwn(x, name)) : [];
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
 
@@ -52,7 +54,7 @@ export function computeExtensionIntegrity(packageBytes: Uint8Array): string {
 
 /** Check trusted package bytes against a manifest digest. Returns false for a missing or different digest. */
 export function verifyExtensionIntegrity(integrity: unknown, packageBytes: Uint8Array): boolean {
-  if (typeof integrity !== 'string' || !integrityPattern.test(integrity)) return false;
+  if (typeof integrity !== 'string' || !validIntegrity(integrity)) return false;
   const expected = Buffer.from(integrity.slice(7), 'base64'), actual = Buffer.from(computeExtensionIntegrity(packageBytes).slice(7), 'base64');
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
@@ -137,7 +139,7 @@ function validateConfiguration(schema:ExtensionConfigSchema, config:unknown):Ext
 }
 
 function validateManifest(m:unknown):asserts m is ExtensionManifest {
-  if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...optional(m,['configSchema','integrity'])]) || (Object.hasOwn(m,'integrity') && (typeof m.integrity !== 'string' || !integrityPattern.test(m.integrity))) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
+  if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...optional(m,['configSchema','integrity'])]) || (Object.hasOwn(m,'integrity') && (typeof m.integrity !== 'string' || !validIntegrity(m.integrity))) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
   if (Object.hasOwn(m,'configSchema')) validateConfigSchema(m.configSchema);
 }
 
@@ -192,7 +194,7 @@ export function checkExtensionCompatibility(manifests: unknown, host: unknown, r
   if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved', ...optional(host,['requireIntegrityPins'])]) || (Object.hasOwn(host,'requireIntegrityPins') && typeof host.requireIntegrityPins !== 'boolean') || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
   const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string}>();
   for (const a of host.approved) {
-    if (!fields(a, ['id','version','scope','permissions', ...optional(a,['integrity'])]) || (Object.hasOwn(a,'integrity') && (typeof a.integrity !== 'string' || !integrityPattern.test(a.integrity))) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
+    if (!fields(a, ['id','version','scope','permissions', ...optional(a,['integrity'])]) || (Object.hasOwn(a,'integrity') && (typeof a.integrity !== 'string' || !validIntegrity(a.integrity))) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
     approvals.set(a.id, {version:a.version,scope:a.scope,permissions:a.permissions,integrity:a.integrity as string|undefined});
   }
   const errors:string[] = [], ids = new Set<string>();

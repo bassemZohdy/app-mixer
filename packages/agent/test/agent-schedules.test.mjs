@@ -38,7 +38,7 @@ test('UTC cron schedules honor month, weekday and day-of-month rules',()=>{
   const now=Date.parse('2026-10-29T07:15:30Z');let daily=s.schedules.save(scope,'cron',{...config,rule:{kind:'cron',expression:'0 8 * * 1-5'}},0,now);assert.equal(daily.nextAt,Date.parse('2026-10-29T08:00:00Z'));
   let leap=s.schedules.save(scope,'leap',{...config,rule:{kind:'cron',expression:'0 0 29 2 *'}},0,now);assert.equal(leap.nextAt,Date.parse('2028-02-29T00:00:00Z'));
   let either=s.schedules.save(scope,'either',{...config,rule:{kind:'cron',expression:'0 0 1 * 1'}},0,Date.parse('2026-11-01T00:00:00Z'));assert.equal(either.nextAt,Date.parse('2026-11-02T00:00:00Z'));
-  for(const expression of ['* * *','60 * * * *','0 24 * * *','0 0 * * 7','5/2 * * * *','0 0 31 2 *'])assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'cron',expression}},0,now));
+  for(const expression of ['* * *','60 * * * *','0 24 * * *','0 0 * * 8','5/2 * * * *','0 0 31 2 *'])assert.throws(()=>s.schedules.save(scope,'bad',{...config,rule:{kind:'cron',expression}},0,now));
  }finally{close(s);}
 });
 

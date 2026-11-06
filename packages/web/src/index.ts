@@ -84,7 +84,7 @@ function textValue(value: unknown, data: unknown): string {
   return typeof result === 'string' ? result : '';
 }
 function children(c: Obj): string[] {
-  if (!Array.isArray(c.children) || !c.children.every(id)) throw Error('Invalid children');
+  if (!Array.isArray(c.children) || !Array.from(c.children).every(id)) throw Error('Invalid children');
   return c.children;
 }
 /** Only trusted application code may register render functions; incoming messages cannot execute code. */
@@ -104,7 +104,7 @@ function validateBasic(c: Obj): void {
     if (!only(c,['id','component','text','variant'])) throw Error('Unsupported Text property');
     if ((!(typeof c.text === 'string' && withinCodePointLimit(c.text,10000)) && !(obj(c.text) && only(c.text,['path']) && typeof c.text.path === 'string' && pointer(c.text.path))) || (c.variant !== undefined && !['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string))) throw Error('Unsupported Text');
   } else if (type === 'Column' || type === 'Row') {
-    if (!only(c,['id','component','children','justify','align']) || !Array.isArray(c.children) || c.children.length > 1000 || !c.children.every(id) || (c.justify !== undefined && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].includes(c.justify as string)) || (c.align !== undefined && !['start','center','end','stretch'].includes(c.align as string))) throw Error('Unsupported layout');
+    if (!only(c,['id','component','children','justify','align']) || !Array.isArray(c.children) || c.children.length > 1000 || !Array.from(c.children).every(id) || (c.justify !== undefined && !['start','center','end','spaceBetween','spaceAround','spaceEvenly'].includes(c.justify as string)) || (c.align !== undefined && !['start','center','end','stretch'].includes(c.align as string))) throw Error('Unsupported layout');
   } else if (type === 'Card') {
     if (!only(c,['id','component','child']) || !id(c.child)) throw Error('Unsupported Card');
   } else if (type === 'TextField') {

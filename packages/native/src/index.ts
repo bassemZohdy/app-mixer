@@ -89,7 +89,7 @@ function validate(c:unknown,extensions:Map<string,NativeExtension>):asserts c is
   if(c.component==='Text'){
     if(!only(c,['id','component','text','variant'])||(!(typeof c.text==='string'&&withinCodePointLimit(c.text,10000))&&!(obj(c.text)&&only(c.text,['path'])&&typeof c.text.path==='string'&&pointer(c.text.path)))||(c.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(c.variant as string)))throw Error('Unsupported Text');
   }else if(c.component==='Column'||c.component==='Row'){
-    if(!only(c,['id','component','children','justify','align'])||!Array.isArray(c.children)||c.children.length>1000||!c.children.every(id)||(c.justify!==undefined&&!justifies.includes(c.justify as string))||(c.align!==undefined&&!aligns.includes(c.align as string)))throw Error('Unsupported layout');
+    if(!only(c,['id','component','children','justify','align'])||!Array.isArray(c.children)||c.children.length>1000||!Array.from(c.children).every(id)||(c.justify!==undefined&&!justifies.includes(c.justify as string))||(c.align!==undefined&&!aligns.includes(c.align as string)))throw Error('Unsupported layout');
   }else if(c.component==='TextField'){
     if(!only(c,['id','component','label','value','variant'])||typeof c.label!=='string'||!obj(c.value)||!only(c.value,['path'])||typeof c.value.path!=='string'||pointer(c.value.path).length===0||(c.variant!==undefined&&c.variant!=='shortText'&&c.variant!=='longText'))throw Error('Unsupported TextField');
   }else if(c.component==='Button'){

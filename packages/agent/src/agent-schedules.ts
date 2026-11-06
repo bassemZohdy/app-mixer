@@ -13,21 +13,24 @@ export type AgentSchedulePage={items:AgentSchedule[];next?:AgentScheduleCursor};
 type FireOptions={definitionVersion:number;maxAttempts:number;runTimeoutMs:number;maxPending:number;traceParent?:string;wakeup?:{runId:string;revision:number}};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
-function field(raw:string,min:number,max:number):Set<number>{
+function field(raw:string,min:number,max:number,starMax=max):Set<number>{
  const values=new Set<number>();for(const piece of raw.split(',')){
   const parts=piece.split('/');if(parts.length>2||!parts[0]||parts[1]===''||(parts[1]!==undefined&&!/^\d+$/.test(parts[1])))throw Error('Invalid cron expression');
   if(parts[1]!==undefined&&parts[0]!=='*'&&!parts[0].includes('-'))throw Error('Invalid cron expression');
   const step=parts[1]===undefined?1:Number(parts[1]);if(!Number.isSafeInteger(step)||step<1||step>max-min+1)throw Error('Invalid cron expression');
-  let start:number,end:number;if(parts[0]==='*'){start=min;end=max;}else{const range=parts[0].split('-');if(range.length>2||range.some(x=>!/^\d+$/.test(x)))throw Error('Invalid cron expression');start=Number(range[0]);end=range.length===2?Number(range[1]):start;}
+  let start:number,end:number;if(parts[0]==='*'){start=min;end=starMax;}else{const range=parts[0].split('-');if(range.length>2||range.some(x=>!/^\d+$/.test(x)))throw Error('Invalid cron expression');start=Number(range[0]);end=range.length===2?Number(range[1]):start;}
   if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<min||end>max||start>end)throw Error('Invalid cron expression');for(let n=start;n<=end;n+=step)values.add(n);
  }return values;
 }
+const monthNames=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'],weekdayNames=['sun','mon','tue','wed','thu','fri','sat'];
+/** Replace three-letter names with their numbers; any other letters are invalid. */
+function names(raw:string,list:string[],offset:number):string{return raw.replace(/[A-Za-z]+/g,token=>{const index=list.indexOf(token.toLowerCase());if(token.length!==3||index<0)throw Error('Invalid cron expression');return String(index+offset);});}
 function cron(expression:string){
  if(typeof expression!=='string'||expression.length>200)throw Error('Invalid cron expression');const parts=expression.trim().split(/\s+/);if(parts.length!==5)throw Error('Invalid cron expression');
- return {minutes:field(parts[0],0,59),hours:field(parts[1],0,23),days:field(parts[2],1,31),months:field(parts[3],1,12),weekdays:field(parts[4],0,6),dayAny:parts[2]==='*',weekdayAny:parts[4]==='*'};
+ return {minutes:field(parts[0],0,59),hours:field(parts[1],0,23),days:field(parts[2],1,31),months:field(names(parts[3],monthNames,1),1,12),weekdays:new Set([...field(names(parts[4],weekdayNames,0),0,7,6)].map(day=>day%7)),dayAny:parts[2]==='*',weekdayAny:parts[4]==='*'};
 }
 function checkConfig(config:ScheduleConfig):ScheduleConfig{
- if(!config||typeof config!=='object'||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
+ if(!config||typeof config!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(config))||(typeof config.rule==='object'&&config.rule!==null&&![Object.prototype,null].includes(Object.getPrototypeOf(config.rule)))||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
  if(config.rule.kind==='interval'){if(Object.keys(config.rule).length!==2||!integer(config.rule.intervalMs)||config.rule.intervalMs<1000||config.rule.intervalMs>30*86400000)throw Error('Invalid schedule');return structuredClone(config);}
  if(config.rule.kind==='cron'){if(Object.keys(config.rule).some(key=>!['kind','expression','timeZone','excludeDates','excludeDateRanges','excludeAnnualDates','observeAnnualWeekends'].includes(key)))throw Error('Invalid schedule');cron(config.rule.expression);if(config.rule.timeZone!==undefined)checkZone(config.rule.timeZone);if(config.rule.excludeDates!==undefined)checkExcludedDates(config.rule.excludeDates);if(config.rule.excludeDateRanges!==undefined)checkExcludedRanges(config.rule.excludeDateRanges);if(config.rule.excludeAnnualDates!==undefined)checkAnnualDates(config.rule.excludeAnnualDates);if(config.rule.observeAnnualWeekends!==undefined&&(typeof config.rule.observeAnnualWeekends!=='boolean'||(config.rule.observeAnnualWeekends&&!config.rule.excludeAnnualDates?.length)))throw Error('Invalid annual observance');return structuredClone(config);}
  throw Error('Invalid schedule');

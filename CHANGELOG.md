@@ -3,7 +3,28 @@
 All notable changes to App Mixer are tracked here. Version numbers describe repository development, not released production features.
 
 ## [Unreleased] — 2026-10-28
+### Fixed
+- Web and React Native renderers reject sparse child lists with the controlled `Invalid children` error; array holes previously bypassed validation and surfaced as a raw TypeError (found by the renderer fuzz test).
+- Run and schedule configuration must be own plain data; schedules reject inherited fields with the controlled error instead of a raw TypeError.
+- Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
+- Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- Credential fuzz test for JWT-authenticated capability calls.
+- Hostile HTTP fuzz test for the Control Plane and Data Plane boundaries.
+- Hostile-source fuzz test for the remote Control Plane connector.
+- Hostile-input fuzz test covering all eleven webhook adapters.
+- Sentry integration webhook adapter for agent event ingress (signed body, installation pinning, resource from signed data) with tests.
+- Acceptance checklists for the 18 open P2/P3 tasks (what remains to be proven on real systems, and the evidence required).
+- Cross-process race tests, a web renderer fuzz test and metrics/digest fuzz tests.
+- Process-kill acceptance tests for publication/rollback, the offline queue and staged external submissions; Kubernetes workload manifest policy test.
+- Process-kill acceptance tests for SQLite agent definition versions and delegation grants.
+- Process-kill acceptance tests for durable approvals (request and decision persistence, single decision, expiry).
+- Process-kill acceptance test for durable run lease expiry, recovery and old-token fencing.
+- Process-kill acceptance test for agent schedule firing before and after commit.
+- Agent schedule cron accepts 7 as Sunday and three-letter month/weekday names, with tests.
+- ES256 (P-256) access-token verification and JWKS key selection for JWT capability authentication, with validation and algorithm-confusion tests.
+- Binary-relevance nDCG (`ndcg`, `meanNdcg`) alongside average precision in the agent memory retrieval evaluation report, with a hand-computed test.
+- PagerDuty v3 webhook adapter for agent event ingress (multi-signature rotation, signed event-ID deduplication) with tests.
 - Initial TypeScript monorepo with core application definitions and greenfield CLI.
 - In-memory draft validation, revision-aware typed patches and publication.
 - Minimal standalone HTTP web shell with static workspace and chat placeholder.

@@ -12,6 +12,7 @@ function compatibleKeys(value:unknown):JSONWebKeySet{
  for(const key of (value as JSONWebKeySet).keys){
   if(!key||typeof key!=='object'||Array.isArray(key)||typeof key.kty!=='string'||!key.kty||['d','p','q','dp','dq','qi','oth','k'].some(name=>Object.hasOwn(key,name))||(key.use!==undefined&&!['sig','enc'].includes(key.use))||(key.alg!==undefined&&(typeof key.alg!=='string'||!key.alg||key.alg.length>128))||(key.key_ops!==undefined&&(!Array.isArray(key.key_ops)||key.key_ops.length>16||key.key_ops.some(item=>typeof item!=='string')||new Set(key.key_ops).size!==key.key_ops.length)))throw Error('Invalid JWKS');
   if(key.kty==='RSA'&&(key.use===undefined||key.use==='sig')&&(key.alg===undefined||key.alg==='RS256')&&(key.key_ops===undefined||key.key_ops.includes('verify')))selected.push(key);
+  else if(key.kty==='EC'&&key.crv==='P-256'&&(key.use===undefined||key.use==='sig')&&(key.alg===undefined||key.alg==='ES256')&&(key.key_ops===undefined||key.key_ops.includes('verify')))selected.push(key);
  }
  if(!selected.length)throw Error('No compatible JWKS keys');return {keys:selected};
 }
