@@ -9,6 +9,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- Shared TextField fixture (rendering, data-model updates, user input, the long-text variant and removal) checked on the web renderer, the React Native store and the Flutter VM renderer, plus a component-by-adapter parity table in the acceptance checklists.
 - JSON Schema record forms show a scalar property's `description` as accessible help text in the editor and preview.
 - Two-process race test showing schedule workers that share one store fire each due occurrence exactly once.
 - Credential fuzz test for JWT-authenticated capability calls.

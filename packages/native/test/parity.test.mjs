@@ -177,3 +177,15 @@ test('shared invalid messages leave web and native surfaces unchanged',async()=>
  for(const value of [message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]})]){web.apply(value);native.apply(value);}
  for(const invalid of fixture){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
 });
+
+test('shared Flutter text field fixture matches web and native rendering and input',async()=>{
+ const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/text-field.json',import.meta.url),'utf8'));
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const webState=()=>{const root=host.children[0]?.children[0];if(!root)return {field:null,text:null};const wrapper=root.children[0],input=wrapper.children[1];return {field:{label:wrapper.children[0].textContent,value:input.value,variant:input.tagName==='textarea'?'longText':null},text:root.children[1].textContent};};
+ const nativeState=()=>{const root=native.snapshot()[0].root;if(!root)return {field:null,text:null};const field=root.children[0];return {field:{label:field.label,value:field.value,variant:field.variant??null},text:root.children[1].text};};
+ for(const step of steps){
+  if(step.message){web.apply(step.message);native.apply(step.message);}
+  else{const input=host.children[0].children[0].children[0].children[1];input.value=step.input;input.listeners.input();native.writeField('main','field',native.snapshot()[0].revision,step.input);}
+  const expected={field:step.field,text:step.text};assert.deepEqual(webState(),expected,JSON.stringify(step));assert.deepEqual(nativeState(),expected,JSON.stringify(step));
+ }
+});

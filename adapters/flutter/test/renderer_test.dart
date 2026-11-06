@@ -139,6 +139,17 @@ void main() {
     for(final step in steps){store.apply(step['message']);expect(store.snapshot().single?.text, step['text']);}
   });
 
+  test('shared text field fixture matches expected output', () {
+    final steps=jsonDecode(File('test/fixtures/text-field.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();
+    for(final step in steps){
+      if(step['message']!=null){store.apply(step['message']);}else{store.writeField('main','field',store.views().single.revision,step['input'] as String);}
+      final root=store.snapshot().single;
+      final field=root==null?null:<String,Object?>{'label':root.children[0].label,'value':root.children[0].value,'variant':root.children[0].variant};
+      expect(field, step['field']);expect(root?.children[1].text, step['text']);
+    }
+  });
+
   testWidgets('field changes update button context and external updates refresh the field', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}

@@ -13,6 +13,18 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] Flutter exact layout dimensions, typography and accessibility parity against the web reference, measured on devices.
   - [ ] Every catalog component and behavior present in the web catalog has a fixture exercised on all four adapters.
 - **Evidence:** CI run URLs per platform and a parity table listing each catalog component against each adapter.
+- **Current fixture coverage** (shared fixtures in `adapters/flutter/test/fixtures/`; web and React Native store run in `packages/native/test/parity.test.mjs`, Flutter VM in `adapters/flutter/test/renderer_test.dart`):
+
+  | Component | Shared fixtures that render it | Web | React Native store | Flutter VM | React, Angular |
+  | --- | --- | --- | --- | --- | --- |
+  | Text | bindings, layout, actions, text-field | yes | yes | yes | through the web renderer only |
+  | Column | layout, text-field | yes | yes | yes | through the web renderer only |
+  | Row | layout | yes | yes | yes | through the web renderer only |
+  | Card | layout | yes | yes | yes | through the web renderer only |
+  | TextField | text-field (render, input, variant, removal); rejections | yes | yes | yes | through the web renderer only |
+  | Button | actions; rejections | yes | yes | yes | through the web renderer only |
+
+  The React and Angular bridges wrap the web renderer and do not load the fixtures themselves. The React Native column covers the shared store, not React Native components on a device.
 
 ### P2-02 Extension SDK and compatibility manifests
 - **Verified locally:** manifest and configuration validation, package digest verification (canonical spelling only), approval pinning and revocation lifecycle, hostile-key tests.
