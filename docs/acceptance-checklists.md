@@ -76,7 +76,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Evidence:** a node-failure test report showing runs recovered exactly once and no duplicated external effect.
 
 ### P2-08 Event, webhook and scheduler activation
-- **Verified locally:** signed ingress with key rotation and deduplication; GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty and Standard Webhooks adapters; cron schedules with time zones, names and exclusions; process-kill schedule tests; a two-process race test showing schedule workers that share one store fire each occurrence once.
+- **Verified locally:** signed ingress with key rotation and deduplication; GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle and Standard Webhooks adapters; cron schedules with time zones, names and exclusions; process-kill schedule tests; a two-process race test showing schedule workers that share one store fire each occurrence once.
 - **Still to prove:**
   - [ ] Each provider adapter against that provider's live or sandbox delivery, including a retry.
   - [ ] Additional providers the product commits to supporting.
