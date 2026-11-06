@@ -56,5 +56,12 @@ test('the web renderer matches the shared accessibility and typography reference
    summary.push(`${expected.name}: ${interactive.role.value}${expected.level?' '+property(interactive,'level'):''}`);
   }
   t.diagnostic(summary.join(', '));
- }finally{client?.close();browser.kill();await once(browser,'exit').catch(()=>{});await new Promise(resolve=>server.close(resolve));rmSync(profile,{recursive:true,force:true,maxRetries:5,retryDelay:200});}
+ }finally{
+  // Close through DevTools so the browser stops writing to its profile before it is removed.
+  const exited=browser.exitCode!==null||browser.signalCode!==null?Promise.resolve():once(browser,'exit');
+  await client?.send('Browser.close').catch(()=>{});client?.close();
+  await Promise.race([exited,new Promise(resolve=>setTimeout(resolve,5000))]);if(browser.exitCode===null&&browser.signalCode===null){browser.kill();await exited;}
+  await new Promise(resolve=>server.close(resolve));
+  try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});}catch{}
+ }
 });
