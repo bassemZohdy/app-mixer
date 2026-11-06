@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- `DevelopmentProposals` no longer refuses new proposals forever after 100 have been created: only pending proposals count toward the limit and settled ones are evicted beyond a `settledLimit` bound.
 - Capability refusals that happen before any effect (not found, forbidden, invalid input, a throwing policy, a failed attempt audit, and the configured runtime's own activity and delegation checks) no longer leave the agent action `uncertain` and the run awaiting operator reconciliation: `CapabilityRegistry` marks such errors with `Symbol.for('app-mixer.effect') === 'none'`, and both action journals return the action to `ready` (or `failed` once attempts are exhausted) and rethrow the original error. Unmarked dispatch errors stay uncertain.
 - The CLI runs as a command on Windows: the entry was detected with a forward-slash suffix of `process.argv[1]`, so `node packages\cli\dist\index.js create demo` exited 0 without creating anything. The entry is now compared by resolved path.
 - The offline queue's rollback anchor now detects selective substitution or deletion of individual item envelopes, not only whole-partition restores. The counter record carries an authenticated digest of every envelope, checked at open, on `list()` and before each write.

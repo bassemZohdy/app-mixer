@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**17 / 65 tasks complete (26%)**
+**18 / 66 tasks complete (27%)**
 
 `█████░░░░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 3 / 34 | 31 (P4-03..P4-28, P4-30..P4-34) |
+| P4 fixes and improvements from the 2026-11-06 code review | 4 / 35 | 31 (P4-03..P4-05, P4-07..P4-28, P4-30..P4-35) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -96,8 +96,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `DevelopmentAgent.propose` throws `Invalid development request` for `draft.schemaVersion !== 1`, so an application migrated under P2-05 cannot be developed by the agent, and its prompt lists only `addPage`, `setPageTitle` and `addComponent` with the four basic component types (no `setPageDescription`, `setExtensions`, `setExtensionOperations` or `Extension` components). Fix: accept versions 1 and 2, derive the operation list from the version, and test a version-2 proposal with a description.
 - [ ] P4-05 Dispatch runs in creation order
   - Found: `SqliteAgentRuns.queuedPage`, `PostgresAgentRuns.queued`, the dispatcher cursor and `expiredPage` order by `run_id`, and event and schedule runs get `randomUUID()` IDs, so queued runs start in random order; there is no created-at column. Fix: add a creation sequence (`created_at` or a monotonic `sequence`) to both registries, order claims by it, keep keyset pagination, and test that 50 queued runs start in order across two nodes.
-- [ ] P4-06 Evict settled development proposals
-  - Found: `DevelopmentProposals` keeps approved and rejected proposals in memory and counts them toward the 100 limit, so after 100 proposals the proposal plane answers 429 until the process restarts; an agent can exhaust it. Fix: count only pending proposals toward the limit, evict settled ones after a bound, and offer a SQLite store so proposals survive a restart.
+- [x] P4-06 Evict settled development proposals
+  - Found: `DevelopmentProposals` keeps approved and rejected proposals in memory and counts them toward the 100 limit, so after 100 proposals the proposal plane answers 429 until the process restarts; an agent can exhaust it. Fixed 2026-11-06: only pending proposals count toward the limit and settled ones are evicted beyond a `settledLimit` bound (tested). A SQLite store so proposals survive a restart is P4-35.
+- [ ] P4-35 Persist development proposals in SQLite
+  - Found while fixing P4-06: `DevelopmentProposals` is in memory only, so pending proposals vanish on restart. Fix: add a SQLite-backed store with the same interface (revision-checked approval, bounded settled history) and tests across a reopen.
 - [ ] P4-07 Make the Data Plane metrics endpoint scrapeable in Kubernetes
   - Found: `deploy/kubernetes/data-plane.mjs` listens for `/metrics` on `127.0.0.1` inside the pod, so Prometheus cannot scrape it; the kind check probes it with `kubectl exec`. Fix: add `APP_MIXER_METRICS_BIND` (pod IP) with the JWT scope check kept mandatory, extend the NetworkPolicy and admission policy for the metrics port, scrape it from another pod in the kind workflow, and document the alternative sidecar layout.
 - [ ] P4-08 Bound the catch-up loop in `PostgresAgentSchedules.fireDue`
