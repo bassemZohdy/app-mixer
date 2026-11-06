@@ -20,3 +20,13 @@ test('CONTRIBUTING documents every opt-in test variable that a test or workflow 
  for(const name of found)if(!internal.has(name))assert.ok(guide.includes(name),name+' is documented in CONTRIBUTING.md');
  for(const workflow of readdirSync(join(root,'.github/workflows')).filter(name=>/^(kubernetes|agent-pod-recovery)\.yml$/.test(name)))assert.ok(guide.includes(workflow.replace('.yml','')),workflow+' is mentioned');
 });
+
+test('workflows cancel superseded runs, bound every job and exercise the device and cluster checks on main and weekly',()=>{
+ const directory=join(root,'.github/workflows');
+ assert.match(read('.github/workflows/ci.yml'),/concurrency:\s*\n\s+group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\s*\n\s+cancel-in-progress: true/);
+ for(const name of readdirSync(directory).filter(file=>file.endsWith('.yml'))){
+  const text=readFileSync(join(directory,name),'utf8').replaceAll('\r\n','\n'),jobs=text.slice(text.indexOf('\njobs:')).match(/^  [a-z0-9-]+:\n/gm)??[];
+  assert.ok(jobs.length>0,name+' has jobs');assert.equal((text.match(/^    timeout-minutes: \d+$/gm)??[]).length,jobs.length,name+': every job has timeout-minutes');
+  if(name!=='ci.yml'){assert.match(text,/^  push:\n    branches: \[main\]$/m,name+' runs on pushes to main');assert.match(text,/^  schedule:\n    - cron: '[^']+'$/m,name+' runs weekly');}
+ }
+});
