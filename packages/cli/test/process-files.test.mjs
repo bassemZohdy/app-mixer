@@ -74,3 +74,14 @@ test('CI caches the pinned Docker images the container tests start',async()=>{
  for(const name of ['keycloak','seaweedfs','opentelemetry-collector','prometheus','alertmanager'])assert.ok(images.some(image=>image.includes(name)),name+' is cached');
  const workflow=read('.github/workflows/ci.yml');assert.match(workflow,/uses: actions\/cache@v4\s*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
 });
+
+test('tests poll conditions with a deadline instead of adding fixed sleeps',async()=>{
+ const {waitFor}=await import('../../../scripts/wait-for.mjs');
+ let ready=false;setTimeout(()=>{ready=true;},30);assert.equal(await waitFor(()=>ready,{timeoutMs:2000,message:'ready'}),true);
+ assert.equal(await waitFor(async()=>'async value'),'async value');
+ const started=Date.now();await assert.rejects(waitFor(()=>false,{timeoutMs:60,intervalMs:5,message:'never'}),/Timed out after 60 ms waiting for never/);assert.ok(Date.now()-started<2000);
+ await assert.rejects(waitFor(()=>{throw new Error('probe failed');},{timeoutMs:30,message:'probe'}),error=>/probe/.test(error.message)&&error.cause?.message==='probe failed','the last probe error is kept as the cause');
+ // A ratchet: the number of inline sleeps in test files may only go down. Poll with waitFor from scripts/wait-for.mjs instead.
+ let sleeps=0;for(const name of ['core','agent','cli','web','native'])for(const file of readdirSync(join(root,'packages',name,'test')).filter(file=>file.endsWith('.test.mjs')))sleeps+=(readFileSync(join(root,'packages',name,'test',file),'utf8').match(/new Promise\(\(?\w+\)?=>setTimeout\(\w+,/g)??[]).length;
+ assert.ok(sleeps<=63,`${sleeps} inline sleeps in tests (limit 63): use waitFor and lower the limit when you remove one`);
+});

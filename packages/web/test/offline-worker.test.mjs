@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {IDBFactory} from 'fake-indexeddb';
 import {EncryptedBrowserQueue,BrowserOfflineWorker} from '../dist/offline.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 const scope={tenantId:'t',applicationId:'app',principalId:'p'};
 const open=async(factory,key)=>EncryptedBrowserQueue.open({enabled:true,databaseName:'worker',scope,key,indexedDB:factory,crypto:webcrypto});
 const key=()=>webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
-const waitFor=async predicate=>{for(let i=0;i<200;i++){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for browser worker');};
+const waitFor=predicate=>waitUntil(predicate,{timeoutMs:2000,message:'the browser worker'});
 const config={intervalMs:100,maxPerPass:5,maxAttempts:2,isOnline:()=>true,resolveActor:()=>scope,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{}};
 
 test('browser worker dispatches only when online and the current identity matches',async()=>{

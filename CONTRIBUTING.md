@@ -13,7 +13,7 @@ npm run lint           # typescript-eslint: floating and misused promises, await
 npm run docs           # regenerates docs/README.md after adding, renaming or retitling a document
 ```
 
-Tests run against `dist`, so rebuild after editing `src`. Every change should come with a test that fails without it, a `CHANGELOG.md` entry under `### Added` or `### Fixed`, and updated documentation under `docs/`. Tasks are tracked in `TODO.md`; tick the task and run `npm run todo`.
+Tests run against `dist`, so rebuild after editing `src`. Tests wait for conditions with `waitFor` from `scripts/wait-for.mjs` (real deadline, named failure) instead of fixed sleeps; a ratchet in `packages/cli/test/process-files.test.mjs` keeps the number of inline sleeps from growing. Every change should come with a test that fails without it, a `CHANGELOG.md` entry under `### Added` or `### Fixed`, and updated documentation under `docs/`. Tasks are tracked in `TODO.md`; tick the task and run `npm run todo`.
 
 ## Opt-in tests
 

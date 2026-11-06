@@ -11,8 +11,9 @@ import {IDBFactory} from 'fake-indexeddb';
 import {JSDOM} from 'jsdom';
 import {createProject} from '../dist/index.js';
 import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 const token='capability-secret-at-least-thirty-two-characters',scope={tenantId:'tenant',applicationId:'demo-app',principalId:'local'};
-const waitFor=async condition=>{for(let i=0;i<250;i++){if(await condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for offline integration');};
+const waitFor=condition=>waitUntil(condition,{timeoutMs:2500,message:'offline integration'});
 
 test('generated offline runtime queues, synchronizes and resolves a conflict through the capability service', {timeout:15000},async()=>{
  let externalCalls=0,stored={value:'server',version:2};const events=[],registry=new CapabilityRegistry(event=>events.push(event));

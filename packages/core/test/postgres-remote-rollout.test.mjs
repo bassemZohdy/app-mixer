@@ -9,9 +9,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import pg from 'pg';
 import {ApplicationStore,SqliteApplicationStore,PostgresRemoteRollout,RemoteRolloutPoller,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportUncertainError} from '../dist/index.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 
 const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
-async function waitFor(check){for(let i=0;i<300;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Timed out waiting for rollout');}
+const waitFor=check=>waitUntil(check,{timeoutMs:3000,message:'the rollout'});
 
 test('shared rollout rejects invalid configuration and malformed state',async()=>{
  assert.throws(()=>new PostgresRemoteRollout({}),/configuration/);

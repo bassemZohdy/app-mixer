@@ -1,9 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {CapabilityRegistry,OfflineSyncWorker,SqliteOfflineQueue,SqliteStagedOperations} from '../dist/index.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'person'};
 const config={scope,principalId:'person',intervalMs:100,maxPerPass:5,isOnline:()=>true,resolveActor:()=>actor,classify:()=> 'uncertain',onError:()=>{}};
-const waitFor=async condition=>{for(let n=0;n<200;n++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for worker');};
+const waitFor=condition=>waitUntil(condition,{timeoutMs:2000,message:'the worker'});
 const register=(registry,execute,authorize=()=>true)=>registry.register({operationId:'change',method:'POST',path:'/change'},{authorize,validate:()=>true,execute});
 
 test('explicitly started worker synchronizes when online and leaves staged work alone',async()=>{

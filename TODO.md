@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**57 / 92 tasks complete (62%)**
+**59 / 92 tasks complete (64%)**
 
-`████████████░░░░░░░░`
+`█████████████░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 43 / 61 | 18 (P4-07, P4-09, P4-17..P4-21, P4-33, P4-33, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45, P4-46, P4-46, P4-47) |
+| P4 fixes and improvements from the 2026-11-06 code review | 45 / 61 | 16 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45, P4-46, P4-46, P4-47) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -184,8 +184,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found while fixing P4-31: the Keycloak, S3, OpenTelemetry Collector, Prometheus and pgvector images are pulled on every run. Fixed 2026-11-06: `.github/scripts/docker-images.mjs` lists the five pinned images from the tests, `ci.yml` restores `~/docker-images` with `actions/cache` keyed by a hash of that list and loads each tarball or pulls and saves it, and a test checks the list and the steps. The time saved is measured on the second CI run after a cache write.
 - [x] P4-32 Slim the Data Plane image
   - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fixed 2026-11-06: the image installs and builds only `core` and `web` (497 MB -> 332 MB, no LangChain or Twilio in `node_modules`), has a TCP `HEALTHCHECK` that works for the TLS and plain transports, and the kind workflow fails above 400 MB; verified by building the image, loading `@app-mixer/core` in it and a static test.
-- [ ] P4-33 Replace sleep-based waits in tests
-  - Found: 64 `setTimeout(resolve, …)` waits across the test suites; the schedule-node test failed in CI on 2026-11-06 because of one such assumption. Fix: condition polling helpers with deadlines and injected clocks where a store accepts one, and a lint rule against bare sleeps in tests.
+- [x] P4-33 Replace sleep-based waits in tests
+  - Found: 64 `setTimeout(resolve, …)` waits across the test suites; the schedule-node test failed in CI on 2026-11-06 because of one such assumption. Fixed 2026-11-06 for the helper and the guard: `scripts/wait-for.mjs` (deadline-based, async conditions, last error kept as cause, unit-tested) replaces eight copies of count-based polling loops (the original schedule-node flake was already fixed by waiting on the fired node), and a ratchet test caps the inline sleeps in `*.test.mjs` at 63 so the count can only fall. The remaining sleeps are mostly 10 ms polling loops inside tests; convert them to `waitFor` and lower the ratchet as files are touched.
 - [x] P4-34 Decide and document the renderer's unspecified behaviour
   - Found: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter; a `Text` bound to a number or boolean renders as an empty string on web, React Native and Flutter; rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fixed 2026-11-06 for the scalar coercion (the functional bug): numbers and booleans render in their JSON spelling on web, React Native and Flutter (Dart whole doubles print without `.0`), documented in `docs/a2ui-renderer.md`, with five new Text components in the shared fixture checked by the browser, react-native-web and Flutter parity tests. Style variants for Button and TextField and stable DOM hooks are P4-46.
 
@@ -219,7 +219,7 @@ A checked item means documentation or implementation is verified; future require
   - Found while fixing P4-31: the Keycloak, S3, OpenTelemetry Collector, Prometheus and pgvector images are pulled on every run. Fixed 2026-11-06: `.github/scripts/docker-images.mjs` lists the five pinned images from the tests, `ci.yml` restores `~/docker-images` with `actions/cache` keyed by a hash of that list and loads each tarball or pulls and saves it, and a test checks the list and the steps. The time saved is measured on the second CI run after a cache write.
 - [x] P4-32 Slim the Data Plane image
   - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fixed 2026-11-06: the image installs and builds only `core` and `web` (497 MB -> 332 MB, no LangChain or Twilio in `node_modules`), has a TCP `HEALTHCHECK` that works for the TLS and plain transports, and the kind workflow fails above 400 MB; verified by building the image, loading `@app-mixer/core` in it and a static test.
-- [ ] P4-33 Replace sleep-based waits in tests
+- [x] P4-33 Replace sleep-based waits in tests
   - Found: 64 `setTimeout(resolve, …)` waits across the test suites; the schedule-node test failed in CI on 2026-11-06 because of one such assumption. Fix: condition polling helpers with deadlines and injected clocks where a store accepts one, and a lint rule against bare sleeps in tests.
 - [x] P4-34 Decide and document the renderer's unspecified behaviour
   - Found: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter; a `Text` bound to a number or boolean renders as an empty string on web, React Native and Flutter; rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fixed 2026-11-06 for the scalar coercion (the functional bug): numbers and booleans render in their JSON spelling on web, React Native and Flutter (Dart whole doubles print without `.0`), documented in `docs/a2ui-renderer.md`, with five new Text components in the shared fixture checked by the browser, react-native-web and Flutter parity tests. Style variants for Button and TextField and stable DOM hooks are P4-46.

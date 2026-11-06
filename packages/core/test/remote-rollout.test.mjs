@@ -8,11 +8,12 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync} from 'node:crypto';
 import {ApplicationStore,SqliteApplicationStore,SqliteRemoteRollout,RemoteRolloutPoller,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportUncertainError} from '../dist/index.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 
 const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
 async function fixture(){const dir=mkdtempSync(join(tmpdir(),'rollout-')),source=new ApplicationStore(definition),target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),server=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);server.listen(0,'127.0.0.1');await once(server,'listening');const config={sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},discovery:{authorize:()=>true,audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence};return {dir,source,target,server,config,publicKey,path:join(dir,'rollout.sqlite')};}
 async function cleanup(f){f.target.close();if(f.server.listening){f.server.closeAllConnections();await new Promise(resolve=>f.server.close(resolve));}rmSync(f.dir,{recursive:true,force:true});}
-async function waitFor(check){for(let i=0;i<300;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Timed out waiting for rollout');}
+const waitFor=check=>waitUntil(check,{timeoutMs:3000,message:'the rollout'});
 
 test('poller backs off on pre-import failure and imports when the source becomes available',async()=>{
  const f=await fixture();let permitted=false;const errors=[],results=[],rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:()=>permitted}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:400,onResult:value=>results.push({value,time:performance.now()}),onError:(error,review)=>errors.push({error,review,time:performance.now()})});

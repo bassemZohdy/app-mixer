@@ -4,9 +4,10 @@ import {webcrypto} from 'node:crypto';
 import {IDBFactory} from 'fake-indexeddb';
 import {JSDOM} from 'jsdom';
 import {EncryptedBrowserQueue,mountOfflineConflictPanel} from '../dist/offline.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 const scope={tenantId:'t',applicationId:'a',principalId:'p'};
 const setup=async()=>EncryptedBrowserQueue.open({enabled:true,databaseName:'ui',scope,key:await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB:new IDBFactory(),crypto:webcrypto});
-const waitFor=async condition=>{for(let i=0;i<150;i++){if(await condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for conflict panel');};
+const waitFor=condition=>waitUntil(condition,{timeoutMs:1500,message:'the conflict panel'});
 const conflict=async(queue,requestKey,payload)=>{const item=await queue.enqueue('save',requestKey,payload),running=await queue.transition(item.id,1,'claim');return queue.transition(item.id,running.version,'conflict');};
 
 test('conflict panel compares current data and atomically queues an explicit resolution',async()=>{

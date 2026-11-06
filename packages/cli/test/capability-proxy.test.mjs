@@ -10,6 +10,7 @@ import {pathToFileURL} from 'node:url';
 import {JSDOM} from 'jsdom';
 import {createProject} from '../dist/index.js';
 import {CapabilityRegistry,createCapabilityServer,registerDataCapability,registerDataListCapability,registerStagedCapability,SqliteStagedOperations,SqliteDataProvider} from '../../core/dist/index.js';
+import {waitFor as waitUntil} from '../../../scripts/wait-for.mjs';
 
 const token='capability-secret-at-least-thirty-two-characters';
 test('generated app uses an authenticated loopback capability service without exposing its token', {timeout:15000},async()=>{
@@ -51,7 +52,7 @@ test('generated app uses an authenticated loopback capability service without ex
    renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
    renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'record-editor',label:'Item'}]}});
    const field=document.querySelector('input'),textarea=document.querySelector('textarea'),[load,save]=document.querySelectorAll('button'),status=document.querySelector('[role=status]');
-   const waitFor=async phrase=>{for(let n=0;n<100&&!status.textContent.includes(phrase);n++)await new Promise(resolve=>setTimeout(resolve,10));assert.match(status.textContent,new RegExp(phrase));};
+   const waitFor=phrase=>waitUntil(()=>status.textContent.includes(phrase),{timeoutMs:1000,message:'status text '+JSON.stringify(phrase)});
    field.value='x';field.dispatchEvent(new dom.window.Event('input'));load.click();await waitFor('Record loaded');
    textarea.value=JSON.stringify({name:'Changed'});save.click();await waitFor('Record saved');
    assert.equal(provider.get({tenantId:'tenant',applicationId:'demo-app'},'items','x').value.name,'Changed');
