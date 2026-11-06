@@ -4,9 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import '../test/signed_plan_fixture.dart';
+import '../test/accessibility_parity.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('matches the shared accessibility and typography reference on a mobile device', (tester) async {
+    final summary=await expectAccessibilityParity(tester);
+    debugPrint('accessibility parity: ${summary.join(', ')}');
+    expect(summary.length,11);
+  });
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
     late void Function(Object?) receive;

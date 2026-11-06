@@ -75,7 +75,7 @@ jobs:
         if: matrix.node == '22'
         env:
           APP_MIXER_TEST_BROWSER: '1'
-        run: node --test packages/cli/test/browser-rollback-anchor.test.mjs packages/web/test/browser-offline-provisioning.test.mjs
+        run: node --test packages/cli/test/browser-rollback-anchor.test.mjs packages/web/test/browser-offline-provisioning.test.mjs packages/web/test/browser-accessibility-parity.test.mjs
       - name: Staged submissions against a real S3 provider
         if: matrix.node == '22'
         env:

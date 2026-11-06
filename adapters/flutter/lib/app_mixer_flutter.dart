@@ -375,7 +375,9 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
         _ => 16.0,
       };
       final style = (theme.bodyMedium ?? const TextStyle()).copyWith(fontSize: size, fontWeight: node.variant?.startsWith('h') == true ? FontWeight.bold : null);
-      return Semantics(header: node.variant?.startsWith('h') ?? false, child: Text(node.text ?? '', style: style));
+      // Heading levels match the web renderer's h1-h5 elements for assistive technology.
+      final level = const {'h1':1,'h2':2,'h3':3,'h4':4,'h5':5}[node.variant];
+      return Semantics(header: level != null, headingLevel: level, child: Text(node.text ?? '', style: style));
     }
     final children=<Widget>[];
     for (var i=0;i<node.children.length;i++) {
