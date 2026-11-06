@@ -171,6 +171,7 @@ export {createRemotePromotionClient, RemotePromotionUncertainError} from './remo
 export type {RemotePromotionRequest, RemotePromotionDetails, RemotePromotionEvent, RemotePromotionOptions} from './remote-promotion.js';
 
 export {createRecordJsonSchemaValidator} from './record-json-schema.js';
+export {RECORD_FORMATS,isRecordDate,isRecordDateTime,isRecordEmail} from './record-formats.js';
 
 export {signPromotionPackage,createSignedPromotionVerifier} from './signed-promotion.js';
 export type {SignedPromotionPackage,PromotionSigningKey,PromotionSignatureEvidence,VerifiedPromotion} from './signed-promotion.js';
