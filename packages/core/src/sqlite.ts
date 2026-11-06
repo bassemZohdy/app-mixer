@@ -176,7 +176,7 @@ export class SqliteApplicationStore {
     return this.transaction(() => {
       const latest=this.getPublished()?.version ?? 0;
       if(latest!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
-      if(advancing){const row=this.db.prepare('SELECT MAX(source_version) AS version FROM application_promotions WHERE app_id=? AND source_environment=? AND target_environment=?').get(this.id,item.sourceEnvironment,targetEnvironment);if(row?.version!==null&&row?.version!==undefined&&item.sourceVersion<=Number(row.version))throw Error('Source publication did not advance');}
+      if(advancing){const row=this.db.prepare('SELECT MAX(source_version) AS version FROM application_promotions WHERE app_id=? AND source_environment=? AND target_environment=?').get(this.id,item.sourceEnvironment,targetEnvironment);if(row?.version!==null&&row?.version!==undefined&&item.sourceVersion<=Number(row.version))throw new AppMixerError('conflict','Source publication did not advance');}
       enforcePublicationGuard(this.publicationGuard,item.definition);
       const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
       this.db.prepare('INSERT INTO application_publications (app_id,version,definition) VALUES (?,?,?)').run(this.id,version,JSON.stringify(item.definition));

@@ -1,6 +1,7 @@
 /** Why an agent operation was refused; each code maps to one HTTP status in `agentErrorStatus`. */
-export type AgentErrorCode='invalid'|'denied'|'not_found'|'conflict'|'limit';
-const STATUS:Record<AgentErrorCode,number>={invalid:400,denied:403,not_found:404,conflict:409,limit:429};
+/** `lost_race`: another worker or node changed the same run or action first (stale revision, lease held, state moved on); a supervisor ignores it and the next pass re-reads. */
+export type AgentErrorCode='invalid'|'denied'|'not_found'|'conflict'|'limit'|'lost_race';
+const STATUS:Record<AgentErrorCode,number>={invalid:400,denied:403,not_found:404,conflict:409,limit:429,lost_race:409};
 
 /** An expected refusal (denied access, missing resource, conflict, limit, invalid input). The HTTP servers answer with a fixed text for its status and never echo the message. */
 export class AgentError extends Error {

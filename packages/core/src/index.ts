@@ -86,7 +86,7 @@ export class ApplicationStore {
   if(!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw Error('Invalid version');
   const item=checkPromotionPackage(input,targetEnvironment,this.draft.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence,expectedVersion),latest=this.published.at(-1)?.version??0;
   if(latest!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
-  if(advancing)for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===item.sourceEnvironment&&previous.targetEnvironment===targetEnvironment&&item.sourceVersion<=previous.sourceVersion)throw Error('Source publication did not advance');
+  if(advancing)for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===item.sourceEnvironment&&previous.targetEnvironment===targetEnvironment&&item.sourceVersion<=previous.sourceVersion)throw new AppMixerError('conflict','Source publication did not advance');
   enforcePublicationGuard(this.publicationGuard,item.definition);
   const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
   const publication={version,definition:item.definition},hash=definitionSha256(item.definition);

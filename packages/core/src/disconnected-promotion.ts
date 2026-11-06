@@ -2,6 +2,7 @@ import type {ApplicationDefinition} from './index.js';
 import {checkPromotionPackage,createPromotionPackage,validEnvironment,type PromotionPackage} from './promotion.js';
 import {checkPromotionEvidence,type VerifiedPromotion,type SignedPromotionPackage} from './signed-promotion.js';
 import type {RemotePromotionFloorAnchor} from './remote-control-connector.js';
+import {AppMixerError} from './errors.js';
 
 type Published={version:number;definition:ApplicationDefinition};
 type Actor={tenantId:string;principalId:string};
@@ -64,7 +65,8 @@ export function createDisconnectedPromotionImporter(options:DisconnectedPromotio
   try{result=await repository.promoteAdvancing(pkg,document.expectedVersion,targetEnvironment,evidence);if(!result||result.version!==document.expectedVersion+1||createPromotionPackage(sourceEnvironment,{version:document.sourceVersion,definition:result.definition}).digest!==pkg.digest)throw Error('Unexpected local publication');}
   catch(error){
    // A stale expected version is a definite refusal: nothing was written. Anything else may have been.
-   if(error instanceof Error&&/version conflict|Expected version|not newer|advanc/i.test(error.message))return reject('rejected','Target version does not match the document: '+error.message);
+   // The built-in repositories refuse with a `conflict` error; host repositories that predate codes are recognised by their documented messages.
+   if(error instanceof Error&&((error instanceof AppMixerError&&error.code==='conflict')||/version conflict|Expected version|not newer|advanc/i.test(error.message)))return reject('rejected','Target version does not match the document: '+error.message);
    try{await emit('uncertain');}catch{}throw Error('Disconnected promotion outcome is uncertain; inspect publication and provenance before retrying');
   }
   await emit('completed');if(anchor)try{await anchor.advance(document.sourceVersion);}catch{}

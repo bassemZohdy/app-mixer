@@ -23,6 +23,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- The PostgreSQL run supervisor ignores lost races by the `lost_race` error code instead of a message regex (30 throw sites in the run, journal and budget stores converted), and the disconnected promotion importer recognises a definite refusal by a `conflict` code first; a look-alike message is no longer silently ignored.
 - `scripts/wait-for.mjs`, a condition poller with a real deadline and a named failure (the last probe error is kept as the cause), replaces eight hand-written polling loops in tests; a ratchet stops the number of inline sleeps in tests from growing.
 - `exactOptionalPropertyTypes` is on in the shared TypeScript configuration: optional properties that receive `undefined` are declared as such, and values passed to LangChain and `fetch` option types that reject `undefined` are spread conditionally.
 - In-range dependency updates: `@langchain/langgraph` 1.5.3 to 1.7.1, `@langchain/core` 1.3.5, `@langchain/langgraph-checkpoint` 1.2.2, `@ag-ui/core` 1.0.4 and `fake-indexeddb` 6.2.7 (full suite green, `npm audit --omit=dev` clean).

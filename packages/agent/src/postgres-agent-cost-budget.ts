@@ -1,5 +1,6 @@
 import type {AgentRunScope} from './durable-runs.js';
 import {POSTGRES_NOW as NOW,type PostgresAgentRunsOptions,type PostgresRunQuery as Query} from './postgres-agent-runs.js';
+import {AgentError} from './errors.js';
 
 export type PostgresCostCall={runId:string;callId:string;day:number;reserved:number;used:number|null;status:'reserved'|'settled'};
 export type PostgresCostSummary={currency:string;limit:number;day:number;committed:number;reserved:number;overrun:boolean};
@@ -33,7 +34,7 @@ export class PostgresAgentCostBudget {
  private async totals(query:Query,tenantId:string,agentId:string,day:number):Promise<{committed:number;reserved:number;overrun:boolean}>{const row=(await query("SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0)::bigint AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0)::bigint AS reserved,COALESCE(BOOL_OR(status='settled' AND used>reserved),false) AS overrun FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND day=$3",[tenantId,agentId,day])).rows[0];return {committed:Number(row?.committed??0),reserved:Number(row?.reserved??0),overrun:row?.overrun===true};}
  private async fence(query:Query,tenantId:string,agentId:string,runId:string,token:string|null):Promise<number>{
   const run=(await query(`SELECT status,lease_token,lease_until,${NOW} AS now FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 FOR UPDATE`,[tenantId,agentId,runId])).rows[0];
-  if(token===null){if(!run||run.status!=='uncertain')throw Error('Run is not uncertain');}
+  if(token===null){if(!run||run.status!=='uncertain')throw new AgentError('lost_race','Run is not uncertain');}
   else if(!run||run.status!=='running'||run.lease_token!==token||run.lease_until==null||Number(run.now)>=Number(run.lease_until))throw Error('Cost budget lease unavailable');
   return Number(run.now);
  }

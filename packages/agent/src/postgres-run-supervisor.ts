@@ -1,3 +1,4 @@
+import {AgentError} from './errors.js';
 import type {ActionVerification,ActionVerificationRequest} from './action-journal.js';
 import type {AgentRunScope} from './durable-runs.js';
 import type {PostgresAgentActionJournal,PostgresAgentRun,PostgresAgentRuns,PostgresRunClaimLimits} from './postgres-agent-runs.js';
@@ -18,7 +19,8 @@ export type PostgresRunSupervisorOptions={
 };
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
 const bounded=(value:unknown,min:number,max:number)=>Number.isSafeInteger(value)&&Number(value)>=min&&Number(value)<=max;
-const lostRace=/revision conflict|cannot be claimed|Lease is active|Invalid run state|Invalid action state|verification stale|concurrency limit|daily run limit|Run is not uncertain/;
+// Losing a race to another worker or node is routine: the store reports it as a `lost_race` error (stale revision, lease held, state moved on, a limit reached) and the next pass re-reads.
+const lostRace=(error:unknown):boolean=>error instanceof AgentError&&(error.code==='lost_race');
 
 /**
  * The scheduling loop for one worker process sharing a PostgresAgentRuns registry with other nodes. Each pass
@@ -43,7 +45,7 @@ export class PostgresRunSupervisor {
  /** One pass: recover, reconcile, then claim. Executions continue in the background. */
  async runOnce():Promise<void>{await this.recover();if(!this.stopped)await this.claim();}
  private event(event:PostgresRunSupervisorEvent):void{try{this.o.onEvent?.(event);}catch(error){this.o.onError(error);}}
- private async guard(operation:()=>Promise<void>):Promise<void>{try{await operation();}catch(error){if(!(error instanceof Error&&lostRace.test(error.message)))this.o.onError(error);}}
+ private async guard(operation:()=>Promise<void>):Promise<void>{try{await operation();}catch(error){if(!lostRace(error))this.o.onError(error);}}
  private async recover():Promise<void>{
   const {runs,scope}=this.o;
   for(const run of await runs.expiredLeases(scope,50,this.o.recoveryGraceMs))await this.guard(async()=>{await runs.recoverExpired(scope,run.runId,run.revision);this.event({type:'recovered',runId:run.runId});});

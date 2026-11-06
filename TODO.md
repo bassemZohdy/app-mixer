@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**59 / 92 tasks complete (64%)**
+**60 / 92 tasks complete (65%)**
 
 `█████████████░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 45 / 61 | 16 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45, P4-46, P4-46, P4-47) |
+| P4 fixes and improvements from the 2026-11-06 code review | 46 / 61 | 15 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45, P4-46, P4-46) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -138,8 +138,8 @@ Each item names what was found and where, and the fix. An item is done when the 
 ### Performance
 - [x] P4-44 Finish typed errors: remaining servers, supervisor, importer and swallowed causes
   - Found while fixing P4-16: `capability-server.ts`, `approval-server.ts`, `event-ingress.ts` and the agent package still map statuses by message text; the supervisor's `lostRace` regex and the disconnected importer's `/version conflict|.../` match messages; `remote-promotion.ts`, `remote-control-connector.ts`, `oidc-discovery.ts`, `jwt-jwks-manager.ts` and `notice-https-transport.ts` swallow the cause (`catch{throw Error('... failed')}`). Fixed 2026-11-06 except the capability server: `AgentError` with `agentErrorStatus` (33 throw sites converted; legacy messages still honoured for host-supplied stores), the approval, event-ingress and metrics servers map by code and answer with fixed texts (a test checks statuses and that no message is echoed), and the eight swallowing sites keep their cause (a test checks one). The supervisor's `lostRace` regex, the disconnected importer's message match and the capability server's message table are P4-47.
-- [ ] P4-47 Map the run supervisor and disconnected importer by code
-  - Found while fixing P4-44: the capability server is done (2026-11-06: codes `denied` and `unavailable` added, 23 more throw sites converted, documented plain messages still honoured because host executors depend on them, tested). Remaining: the run supervisor's `lostRace` regex (`revision conflict|cannot be claimed|Lease is active|...`) and the disconnected importer's `/version conflict|Expected version|not newer|advanc/i` match message text. Fix: codes for those refusals (a `conflict` code on the stores' lost-race errors), matching by code, and tests that rewording a message cannot change what the supervisor ignores or the importer rejects.
+- [x] P4-47 Map the run supervisor and disconnected importer by code
+  - Found while fixing P4-44 (the capability server was done then). Fixed 2026-11-06: a `lost_race` `AgentError` code (30 throw sites in `durable-runs`, `postgres-agent-runs`, `action-journal`, the cost budget) replaces the supervisor's `lostRace` regex (a unit test shows reworded and look-alike messages are reported, coded ones ignored); `Source publication did not advance` is a `conflict` `AppMixerError` and the importer checks the code before falling back to the documented messages that host repositories may still throw.
 - [ ] P4-17 Cut the round trips of exact search and listings on PostgreSQL
   - Found: `AgentSemanticMemory.search`/`searchHybrid` on `PostgresAgentMemory` page through `list`, which calls `get` per row (three reads and three authorize calls each) and then `get` again per hit, so one query costs more than 3N round trips for N ≤ 1,000 entries; `PostgresAgentDefinitions.list` costs six per agent. Fix: one page read with the fence applied once per page and per-record authorization in memory, a benchmark at `maxEntries: 1000`, and the same for the definition listing.
 - [ ] P4-18 Incremental rendering and a renderer benchmark
