@@ -57,3 +57,17 @@ test('PostgreSQL definitions enforce host tenant limits under concurrent creatio
   limits.tenant.maxConcurrentRuns=1;await assert.rejects(definitions.save(actor,{...manifest('tenant','late'),name:'Updated'},1),/quota exceeds tenant limit/);assert.equal((await definitions.get(actor,'late')).version,1);
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
 });
+
+test('PostgreSQL definition listing reads a page in three batch queries and keeps per-agent authorization',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
+ const schema='agent_list_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let queries=0;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);
+  const store=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>{queries++;return pool.query(sql,args);},transaction:transaction(pool),clock:()=>100,authorize:(_who,action,id)=>!(action==='read'&&id==='agent07')});await store.initialize();
+  for(let n=0;n<20;n++)await store.save(actor,manifest('tenant','agent'+String(n).padStart(2,'0')),0);
+  await store.save(actor,{...manifest('tenant','agent02'),name:'Second version'},1);
+  queries=0;const page=await store.list(actor,{limit:50});
+  assert.equal(page.items.length,19,'one agent is not readable by this actor');assert.ok(!page.items.some(item=>item.manifest.agentId==='agent07'));assert.equal(page.items.find(item=>item.manifest.agentId==='agent02').version,2,'the latest version is listed');
+  assert.ok(queries<=4,queries+' queries for 20 agents (one id scan and three batch reads)');
+  for(const item of page.items.slice(0,3))assert.deepEqual(await store.get(actor,item.manifest.agentId),item,'a batched read equals a single read');
+  const first=await store.list(actor,{limit:5}),second=await store.list(actor,{limit:5,after:first.nextAfter});assert.equal(first.items.length,5);assert.ok(first.items.at(-1).manifest.agentId<second.items[0].manifest.agentId);
+ }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
+});

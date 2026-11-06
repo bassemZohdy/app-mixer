@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**65 / 94 tasks complete (69%)**
+**66 / 94 tasks complete (70%)**
 
 `██████████████░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 51 / 63 | 12 (P4-07, P4-09, P4-19..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-48, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 52 / 63 | 11 (P4-07, P4-09, P4-19..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -142,8 +142,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found while fixing P4-44 (the capability server was done then). Fixed 2026-11-06: a `lost_race` `AgentError` code (30 throw sites in `durable-runs`, `postgres-agent-runs`, `action-journal`, the cost budget) replaces the supervisor's `lostRace` regex (a unit test shows reworded and look-alike messages are reported, coded ones ignored); `Source publication did not advance` is a `conflict` `AppMixerError` and the importer checks the code before falling back to the documented messages that host repositories may still throw.
 - [x] P4-17 Cut the round trips of exact search and listings on PostgreSQL
   - Found: `AgentSemanticMemory.search`/`searchHybrid` on `PostgresAgentMemory` page through `list`, which calls `get` per row (three reads and three authorize calls each) and then `get` again per hit, so one query costs more than 3N round trips for N ≤ 1,000 entries; `PostgresAgentDefinitions.list` costs six per agent. Fixed 2026-11-06 for the memory listing: `readMany` reads a page with two batch queries and applies the same three authorization points per readable record as `get` (so the fence is not weakened), with a PostgreSQL test that counts queries (3 for 50 memories) and authorizations, checks that expired and denied memories are skipped, that a batched read equals a single read, and that pagination continues. The definition listing (six queries per agent) is P4-48.
-- [ ] P4-48 Batch the PostgreSQL definition listing
-  - Found while fixing P4-17: `PostgresAgentDefinitions.list` calls `get` per agent (three reads and three authorizations each, six queries per agent). Fix: a `readMany` with the same read, permit-with-manifest, re-read and fence semantics as `get`, and a query-counting test like the memory one.
+- [x] P4-48 Batch the PostgreSQL definition listing
+  - Found while fixing P4-17: `PostgresAgentDefinitions.list` calls `get` per agent (three reads and three authorizations each, six queries per agent). Fix: a `readMany` with the same read, permit-with-manifest, re-read and fence semantics as `get`, and a query-counting test like the memory one. Fixed 2026-11-06: `readMany` with the same authorize/read/authorize/read/authorize/read sequence as `get`; a PostgreSQL test shows 20 agents in at most 4 queries, a denied agent skipped, the latest version listed, a batched read equal to a single read and pagination intact.
 - [x] P4-18 Incremental rendering and a renderer benchmark
   - Found: `A2UIRenderer.apply` rebuilds the whole surface with `replaceChildren` on every message, including every keystroke (a field write becomes `updateDataModel` → full re-render with manual focus and selection restore); the React Native and Flutter stores re-snapshot the whole tree too. Fixed 2026-11-06 for the web renderer: bound Text and TextField nodes are patched in place on data-only updates when every rendered component is built in; `scripts/bench-renderer.mjs` (998 components) shows 0.73 against 15.4 ms per update; tests check six update steps against a fresh full render, that no element is created and node identity is kept, that a custom component forces a rebuild, and run the benchmark as a smoke test. The React Native and Flutter stores are P4-49.
 - [ ] P4-49 Incremental updates for the React Native and Flutter stores
