@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**63 / 92 tasks complete (68%)**
+**64 / 93 tasks complete (69%)**
 
 `██████████████░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 49 / 61 | 12 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42) |
+| P4 fixes and improvements from the 2026-11-06 code review | 50 / 62 | 12 (P4-07, P4-09, P4-18..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-48) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -140,8 +140,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found while fixing P4-16: `capability-server.ts`, `approval-server.ts`, `event-ingress.ts` and the agent package still map statuses by message text; the supervisor's `lostRace` regex and the disconnected importer's `/version conflict|.../` match messages; `remote-promotion.ts`, `remote-control-connector.ts`, `oidc-discovery.ts`, `jwt-jwks-manager.ts` and `notice-https-transport.ts` swallow the cause (`catch{throw Error('... failed')}`). Fixed 2026-11-06 except the capability server: `AgentError` with `agentErrorStatus` (33 throw sites converted; legacy messages still honoured for host-supplied stores), the approval, event-ingress and metrics servers map by code and answer with fixed texts (a test checks statuses and that no message is echoed), and the eight swallowing sites keep their cause (a test checks one). The supervisor's `lostRace` regex, the disconnected importer's message match and the capability server's message table are P4-47.
 - [x] P4-47 Map the run supervisor and disconnected importer by code
   - Found while fixing P4-44 (the capability server was done then). Fixed 2026-11-06: a `lost_race` `AgentError` code (30 throw sites in `durable-runs`, `postgres-agent-runs`, `action-journal`, the cost budget) replaces the supervisor's `lostRace` regex (a unit test shows reworded and look-alike messages are reported, coded ones ignored); `Source publication did not advance` is a `conflict` `AppMixerError` and the importer checks the code before falling back to the documented messages that host repositories may still throw.
-- [ ] P4-17 Cut the round trips of exact search and listings on PostgreSQL
-  - Found: `AgentSemanticMemory.search`/`searchHybrid` on `PostgresAgentMemory` page through `list`, which calls `get` per row (three reads and three authorize calls each) and then `get` again per hit, so one query costs more than 3N round trips for N ≤ 1,000 entries; `PostgresAgentDefinitions.list` costs six per agent. Fix: one page read with the fence applied once per page and per-record authorization in memory, a benchmark at `maxEntries: 1000`, and the same for the definition listing.
+- [x] P4-17 Cut the round trips of exact search and listings on PostgreSQL
+  - Found: `AgentSemanticMemory.search`/`searchHybrid` on `PostgresAgentMemory` page through `list`, which calls `get` per row (three reads and three authorize calls each) and then `get` again per hit, so one query costs more than 3N round trips for N ≤ 1,000 entries; `PostgresAgentDefinitions.list` costs six per agent. Fixed 2026-11-06 for the memory listing: `readMany` reads a page with two batch queries and applies the same three authorization points per readable record as `get` (so the fence is not weakened), with a PostgreSQL test that counts queries (3 for 50 memories) and authorizations, checks that expired and denied memories are skipped, that a batched read equals a single read, and that pagination continues. The definition listing (six queries per agent) is P4-48.
+- [ ] P4-48 Batch the PostgreSQL definition listing
+  - Found while fixing P4-17: `PostgresAgentDefinitions.list` calls `get` per agent (three reads and three authorizations each, six queries per agent). Fix: a `readMany` with the same read, permit-with-manifest, re-read and fence semantics as `get`, and a query-counting test like the memory one.
 - [ ] P4-18 Incremental rendering and a renderer benchmark
   - Found: `A2UIRenderer.apply` rebuilds the whole surface with `replaceChildren` on every message, including every keystroke (a field write becomes `updateDataModel` → full re-render with manual focus and selection restore); the React Native and Flutter stores re-snapshot the whole tree too. Fix: a 1,000-component benchmark fixture, data-only updates that patch bound Text and TextField nodes in place, and a parity test that the incremental path matches a full render.
 - [ ] P4-19 Avoid decrypting the whole browser queue on every worker pass

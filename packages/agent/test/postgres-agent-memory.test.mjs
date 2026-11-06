@@ -92,3 +92,18 @@ test('PostgreSQL tombstone compaction restores room under the history quota, is 
   assert.ok((await memory.auditHistory(actor,mine,{limit:100})).items.some(item=>item.action==='purge'&&item.count===15),'compaction is audited without values');
  }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
 });
+
+test('PostgreSQL listing reads a page in a constant number of queries and keeps per-record authorization',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
+ const schema='app_mixer_batch_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100,queries=0,authorizations=0;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);
+  const memory=new PostgresAgentMemory({enabled:true,maxEntries:100,maxTtlMs:1000,clock:()=>now,authorize:(_who,_scope,action,id)=>{authorizations++;return !(action==='read'&&id==='m07');},query:(sql,args)=>{queries++;return pool.query(sql,args);},transaction:transaction(pool)});await memory.initialize();
+  const mine={...scope,kind:'episodic',owner:{kind:'user',id:'u1'}},opts=expiresAt=>({expectedRevision:null,expiresAt,provenance});
+  for(let n=0;n<50;n++)await memory.put(actor,mine,'m'+String(n).padStart(2,'0'),{n},opts(n===3?150:500));
+  now=200;queries=0;authorizations=0;const page=await memory.list(actor,mine,{limit:100});
+  assert.equal(page.items.length,48,'50 memories minus the expired one and the one the actor may not read');assert.ok(!page.items.some(item=>item.id==='m07'||item.id==='m03'));assert.equal(page.nextAfter,undefined);
+  assert.ok(queries<=3,queries+' queries for 50 memories (one id scan and two batch reads)');assert.ok(authorizations>=3*49,'every readable memory is still authorized before, during and after the read ('+authorizations+')');
+  for(const item of page.items.slice(0,5))assert.deepEqual(await memory.get(actor,mine,item.id),item,'a batched read equals a single read');
+  queries=0;const first=await memory.list(actor,mine,{limit:10}),second=await memory.list(actor,mine,{limit:10,after:first.nextAfter});
+  assert.equal(first.items.length,10);assert.ok(first.nextAfter);assert.equal(second.items[0].id>first.items.at(-1).id,true,'pagination continues after the cursor');assert.ok(queries<=8,queries+' queries for two pages');
+ }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
+});

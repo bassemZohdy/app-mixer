@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- `PostgresAgentMemory.list`, and with it semantic and hybrid search, reads a page of memories with two batch queries instead of two per memory (a 50-memory page: 3 queries instead of about 101) while keeping the per-record authorization before, during and after the read.
 - Deleted business records no longer accumulate forever: `SqliteDataProvider.compactTombstones` removes tombstones in bounded passes.
 - `EncryptedBrowserQueue` can be freed once it holds 1,000 items: a new `purge` deletes settled items in bounded passes while keeping the authenticated counter, state digest and rollback anchor consistent (a restored purged envelope is still detected).
 - A `Text` bound to a number or boolean no longer renders as an empty string on the web, React Native and Flutter renderers: finite numbers and booleans are shown in their JSON spelling, and the shared accessibility fixture checks `3`, `2.5`, `4`, `true` and `false`.

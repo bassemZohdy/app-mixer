@@ -111,3 +111,7 @@ To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-me
 ## Tombstone compaction
 
 Deleting or expiring a memory leaves a tombstone that keeps the ID's revision counter, and tombstones count toward the history quota (ten times `maxEntries` per scope). `compactTombstones(actor, scope, {limit})` (SQLite and PostgreSQL, same `purge` permission as `purgeExpired`) physically deletes up to `limit` (1 to 1,000) of a scope's tombstones, oldest first, and returns the count; it is audited as a `purge` event with the count and never touches live memories or other scopes. A compacted ID restarts at revision 1 when written again, so compact only IDs that no client can still hold a revision for. Run `purgeExpired` first so expired memories become tombstones, then compact on the owner's chosen schedule.
+
+## Listing cost on PostgreSQL
+
+`PostgresAgentMemory.list` (and the semantic search that pages through it) reads a page of memories with two queries for the whole batch instead of two per memory. Each readable memory is still authorized before the first read, after it and after a second read that must show the same revision, so the guarantees of `get` hold per record; a memory the actor may not read, or that is missing or expired, is skipped. A page of 50 memories costs three queries (one id scan, two batch reads) instead of about 101.
