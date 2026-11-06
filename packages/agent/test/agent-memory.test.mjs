@@ -73,3 +73,13 @@ test('erasing a scope needs its own permission, removes only that scope and is a
   assert.equal((await store.put(actor,scope,'a','new',write(500))).revision,3);
  }finally{store.close();}
 });
+
+test('SQL literals for index predicates accept only plain identifiers and never an unescaped quote',async()=>{
+ const {sqlLiteral}=await import('../dist/postgres-agent-memory.js');const {validMemoryId}=await import('../dist/agent-memory.js');
+ assert.equal(sqlLiteral('tenant-1'),"'tenant-1'");assert.equal(sqlLiteral('user'),"'user'");assert.equal(sqlLiteral('model:v1.2/a@b_c'),"'model:v1.2/a@b_c'");
+ for(const character of ["'",'"','\\',';','$','`','(',')',' ','\n','\r','\t','\0','%','*','=','|','&','<','>','#','é','’']){
+  for(const value of ['a'+character,character+'a','a'+character+'b'])if(!validMemoryId(value)){assert.throws(()=>sqlLiteral(value),/Invalid SQL identifier/,JSON.stringify(value));}
+  assert.equal(validMemoryId('a'+character+'b'),false,JSON.stringify(character)+' is not in the memory ID alphabet');
+ }
+ for(const value of ['',undefined,null,1,{},[],'x'.repeat(129),"o'brien"])assert.throws(()=>sqlLiteral(value),/Invalid SQL identifier/);
+});

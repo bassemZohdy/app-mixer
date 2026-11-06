@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**20 / 66 tasks complete (30%)**
+**21 / 66 tasks complete (32%)**
 
 `██████░░░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 6 / 35 | 29 (P4-03, P4-05, P4-07, P4-09..P4-28, P4-30..P4-35) |
+| P4 fixes and improvements from the 2026-11-06 code review | 7 / 35 | 28 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-28, P4-30..P4-35) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -120,8 +120,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: the development review page (`planes.ts`) and the approval review page (`approval-server.ts`) ship inline scripts under `script-src 'unsafe-inline'`; the generated `server.mjs` serves `/` with no Content-Security-Policy, Referrer-Policy or frame-ancestors. Fix: serve the page scripts as separate modules (or nonces), set a strict CSP and the other headers in the generated server, and assert them in the browser smoke tests.
 - [ ] P4-14 Harden the HTTP and TLS servers that core creates
   - Found: `createControlPlane`, `createDataPlane(Https)`, `createCapabilityServer`, `createAGUIServer`, the generated `server.mjs` and `deploy/local/service.mjs` leave Node's default `requestTimeout`/`headersTimeout`/`keepAliveTimeout`; only `deploy/kubernetes/data-plane.mjs` sets them. The HTTPS variants set `minVersion: 'TLSv1.2'` with no cipher policy. Fix: conservative defaults in one server factory, a `ciphers`/`honorCipherOrder` policy, and a slow-body test.
-- [ ] P4-15 Keep validated identifiers out of SQL text
-  - Found: `postgres-agent-memory.ts` builds the HNSW index predicate, the scoped filter and `value::jsonb->>'modelId'='${modelId}'` by string interpolation; safety rests on the `validMemoryId` regex. Fix: parameterize the query-side filters, quote index predicates through one helper, and add a test that the regex rejects every quoting character.
+- [x] P4-15 Keep validated identifiers out of SQL text
+  - Found: `postgres-agent-memory.ts` builds the HNSW index predicate, the scoped filter and `value::jsonb->>'modelId'='${modelId}'` by string interpolation; safety rests on the `validMemoryId` regex. Fixed 2026-11-06: scope and model identifiers are quoted through one validating helper (`sqlLiteral`: memory-ID alphabet, quotes doubled as a second layer) and a test rejects every quoting character. The query-side filters stay literals on purpose: the HNSW index is partial and its expression holds constants, and the planner only matches the query against it when it holds the same constants (a bound parameter would silently fall back to a sequential scan).
 - [ ] P4-16 Typed errors with codes and preserved causes
   - Found: HTTP status mapping is done by comparing message strings (`planes.ts`, `capability-server.ts`, `approval-server.ts`, `event-ingress.ts`, the supervisor's `lostRace` regex, the disconnected importer's `/version conflict|.../`), so a new or reworded message silently becomes a 500 or a wrong class; `remote-promotion.ts`, `remote-control-connector.ts`, `oidc-discovery.ts`, `jwt-jwks-manager.ts` and `notice-https-transport.ts` swallow the cause (`catch{throw Error('… failed')}`). Fix: an `AppMixerError` with `code` and `status`, `cause` attached without secrets, mapping by code, and a test that every thrown code has a mapping.
 

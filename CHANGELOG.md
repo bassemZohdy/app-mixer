@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- The PostgreSQL memory store quotes the identifiers it must place in index predicates and expressions through one validating helper (`sqlLiteral`) instead of interpolating them, and a test checks that every quoting character is refused.
 - `PostgresAgentSchedules.fireDue` bounds its rescans (`maxScans`) and reports `scans` and `backlog`, so heavy contention or a long catch-up no longer rescans the due list without limit.
 - `DevelopmentAgent` works on schema version 2 drafts (page descriptions, extension references and operations, `Extension` components); it previously refused every draft that was not version 1, including applications migrated to version 2.
 - `DevelopmentProposals` no longer refuses new proposals forever after 100 have been created: only pending proposals count toward the limit and settled ones are evicted beyond a `settledLimit` bound.
