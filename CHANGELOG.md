@@ -14,6 +14,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - `AgentWorkerHost` runs schedule, recovery and notice workers in one process, rolls back a partial start, drains them in parallel with a bounded stop on SIGTERM or SIGINT, and exposes readiness.
 - Shared TextField fixture (rendering, data-model updates, user input, the long-text variant and removal) checked on the web renderer, the React Native store and the Flutter VM renderer, plus a component-by-adapter parity table in the acceptance checklists.
 - JSON Schema record forms show a scalar property's `description` as accessible help text in the editor and preview.
+- JSON Schema record forms support `$comment`, `deprecated`, `examples`, object and array `description`, scalar array item `title`, `default` for new records, `readOnly`, `format` `date`/`date-time`/`email` (also checked by the server validator through `RECORD_FORMATS`), and one discriminated `oneOf`/`anyOf` per object.
 - Two-process race test showing schedule workers that share one store fire each due occurrence exactly once.
 - Credential fuzz test for JWT-authenticated capability calls.
 - Hostile HTTP fuzz test for the Control Plane and Data Plane boundaries.
