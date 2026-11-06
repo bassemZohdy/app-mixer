@@ -166,6 +166,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   const fixedRegistry=new NativeComponentRegistry();for(const [name,entry] of installed)fixedRegistry.register(name,entry.render,entry.validate);
   // Approximate the browser's default heading scale for the supported text variants.
   // React Native's default font scaling remains enabled for accessibility.
+  const headingLevels:Record<string,number>={h1:1,h2:2,h3:3,h4:4,h5:5};
   const textStyles:Record<string,{fontSize:number;fontWeight?:'bold'}>={
     h1:{fontSize:32,fontWeight:'bold'},h2:{fontSize:24,fontWeight:'bold'},
     h3:{fontSize:18.72,fontWeight:'bold'},h4:{fontSize:16,fontWeight:'bold'},
@@ -189,7 +190,8 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const render=(node:NativeNode,surface:NativeSurface):any=>{
       const extension=installed.get(node.kind);
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key:node.id});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key:node.id,...(node.variant?.startsWith('h')?{accessibilityRole:'header'}:{}),style:textStyles[node.variant??'body']},node.text);
+      // Heading levels match the web renderer's h1-h5 elements; react-native-web renders them as h1-h5.
+      if(node.kind==='Text'){const level=headingLevels[node.variant??''];return React.createElement(primitives.Text,{key:node.id,...(level?{accessibilityRole:'header','aria-level':level}:{}),style:textStyles[node.variant??'body']},node.text);}
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key:node.id,accessibilityRole:'button',disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}

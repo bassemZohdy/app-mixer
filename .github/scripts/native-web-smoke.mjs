@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createReactNativeA2UIComponent,APP_MIXER_CATALOG} from '../../packages/native/dist/index.js';
 import {replayFixtures,nativeWebSurfaceRoot,nativeWebTree} from './fixture-tree.mjs';
@@ -55,4 +56,19 @@ try{
  deliver.type=(element,value)=>React.act(()=>{Object.getOwnPropertyDescriptor(element.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new window.Event('input',{bubbles:true}));});
  await replayFixtures(deliver,document.getElementById('app'),{actions:()=>fixtureActions,errors:()=>fixtureErrors,root:nativeWebSurfaceRoot,tree:nativeWebTree});
  await React.act(()=>fixtureRoot.unmount());
+ // The shared accessibility and typography reference, also checked on the web renderer and on Flutter.
+ const reference=JSON.parse(readFileSync(new URL('../../adapters/flutter/test/fixtures/accessibility.json',import.meta.url),'utf8'));
+ const a11yRoot=createRoot(document.getElementById('app'));let a11yReceive;const a11yErrors=[];
+ await React.act(()=>a11yRoot.render(React.createElement(Component,{subscribe:callback=>{a11yReceive=callback;},onError:error=>a11yErrors.push(error),onAction:()=>{}})));
+ await React.act(()=>{for(const message of reference.messages)a11yReceive(message);});
+ const app=document.getElementById('app'),leaf=text=>[...app.querySelectorAll('*')].find(element=>element.children.length===0&&element.textContent===text);
+ for(const expected of reference.semantics){
+  if(expected.role==='heading'){const element=leaf(expected.name);assert.equal(element?.tagName,'H'+expected.level,expected.name);continue;}
+  if(expected.role==='text'){const element=leaf(expected.name);assert.ok(element,expected.name);assert.equal(element.closest('h1,h2,h3,h4,h5,h6,button,[role="button"],[role="heading"]'),null,expected.name);continue;}
+  if(expected.role==='textbox'){const element=app.querySelector(`[aria-label="${expected.name}"]`);assert.equal(element?.tagName,expected.multiline?'TEXTAREA':'INPUT',expected.name);assert.equal(element.value,expected.value,expected.name);continue;}
+  if(expected.role==='button'){const element=[...app.querySelectorAll('[role="button"],button')].find(item=>item.textContent===expected.name);assert.ok(element,expected.name);assert.equal(element.getAttribute('aria-disabled')==='true'||element.disabled===true,!expected.enabled,expected.name);continue;}
+  assert.fail('unknown role '+expected.role);
+ }
+ for(const expected of reference.typography){const style=leaf(expected.text).getAttribute('style')??'',size=Number(/font-size: ([\d.]+)px/.exec(style)?.[1]);assert.ok(Math.abs(size-expected.fontSize)<0.01,`${expected.text} font size ${size}`);assert.equal(/font-weight: (bold|700)/.test(style),expected.bold,`${expected.text} weight`);}
+ assert.deepEqual(a11yErrors,[]);await React.act(()=>a11yRoot.unmount());
 }finally{dom.window.close();}
