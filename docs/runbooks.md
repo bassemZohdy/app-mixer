@@ -2,7 +2,9 @@
 
 One section per alert in [`deploy/observability/prometheus-alerts.yml`](../deploy/observability/prometheus-alerts.yml). Each section says what the alert means, what to check first and how to resolve it with the APIs App Mixer provides. A test checks that every alert has a section here and that every metric and label value an alert uses is one the product emits.
 
-The rules are starting points. Tune thresholds and `for:` durations to your SLOs, keep the job names (`app-mixer-data-plane`, `app-mixer-agent`) or update the expressions, and route `severity: page` and `severity: ticket` in Alertmanager. App Mixer does not ship Alertmanager routes, on-call schedules or dashboards.
+The rules are starting points. Tune thresholds and `for:` durations to your SLOs, keep the job names (`app-mixer-data-plane`, `app-mixer-agent`) or update the expressions, and route `severity: page` and `severity: ticket` in Alertmanager. [`alertmanager-example.yml`](../deploy/observability/alertmanager-example.yml) is a starting routing tree: pages to an on-call receiver, everything else to tickets, resolved notices on, and ticket alerts for a target suppressed while its scrape is failing. Replace its two placeholder webhook URLs with your integrations. App Mixer does not provide on-call schedules, paging or ticketing services, or dashboards.
+
+The failure drill in `packages/cli/test/alert-rules.test.mjs` (`APP_MIXER_TEST_PROMETHEUS=docker`, run in CI) loads both files into real Prometheus and Alertmanager containers with the `for:` durations and grouping timings shortened, scrapes the real metrics servers, breaks them (no schedule worker, an uncertain action, a pod stuck draining, then a metrics endpoint gone), and checks that each alert reaches the right webhook receiver with its runbook and that resolved notices follow recovery.
 
 ## AppMixerMetricsScrapeFailing
 
