@@ -9,6 +9,7 @@ npm ci
 npm run build          # web bundle first, then every workspace
 npm test               # builds, then runs every default test with node --test
 npm run todo           # recomputes the progress table in TODO.md; a test fails when it is stale
+npm run docs           # regenerates docs/README.md after adding, renaming or retitling a document
 ```
 
 Tests run against `dist`, so rebuild after editing `src`. Every change should come with a test that fails without it, a `CHANGELOG.md` entry under `### Added` or `### Fixed`, and updated documentation under `docs/`. Tasks are tracked in `TODO.md`; tick the task and run `npm run todo`.

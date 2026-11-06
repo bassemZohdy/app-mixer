@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**23 / 67 tasks complete (34%)**
+**24 / 67 tasks complete (36%)**
 
 `███████░░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 9 / 36 | 27 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-28, P4-32..P4-36) |
+| P4 fixes and improvements from the 2026-11-06 code review | 10 / 36 | 26 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-32..P4-36) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -152,8 +152,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fix: update with the collector and browser tests green, add `.github/dependabot.yml` grouped by ecosystem, and run `npm audit --omit=dev` in CI.
 
 ### Documentation and process
-- [ ] P4-28 Index every document from the README and retire the orphans
-  - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fix: a generated docs index, merge or delete the three orphans, refresh the status paragraph, and a test that every `docs/**/*.md` is reachable from the README.
+- [x] P4-28 Index every document from the README and retire the orphans
+  - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fixed 2026-11-06: `npm run docs` generates `docs/README.md` from the file headings (a test fails when it is stale), the README links it and its status paragraph is refreshed, the three orphans (`roadmap.md`, `requirements.md`, `architecture.md`, M0-era stubs that duplicated `docs/specs/*` and `TODO.md`) were deleted, and a test checks every `docs/**/*.md` is reachable from the README.
 - [x] P4-29 Compute the progress table instead of maintaining it by hand
   - Found: the table said P2 was 0 / 10 while P2-03 was checked. Fixed 2026-11-06: `scripts/todo-progress.mjs` derives the header, bar and per-phase rows from the task checkboxes (`npm run todo` rewrites, `--check` fails when stale), and a test fails `npm test` when TODO.md is out of date.
 - [x] P4-30 Contributor and security process files

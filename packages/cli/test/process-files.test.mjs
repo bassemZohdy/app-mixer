@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,readdirSync,statSync} from 'node:fs';
-import {join} from 'node:path';
+import {join,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),read=path=>readFileSync(join(root,path),'utf8');
 function files(directory){return readdirSync(directory).flatMap(name=>{if(['node_modules','dist','.git'].includes(name))return[];const path=join(directory,name);return statSync(path).isDirectory()?files(path):[path];});}
@@ -29,4 +29,17 @@ test('workflows cancel superseded runs, bound every job and exercise the device 
   assert.ok(jobs.length>0,name+' has jobs');assert.equal((text.match(/^    timeout-minutes: \d+$/gm)??[]).length,jobs.length,name+': every job has timeout-minutes');
   if(name!=='ci.yml'){assert.match(text,/^  push:\n    branches: \[main\]$/m,name+' runs on pushes to main');assert.match(text,/^  schedule:\n    - cron: '[^']+'$/m,name+' runs weekly');}
  }
+});
+
+test('every document under docs is reachable from the README and the generated index is current',async()=>{
+ const {render}=await import(new URL('../../../scripts/docs-index.mjs',import.meta.url));
+ assert.equal(read('docs/README.md').replaceAll('\r\n','\n'),render(),'docs/README.md is out of date; run npm run docs');
+ const seen=new Set(),queue=[join(root,'README.md')];
+ while(queue.length){
+  const file=queue.pop();if(seen.has(file))continue;seen.add(file);
+  for(const match of readFileSync(file,'utf8').matchAll(/\]\(([^)#\s]+\.md)(?:#[^)]*)?\)/g)){if(/^[a-z]+:/i.test(match[1]))continue;const target=join(file,'..',match[1]);if(existsSync(target))queue.push(target);}
+ }
+ const norm=path=>path.split(sep).join('/');
+ const unreachable=files(join(root,'docs')).filter(path=>path.endsWith('.md')&&![...seen].some(item=>norm(item)===norm(path)));
+ assert.deepEqual(unreachable.map(path=>norm(path).slice(norm(root).length)),[]);
 });
