@@ -4,7 +4,7 @@ export const APP_MIXER_CATALOG = 'https://raw.githubusercontent.com/bassemZohdy/
 export const BASIC_CATALOG = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj = Record<string, unknown>;
 export type ActionMessage = {version:'v0.9.1'; action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string, unknown>}};
-type Interaction = {write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
+type Interaction = {bind: (update: (data: unknown) => void) => void; write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
 type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document, interaction: Interaction) => HTMLElement;
 const obj = (x: unknown): x is Obj => x !== null && typeof x === 'object' && !Array.isArray(x);
 const only = (value: Obj, keys: string[]): boolean => Object.keys(value).every(key => keys.includes(key));
@@ -122,13 +122,15 @@ function validateBasic(c: Obj): void {
 }
 export function basicRegistry(): ComponentRegistry {
   const registry = new ComponentRegistry();
-  registry.register('Text', (c, _child, data, doc) => {
+  registry.register('Text', (c, _child, data, doc, interaction) => {
     if (!only(c, ['id','component','text','variant'])) throw Error('Unsupported Text property');
     if (c.variant !== undefined && !['h1','h2','h3','h4','h5','caption','body'].includes(c.variant as string)) throw Error('Unsupported Text variant');
     if (!(typeof c.text === 'string' || (obj(c.text) && typeof c.text.path === 'string'))) throw Error('Invalid Text');
     const variants: Record<string,string> = {h1:'h1', h2:'h2', h3:'h3', h4:'h4', h5:'h5', caption:'small', body:'p'};
     const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant] : 'p';
-    const element = doc.createElement(tag); element.textContent = displayText(c.text, data); return element;
+    const element = doc.createElement(tag); element.textContent = displayText(c.text, data);
+    interaction.bind(next => { const text = displayText(c.text, next); if (element.textContent !== text) element.textContent = text; });
+    return element;
   }, validateBasic);
   for (const type of ['Column', 'Row']) registry.register(type, (c, child, _data, doc) => {
     if (!only(c, ['id','component','children','justify','align'])) throw Error('Unsupported layout property');
@@ -163,6 +165,7 @@ export function basicRegistry(): ComponentRegistry {
     input.addEventListener('compositionend', () => { composing = false; interaction.write(path, input.value, input); });
     input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
     interaction.controls.set(c.id as string, input);
+    interaction.bind(next => { const value = textValue(c.value, next); if (input.value !== value) input.value = value; });
     wrapper.appendChild(input); return wrapper;
   }, validateBasic);
   registry.register('Button', (c, child, _data, doc, interaction) => {
@@ -182,9 +185,13 @@ export function basicRegistry(): ComponentRegistry {
     button.addEventListener('click', () => interaction.action(event.name as string, context));
     return button;
   }, validateBasic);
+  for (const name of ['Text','Column','Row','Card','TextField','Button']) BUILTIN.add(registry.get(name)!);
   return registry;
 }
-type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
+/** `patch` is set when every rendered component is a built-in one: a data-only update then refreshes the bound Text and TextField nodes in place instead of rebuilding the surface. */
+type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; componentRevision: object; patch?: ((data: unknown) => void)[] | undefined };
+/** Renderers created by `basicRegistry`; any other renderer may read data in ways the incremental path cannot see. */
+const BUILTIN = new WeakSet<Renderer>();
 export class A2UIRenderer {
   private readonly surfaces = new Map<string, Surface>();
   constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry(), private readonly onAction?: (message: ActionMessage) => void) {}
@@ -224,8 +231,13 @@ export class A2UIRenderer {
       if (payload.path !== undefined && typeof payload.path !== 'string') throw Error('Invalid data path');
       data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value') || payload.value === undefined);
     }
+    if (kind === 'updateDataModel' && surface.patch) {
+      for (const update of surface.patch) update(data);
+      surface.data = data; return;
+    }
     const doc = this.host.ownerDocument;
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
+    const patches: ((data: unknown) => void)[] = []; let patchable = true;
     let renderedCount = 0;
     const render = (componentId: string, visited: Set<string>): HTMLElement => {
       if (++renderedCount > 5000) throw Error('Component tree too large');
@@ -234,6 +246,7 @@ export class A2UIRenderer {
       if (visited.has(componentId) || visited.size >= 100) throw Error('Cyclic or deeply nested components');
       const next = new Set(visited); next.add(componentId);
       const interaction: Interaction = {
+        bind: update => { patches.push(update); },
         controls, enabled: !!this.onAction,
         write: (path, value, input) => {
           if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(componentId) !== input) return;
@@ -258,7 +271,9 @@ export class A2UIRenderer {
           this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
         }
       };
-      const element = this.registry.get(c.component as string)!(c, child => render(child, next), data, doc, interaction);
+      const renderer = this.registry.get(c.component as string)!;
+      if (!BUILTIN.has(renderer)) patchable = false;
+      const element = renderer(c, child => render(child, next), data, doc, interaction);
       // Stable hooks for host styling and test selection: the component ID and, when given, its variant. Colors and borders are the host's theme.
       element.dataset.componentId = c.id as string;
       if (typeof c.variant === 'string') element.dataset.variant = c.variant;
@@ -268,6 +283,7 @@ export class A2UIRenderer {
     const root = components.has('root') ? render('root', new Set()) : undefined;
     surface.element.replaceChildren(...(root ? [root] : []));
     surface.components = components; surface.data = data; surface.controls = controls; surface.componentRevision = componentRevision;
+    surface.patch = patchable ? patches : undefined;
   }
 }
 

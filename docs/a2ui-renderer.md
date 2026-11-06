@@ -42,3 +42,7 @@ The renderers do not impose a theme: colors, borders and fonts belong to the hos
 | Variant | `data-variant` (`h1`-`h5`, `body`, `caption`, `shortText`, `longText`, `default`, `primary`, `borderless`) | `variantStyles={{Button:{primary:...},TextField:{longText:...}}}` prop, applied as `style` | `primary` is Material's filled button; `default` and `borderless` are the text button; `longText` is a multi-line field |
 
 Example (web): `button[data-variant="primary"] { background: #1a56db; color: white }`, or select a component in a test with `[data-component-id="save"]`. Text variants also keep their element or text-theme mapping.
+
+## Data updates
+
+A data-only update (`updateDataModel`, which every keystroke in a `TextField` sends) no longer rebuilds the surface when every rendered component is built in (`Text`, `Column`, `Row`, `Card`, `TextField`, `Button`): the bound `Text` and `TextField` nodes are refreshed in place, so DOM nodes, focus and selection are kept and no element is created. A surface that renders any custom component, or an `updateComponents` message, still rebuilds, because a custom renderer may read any part of the data. `node scripts/bench-renderer.mjs [updates]` measures it on a 998-component surface: about 0.7 ms per update against about 15 ms for a rebuild on the development machine (about 20 times faster). The React Native and Flutter stores still re-snapshot the tree on every update.
