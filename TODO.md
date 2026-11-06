@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**27 / 68 tasks complete (40%)**
+**28 / 68 tasks complete (41%)**
 
 `████████░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 13 / 37 | 24 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-37) |
+| P4 fixes and improvements from the 2026-11-06 code review | 14 / 37 | 23 (P4-03, P4-05, P4-07, P4-09..P4-13, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-37) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -118,8 +118,8 @@ Each item names what was found and where, and the fix. An item is done when the 
 ### Security hardening
 - [ ] P4-13 Remove `'unsafe-inline'` scripts and add headers to the generated app
   - Found: the development review page (`planes.ts`) and the approval review page (`approval-server.ts`) ship inline scripts under `script-src 'unsafe-inline'`; the generated `server.mjs` serves `/` with no Content-Security-Policy, Referrer-Policy or frame-ancestors. Fix: serve the page scripts as separate modules (or nonces), set a strict CSP and the other headers in the generated server, and assert them in the browser smoke tests.
-- [ ] P4-14 Harden the HTTP and TLS servers that core creates
-  - Found: `createControlPlane`, `createDataPlane(Https)`, `createCapabilityServer`, `createAGUIServer`, the generated `server.mjs` and `deploy/local/service.mjs` leave Node's default `requestTimeout`/`headersTimeout`/`keepAliveTimeout`; only `deploy/kubernetes/data-plane.mjs` sets them. The HTTPS variants set `minVersion: 'TLSv1.2'` with no cipher policy. Fix: conservative defaults in one server factory, a `ciphers`/`honorCipherOrder` policy, and a slow-body test.
+- [x] P4-14 Harden the HTTP and TLS servers that core creates
+  - Found: `createControlPlane`, `createDataPlane(Https)`, `createCapabilityServer`, `createAGUIServer`, the generated `server.mjs` and `deploy/local/service.mjs` leave Node's default `requestTimeout`/`headersTimeout`/`keepAliveTimeout`; only `deploy/kubernetes/data-plane.mjs` sets them. The HTTPS variants set `minVersion: 'TLSv1.2'` with no cipher policy. Fixed 2026-11-06: `limitServer` (core and an agent copy, since agent does not import core) applies 10 s header, 30 s request, 5 s keep-alive and 30 s idle timeouts to every server factory and to the generated `server.mjs` (the local service uses the factories); `TLS_POLICY` adds ECDHE AEAD `ciphers` and `honorCipherOrder` to the HTTPS servers and the credential reloader; a test stalls a request body and checks the connection is closed promptly. Found while testing: Node only checks timeouts every 30 s (and ignored `connectionsCheckingInterval` here), so the idle timeout is the prompt cut-off; the AG-UI event stream is exempt from it.
 - [x] P4-15 Keep validated identifiers out of SQL text
   - Found: `postgres-agent-memory.ts` builds the HNSW index predicate, the scoped filter and `value::jsonb->>'modelId'='${modelId}'` by string interpolation; safety rests on the `validMemoryId` regex. Fixed 2026-11-06: scope and model identifiers are quoted through one validating helper (`sqlLiteral`: memory-ID alphabet, quotes doubled as a second layer) and a test rejects every quoting character. The query-side filters stay literals on purpose: the HNSW index is partial and its expression holds constants, and the planner only matches the query against it when it holds the same constants (a bound parameter would silently fall back to a sequential scan).
 - [ ] P4-16 Typed errors with codes and preserved causes

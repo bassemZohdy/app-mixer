@@ -31,3 +31,9 @@ Control requests require `Authorization: Bearer <token>`. JSON mutations require
 | Data | `GET /application/versions/:version` | A specific published version. |
 
 A stale revision returns 409. Bad requests return 400; unauthorized requests return 401. No Data Plane route reads drafts or changes definitions. Optional local proposal endpoints and a review UI provide separate agent and developer tokens; see [development proposals](development-proposals.md). Complete schema, capability and permission validation and production authorization remain separate roadmap items.
+
+## Server limits and TLS policy
+
+Every HTTP server created by `@app-mixer/core` and `@app-mixer/agent` (control and Data Plane, capability server, metrics servers, the AG-UI, approval, event-ingress and notice-receiver servers and the generated `server.mjs`) applies `limitServer`: 10 s for request headers, 30 s for a whole request, 5 s keep-alive and a 30 s socket idle timeout (no bytes in either direction). Node only checks expired connections every 30 s, which is why the idle timeout is the prompt cut-off for a client that stalls mid-request. The AG-UI event-stream server has no idle timeout because a stream can be silent while a model works. Override the values by calling `limitServer(server, {headersTimeoutMs, requestTimeoutMs, keepAliveTimeoutMs, idleTimeoutMs})` on the returned server before `listen`; `deploy/kubernetes/data-plane.mjs` does so with tighter values.
+
+The HTTPS variants and the credential reloader use `TLS_POLICY`: TLS 1.2 or later, only ECDHE key exchange with AES-GCM or ChaCha20-Poly1305 suites (TLS 1.3 suites are unaffected) and the server's cipher order. A client or certificate that needs a different suite must terminate TLS at a proxy.

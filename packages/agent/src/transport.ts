@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import {limitServer} from './server-limits.js';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import { validateRunInput, type LangGraphAGUIAdapter, type RunInput } from './index.js';
 import {traceAgent,type AgentTransportTracingOptions} from './transport-tracing.js';
@@ -47,7 +48,7 @@ export function createAGUIServer(agent: LangGraphAGUIAdapter, token: string, tra
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Token must contain at least 32 characters');
   if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid agent tracing configuration');
   const dispatch=tracing?traceAgent({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent}):undefined;
-  return createServer((req,res) => {
+  return limitServer(createServer((req,res) => {
    const run=()=>{void (async()=>{
     if (!isAuthorized(req,token)) { reply(res,401,'Unauthorized'); return; }
     if(req.method !== 'POST' || req.url !== '/agent') { reply(res,404,'Not found'); return; }
@@ -69,5 +70,5 @@ export function createAGUIServer(agent: LangGraphAGUIAdapter, token: string, tra
     } catch { if(!res.destroyed) res.destroy(); }
    })().catch(()=>{if(!res.headersSent&&!res.destroyed)reply(res,500,'Internal server error');else if(!res.destroyed)res.destroy();});};
    if(dispatch)dispatch(req,res,run);else run();
-  });
+  }),{idleTimeoutMs:0});// Event streams may be silent while a model works, so only the header and request timeouts apply here.
 }

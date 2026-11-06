@@ -74,7 +74,7 @@ try {
   if(candidate.protocol==='http:' && ['127.0.0.1','localhost'].includes(candidate.hostname) && candidate.pathname==='/agent' && !candidate.search && !candidate.hash && !candidate.username && !candidate.password && (process.env.AGENT_TOKEN||'').length>=32) agentURL=candidate;
 } catch {}
 const json=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));};
-createServer(async(req,res)=>{
+const server=createServer(async(req,res)=>{
   const host=req.headers.host;
   if(host!==('127.0.0.1:'+req.socket.localPort) && host!==('localhost:'+req.socket.localPort)){json(res,400,{error:'Invalid host'});return;}
   if(req.method==='GET' && req.url==='/api/publication/status'){json(res,200,{configured:!!process.env.DATA_PLANE_URL,schemaVersion:publicationSchemaVersion});return;}
@@ -132,7 +132,10 @@ createServer(async(req,res)=>{
   const path=shellWorkerRequest?'offline-shell-sw.js':req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':req.method==='GET'&&req.url==='/data-editor.mjs'?'data-editor.mjs':req.method==='GET'&&req.url==='/staged-editor.mjs'?'staged-editor.mjs':req.method==='GET'&&['/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs','/offline-shell-sw.js','/offline-publications.js','/offline-publication-runtime.mjs','/offline-publication-host.mjs'].includes(req.url)?req.url.slice(1):null;
   if(!path){res.writeHead(404);res.end();return;}
   try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':(path.endsWith('.mjs')||path.endsWith('.js'))?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
-}).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
+});
+// Bound slow or stalled clients; Node's defaults wait 60 s for headers and 300 s for a request.
+server.headersTimeout=10000;server.requestTimeout=30000;server.keepAliveTimeout=5000;server.setTimeout(30000);
+server.listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
 `;
  const capabilities=String.raw`// Trusted application code invokes only host-registered capabilities.
 export async function invokeCapability(operationId,input){

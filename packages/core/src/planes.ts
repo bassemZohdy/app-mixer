@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import {createServer as createHttpsServer,type Server as HttpsServer,type ServerOptions as HttpsOptions} from 'node:https';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { limitServer, TLS_POLICY } from './server-limits.js';
 import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenance } from './index.js';
 import { isValidExtensionReferences, isValidExtensionOperations } from './index.js';
@@ -95,7 +96,7 @@ function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promis
     if(dispatch)dispatch(req,res,run);else run();
   };
 }
-function server(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void):Server{return createServer(listener(handler,dispatch));}
+function server(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void):Server{return limitServer(createServer(listener(handler,dispatch)));}
 /** Local-development control plane. Bind to loopback and protect its token. */
 export type DevelopmentRunner = (instruction:string, draft:ApplicationDefinition) => Promise<{id:string}>;
 /** Trusted host-owned browser module source. It must not contain secrets. */
@@ -239,7 +240,7 @@ function createDataPlaneInternal(repository:DataPlanePublicationRepository,optio
     void task.finally(()=>{clearTimeout(timer);if(checkTimer===timer)checkTimer=undefined;if(controller===current)controller=undefined;if(pending===result)pending=undefined;});
     return result;
   };
-  const factory=(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void)=>tls?createHttpsServer(tls,listener(handler,dispatch)):server(handler,dispatch);
+  const factory=(handler:(req:IncomingMessage,res:ServerResponse)=>Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void)=>tls?limitServer(createHttpsServer(tls,listener(handler,dispatch))):server(handler,dispatch);
   const instance=factory(async (req, res) => {
     if(observe){
       const started=performance.now(),route:DataPlaneRequestObservation['route']=req.method!=='GET'?'other':req.url==='/application'?'application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'version':health&&req.url==='/health/live'?'live':health&&req.url==='/health/ready'?'ready':'other';let recorded=false;
@@ -274,7 +275,7 @@ export function createDataPlane(repository:DataPlanePublicationRepository,option
 export function createDataPlaneHttps(repository:DataPlanePublicationRepository,tls:DataPlaneTlsOptions,options?:DataPlaneOptions):DataPlaneHttpsServer{
  const pem=(value:unknown):value is string|Buffer=>(typeof value==='string'&&value.trim().length>0)||(Buffer.isBuffer(value)&&value.length>0);
  if(!tls||typeof tls!=='object'||Array.isArray(tls)||Object.keys(tls).some(key=>!['cert','key','clientCa'].includes(key))||!pem(tls.cert)||!pem(tls.key)||(tls.clientCa!==undefined&&!pem(tls.clientCa)))throw Error('Invalid data plane TLS configuration');
- return createDataPlaneInternal(repository,options,{cert:tls.cert,key:tls.key,minVersion:'TLSv1.2',...(tls.clientCa!==undefined?{ca:tls.clientCa,requestCert:true,rejectUnauthorized:true}:{})}) as DataPlaneHttpsServer;
+ return createDataPlaneInternal(repository,options,{cert:tls.cert,key:tls.key,...TLS_POLICY,...(tls.clientCa!==undefined?{ca:tls.clientCa,requestCert:true,rejectUnauthorized:true}:{})}) as DataPlaneHttpsServer;
 }
 
 /** Proposal-only endpoint for an agent; it cannot apply, approve or publish. */

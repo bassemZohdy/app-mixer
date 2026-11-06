@@ -15,6 +15,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- Every HTTP server in core, agent and the generated app has header, request, keep-alive and idle timeouts (`limitServer`), and the HTTPS servers and TLS reloader share a `TLS_POLICY` (TLS 1.2+, forward-secret AEAD cipher suites, server cipher order); a slow-body test checks that a stalled client is cut off.
 - The shared TypeScript configuration also enables `noFallthroughCasesInSwitch`, `noImplicitOverride` and `verbatimModuleSyntax` (no fallout in any package); a test keeps them on.
 - The Twilio webhook adapter verifies signatures with a local HMAC-SHA1 implementation instead of the `twilio` SDK, removing it and its transitive dependencies (about 600 lines of lock file) from the agent package; the implementation was cross-checked against the SDK on 15,360 signature and URL combinations and keeps SDK-generated reference vectors as fixtures.
 - The Data Plane image installs and builds only the `core` and `web` workspaces (about 330 MB instead of about 500 MB), has a transport-neutral `HEALTHCHECK`, and the kind workflow fails when the image grows past 400 MB.
