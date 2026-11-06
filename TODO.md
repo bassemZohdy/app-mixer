@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**57 / 80 tasks complete (71%)**
+**58 / 80 tasks complete (73%)**
 
-`██████████████░░░░░░`
+`███████████████░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 43 / 49 | 6 (P4-07, P4-20, P4-38, P4-41, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 44 / 49 | 5 (P4-07, P4-20, P4-41, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -116,8 +116,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found while fixing P4-10: each store still opens its own `DatabaseSync` on the shared file. Done 2026-11-06: `scripts/bench-sqlite.mjs` measures it (4 worker processes, 1,200 transactions: rollback journal 144/s, WAL 436/s, no lock errors; the kill tests run on WAL unchanged) and is smoke-tested. Decision: no shared-connection constructor. WAL removes most of the contention, each store keeping its own connection keeps lifecycles independent, and a shared handle would need coordinated close and transaction ownership across stores; revisit only if a benchmark of a real deployment shows lock waits.
 - [x] P4-11 Give the SQLite stores the retention their PostgreSQL counterparts have
   - Found: `SqliteAgentRuns.agent_run_starts` grows forever (`PostgresAgentRunSlots.pruneStarts` exists), `SqliteCapabilityAudit` has no `prune` (`PostgresCapabilityAudit` has), business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history are documented as growing until the database is retired. Fixed 2026-11-06 for the two stores with a PostgreSQL counterpart: `SqliteCapabilityAudit.prune` (same contract as the PostgreSQL sink: tenant, `before`, `through`, `limit`) and `SqliteAgentRuns.pruneStarts`, with tests and doc sections; the host authorizes callers. Business-record tombstones and notice, receipt and delivery history are P4-38.
-- [ ] P4-38 Retention for notice, receipt and delivery history
-  - Found while fixing P4-11: notices, receipts and delivery history grow until the database is retired. Fixed 2026-11-06 for the other half of the original finding: `SqliteDataProvider.compactTombstones` removes business-record tombstones in bounded passes (tested; documented in `docs/business-data.md`). Remaining: `agent_notices` (with `created_at`) and its receipts, `agent_notice_deliveries` and `agent_notice_delivery_events`, `received_agent_notices` and their acks. The event tables are immutable by trigger (`BEFORE DELETE` raises), so retention needs an explicit, audited exception (for example a retention trigger bypass that records what was removed). Fix: bounded, authorized prune methods per store (delivered notices and receipts older than a retention window), the trigger design above, tests, and a retention section in each store's doc.
+- [x] P4-38 Retention for notice, receipt and delivery history
+  - Found while fixing P4-11: notices, receipts and delivery history grow until the database is retired (and business-record tombstones, fixed earlier with `compactTombstones`). Fixed 2026-11-06: `SqliteAgentNotices.prune` deletes notices with their receipts and delivery events and deliveries (keeping any notice with an undelivered delivery) and records each prune in an immutable table; `SqliteAgentNoticeReceiver.prune` removes acknowledged received notices; both need the new `prune` access, are bounded (limit 1,000) and run the trigger bypass (drop the delete triggers, delete, recreate) inside one transaction. Tests check old-versus-new, limits, denial, receipts and events removed, the pending delivery kept, the prune records, and that the immutability triggers are back.
 - [x] P4-12 Add operator listings for stranded work
   - Found: `SqliteStagedOperations` has no listing by status, so `submitting`/`uncertain` operations can only be found with raw SQL; the offline queue lists one principal at a time; uncertain PostgreSQL offline executions have no scan. Fixed 2026-11-06 for the staged operations: `SqliteStagedOperations.list(scope, {status?, after?, limit?})` (keyset pages, tenant and application scoped, tested for each status and for page coverage) and a runbook entry; the offline queue and PostgreSQL offline execution scans are P4-39.
 

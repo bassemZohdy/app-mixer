@@ -88,3 +88,49 @@ test('delivery listing checks scope and individual read policy',async()=>{const 
 test('delivery history is scoped, immutable, paginated and attributes decisions',async()=>{const s=setup();let outbox,db;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{secret:'private'},90);let allowRead=true;outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:(_actor,action)=>action!=='read'||allowRead});const item=await outbox.queue(reviewer,1,'channel');await outbox.queue(reviewer,1,'channel');await assert.rejects(outbox.dispatch(service,item.id,async()=>{throw Error('unknown')}),/uncertain/);await outbox.reconcile(other,item.id,'not_delivered');await outbox.dispatch(service,item.id,async()=>{});const first=await outbox.history(reviewer,item.id,{limit:2}),second=await outbox.history(reviewer,item.id,{after:first.nextAfter,limit:100}),events=[...first.items,...second.items];assert.deepEqual(events.map(e=>e.action),['queued','sending','uncertain','reconciled_not_delivered','sending','delivered']);assert.deepEqual(events.map(e=>e.principalId),['reviewer','service','service','other','service','service']);assert.deepEqual(events.map(e=>e.revision),[1,2,3,4,5,6]);assert.equal(JSON.stringify(events).includes('private'),false);allowRead=false;await assert.rejects(outbox.history(reviewer,item.id),/denied/);await assert.rejects(outbox.history({...reviewer,tenantId:'other'},item.id),/actor/);db=new DatabaseSync(s.path);assert.throws(()=>db.exec('DELETE FROM agent_notice_delivery_events'),/immutable/);assert.throws(()=>db.exec("UPDATE agent_notice_delivery_events SET action='delivered'"),/immutable/);assert.throws(()=>db.exec("INSERT OR REPLACE INTO agent_notice_delivery_events(tenant_id,agent_id,delivery_id,revision,action,principal_id,observed_at) VALUES ('tenant','agent',1,1,'queued','other',10)"),/immutable/);}finally{db?.close();outbox?.close();close(s)}});
 
 test('audit failure prevents dispatch and a failed completion audit leaves delivery uncertain',async()=>{const s=setup();let outbox,db;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});const item=await outbox.queue(reviewer,1,'channel');db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER fail_sending BEFORE INSERT ON agent_notice_delivery_events WHEN NEW.action='sending' BEGIN SELECT RAISE(ABORT,'audit failed'); END");let calls=0;await assert.rejects(outbox.dispatch(service,item.id,async()=>{calls++}),/audit failed/);assert.equal(calls,0);assert.equal((await outbox.get(reviewer,item.id)).status,'pending');db.exec('DROP TRIGGER fail_sending');db.exec("CREATE TRIGGER fail_delivered BEFORE INSERT ON agent_notice_delivery_events WHEN NEW.action='delivered' BEGIN SELECT RAISE(ABORT,'audit failed'); END");await assert.rejects(outbox.dispatch(service,item.id,async()=>{calls++}),/outcome uncertain/);assert.equal(calls,1);assert.equal((await outbox.get(reviewer,item.id)).status,'uncertain');assert.deepEqual((await outbox.history(reviewer,item.id)).items.map(event=>event.action),['queued','sending','uncertain']);}finally{db?.close();outbox?.close();close(s)}});
+
+test('notice retention removes old notices with their receipts and delivery history, keeps undelivered work and records each prune',async()=>{
+ const s=setup();let outbox,db;
+ try{
+  for(const action of ['a1','a2','a3','a4'])await s.approvals.request(service,s.run.leaseToken,action,'lookup',{n:action},900);
+  const ids=(await s.notices.list(reviewer)).items.map(item=>item.id);assert.equal(ids.length,4);
+  await s.notices.acknowledge(reviewer,ids[0]);
+  outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});
+  const delivered=await outbox.queue(reviewer,ids[0],'channel'),pending=await outbox.queue(reviewer,ids[1],'channel');
+  await outbox.dispatch(reviewer,delivered.id,async()=>{});assert.equal((await outbox.get(reviewer,delivered.id)).status,'delivered');
+  s.now=500;
+  for(const bad of [{before:600,limit:5},{before:-1,limit:5},{before:100,limit:0},{before:100,limit:1001},{before:1.5,limit:5},null])await assert.rejects(s.notices.prune(reviewer,bad),/Invalid notice retention/);
+  const denied=new SqliteAgentNotices(s.path,{scope,clock:()=>500,authorize:(_actor,action)=>action!=='prune'});try{await assert.rejects(denied.prune(reviewer,{before:400,limit:5}),/Notice access denied/);}finally{denied.close();}
+  // Notices 1-4 were created at time 10. Notice 2 has a pending delivery and stays; notice 1 (acknowledged, delivered) and 3 and 4 go.
+  assert.equal(await s.notices.prune(reviewer,{before:400,limit:2}),2,'the limit bounds one pass (oldest first: notices 1 and 3)');
+  assert.equal(await s.notices.prune(reviewer,{before:400,limit:10}),1,'the last prunable notice');assert.equal(await s.notices.prune(reviewer,{before:400,limit:10}),0);
+  const remaining=(await s.notices.list(reviewer)).items.map(item=>item.id);assert.deepEqual(remaining,[ids[1]],'a notice with an undelivered delivery is kept');
+  assert.equal((await outbox.get(reviewer,pending.id)).status,'pending');assert.equal(await outbox.get(reviewer,delivered.id),undefined,'the delivered notice and its delivery are gone');
+  db=new DatabaseSync(s.path);
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS n FROM agent_notice_receipts').get().n),0,'receipts went with their notice');
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS n FROM agent_notice_delivery_events WHERE delivery_id=?').get(delivered.id).n),0,'delivery events went with the delivery');
+  assert.ok(Number(db.prepare('SELECT COUNT(*) AS n FROM agent_notice_delivery_events WHERE delivery_id=?').get(pending.id).n)>=1,'the kept delivery keeps its history');
+  const records=db.prepare('SELECT actor_id,before_at,notices FROM agent_notice_prunes ORDER BY id').all().map(row=>({...row}));assert.deepEqual(records,[{actor_id:'reviewer',before_at:400,notices:2},{actor_id:'reviewer',before_at:400,notices:1}],'each prune is recorded');
+  // The immutability triggers are back in place after a prune.
+  for(const sql of ["DELETE FROM agent_notices","DELETE FROM agent_notice_delivery_events","DELETE FROM agent_notice_prunes","UPDATE agent_notice_prunes SET notices=0"])assert.throws(()=>db.exec(sql),/immutable/,sql);
+  for(const name of ["agent_notices_no_delete","agent_receipts_no_delete","notice_delivery_events_no_delete","agent_notice_prunes_no_delete"])assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name),name+' was recreated');
+ }finally{db?.close();outbox?.close();close(s);}
+});
+
+test('received-notice retention removes only old acknowledged notices and keeps the tables immutable',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'receiver-prune-')),path=join(dir,'db');let now=10,receiver,probe;
+ try{
+  receiver=new SqliteAgentNoticeReceiver(path,{scope,maxPending:10,authorize:(_actor,action)=>action!=='prune'||_actor.principalId==='cleaner',clock:()=>now});
+  const sender={tenantId:'tenant',principalId:'sender'},cleaner={tenantId:'tenant',principalId:'cleaner'},keys=['123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174002','123e4567-e89b-42d3-a456-426614174003'];
+  const message=n=>({version:1,noticeId:n,...scope,runId:'run',kind:'approval_requested',subjectId:'action'+n,subjectRevision:0});
+  const received=[];for(const [n,key] of keys.entries())received.push(await receiver.receive(sender,key,message(n+1)));
+  const list=await receiver.list(reviewer);const ids=list.items.map(item=>item.id);await receiver.acknowledge(reviewer,ids[0]);await receiver.acknowledge(reviewer,ids[1]);now=500;
+  for(const bad of [{before:900,limit:5},{before:100,limit:0},{before:1.5,limit:1},null])await assert.rejects(receiver.prune(cleaner,bad),/Invalid notice retention/);
+  await assert.rejects(receiver.prune(reviewer,{before:400,limit:5}),/access/i);
+  assert.equal(await receiver.prune(cleaner,{before:400,limit:1}),1,'the limit bounds one pass');assert.equal(await receiver.prune(cleaner,{before:400,limit:10}),1);assert.equal(await receiver.prune(cleaner,{before:400,limit:10}),0);
+  assert.deepEqual((await receiver.list(reviewer)).items.map(item=>item.id),[ids[2]],'the unacknowledged notice stays');
+  probe=new DatabaseSync(path);assert.equal(Number(probe.prepare('SELECT COUNT(*) AS n FROM received_agent_notice_acks').get().n),0);
+  assert.throws(()=>probe.exec('DELETE FROM received_agent_notices'),/immutable/);
+  for(const name of ['received_agent_notices_no_delete','received_agent_notice_acks_no_delete'])assert.ok(probe.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name),name+' was recreated');
+ }finally{probe?.close();receiver?.close();rmSync(dir,{recursive:true,force:true});}
+});

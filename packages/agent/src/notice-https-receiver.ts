@@ -5,7 +5,7 @@ import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
 
 type Actor={tenantId:string;principalId:string};
-type Access='receive'|'verify'|'list'|'read'|'acknowledge';
+type Access='receive'|'verify'|'list'|'read'|'acknowledge'|'prune';
 export type ReceivedAgentNotice={id:number;senderId:string;message:AgentNoticeMessage;receivedAt:number;acknowledgedAt:number|null;acknowledgedBy:string|null};
 type Options={scope:AgentRunScope;maxPending:number;authorize:(actor:Actor,action:Access,notice:ReceivedAgentNotice|null)=>boolean|Promise<boolean>;clock?:()=>number};
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
@@ -35,6 +35,27 @@ export class SqliteAgentNoticeReceiver {
    CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_replace BEFORE INSERT ON received_agent_notice_acks WHEN EXISTS(SELECT 1 FROM received_agent_notice_acks WHERE notice_id=NEW.notice_id) BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;`);}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
+ /**
+  * Retention: delete up to `limit` (1 to 1,000) acknowledged notices received before `before`, with their acknowledgements, oldest first, and return the count. Unacknowledged
+  * notices are never removed. The tables are immutable by trigger; the delete triggers are dropped and recreated inside the same transaction. A pruned notice's delivery key is
+  * forgotten, so a sender that replays it later is accepted again: choose a horizon beyond any sender's retry window. Needs the `prune` permission.
+  */
+ async prune(actor:Actor,options:{before:number;limit:number}):Promise<number>{
+  const who=this.actor(actor);if(!options||typeof options!=='object'||!integer(options.before)||options.before>this.now()||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid notice retention');
+  await this.permit(who,'prune',null);
+  this.db.exec('BEGIN IMMEDIATE');
+  try{
+   const ids=this.db.prepare('SELECT n.id FROM received_agent_notices n JOIN received_agent_notice_acks a ON a.notice_id=n.id WHERE n.tenant_id=? AND n.agent_id=? AND n.received_at<? ORDER BY n.id LIMIT ?').all(this.scope.tenantId,this.scope.agentId,options.before,options.limit).map(row=>Number(row.id));
+   if(ids.length){
+    const triggers=(this.db.prepare("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('received_agent_notices','received_agent_notice_acks')").all() as {name:string;sql:string}[]).filter(trigger=>/_no_delete$/.test(trigger.name)),marks=ids.map(()=>'?').join(',');
+    for(const trigger of triggers)this.db.exec(`DROP TRIGGER "${trigger.name}"`);
+    this.db.prepare(`DELETE FROM received_agent_notice_acks WHERE notice_id IN (${marks})`).run(...ids);
+    this.db.prepare(`DELETE FROM received_agent_notices WHERE id IN (${marks})`).run(...ids);
+    for(const trigger of triggers)this.db.exec(trigger.sql);
+   }
+   this.db.exec('COMMIT');return ids.length;
+  }catch(error){this.db.exec('ROLLBACK');throw error;}
+ }
  private actor(value:Actor):Actor{if(!value||value.tenantId!==this.scope.tenantId||!id(value.principalId))throw Error('Invalid notice receiver actor');return {tenantId:value.tenantId,principalId:value.principalId};}
  private now():number{const now=this.clock();if(!integer(now))throw Error('Invalid clock');return now;}
  private row(noticeId:number):ReceivedAgentNotice|undefined{const row=this.db.prepare('SELECT n.*,a.principal_id AS acknowledged_by,a.acknowledged_at FROM received_agent_notices n LEFT JOIN received_agent_notice_acks a ON a.notice_id=n.id AND a.tenant_id=n.tenant_id AND a.agent_id=n.agent_id WHERE n.tenant_id=? AND n.agent_id=? AND n.id=?').get(this.scope.tenantId,this.scope.agentId,noticeId);if(!row)return;return {id:Number(row.id),senderId:String(row.sender_id),message:JSON.parse(String(row.message)) as AgentNoticeMessage,receivedAt:Number(row.received_at),acknowledgedAt:row.acknowledged_at===null?null:Number(row.acknowledged_at),acknowledgedBy:row.acknowledged_by===null?null:String(row.acknowledged_by)};}
