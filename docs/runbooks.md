@@ -101,3 +101,11 @@ The failure drill in `packages/cli/test/alert-rules.test.mjs` (`APP_MIXER_TEST_P
 **Check:** `staged.list(scope, {status: 'submitting'})` and `{status: 'uncertain'}` (paginate with `next`). For each, confirm in the external system whether the effect with the operation's idempotency key happened; for `submitting`, first confirm that the submitting process is gone.
 
 **Resolve:** call `recoverAbandoned` for a `submitting` record whose process is gone, then `reconcileWithEvidence` (or `reconcile`) with `applied` or `not_applied`. `not_applied` makes the intent eligible for a new submission with the same key; never mark it so without evidence.
+
+## Stranded offline operations
+
+**Meaning:** an offline queue item is `uncertain`, `conflict` or `running` for longer than a worker pass, or a shared execution is `running` or `uncertain`; nothing retries it automatically.
+
+**Check:** `queue.listAll(scope, {status})` and `executions.list(scope, {status})` for `uncertain` and `running`, paging with `next`. For `running`, confirm that the submitting process is gone before touching it.
+
+**Resolve:** `recoverAbandoned` (queue) or `markUncertain` (shared execution, with the listed attempt token) for abandoned `running` work, then verify the outcome with the remote system and `reconcile` with `applied` or `not_applied`. `conflict` items need a user or operator decision (`discard`).

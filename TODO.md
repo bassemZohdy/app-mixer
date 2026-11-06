@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**32 / 71 tasks complete (45%)**
+**33 / 71 tasks complete (46%)**
 
 `█████████░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 18 / 40 | 22 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-39) |
+| P4 fixes and improvements from the 2026-11-06 code review | 19 / 40 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25..P4-27, P4-33..P4-38) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -118,8 +118,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `SqliteStagedOperations` has no listing by status, so `submitting`/`uncertain` operations can only be found with raw SQL; the offline queue lists one principal at a time; uncertain PostgreSQL offline executions have no scan. Fixed 2026-11-06 for the staged operations: `SqliteStagedOperations.list(scope, {status?, after?, limit?})` (keyset pages, tenant and application scoped, tested for each status and for page coverage) and a runbook entry; the offline queue and PostgreSQL offline execution scans are P4-39.
 
 ### Security hardening
-- [ ] P4-39 Cross-principal listings for the offline queue and PostgreSQL offline executions
-  - Found while fixing P4-12: `SqliteOfflineQueue` lists one principal at a time and uncertain PostgreSQL offline executions have no scan. Fix: paginated, host-authorized `list({status})` over a tenant for both, tests per status and a runbook entry.
+- [x] P4-39 Cross-principal listings for the offline queue and PostgreSQL offline executions
+  - Found while fixing P4-12: `SqliteOfflineQueue` lists one principal at a time and uncertain PostgreSQL offline executions have no scan. Fixed 2026-11-06: `SqliteOfflineQueue.listAll` and `PostgresOfflineExecutions.list` (keyset pages, tenant and application scoped, by status), tests against SQLite and PostgreSQL, doc section and runbook entry.
 - [x] P4-40 Treat pre-effect refusals as not applied in staged and offline submission
   - Found while fixing P4-02: `SqliteStagedOperations.submit` and the offline execution stores mark an operation `uncertain` for any error, including the capability refusals that `CapabilityRegistry` now marks with `Symbol.for('app-mixer.effect') === 'none'`. Fixed 2026-11-06: staged operations return to `staged`, offline queue items are retried within the attempt limit (the classifier is not consulted) and PostgreSQL shared executions return to `ready`; every other error stays uncertain; docs updated and tests changed or added for all three (two older tests had encoded the conservative behaviour).
 - [x] P4-13 Remove `'unsafe-inline'` scripts and add headers to the generated app

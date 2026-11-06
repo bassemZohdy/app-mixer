@@ -123,3 +123,22 @@ test('a refusal before execution is retried within the attempt limit and an uncl
   assert.equal((await failing.processOne(scope,actor,lossy,()=> 'unexpected',1)).status,'uncertain');assert.equal(failing.get(scope,'p',item.id).status,'uncertain');
  }finally{failing.close();}
 });
+
+test('operators can list a tenant across principals by status with pagination',async()=>{
+ const queue=new SqliteOfflineQueue(':memory:',{...policy,maxAttempts:3}),registry=new CapabilityRegistry(()=>{});let mode='uncertain';
+ registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{if(mode==='ok')return null;throw Error(mode);}});
+ const actorFor=principalId=>({...actor,principalId});
+ try{
+  const a1=queue.enqueue(scope,'p','update','a1',{n:1}),b1=queue.enqueue(scope,'q','update','b1',{n:2}),a2=queue.enqueue(scope,'p','update','a2',{n:3}),c1=queue.enqueue(scope,'r','update','c1',{n:4});
+  assert.equal((await queue.processOne(scope,actorFor('p'),registry,()=>'uncertain',1)).id,a1.id);
+  assert.equal((await queue.processOne(scope,actorFor('q'),registry,()=>'conflict',2)).id,b1.id);
+  const named=page=>page.items.map(item=>item.principalId+':'+item.requestKey+':'+item.status);
+  assert.deepEqual(named(queue.listAll(scope,{status:'uncertain'})),['p:a1:uncertain']);assert.deepEqual(named(queue.listAll(scope,{status:'conflict'})),['q:b1:conflict']);
+  assert.deepEqual(named(queue.listAll(scope,{status:'pending'})),['p:a2:pending','r:c1:pending']);
+  assert.equal(queue.listAll(scope).items.length,4);assert.deepEqual(queue.listAll({...scope,tenantId:'other'}).items,[],'listings are tenant-scoped');
+  const seen=[];let page=queue.listAll(scope,{limit:3});assert.equal(page.items.length,3);assert.ok(page.next);
+  while(true){seen.push(...page.items.map(item=>item.id));if(page.next===undefined)break;page=queue.listAll(scope,{limit:3,after:page.next});}
+  assert.deepEqual(seen,[a1.id,b1.id,a2.id,c1.id],'oldest first, every item once');
+  for(const bad of [{status:'unknown'},{limit:0},{limit:101},{after:-1},null])assert.throws(()=>queue.listAll(scope,bad),/Invalid offline operation query/);
+ }finally{queue.close();}
+});

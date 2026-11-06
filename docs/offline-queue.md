@@ -181,3 +181,7 @@ It makes no network request. The returned publication can seed `EncryptedPublica
 - `packages/web/test/browser-offline-provisioning.test.mjs` (opt-in, run in CI with headless Chrome): a real browser verifies the grant with its own WebCrypto and rejects a tampered copy. After a browser restart without the grant, it still has its publication and queued work, and it made no requests.
 
 `PostgresOfflineExecutions.execute` applies the same rule: a dispatch error marked as thrown before any effect returns the key to `ready` for another attempt and is rethrown as is, while every other error marks the execution `uncertain`.
+
+## Operator listings
+
+`SqliteOfflineQueue.listAll(scope, {status?, after?, limit?})` lists a tenant and application across every principal, oldest first, optionally by status (`uncertain`, `conflict`, `running`, ...). It returns `{items, next?}` with each item carrying its `principalId`; pass `next` as `after` for the next page (at most 100 per page, 50 by default). `PostgresOfflineExecutions.list(scope, {status?, after?, limit?})` is the equivalent scan of shared executions in key order; its items carry the principal, key, operation, status and the attempt token that `markUncertain` needs, never payloads or results. Both require the host to authorize the operator.

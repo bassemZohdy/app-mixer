@@ -59,6 +59,17 @@ export class SqliteOfflineQueue {
     const ids=this.db.prepare('SELECT id FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? ORDER BY rowid').all(scope.tenantId,scope.applicationId,principalId);
     return ids.map(row=>this.get(scope,principalId,row.id as string)!);
   }
+  /**
+   * Operator listing across every principal of a tenant and application, optionally by status (for example `uncertain`, `conflict` or `running`),
+   * oldest first with keyset pagination: pass `next` from the previous page as `after`. The host authorizes the operator; payloads are returned as by `get`.
+   */
+  listAll(scope:DataScope,options:{status?:OfflineStatus;after?:number;limit?:number}={}):{items:(OfflineOperation&{principalId:string})[];next?:number} {
+    checkKey(scope,'offline','list');const status=options?.status,after=options?.after??0,limit=options?.limit??50;
+    if(!options||(status!==undefined&&!['pending','running','conflict','uncertain','exhausted','succeeded','discarded'].includes(status))||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid offline operation query');
+    const rows=this.db.prepare(`SELECT rowid AS position,* FROM offline_operations WHERE tenant_id=? AND application_id=? AND rowid>?${status!==undefined?' AND status=?':''} ORDER BY rowid LIMIT ?`).all(...[scope.tenantId,scope.applicationId,after,...(status!==undefined?[status]:[]),limit+1] as (string|number)[]);
+    const items=rows.slice(0,limit).map(row=>({principalId:row.principal_id as string,id:row.id as string,operationId:row.operation_id as string,requestKey:row.request_key as string,idempotencyKey:row.idempotency_key as string,payload:dataCopy(JSON.parse(row.payload as string)),status:row.status as OfflineStatus,attempts:Number(row.attempts),nextAttemptAt:Number(row.next_attempt_at)}));
+    return rows.length>limit?{items,next:Number(rows[limit-1]!.position)}:{items};
+  }
   /** Process one due item; only a host-confirmed pre-effect failure may be retried automatically. */
   async processOne(scope:DataScope,context:InvocationContext,registry:CapabilityRegistry,classify:(error:unknown)=>OfflineFailure,now=Date.now()):Promise<OfflineOperation|undefined> {
     if(!context||context.tenantId!==scope?.tenantId||typeof context.principalId!=='string'||!['ui','agent','service'].includes(context.origin)||!(registry instanceof CapabilityRegistry)||typeof classify!=='function'||!Number.isSafeInteger(now)||now<0||now>Number.MAX_SAFE_INTEGER-this.retryDelayMs)throw Error('Invalid offline processing context');

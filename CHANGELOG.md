@@ -16,6 +16,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- Operator scans for stranded offline work: `SqliteOfflineQueue.listAll` (across principals, by status, paginated) and `PostgresOfflineExecutions.list` (by status, paginated, no payloads), with a runbook entry.
 - `SqliteStagedOperations.list` gives operators a paginated, status-filtered listing of staged business operations (find `submitting` and `uncertain` work without raw SQL), with a runbook entry.
 - SQLite retention: `SqliteCapabilityAudit.prune` (bounded, tenant-scoped, pinned to a reviewed sequence) and `SqliteAgentRuns.pruneStarts`, matching the PostgreSQL stores; the run-start table no longer grows without bound.
 - The development review page, the approval review page and the generated app's page no longer use `'unsafe-inline'`: their inline script and style are allowed by hash, and the pages gain `base-uri`, `frame-ancestors` and `Referrer-Policy` headers; tests check the headers and (opt-in, run in CI) that the scripts run in a real browser.
