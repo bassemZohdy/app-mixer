@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {SqliteAgentRuns} from '../dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules} from '../dist/index.js';
 
 const scope={tenantId:'tenant',agentId:'agent'},fixture=name=>fileURLToPath(new URL(`./fixtures/${name}`,import.meta.url));
 const spawn=(file,args)=>{const child=fork(fixture(file),args,{stdio:['ignore','ignore','ignore','ipc']});child.messages=[];child.waiters=[];child.on('message',message=>{child.messages.push(message);child.waiters.splice(0).forEach(resolve=>resolve());});return child;};
@@ -34,5 +34,21 @@ test('two processes dispatching the same journaled action never both run the eff
   const results=await Promise.all(children.map(child=>next(child,'dispatching')));
   // The first claimant is stuck inside its effect; the other must be refused rather than dispatching a second time.
   assert.equal(results.filter(result=>result.type==='dispatching').length,1,JSON.stringify(results));assert.equal(results.filter(result=>result.type==='rejected').length,1);assert.match(results.find(result=>result.type==='rejected').message,/requires reconciliation/);
+ }finally{await stop(children);rmSync(dir,{recursive:true,force:true});}
+});
+
+test('two schedule workers sharing a store fire each due occurrence exactly once',{timeout:30000},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'agent-schedule-race-')),path=join(dir,'runs.sqlite'),children=[],ids=['a','b','c','d','e'];
+ try{
+  const runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),schedules=new SqliteAgentSchedules(path);
+  for(const id of ids)schedules.save(scope,id,{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,1000);
+  schedules.close();triggers.close();runs.close();
+  children.push(spawn('race-schedule-worker.mjs',[path]),spawn('race-schedule-worker.mjs',[path]));
+  await Promise.all(children.map(ready));children.forEach(child=>child.send('go'));
+  const results=await Promise.all(children.map(async child=>{for(;;){const index=child.messages.findIndex(message=>message.type==='done');if(index>=0)return child.messages.splice(index,1)[0];await new Promise(resolve=>child.waiters.push(resolve));}}));
+  // Both workers see every schedule due at 2000; between them each occurrence becomes exactly one run, and the loser is not reported as an error.
+  assert.deepEqual(results.flatMap(result=>result.errors),[],JSON.stringify(results));assert.equal(results.reduce((sum,result)=>sum+result.fired,0),ids.length,JSON.stringify(results));
+  const check=new SqliteAgentRuns(path),after=new SqliteAgentSchedules(path);
+  try{assert.equal(check.list(scope).length,ids.length);for(const id of ids){const schedule=after.get(scope,id);assert.equal(schedule.nextAt,3000);assert.equal(schedule.revision,2);assert.ok(after.getOccurrence(scope,id,schedule.generation,2000));}}finally{after.close();check.close();}
  }finally{await stop(children);rmSync(dir,{recursive:true,force:true});}
 });
