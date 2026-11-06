@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- `PostgresAgentSchedules.fireDue` bounds its rescans (`maxScans`) and reports `scans` and `backlog`, so heavy contention or a long catch-up no longer rescans the due list without limit.
 - `DevelopmentAgent` works on schema version 2 drafts (page descriptions, extension references and operations, `Extension` components); it previously refused every draft that was not version 1, including applications migrated to version 2.
 - `DevelopmentProposals` no longer refuses new proposals forever after 100 have been created: only pending proposals count toward the limit and settled ones are evicted beyond a `settledLimit` bound.
 - Capability refusals that happen before any effect (not found, forbidden, invalid input, a throwing policy, a failed attempt audit, and the configured runtime's own activity and delegation checks) no longer leave the agent action `uncertain` and the run awaiting operator reconciliation: `CapabilityRegistry` marks such errors with `Symbol.for('app-mixer.effect') === 'none'`, and both action journals return the action to `ready` (or `failed` once attempts are exhausted) and rethrow the original error. Unmarked dispatch errors stay uncertain.

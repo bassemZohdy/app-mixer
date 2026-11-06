@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**19 / 66 tasks complete (29%)**
+**20 / 66 tasks complete (30%)**
 
 `██████░░░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 5 / 35 | 30 (P4-03, P4-05, P4-07..P4-28, P4-30..P4-35) |
+| P4 fixes and improvements from the 2026-11-06 code review | 6 / 35 | 29 (P4-03, P4-05, P4-07, P4-09..P4-28, P4-30..P4-35) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -102,8 +102,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found while fixing P4-06: `DevelopmentProposals` is in memory only, so pending proposals vanish on restart. Fix: add a SQLite-backed store with the same interface (revision-checked approval, bounded settled history) and tests across a reopen.
 - [ ] P4-07 Make the Data Plane metrics endpoint scrapeable in Kubernetes
   - Found: `deploy/kubernetes/data-plane.mjs` listens for `/metrics` on `127.0.0.1` inside the pod, so Prometheus cannot scrape it; the kind check probes it with `kubectl exec`. Fix: add `APP_MIXER_METRICS_BIND` (pod IP) with the JWT scope check kept mandatory, extend the NetworkPolicy and admission policy for the metrics port, scrape it from another pod in the kind workflow, and document the alternative sidecar layout.
-- [ ] P4-08 Bound the catch-up loop in `PostgresAgentSchedules.fireDue`
-  - Found: every conflict sets `progressed` and rescans from the first page with no limit, so heavy contention or a long catch-up can loop until `maxFires` with unbounded scans. Fix: cap rescans (for example `maxScans`), return the remaining backlog in the pass result, and test two nodes catching up 500 missed occurrences.
+- [x] P4-08 Bound the catch-up loop in `PostgresAgentSchedules.fireDue`
+  - Found: every conflict sets `progressed` and rescans from the first page with no limit, so heavy contention or a long catch-up can loop until `maxFires` with unbounded scans. Fixed 2026-11-06: `maxScans` (default `maxFires + 100`) caps the rescans, the pass reports `scans` and `backlog`, and a PostgreSQL test checks both limits, two concurrent nodes (no occurrence fired twice) and a pass with nothing due.
 
 ### Durability and operations
 - [ ] P4-09 Version every store schema and run migrations deliberately

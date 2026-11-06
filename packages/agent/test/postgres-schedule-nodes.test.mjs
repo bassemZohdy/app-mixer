@@ -83,3 +83,22 @@ test('two nodes sharing PostgreSQL schedules fire each occurrence once, survive 
   t.diagnostic(`${total} occurrences across ${ids.length} schedules, each fired once; nodes lost ${conflicts} firing races; ${reclaimed} claim taken over after the kill`);
  }finally{for(const child of nodes.values())if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(()=>{});await admin.end();}
 });
+
+test('a polling pass is bounded by maxFires and maxScans, reports the backlog and two nodes never fire an occurrence twice',{skip:!url&&'set APP_MIXER_TEST_POSTGRES_URL to run against PostgreSQL',timeout:60000},async()=>{
+ const schema='schedules_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+ try{
+  await admin.query(`CREATE SCHEMA "${schema}"`);
+  const make=()=>new PostgresAgentSchedules({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)}),first=make(),second=make();await first.initialize();
+  // Saved at a time long ago, the schedules are due for far more occurrences than any pass may fire.
+  for(const name of ['a','b','c'])await first.save(scope,name,{enabled:true,principalId:'service',rule:{kind:'interval',intervalMs:60000}},0,1000,'admin');
+  await assert.rejects(first.fireDue(scope,policy,{nodeId:'n',maxScans:0}),/Invalid schedule fire/);await assert.rejects(first.fireDue(scope,policy,{nodeId:'n',maxScans:10001}),/Invalid schedule fire/);
+  const limited=await first.fireDue(scope,policy,{nodeId:'n',maxFires:1000,maxScans:4});
+  assert.equal(limited.scans,4,'the rescan loop stops at maxScans');assert.equal(limited.fired.length,12,'each scan fires the three due schedules');assert.equal(limited.backlog,true);
+  const capped=await first.fireDue(scope,policy,{nodeId:'n',maxFires:5});assert.equal(capped.fired.length,5);assert.equal(capped.backlog,true);assert.ok(capped.scans<=105);
+  const [x,y]=await Promise.all([first.fireDue(scope,policy,{nodeId:'one',maxFires:25}),second.fireDue(scope,policy,{nodeId:'two',maxFires:25})]);
+  const fired=[...x.fired,...y.fired];assert.equal(fired.length,new Set(fired.map(item=>item.scheduleId+':'+item.scheduledAt)).size,'no occurrence fired twice');assert.ok(fired.length>=25);assert.equal(x.backlog&&y.backlog,true);
+  // Disabled schedules leave nothing due, so a pass finishes without a backlog.
+  for(const name of ['a','b','c']){const current=await first.get(scope,name);await first.save(scope,name,{...current.config,enabled:false},current.revision,Date.now(),'admin');}
+  const idle=await first.fireDue(scope,policy,{nodeId:'n'});assert.deepEqual({fired:idle.fired.length,backlog:idle.backlog},{fired:0,backlog:false});
+ }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
+});

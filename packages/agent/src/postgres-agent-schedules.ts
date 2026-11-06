@@ -8,7 +8,8 @@ export type PostgresAgentSchedulesOptions={enabled:true;query:Query;transaction:
 export type AgentScheduledRun={scheduleId:string;generation:number;scheduledAt:number;runId:string;principalId:string;payload:Record<string,unknown>;definitionVersion:number;maxAttempts:number;deadline:number;firedAt:number;firedBy:string};
 export type AgentScheduledRunClaim=AgentScheduledRun & {token:string;leaseUntil:number;claims:number};
 export type AgentScheduleHistoryEvent={id:number;scheduleId:string;kind:'created'|'updated'|'fired';revision:number;generation:number;nextAt:number;actorId?:string;runId?:string;scheduledAt?:number;observedAt:number};
-export type AgentScheduleFirePass={fired:{scheduleId:string;runId:string;scheduledAt:number}[];conflicts:number};
+/** `backlog` is true when the pass stopped at `maxFires` or `maxScans` while schedules may still be due; poll again. */
+export type AgentScheduleFirePass={fired:{scheduleId:string;runId:string;scheduledAt:number}[];conflicts:number;scans:number;backlog:boolean};
 
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
@@ -79,11 +80,13 @@ export class PostgresAgentSchedules {
   * One polling pass for a node: fire every due occurrence (catching up missed ones) up to `maxFires`, leaving any
   * occurrence another node fired first. Returns what this node fired and how many races it lost.
   */
- async fireDue(scope:AgentRunScope,policy:AgentScheduleFireOptions,options:{nodeId:string;actorId?:string;maxFires?:number;authorize?:(schedule:AgentSchedule)=>boolean|Promise<boolean>}):Promise<AgentScheduleFirePass>{
-  const maxFires=options?.maxFires??100;if(!options||!id(options.nodeId)||!integer(maxFires)||maxFires<1||maxFires>1000||(options.authorize!==undefined&&typeof options.authorize!=='function'))throw Error('Invalid schedule fire');
-  const pass:AgentScheduleFirePass={fired:[],conflicts:0};let after:AgentScheduleCursor|undefined;
+ async fireDue(scope:AgentRunScope,policy:AgentScheduleFireOptions,options:{nodeId:string;actorId?:string;maxFires?:number;maxScans?:number;authorize?:(schedule:AgentSchedule)=>boolean|Promise<boolean>}):Promise<AgentScheduleFirePass>{
+  const maxFires=options?.maxFires??100,maxScans=options?.maxScans??maxFires+100;if(!options||!id(options.nodeId)||!integer(maxFires)||maxFires<1||maxFires>1000||!integer(maxScans)||maxScans<1||maxScans>10000||(options.authorize!==undefined&&typeof options.authorize!=='function'))throw Error('Invalid schedule fire');
+  const pass:AgentScheduleFirePass={fired:[],conflicts:0,scans:0,backlog:false};let after:AgentScheduleCursor|undefined;
   while(pass.fired.length<maxFires){
-   const page=await this.duePage(scope,undefined,100,after);if(!page.items.length)break;let progressed=false;
+   // Every contested or fired schedule rescans from the first page, so the number of scans is bounded explicitly.
+   if(pass.scans>=maxScans){pass.backlog=true;break;}
+   pass.scans++;const page=await this.duePage(scope,undefined,100,after);if(!page.items.length)break;let progressed=false;
    for(const schedule of page.items){
     if(pass.fired.length>=maxFires)break;if(options.authorize&&await options.authorize({...schedule,config:{...schedule.config}})!==true)continue;
     try{const fired=await this.fire(scope,schedule.scheduleId,schedule.revision,policy,{nodeId:options.nodeId,actorId:options.actorId});pass.fired.push({scheduleId:schedule.scheduleId,...fired});progressed=true;}
@@ -92,6 +95,7 @@ export class PostgresAgentSchedules {
    // A fired or contested schedule may still be due (catch-up); rescan from the start until nothing is left.
    after=progressed?undefined:page.next;if(!progressed&&!page.next)break;
   }
+  if(pass.fired.length>=maxFires)pass.backlog=true;
   return pass;
  }
  /** Claim the oldest unstarted run request, or one whose claim expired, for `leaseMs` of database time. */
