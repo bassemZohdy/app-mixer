@@ -127,3 +127,13 @@ test('SQLite erasure request fence survives reopening and rolls back with audit'
  const dir=mkdtempSync(join(tmpdir(),'memory-erase-fence-')),path=join(dir,'memory.sqlite');let store=new SqliteAgentMemory(path,settings({audit:true,clock:()=>100})),db;
  try{await store.put(actor,scope,'one','secret',write(500));db=new DatabaseSync(path);db.exec("CREATE TRIGGER fail_erasure_request BEFORE INSERT ON agent_memory_erasure_requests BEGIN SELECT RAISE(ABORT,'request unavailable'); END");await assert.rejects(store.eraseScopeOnce(actor,scope,'req-1'),/request unavailable/);assert.equal((await store.get(actor,scope,'one')).value,'secret');assert.deepEqual((await store.auditHistory(actor,scope)).items.map(e=>e.action),['write']);db.exec('DROP TRIGGER fail_erasure_request');assert.deepEqual(await store.eraseScopeOnce(actor,scope,'req-1'),{erased:1,replayed:false});assert.throws(()=>db.exec('DELETE FROM agent_memory_erasure_requests'),/immutable/);store.close();store=new SqliteAgentMemory(path,settings({audit:true,clock:()=>100}));await store.put(actor,scope,'later','survives',write(500));assert.deepEqual(await store.eraseScopeOnce(actor,scope,'req-1'),{erased:1,replayed:true});assert.equal((await store.get(actor,scope,'later')).value,'survives');}finally{db?.close();store.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('SQL literals for index predicates accept only plain identifiers and never an unescaped quote',async()=>{
+ const {sqlLiteral}=await import('../dist/postgres-agent-memory.js');const {validMemoryId}=await import('../dist/agent-memory.js');
+ assert.equal(sqlLiteral('tenant-1'),"'tenant-1'");assert.equal(sqlLiteral('user'),"'user'");assert.equal(sqlLiteral('model:v1.2/a@b_c'),"'model:v1.2/a@b_c'");
+ for(const character of ["'",'"','\\',';','$','`','(',')',' ','\n','\r','\t','\0','%','*','=','|','&','<','>','#','é','’']){
+  for(const value of ['a'+character,character+'a','a'+character+'b'])if(!validMemoryId(value)){assert.throws(()=>sqlLiteral(value),/Invalid SQL identifier/,JSON.stringify(value));}
+  assert.equal(validMemoryId('a'+character+'b'),false,JSON.stringify(character)+' is not in the memory ID alphabet');
+ }
+ for(const value of ['',undefined,null,1,{},[],'x'.repeat(129),"o'brien"])assert.throws(()=>sqlLiteral(value),/Invalid SQL identifier/);
+});
