@@ -150,7 +150,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Evidence:** a real approver completing an approval through the production channel, with the audit record exported.
 
 ### P3-07 Trace, metrics, audit, quotas and budgets
-- **Verified locally:** concurrency and daily-run limits, token and cost reservation ledger with uncertain-call reconciliation, lifecycle history, authorized gauges, cross-process reservation race test.
+- **Verified locally:** concurrency and daily-run limits, token and cost reservation ledger with uncertain-call reconciliation, lifecycle history, authorized gauges (including schedule backlog and actions awaiting reconciliation), cross-process reservation race test.
 - **Still to prove:**
   - [ ] Provider-specific enforcement of limits on each model provider used.
   - [ ] Production-wide cost controls across nodes.
