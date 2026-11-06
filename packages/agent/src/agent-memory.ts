@@ -64,7 +64,7 @@ export class SqliteAgentMemory {
   await this.permit(c.actor,c.scope,'write',memoryId);const now=this.now();if(expires<=now||expires-now>this.maxTtlMs)throw Error('Invalid memory expiration');
   this.db.exec('BEGIN IMMEDIATE');try{
    const prior=this.row(c.scope,memoryId),live=prior?this.record(prior,now):undefined;if((live?.revision??null)!==expected)throw Error('Memory revision conflict');
-   if(!prior){const history=this.db.prepare('SELECT COUNT(*) AS n FROM agent_memories WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=?').get(...this.args(c.scope));if(Number(history?.n)>=this.maxEntries*10)throw Error('Memory history quota exceeded');}
+   if(!prior){const history=this.db.prepare('SELECT COUNT(*) AS n FROM agent_memories WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=?').get(...this.args(c.scope));if(Number(history?.n)>=this.maxEntries*10)throw Error('Memory history quota exceeded; compact tombstones');}
    if(!live){const count=this.db.prepare('SELECT COUNT(*) AS n FROM agent_memories WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0 AND expires_at>?').get(...this.args(c.scope),now);if(Number(count?.n)>=this.maxEntries)throw Error('Memory quota exceeded');}
    const revision=(prior?Number(prior.revision):0)+1;if(!Number.isSafeInteger(revision)||revision<1)throw Error('Invalid memory revision');
    this.db.prepare('INSERT INTO agent_memories VALUES (?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id) DO UPDATE SET revision=excluded.revision,value=excluded.value,provenance=excluded.provenance,expires_at=excluded.expires_at,deleted=0').run(...this.args(c.scope),memoryId,revision,serialized,provenance,expires);
@@ -84,6 +84,14 @@ export class SqliteAgentMemory {
  }
  async purgeExpired(actor:MemoryActor,scope:MemoryScope):Promise<number>{
   const c=checkedMemoryScope(actor,scope);await this.permit(c.actor,c.scope,'purge');const now=this.now();this.db.exec('BEGIN IMMEDIATE');try{const result=this.db.prepare('UPDATE agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0 AND expires_at<=? AND revision<?').run(...this.args(c.scope),now,Number.MAX_SAFE_INTEGER),count=Number(result.changes);if(count)this.recordAudit(c.actor,c.scope,'purge',null,null,count,now);this.db.exec('COMMIT');return count;}catch(error){this.db.exec('ROLLBACK');throw error;}
+ }
+ /**
+  * Second stage of retention (same `purge` permission): physically delete up to `limit` (1 to 1,000) tombstones of one scope, oldest first, and return the count. Tombstones keep a
+  * memory ID's revision counter, so compacting one lets a later write of that ID start again at revision 1: compact only IDs no client can still hold a revision for.
+  */
+ async compactTombstones(actor:MemoryActor,scope:MemoryScope,options:{limit:number}):Promise<number>{
+  const c=checkedMemoryScope(actor,scope);if(!options||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid memory compaction');await this.permit(c.actor,c.scope,'purge');const now=this.now();this.db.exec('BEGIN IMMEDIATE');
+  try{const count=Number(this.db.prepare('DELETE FROM agent_memories WHERE rowid IN (SELECT rowid FROM agent_memories WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=1 ORDER BY rowid LIMIT ?)').run(...this.args(c.scope),options.limit).changes);if(count)this.recordAudit(c.actor,c.scope,'purge',null,null,count,now);this.db.exec('COMMIT');return count;}catch(error){this.db.exec('ROLLBACK');throw error;}
  }
  /** Tombstone every live or expired memory in one scope (for example when an owner asks for erasure). Needs the separate `erase` permission; returns how many were erased. */
  async eraseScope(actor:MemoryActor,scope:MemoryScope):Promise<number>{

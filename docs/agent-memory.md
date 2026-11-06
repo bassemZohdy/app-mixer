@@ -107,3 +107,7 @@ To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-me
 ## Erasing a scope
 
 `SqliteAgentMemory.eraseScope(actor, scope)` tombstones every live or expired memory in one tenant, agent, owner and kind scope, for example when an owner asks for their data to be erased. It needs the host `authorize` callback to allow a separate `erase` action, so a cleanup worker that may only `purge` expired entries cannot erase live data. It returns the number erased, is idempotent, and with auditing enabled records one value-free `erase` event with the count. Revisions keep increasing, so a later write cannot reuse an old revision. The PostgreSQL adapter offers the same operation, taking the scope lock and writing the audit record in one transaction.
+
+## Tombstone compaction
+
+Deleting or expiring a memory leaves a tombstone that keeps the ID's revision counter, and tombstones count toward the history quota (ten times `maxEntries` per scope). `compactTombstones(actor, scope, {limit})` (SQLite and PostgreSQL, same `purge` permission as `purgeExpired`) physically deletes up to `limit` (1 to 1,000) of a scope's tombstones, oldest first, and returns the count; it is audited as a `purge` event with the count and never touches live memories or other scopes. A compacted ID restarts at revision 1 when written again, so compact only IDs that no client can still hold a revision for. Run `purgeExpired` first so expired memories become tombstones, then compact on the owner's chosen schedule.

@@ -74,3 +74,21 @@ test('PostgreSQL scope erasure is separately authorized, scoped, audited and sur
   assert.equal((await memory.put(actor,user,'a','new',opts(500))).revision,3);
  }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
 });
+
+test('PostgreSQL tombstone compaction restores room under the history quota, is scoped, audited and needs purge permission',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
+ const schema='app_mixer_compact_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
+ try{await admin.query(`CREATE SCHEMA "${schema}"`);
+  const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:2,maxTtlMs:1000,clock:()=>now,authorize:(who,_scope,action)=>who.principalId==='service'||(who.principalId==='cleaner'&&action==='purge'),query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await memory.initialize();
+  const mine={...scope,kind:'episodic',owner:{kind:'user',id:'u1'}},other={...mine,owner:{kind:'user',id:'u2'}},opts=expiresAt=>({expectedRevision:null,expiresAt,provenance});
+  await memory.put(actor,other,'keep','other-owner',opts(500));
+  for(let n=0;n<20;n++){await memory.put(actor,mine,'m'+n,{n},opts(500));await memory.delete(actor,mine,'m'+n,1);}
+  await assert.rejects(memory.put(actor,mine,'fresh',{},opts(500)),/history quota exceeded/);
+  for(const bad of [{limit:0},{limit:1001},null])await assert.rejects(memory.compactTombstones({...actor,principalId:'cleaner'},mine,bad),/Invalid memory compaction/);
+  await assert.rejects(memory.compactTombstones({...actor,principalId:'nobody'},mine,{limit:5}),/access denied/);
+  assert.equal(await memory.compactTombstones({...actor,principalId:'cleaner'},mine,{limit:15}),15,'the limit bounds one pass');
+  await memory.put(actor,mine,'fresh',{ok:true},opts(500));assert.deepEqual((await memory.get(actor,mine,'fresh')).value,{ok:true});
+  assert.equal(await memory.compactTombstones({...actor,principalId:'cleaner'},mine,{limit:1000}),5);assert.equal(await memory.compactTombstones({...actor,principalId:'cleaner'},mine,{limit:1000}),0);
+  assert.deepEqual((await memory.get(actor,mine,'fresh')).value,{ok:true},'live memories survive compaction');assert.equal((await memory.get(actor,other,'keep')).value,'other-owner','another owner is untouched');
+  assert.ok((await memory.auditHistory(actor,mine,{limit:100})).items.some(item=>item.action==='purge'&&item.count===15),'compaction is audited without values');
+ }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
+});

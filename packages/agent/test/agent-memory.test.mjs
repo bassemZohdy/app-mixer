@@ -83,3 +83,22 @@ test('SQL literals for index predicates accept only plain identifiers and never 
  }
  for(const value of ['',undefined,null,1,{},[],'x'.repeat(129),"o'brien"])assert.throws(()=>sqlLiteral(value),/Invalid SQL identifier/);
 });
+
+test('tombstone compaction lets a scope that reached its history quota accept new memories again',async()=>{
+ let restricted;const dir=mkdtempSync(join(tmpdir(),'memory-compact-')),store=new SqliteAgentMemory(join(dir,'memory.sqlite'),settings({maxEntries:2,audit:true}));
+ try{
+  // maxEntries 2 allows a history of 20 rows: write and delete 20 distinct IDs.
+  for(let n=0;n<20;n++){await store.put(actor,scope,'m'+n,{n},write(200));await store.delete(actor,scope,'m'+n,1);}
+  await assert.rejects(store.put(actor,scope,'fresh',{},write(200)),/history quota exceeded/);
+  for(const bad of [{limit:0},{limit:1001},{limit:'1'},null,undefined])await assert.rejects(store.compactTombstones(actor,scope,bad),/Invalid memory compaction/);
+  assert.equal(await store.compactTombstones(actor,scope,{limit:15}),15,'the limit bounds one pass');
+  assert.deepEqual((await store.get(actor,scope,'m0')),undefined,'a compacted tombstone is gone');
+  await store.put(actor,scope,'fresh',{ok:true},write(200));assert.deepEqual((await store.get(actor,scope,'fresh')).value,{ok:true});
+  assert.equal(await store.compactTombstones(actor,scope,{limit:1000}),5,'the remaining tombstones');assert.equal(await store.compactTombstones(actor,scope,{limit:1000}),0);
+  assert.deepEqual((await store.get(actor,scope,'fresh')).value,{ok:true},'live memories are never compacted');
+  assert.equal(await store.compactTombstones(actor,{...scope,owner:{kind:'organization',id:'other'}},{limit:10}),0,'another owner is untouched');
+  const audit=await store.auditHistory(actor,scope,{limit:100});assert.ok(audit.items.some(item=>item.action==='purge'&&item.count===15),'compaction is audited without values');
+  restricted=new SqliteAgentMemory(join(dir,'memory.sqlite'),settings({authorize:(_actor,_scope,action)=>action!=='purge'}));
+  await assert.rejects(restricted.compactTombstones(actor,scope,{limit:1}),/denied|forbidden|not authorized/i,'compaction needs the purge permission');
+ }finally{restricted?.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});

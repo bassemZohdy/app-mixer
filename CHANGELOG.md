@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- Agent memory scopes no longer become permanently unwritable after `10 x maxEntries` writes and deletes: `compactTombstones` (SQLite and PostgreSQL, `purge` permission, audited) removes tombstones in bounded passes.
 - `SqliteOfflineQueue` no longer refuses a principal after 1,000 operations ever: only live operations count toward the cap, and a host-authorized `purge` removes settled history.
 - Capability refusals before execution no longer strand staged business operations and offline items as `uncertain`: `SqliteStagedOperations.submit` returns the intent to `staged`, `SqliteOfflineQueue` retries within its attempt limit without consulting the classifier, and `PostgresOfflineExecutions` returns the key to `ready`. Execution errors stay uncertain.
 - The PostgreSQL memory store quotes the identifiers it must place in index predicates and expressions through one validating helper (`sqlLiteral`) instead of interpolating them, and a test checks that every quoting character is refused.
