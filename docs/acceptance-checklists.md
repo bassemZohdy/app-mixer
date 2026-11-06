@@ -70,9 +70,9 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** run registry, lease claim, renewal and fencing, expiry, pause, resume and cancel, process-kill lease recovery, PostgreSQL run slots.
 - **Still to prove:**
   - [ ] Production scheduling of workers.
-  - [ ] A shared (non-SQLite) run registry.
+  - [x] A shared (non-SQLite) run registry. `PostgresAgentRuns` keeps runs and a lease-fenced action journal on one PostgreSQL primary. Workers killed mid-dispatch are recovered exactly once by racing survivor processes, with no duplicated external effect ([durable-agent-runs.md](durable-agent-runs.md#shared-run-registry-across-nodes)).
   - [x] Safe replay of external effects after recovery against a real provider. A worker killed before the write, after an applied write with a lost response, or after recording, recovers against a real S3-compatible provider with exactly one effect ([agent-action-journal.md](agent-action-journal.md#crash-recovery-against-a-real-provider)).
-  - [ ] Production coordination between nodes, including node failure.
+  - [ ] Production coordination between nodes, including node failure. Separate processes sharing PostgreSQL pass the node-failure test locally and in CI; a production multi-node deployment is still unproven.
 - **Evidence:** a node-failure test report showing runs recovered exactly once and no duplicated external effect.
 
 ### P2-08 Event, webhook and scheduler activation
@@ -80,7 +80,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Each provider adapter against that provider's live or sandbox delivery, including a retry.
   - [ ] Additional providers the product commits to supporting.
-  - [x] Distributed coordination of schedule firing across nodes. `PostgresAgentSchedules` fires each occurrence once across nodes; two processes with one killed mid-run fire every one-second occurrence exactly once with no gaps ([agent-schedules.md](agent-schedules.md#shared-schedules-across-nodes)). Handing a fired run to an executor is at least once until a shared run registry exists (P2-07).
+  - [x] Distributed coordination of schedule firing across nodes. `PostgresAgentSchedules` fires each occurrence once across nodes; two processes with one killed mid-run fire every one-second occurrence exactly once with no gaps ([agent-schedules.md](agent-schedules.md#shared-schedules-across-nodes)). Handing a fired run to an executor is at least once until a shared run registry exists (P2-07). `PostgresAgentRuns.create` now refuses a second run for a reclaimed request.
 - **Evidence:** one captured live delivery per provider verified by the adapter, and a two-node schedule test showing a single fire per occurrence.
 
 ### P2-09 Action journal and reconciliation

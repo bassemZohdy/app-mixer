@@ -45,7 +45,7 @@ This is a local SQLite scheduler. Time must come from a trusted, consistent cloc
 - **`claimRun(scope, workerId, leaseMs)`** claims the oldest unstarted run request for a lease of database time. A claim that expired can be taken over. `markStarted(scope, runId, token)` records the hand-off and returns false if the claim expired or was taken over.
 - **`runs(scope, scheduleId)`** lists fired occurrences with their status and claim count. **`history(scope, scheduleId)`** lists the change and fire events.
 
-Firing is exactly once per occurrence. The hand-off to an executor is at least once: if a node creates the run and dies before `markStarted`, another node can claim the same request after the lease expires. The run ID is stable, so create the run under that ID in a registry that refuses duplicates. Until a shared run registry exists, two nodes with separate SQLite run registries can both start a reclaimed request.
+Firing is exactly once per occurrence. The hand-off to an executor is at least once: if a node creates the run and dies before `markStarted`, another node can claim the same request after the lease expires. The run ID is stable, so create the run under that ID in a registry that refuses duplicates. `PostgresAgentRuns.create` refuses an existing run ID across nodes ([durable-agent-runs.md](durable-agent-runs.md#shared-run-registry-across-nodes)); two nodes with separate SQLite run registries could both start a reclaimed request.
 
 The host must authorize schedule changes and firing (`authorize` on `fireDue`), authenticate nodes, protect the primary connection, and prune old run requests and events. Unlike the SQLite store, history rows are not protected by triggers.
 
