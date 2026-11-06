@@ -5,6 +5,7 @@
 **13 / 31 tasks complete (42%)**
 **24 / 67 tasks complete (36%)**
 **34 / 72 tasks complete (47%)**
+**18 / 66 tasks complete (27%)**
 
 `████████░░░░░░░░░░░░`
 **35 / 73 tasks complete (48%)**
@@ -28,6 +29,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P4 fixes and improvements from the 2026-11-06 code review | 10 / 36 | 26 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-32..P4-36) |
 | P4 fixes and improvements from the 2026-11-06 code review | 21 / 42 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25, P4-33..P4-38, P4-41, P4-42) |
 | P4 fixes and improvements from the 2026-11-06 code review | 20 / 41 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25, P4-27, P4-33..P4-38, P4-41) |
+| P4 fixes and improvements from the 2026-11-06 code review | 4 / 35 | 31 (P4-03..P4-05, P4-07..P4-28, P4-30..P4-35) |
 
 Each open task's remaining proof and required evidence: [acceptance checklists](docs/acceptance-checklists.md).
 

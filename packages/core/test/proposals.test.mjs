@@ -45,3 +45,18 @@ test('proposal approval applies to SQLite without publishing',()=>{
     assert.equal(repo.getPublished().definition.pages[0].id,'home');
   } finally {repo.close();}
 });
+
+test('only pending proposals count toward the limit and settled ones are evicted beyond their bound',()=>{
+ const repo=new ApplicationStore(initial),proposals=new DevelopmentProposals(repo,2,2);
+ const patch=n=>[{op:'addPage',page:{...page,id:'p'+n,route:'/p'+n}}];
+ const a=proposals.propose(0,patch(1)),b=proposals.propose(0,patch(2));
+ assert.throws(()=>proposals.propose(0,patch(3)),/limit/,'two pending proposals fill the limit');
+ proposals.reject(a.id);const c=proposals.propose(0,patch(3));assert.equal(c.status,'pending','a settled proposal frees its slot');
+ proposals.reject(b.id);proposals.reject(c.id);
+ // Three settled proposals with a bound of two: the oldest settled one is gone, the newest two stay readable.
+ assert.equal(proposals.get(a.id),undefined);assert.equal(proposals.get(b.id).status,'rejected');assert.equal(proposals.get(c.id).status,'rejected');
+ assert.throws(()=>proposals.approve(a.id),/not found/);
+ for(let n=4;n<20;n++){const p=proposals.propose(0,patch(n));proposals.reject(p.id);}
+ const pending=proposals.propose(0,patch(99));assert.equal(proposals.get(pending.id).status,'pending','a long history never blocks new proposals');
+ assert.throws(()=>new DevelopmentProposals(repo,1,-1),/Invalid proposal limit/);
+});
