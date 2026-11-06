@@ -85,3 +85,11 @@ test('tests poll conditions with a deadline instead of adding fixed sleeps',asyn
  let sleeps=0;for(const name of ['core','agent','cli','web','native'])for(const file of readdirSync(join(root,'packages',name,'test')).filter(file=>file.endsWith('.test.mjs')))sleeps+=(readFileSync(join(root,'packages',name,'test',file),'utf8').match(/new Promise\(\(?\w+\)?=>setTimeout\(\w+,/g)??[]).length;
  assert.ok(sleeps<=63,`${sleeps} inline sleeps in tests (limit 63): use waitFor and lower the limit when you remove one`);
 });
+
+test('the record editor preview shares its schema parser with the template through the sync script',async()=>{
+ const {synced}=await import('../../../scripts/sync-editor-previews.mjs'),template=read('packages/cli/templates/data-editor.mjs'),preview=read('packages/core/src/data-editor-preview.ts');
+ assert.equal(synced(template,preview),preview.replaceAll('\r\n','\n'),'the preview is current; run npm run previews');
+ const changed=template.replace("function normalizeFields(","function normalizeFields(/* edited */ ");assert.notEqual(changed,template);
+ assert.match(synced(changed,preview),/function normalizeFields\(\/\* edited \*\//,'an edit to the template reaches the preview');
+ const escaped=synced(template.replace("function normalizeFields(","function normalizeFields(a=`x${1}`,"),preview);assert.ok(escaped.includes('a='+String.fromCharCode(92)+'`x'+String.fromCharCode(92)+'${1}'+String.fromCharCode(92)+'`'),'backticks and interpolation are escaped for the template literal');
+});

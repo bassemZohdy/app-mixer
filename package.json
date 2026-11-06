@@ -10,7 +10,8 @@
     "test": "npm run build && node --test packages/core/test/*.test.mjs packages/cli/test/*.test.mjs packages/web/test/*.test.mjs packages/native/test/*.test.mjs packages/agent/test/*.test.mjs",
     "todo": "node scripts/todo-progress.mjs",
     "docs": "node scripts/docs-index.mjs",
-    "lint": "eslint \"packages/*/src/**/*.ts\""
+    "lint": "eslint \"packages/*/src/**/*.ts\"",
+    "previews": "node scripts/sync-editor-previews.mjs"
   },
   "engines": {
     "node": ">=22.13.0"
