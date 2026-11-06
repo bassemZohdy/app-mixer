@@ -28,7 +28,7 @@ Tests that need an external service are skipped unless their variable is set. CI
 | `APP_MIXER_TEST_OTEL_COLLECTOR=docker` | Docker (OpenTelemetry Collector) | `node --test packages/cli/test/otel-collector-trace.test.mjs` |
 | `APP_MIXER_TEST_PROMETHEUS=docker` | Docker (Prometheus) | `node --test packages/cli/test/alert-rules.test.mjs` |
 
-The Docker Compose outage test runs with `node deploy/local/compose-smoke.mjs`. The Kubernetes (`kubernetes.yml`), agent pod recovery (`agent-pod-recovery.yml`), Flutter (`flutter*.yml`) and React Native device workflows need kind, an Android emulator or an iOS simulator; run them from GitHub with `gh workflow run <workflow>.yml --ref <branch>`. On Windows use Git Bash and set `MSYS_NO_PATHCONV=1` when passing paths to `kind` or `docker`.
+CI caches the pinned images these tests start (`node .github/scripts/docker-images.mjs` lists them) with `actions/cache`, so a registry rate limit or slow pull does not fail a run. The Docker Compose outage test runs with `node deploy/local/compose-smoke.mjs`. The Kubernetes (`kubernetes.yml`), agent pod recovery (`agent-pod-recovery.yml`), Flutter (`flutter*.yml`) and React Native device workflows need kind, an Android emulator or an iOS simulator; run them from GitHub with `gh workflow run <workflow>.yml --ref <branch>`. On Windows use Git Bash and set `MSYS_NO_PATHCONV=1` when passing paths to `kind` or `docker`.
 
 ## Pull requests
 

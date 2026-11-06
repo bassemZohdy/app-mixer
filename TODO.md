@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**45 / 78 tasks complete (58%)**
+**46 / 78 tasks complete (59%)**
 
 `████████████░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 31 / 47 | 16 (P4-07, P4-09, P4-17..P4-21, P4-33, P4-36..P4-38, P4-41, P4-42, P4-45..P4-47) |
+| P4 fixes and improvements from the 2026-11-06 code review | 32 / 47 | 15 (P4-07, P4-09, P4-17..P4-21, P4-33, P4-37, P4-38, P4-41, P4-42, P4-45..P4-47) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -180,8 +180,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: no `CONTRIBUTING.md` (the opt-in test matrix - PostgreSQL, Docker, Keycloak, browsers, kind, Flutter - is undocumented outside session notes), no `SECURITY.md`, no `CODEOWNERS`, no `.nvmrc`, no issue or PR templates. Fixed 2026-11-06: `CONTRIBUTING.md` (including the opt-in matrix and the CI commands), `SECURITY.md` (private vulnerability reporting), `CODEOWNERS`, `.nvmrc`, issue and PR templates, and a test that the guide names every opt-in variable the tests and workflows read.
 - [x] P4-31 CI hygiene
   - Found: `ci.yml` has no `concurrency` group (superseded pushes keep running) and no `timeout-minutes` on its jobs; the Kubernetes, agent pod recovery, Flutter and React Native workflows run only on pull requests or manual dispatch, so pushes to `main` never exercise them; Docker images are pulled on every run. Fixed 2026-11-06: `concurrency` with `cancel-in-progress` in `ci.yml`, `timeout-minutes` on every job, and `push` on `main` plus a weekly schedule for the seven other workflows, with a test for all three. Image caching is P4-36.
-- [ ] P4-36 Cache Docker images in CI
-  - Found while fixing P4-31: the Keycloak, S3, OpenTelemetry Collector, Prometheus and pgvector images are pulled on every run. Fix: a cached `docker save`/`load` step keyed by the pinned image digest (or a registry mirror), measured against the current pull time.
+- [x] P4-36 Cache Docker images in CI
+  - Found while fixing P4-31: the Keycloak, S3, OpenTelemetry Collector, Prometheus and pgvector images are pulled on every run. Fixed 2026-11-06: `.github/scripts/docker-images.mjs` lists the five pinned images from the tests, `ci.yml` restores `~/docker-images` with `actions/cache` keyed by a hash of that list and loads each tarball or pulls and saves it, and a test checks the list and the steps. The time saved is measured on the second CI run after a cache write.
 - [x] P4-32 Slim the Data Plane image
   - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fixed 2026-11-06: the image installs and builds only `core` and `web` (497 MB -> 332 MB, no LangChain or Twilio in `node_modules`), has a TCP `HEALTHCHECK` that works for the TLS and plain transports, and the kind workflow fails above 400 MB; verified by building the image, loading `@app-mixer/core` in it and a static test.
 - [ ] P4-33 Replace sleep-based waits in tests

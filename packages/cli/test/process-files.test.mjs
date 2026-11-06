@@ -65,3 +65,12 @@ test('the lint baseline is configured, scripted and run in CI',()=>{
  const config=read('eslint.config.mjs');for(const rule of ['no-floating-promises','no-misused-promises','await-thenable','no-unused-vars'])assert.match(config,new RegExp(rule));
  assert.equal(JSON.parse(read('package.json')).scripts.lint,'eslint "packages/*/src/**/*.ts"');assert.match(read('.github/workflows/ci.yml'),/run: npm run lint/);assert.ok(existsSync(join(root,'.editorconfig')));
 });
+
+test('CI caches the pinned Docker images the container tests start',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const images=execFileSync(process.execPath,[join(root,'.github/scripts/docker-images.mjs')],{encoding:'utf8'}).trim().split('\n');
+ assert.ok(images.length>=5,'found '+images.length+' images');
+ for(const image of images)assert.match(image,/@sha256:[a-f0-9]{64}$|:[0-9][A-Za-z0-9._-]*$/,image+' is pinned to a version or digest');
+ for(const name of ['keycloak','seaweedfs','opentelemetry-collector','prometheus','alertmanager'])assert.ok(images.some(image=>image.includes(name)),name+' is cached');
+ const workflow=read('.github/workflows/ci.yml');assert.match(workflow,/uses: actions\/cache@v4\s*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
+});
