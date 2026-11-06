@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**14 / 65 tasks complete (22%)**
+**16 / 65 tasks complete (25%)**
 
-`████░░░░░░░░░░░░░░░░`
+`█████░░░░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 0 / 34 | 34 (P4-01..P4-34) |
+| P4 fixes and improvements from the 2026-11-06 code review | 2 / 34 | 32 (P4-02..P4-28, P4-30..P4-34) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -86,8 +86,8 @@ Last full `npm test` (2026-11-06, Windows, no PostgreSQL): 846 tests, 799 pass, 
 Each item names what was found and where, and the fix. An item is done when the fix is merged with a test (or, for documentation and process items, when the change is in place). Ordered by severity within each group.
 
 ### Bugs and correctness
-- [ ] P4-01 Fix the CLI entry point on Windows and add a `bin`
-  - Found: `packages/cli/src/index.ts` detects the entry with `process.argv[1]?.endsWith('/dist/index.js')`; on Windows `argv[1]` uses backslashes, so `node packages\cli\dist\index.js create demo` exits 0 and creates nothing (reproduced 2026-11-06). `package.json` has a shebang but no `bin`, so `npx`/global installs cannot run it. Fix: compare `process.argv[1]` with `fileURLToPath(import.meta.url)`, add `"bin": {"app-mixer": "dist/index.js"}`, and test the entry on Windows and Linux.
+- [x] P4-01 Fix the CLI entry point on Windows
+  - Found: `packages/cli/src/index.ts` detected the entry with `process.argv[1]?.endsWith('/dist/index.js')`; on Windows `argv[1]` uses backslashes, so `node packages\cli\dist\index.js create demo` exited 0 and created nothing (reproduced 2026-11-06). Fixed 2026-11-06: the entry is compared by resolved path (case-insensitively on Windows), and a test runs the command through absolute and relative paths, the usage error and an invalid name (verified on Windows and in CI).
 - [ ] P4-02 Stop recording pre-effect failures as uncertain actions
   - Found: `SqliteAgentActionJournal.invoke` and `PostgresAgentActionJournal.invoke` mark the action `uncertain` for any error thrown by `dispatch`, including `Capability forbidden`, `Invalid capability input`, `Capability not found` and delegation refusals that `CapabilityRegistry.invoke` raises before `execute` (and audits as `denied`/`invalid`/`not_found`). The run then settles `uncertain` and needs manual reconciliation although nothing was applied. Fix: let the registry throw typed pre-effect errors (see P4-16), classify them as `not_applied` (or `failed` when attempts are exhausted) in both journals, keep every other error uncertain, and test each class.
 - [ ] P4-03 Replace lifetime caps that count terminal rows with retention
@@ -152,8 +152,8 @@ Each item names what was found and where, and the fix. An item is done when the 
 ### Documentation and process
 - [ ] P4-28 Index every document from the README and retire the orphans
   - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fix: a generated docs index, merge or delete the three orphans, refresh the status paragraph, and a test that every `docs/**/*.md` is reachable from the README.
-- [ ] P4-29 Compute the progress table instead of maintaining it by hand
-  - Found: the table said P2 was 0 / 10 while P2-03 was checked (corrected in this edit). Fix: a small script that derives the header count, bar and per-phase rows from the checkboxes, run in CI as a check.
+- [x] P4-29 Compute the progress table instead of maintaining it by hand
+  - Found: the table said P2 was 0 / 10 while P2-03 was checked. Fixed 2026-11-06: `scripts/todo-progress.mjs` derives the header, bar and per-phase rows from the task checkboxes (`npm run todo` rewrites, `--check` fails when stale), and a test fails `npm test` when TODO.md is out of date.
 - [ ] P4-30 Contributor and security process files
   - Found: no `CONTRIBUTING.md` (the opt-in test matrix - PostgreSQL, Docker, Keycloak, browsers, kind, Flutter - is undocumented outside session notes), no `SECURITY.md`, no `CODEOWNERS`, no `.nvmrc`, no issue or PR templates. Fix: add them, including the exact commands the CI steps run.
 - [ ] P4-31 CI hygiene

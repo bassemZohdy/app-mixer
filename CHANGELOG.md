@@ -4,11 +4,13 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- The CLI runs as a command on Windows: the entry was detected with a forward-slash suffix of `process.argv[1]`, so `node packages\cli\dist\index.js create demo` exited 0 without creating anything. The entry is now compared by resolved path.
 - The offline queue's rollback anchor now detects selective substitution or deletion of individual item envelopes, not only whole-partition restores. The counter record carries an authenticated digest of every envelope, checked at open, on `list()` and before each write.
 - Run and schedule configuration must be own plain data; schedules reject inherited fields with the controlled error instead of a raw TypeError.
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- `npm run todo` (`scripts/todo-progress.mjs`) derives the TODO progress header, bar and phase table from the task checkboxes; `--check` fails when the file is stale, and a test enforces it.
 - A shared accessibility and typography reference checked on the web renderer (real browser accessibility tree), React Native through react-native-web, and Flutter in the VM and on Android and iOS emulators. Flutter headings now expose their level, and React Native headings pass `aria-level`.
 - An opt-in end-to-end identity test against Keycloak (run in CI): delegation, expiry and revocation during a run, revocation at the provider, approval through the review API and HTTPS notice delivery, all with provider-issued tokens.
 - A draft labelled memory evaluation set (pending owner review) and a PostgreSQL test that reports every retrieval mode among 900 distractors, compares HNSW with exact search and checks proposed floors.
