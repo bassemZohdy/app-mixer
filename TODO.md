@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**68 / 94 tasks complete (72%)**
+**56 / 80 tasks complete (70%)**
 
 `██████████████░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 54 / 63 | 9 (P4-07, P4-19, P4-20, P4-38, P4-41, P4-41, P4-42, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 42 / 49 | 7 (P4-07, P4-19, P4-20, P4-38, P4-41, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -199,38 +199,3 @@ A checked item means documentation or implementation is verified; future require
 
 - [x] P4-46 Specify and implement renderer style variants and stable test hooks
   - Found while fixing P4-34: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter, and rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fixed 2026-11-06 by decision: the renderers carry no theme, so variants are style hooks the host maps (web `data-variant`; React Native `variantStyles` prop; Flutter `primary` is `FilledButton`, the others the text button) and every component exposes its ID (`data-component-id`, `testID`, `ValueKey('a2ui:<id>')`); specified in `docs/a2ui-renderer.md`, tested on web and in the react smoke test, and in a Flutter widget test (verified by the Flutter workflows).
-- [x] P4-25 Add a lint and format baseline
-  - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fixed 2026-11-06 for the lint half: ESLint 10 with typescript-eslint (`no-floating-promises`, `no-misused-promises`, `await-thenable`, unused variables, fallthrough) over every package's `src`, `npm run lint` in CI on Node 22, `.editorconfig`, and the six findings fixed (three async server handlers now wrapped in `guard`, an unmarked promise in the plane request runner, an unused binding); a negative control confirmed the floating-promise rule fires. No formatter was added because reformatting the dense one-line style would touch nearly every line; import rules were not added because the codebase has no import-order convention to enforce.
-- [x] P4-26 Package metadata and layering before any publish
-  - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fixed 2026-11-06 for the metadata: `license`, `repository`, `files` and `types` are declared, the web dependency is `0.1.0` in both core and cli, and `packages/cli/test/package-metadata.test.mjs` (run by `npm test` in CI) checks them and `npm pack --dry-run` contents. The layering change is P4-41.
-- [ ] P4-41 Move the web-serving and ComponentRegistry glue out of core
-  - Found while fixing P4-26: `packages/core` imports `@app-mixer/web` (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: move that glue into a small `@app-mixer/host` package (or the CLI), keep core free of renderer imports, and keep the public exports working through a re-export for one release.
-- [x] P4-27 Dependency updates and automation
-  - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fixed 2026-11-06 for automation and the safe update: `.github/dependabot.yml` is grouped by ecosystem (OpenTelemetry, LangChain, TypeScript tooling, others), CI runs `npm audit --omit=dev` (0 vulnerabilities), and `jose` is at 6.2.15 with the JWT tests green. The major updates (OpenTelemetry 3.x, jsdom 31, LangGraph 1.7, TypeScript 7) are P4-42, to be taken one group at a time with the collector and browser tests.
-
-### Documentation and process
-- [ ] P4-42 Take the major dependency updates one group at a time
-  - Found while fixing P4-27. Done 2026-11-06: the in-range updates (`@langchain/langgraph` 1.5.3 to 1.7.1, `@langchain/core`, `@langchain/langgraph-checkpoint`, `@ag-ui/core`, `fake-indexeddb`) with the full suite green. Remaining majors: `@opentelemetry/*` 2.x to 3.x with the OTLP exporter 0.223 to 0.301, `jsdom` 26 to 31, `@types/node` 22 to 26 (keep it matched to the supported Node range) and TypeScript 5.9 to 7 (blocked by typescript-eslint's `<6.1.0` peer range). Fix: update each group in its own commit with the OpenTelemetry collector, browser and agent tests green, and record any API change in the CHANGELOG.
-- [x] P4-28 Index every document from the README and retire the orphans
-  - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fixed 2026-11-06: `npm run docs` generates `docs/README.md` from the file headings (a test fails when it is stale), the README links it and its status paragraph is refreshed, the three orphans (`roadmap.md`, `requirements.md`, `architecture.md`, M0-era stubs that duplicated `docs/specs/*` and `TODO.md`) were deleted, and a test checks every `docs/**/*.md` is reachable from the README.
-- [x] P4-29 Compute the progress table instead of maintaining it by hand
-  - Found: the table said P2 was 0 / 10 while P2-03 was checked. Fixed 2026-11-06: `scripts/todo-progress.mjs` derives the header, bar and per-phase rows from the task checkboxes (`npm run todo` rewrites, `--check` fails when stale), and a test fails `npm test` when TODO.md is out of date.
-- [x] P4-30 Contributor and security process files
-  - Found: no `CONTRIBUTING.md` (the opt-in test matrix - PostgreSQL, Docker, Keycloak, browsers, kind, Flutter - is undocumented outside session notes), no `SECURITY.md`, no `CODEOWNERS`, no `.nvmrc`, no issue or PR templates. Fixed 2026-11-06: `CONTRIBUTING.md` (including the opt-in matrix and the CI commands), `SECURITY.md` (private vulnerability reporting), `CODEOWNERS`, `.nvmrc`, issue and PR templates, and a test that the guide names every opt-in variable the tests and workflows read.
-- [x] P4-31 CI hygiene
-  - Found: `ci.yml` has no `concurrency` group (superseded pushes keep running) and no `timeout-minutes` on its jobs; the Kubernetes, agent pod recovery, Flutter and React Native workflows run only on pull requests or manual dispatch, so pushes to `main` never exercise them; Docker images are pulled on every run. Fixed 2026-11-06: `concurrency` with `cancel-in-progress` in `ci.yml`, `timeout-minutes` on every job, and `push` on `main` plus a weekly schedule for the seven other workflows, with a test for all three. Image caching is P4-36.
-- [x] P4-36 Cache Docker images in CI
-  - Found while fixing P4-31: the Keycloak, S3, OpenTelemetry Collector, Prometheus and pgvector images are pulled on every run. Fixed 2026-11-06: `.github/scripts/docker-images.mjs` lists the five pinned images from the tests, `ci.yml` restores `~/docker-images` with `actions/cache` keyed by a hash of that list and loads each tarball or pulls and saves it, and a test checks the list and the steps. The time saved is measured on the second CI run after a cache write.
-- [x] P4-32 Slim the Data Plane image
-  - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fixed 2026-11-06: the image installs and builds only `core` and `web` (497 MB -> 332 MB, no LangChain or Twilio in `node_modules`), has a TCP `HEALTHCHECK` that works for the TLS and plain transports, and the kind workflow fails above 400 MB; verified by building the image, loading `@app-mixer/core` in it and a static test.
-- [x] P4-33 Replace sleep-based waits in tests
-  - Found: 64 `setTimeout(resolve, …)` waits across the test suites; the schedule-node test failed in CI on 2026-11-06 because of one such assumption. Fix: condition polling helpers with deadlines and injected clocks where a store accepts one, and a lint rule against bare sleeps in tests.
-- [x] P4-34 Decide and document the renderer's unspecified behaviour
-  - Found: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter; a `Text` bound to a number or boolean renders as an empty string on web, React Native and Flutter; rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fixed 2026-11-06 for the scalar coercion (the functional bug): numbers and booleans render in their JSON spelling on web, React Native and Flutter (Dart whole doubles print without `.0`), documented in `docs/a2ui-renderer.md`, with five new Text components in the shared fixture checked by the browser, react-native-web and Flutter parity tests. Style variants for Button and TextField and stable DOM hooks are P4-46.
-
-Persistent-agent details: [requirements and architecture](docs/specs/persistent-agents.md), [ADR 0010](docs/adr/0010-configurable-persistent-agents.md). The manifest store is implemented; the remaining persistent-agent capabilities are planned.
-
-A checked item means documentation or implementation is verified; future requirements are not completed merely by being described.
-
-- [x] P4-46 Specify and implement renderer style variants and stable test hooks
-  - Found while fixing P4-34: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter, and rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fix: specify the visual meaning of each variant in `docs/a2ui-renderer.md` and the catalog, implement it on all adapters through the shared fixtures, add `data-component-id` (and the equivalent keys on React Native and Flutter), and extend the parity tests.
