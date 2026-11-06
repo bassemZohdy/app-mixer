@@ -36,7 +36,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-03 Internal data provider and staged external transactions
 - **Verified locally:** SQLite provider, per-record authorization, staged submission that never auto-retries a possibly applied effect, process-kill recovery, JSON Schema validation and forms.
 - **Still to prove:**
-  - [ ] Broader JSON Schema-driven forms for the schema features the form editor still rejects. Annotations, `default`, `readOnly`, `date`/`date-time`/`email` formats and discriminated unions are now supported. The remaining unsupported keywords and a proposed handling for each are listed in [business-data.md](business-data.md#json-schema-keywords-the-form-does-not-support); every row still needs an owner decision.
+  - [x] Broader JSON Schema-driven forms for the schema features the form editor still rejects. Annotations, `default`, `readOnly`, `date`/`date-time`/`email` formats, discriminated unions, conflict-free `allOf` merging, scalar key/value dictionaries and object-array item titles are supported. Every remaining unsupported keyword has an owner decision (accepted 2026-11-06) in [business-data.md](business-data.md#json-schema-keywords-the-form-does-not-support).
   - [ ] Verification of staged outcomes against at least one real external provider, including an ambiguous timeout.
 - **Evidence:** the list of unsupported keywords with the decision for each, and a provider sandbox transcript showing an ambiguous result reconciled without a duplicate effect.
 
