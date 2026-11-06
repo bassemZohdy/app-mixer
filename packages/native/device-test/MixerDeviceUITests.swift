@@ -52,7 +52,7 @@ final class MixerDeviceUITests: XCTestCase {
     XCTAssertEqual(app.textFields["Name"].value as? String, "Ada")
     XCTAssertEqual(app.textViews["Notes"].value as? String, "Line one")
     XCTAssertTrue(app.buttons["Save"].isEnabled)
-    let heights = ["Account", "Profile", "Contact details", "Body copy", "Small print"].map { app.staticTexts[$0].frame.height }
+    let heights = ["Account", "Profile", "Contact details", "Body copy", "Small print"].map { app.staticTexts[$0].firstMatch.frame.height }
     XCTAssertEqual(heights, heights.sorted(by: >), "Text heights follow the reference sizes")
     XCTAssertEqual(Set(heights).count, heights.count, "Each size is distinct")
   }
