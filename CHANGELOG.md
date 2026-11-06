@@ -15,6 +15,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- `CONTRIBUTING.md` (build, test and the opt-in test matrix with the commands CI runs), `SECURITY.md`, `.github/CODEOWNERS`, `.nvmrc` and issue and pull request templates; a test fails when a documented opt-in variable goes missing from the guide.
 - `npm run todo` (`scripts/todo-progress.mjs`) derives the TODO progress header, bar and phase table from the task checkboxes; `--check` fails when the file is stale, and a test enforces it.
 - A shared accessibility and typography reference checked on the web renderer (real browser accessibility tree), React Native through react-native-web, and Flutter in the VM and on Android and iOS emulators. Flutter headings now expose their level, and React Native headings pass `aria-level`.
 - An opt-in end-to-end identity test against Keycloak (run in CI): delegation, expiry and revocation during a run, revocation at the provider, approval through the review API and HTTPS notice delivery, all with provider-issued tokens.

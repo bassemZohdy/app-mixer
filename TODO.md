@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**21 / 66 tasks complete (32%)**
+**22 / 66 tasks complete (33%)**
 
-`██████░░░░░░░░░░░░░░`
+`███████░░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 7 / 35 | 28 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-28, P4-30..P4-35) |
+| P4 fixes and improvements from the 2026-11-06 code review | 8 / 35 | 27 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-28, P4-31..P4-35) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -156,8 +156,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fix: a generated docs index, merge or delete the three orphans, refresh the status paragraph, and a test that every `docs/**/*.md` is reachable from the README.
 - [x] P4-29 Compute the progress table instead of maintaining it by hand
   - Found: the table said P2 was 0 / 10 while P2-03 was checked. Fixed 2026-11-06: `scripts/todo-progress.mjs` derives the header, bar and per-phase rows from the task checkboxes (`npm run todo` rewrites, `--check` fails when stale), and a test fails `npm test` when TODO.md is out of date.
-- [ ] P4-30 Contributor and security process files
-  - Found: no `CONTRIBUTING.md` (the opt-in test matrix - PostgreSQL, Docker, Keycloak, browsers, kind, Flutter - is undocumented outside session notes), no `SECURITY.md`, no `CODEOWNERS`, no `.nvmrc`, no issue or PR templates. Fix: add them, including the exact commands the CI steps run.
+- [x] P4-30 Contributor and security process files
+  - Found: no `CONTRIBUTING.md` (the opt-in test matrix - PostgreSQL, Docker, Keycloak, browsers, kind, Flutter - is undocumented outside session notes), no `SECURITY.md`, no `CODEOWNERS`, no `.nvmrc`, no issue or PR templates. Fixed 2026-11-06: `CONTRIBUTING.md` (including the opt-in matrix and the CI commands), `SECURITY.md` (private vulnerability reporting), `CODEOWNERS`, `.nvmrc`, issue and PR templates, and a test that the guide names every opt-in variable the tests and workflows read.
 - [ ] P4-31 CI hygiene
   - Found: `ci.yml` has no `concurrency` group (superseded pushes keep running) and no `timeout-minutes` on its jobs; the Kubernetes, agent pod recovery, Flutter and React Native workflows run only on pull requests or manual dispatch, so pushes to `main` never exercise them; Docker images are pulled on every run. Fix: `concurrency: {group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true}`, job timeouts, a weekly schedule plus `push` on `main` for the device and cluster workflows, and image caching.
 - [ ] P4-32 Slim the Data Plane image
