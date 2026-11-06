@@ -75,6 +75,11 @@ jobs:
         env:
           APP_MIXER_TEST_BROWSER: '1'
         run: node --test packages/cli/test/browser-rollback-anchor.test.mjs
+      - name: Staged submissions against a real S3 provider
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_S3: docker
+        run: node --test packages/core/test/staged-s3-provider.test.mjs
       - name: Prometheus alert rules failure drill
         if: matrix.node == '22'
         env:
