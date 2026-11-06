@@ -9,6 +9,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- A multi-node quota test (PostgreSQL CI job) releases two processes with separate pools against one agent's concurrency and daily run limits at the same instant over 20 rounds and checks that exactly the limit is admitted and recorded each time.
 - A test installs a third-party extension package (built and packed outside the repository) into a generated app with npm, approves it with a pinned tarball digest, publishes, renders and invokes it, then revokes it; its diagnostics are the lifecycle transcript.
 - An opt-in process-kill test (`APP_MIXER_TEST_S3=docker`, run in CI) kills a worker before, during and after a journaled action's write to a real S3-compatible provider and checks that recovery reconciles it with exactly one effect; the provider also passes the idempotency contract check.
 - An opt-in test (`APP_MIXER_TEST_S3=docker`, run in CI) submits staged intents to a real S3-compatible provider (SeaweedFS, SigV4) through a proxy that loses responses or requests, and checks that every ambiguous outcome reconciles with exactly one object per intent.

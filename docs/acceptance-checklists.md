@@ -63,7 +63,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** manifest validation, immutable tenant-scoped versions, optimistic concurrency, PostgreSQL store with audit and quotas, process-kill tests.
 - **Still to prove:**
   - [ ] Production identity for administrators and service principals.
-  - [ ] Distributed run-quota enforcement across nodes.
+  - [x] Distributed run-quota enforcement across nodes. Two processes with separate PostgreSQL pools exceed the concurrency and daily limits at the same instant for 20 rounds (1,200 attempts); every round admits exactly the limit and the database records exactly that ([durable-agent-runs.md](durable-agent-runs.md#shared-run-slots)).
 - **Evidence:** a multi-node quota test that exceeds the limit from two nodes simultaneously and a record that exactly the limit was admitted.
 
 ### P2-07 Lifecycle manager and durable run registry
