@@ -109,9 +109,9 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Evidence:** an outage drill (store down, requests fail closed), a certificate rotation transcript, and a deprovisioning test showing access ends within the stated bound.
 
 ### P3-02 Observability and operational controls
-- **Verified locally:** liveness and readiness probes, draining, bounded metrics with fixed labels (fuzz-tested), scrape server, optional OpenTelemetry spans, cluster tests for scope, tenant and outages.
+- **Verified locally:** liveness and readiness probes, draining, bounded metrics with fixed labels (fuzz-tested), scrape server, optional OpenTelemetry spans, cluster tests for scope, tenant and outages. One trace exported over OTLP to a real OpenTelemetry Collector container spans a browser-originated span, the generated workspace process, the Data Plane, the capability service and the Control Plane, with no tokens or inputs in the export ([collector test](data-plane-observability.md#collector-integration-test)).
 - **Still to prove:**
-  - [ ] Cross-service tracing from browser through Data Plane, capabilities and Control Plane in a real collector.
+  - [ ] Cross-service tracing that starts in a real browser with a browser OpenTelemetry SDK; the collector test sends the browser's `traceparent` from Node.
   - [ ] Production transport and deployment integration of metrics and traces.
   - [ ] The operational controls (alerts, runbooks) the product promises.
 - **Evidence:** a trace screenshot or export spanning all services and an alert fired in a failure drill.
