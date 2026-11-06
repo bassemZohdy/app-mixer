@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app_mixer_flutter/app_mixer_flutter.dart';
 import 'signed_plan_fixture.dart';
 import 'parity_scenario.dart';
+import 'accessibility_fixture.dart';
+import 'accessibility_parity.dart';
 
 Map<String, Object?> message(String kind, Object payload) => {'version':'v0.9.1',kind:payload};
 void main() {
@@ -366,6 +368,13 @@ void main() {
     expect(tester.widget<TextField>(find.byType(TextField).first).controller?.text,'Ada');expect(errors,isEmpty);expect(tester.takeException(),isNull);
   });
 
+  test('the device copy of the accessibility reference matches the shared fixture', () {
+    expect(jsonDecode(accessibilityFixtureJson),jsonDecode(File('test/fixtures/accessibility.json').readAsStringSync()));
+  });
+  testWidgets('matches the shared accessibility and typography reference', (tester) async {
+    final summary=await expectAccessibilityParity(tester);
+    expect(summary.length,11);
+  });
   testWidgets('text variants use the host theme and heading semantics', (tester) async {
     late void Function(Object?) receive;
     VoidCallback? subscribe(void Function(Object?) callback){receive=callback;return null;}

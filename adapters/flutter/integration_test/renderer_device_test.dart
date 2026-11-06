@@ -6,6 +6,7 @@ import 'package:integration_test/integration_test.dart';
 import '../test/signed_plan_fixture.dart';
 import '../test/signed_registry_plan_fixture.dart';
 import '../test/parity_scenario.dart';
+import '../test/accessibility_parity.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -43,6 +44,12 @@ void main() {
   testWidgets('unresolved column references reserve vertical flex slots until resolved on a mobile device', verifyIncrementalMissingColumnSpacing);
   testWidgets('row cross-axis alignment places children consistently on a mobile device', verifyRowAlignment);
   testWidgets('column cross-axis alignment places children consistently on a mobile device', verifyColumnAlignment);
+
+  testWidgets('matches the shared accessibility and typography reference on a mobile device', (tester) async {
+    final summary=await expectAccessibilityParity(tester);
+    debugPrint('accessibility parity: ${summary.join(', ')}');
+    expect(summary.length,11);
+  });
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
     late void Function(Object?) receive;
