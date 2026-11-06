@@ -54,7 +54,7 @@ The PostgreSQL CI integration includes worker termination immediately before and
 
 ## Retention worker
 
-`AgentMemoryRetentionWorker` optionally schedules cleanup of an explicit host-supplied list of up to 1,000 scopes belonging to a fixed authenticated actor. Set `maxScopesPerPass` (1–100), `pollMs`, a per-scope host `authorize` callback and `onError`. It visits at most that many scopes per pass in round-robin order; denied or failing scopes do not stop later scopes from being visited. `runOnce()` performs one pass, while `start()` runs passes without overlap and `stop()` waits for an in-flight pass. Stopping cannot cancel a cleanup that has already begun. The store independently authorizes each purge and retains tombstones, and enabled mutation audit records nonempty purges in the same transaction. PostgreSQL scope locks serialize overlapping workers.
+`AgentMemoryRetentionWorker` optionally schedules cleanup of an explicit host-supplied list of up to 1,000 scopes belonging to a fixed authenticated actor. Set `maxScopesPerPass` (1â€“100), `pollMs`, a per-scope host `authorize` callback and `onError`. It visits at most that many scopes per pass in round-robin order; denied or failing scopes do not stop later scopes from being visited. `runOnce()` performs one pass, while `start()` runs passes without overlap and `stop()` waits for an in-flight pass. Stopping cannot cancel a cleanup that has already begun. The store independently authorizes each purge and retains tombstones, and enabled mutation audit records nonempty purges in the same transaction. PostgreSQL scope locks serialize overlapping workers.
 
 The list and actor are fixed at construction; rebuilding the worker is required when scopes change. This worker does not discover new scopes, guarantee purge timing, coordinate a production scheduler, remove tombstones or erase database backups. Callbacks and database operations must return promptly; the host owns scheduler health, retries, storage protection and alerting.
 
@@ -70,7 +70,7 @@ The index is optional and maintained by PostgreSQL on writes and deletes; creati
 
 ## Indexed PostgreSQL vector search
 
-A host can install pgvector 0.8.7 or newer in PostgreSQL's `public` schema, then configure `vectorIndex: {modelId, dimensions}` on `PostgresAgentMemory` and call `initialize()`. Dimensions must be 1–2,000 and must match that embedding model everywhere. Initialization creates a model-specific HNSW cosine index; hosts must coordinate initialization and migrations, provision sufficient database privileges and capacity, and schedule index creation because it can block writes. Existing and future `semantic-v1` records for that model must contain valid vectors of exactly that dimension; incompatible records can make index creation or writes fail. Treat model IDs as immutable versions and plan re-embedding and index retirement explicitly.
+A host can install pgvector 0.8.7 or newer in PostgreSQL's `public` schema, then configure `vectorIndex: {modelId, dimensions}` on `PostgresAgentMemory` and call `initialize()`. Dimensions must be 1â€“2,000 and must match that embedding model everywhere. Initialization creates a model-specific HNSW cosine index; hosts must coordinate initialization and migrations, provision sufficient database privileges and capacity, and schedule index creation because it can block writes. Existing and future `semantic-v1` records for that model must contain valid vectors of exactly that dimension; incompatible records can make index creation or writes fail. Treat model IDs as immutable versions and plan re-embedding and index retirement explicitly.
 
 `AgentSemanticMemory.searchIndexed(actor, scope, query, limit?, maxCandidates?)` checks scope access before embedding, uses a bounded pgvector search, and independently rechecks each candidate's read authorization and revision. It returns up to 20 authorized, valid records with cosine-based scores; `maxCandidates` defaults to 100 and is capped at 1,000. The search uses pgvector's strict iterative scans and a bounded candidate list. It is approximate: expired or unauthorized records, filtering, index scan limits and index recall can yield fewer or different results than exact `search()`. A shared HNSW index can make one scope's vectors affect another scope's recall and timing, even though record authorization filters returned data. Hosts needing stronger performance or timing isolation should use separate databases or separately isolated indexes. Evaluate recall, latency, permissions and language coverage on representative deployment data; do not treat similarity as confidence or retrieved text as trusted instructions.
 
@@ -80,6 +80,26 @@ The index is maintained by PostgreSQL for writes and deletion, but this does not
 The host may configure `registerSemanticMemorySearch` with `mode: 'indexed'` or `mode: 'lexical'` and a fixed `maxCandidates`; the model supplies only query text and cannot change mode, limits or scope. The default remains exact semantic search. Similarity cutoffs are not supported for indexed modes, and these modes require the corresponding PostgreSQL indexes.
 
 `evaluateAgentMemoryRetrieval` accepts `indexed` and `lexical` modes with the same candidate bound. For indexed vector search, `compareExact: true` also runs the exact semantic search for each query and reports its authorized IDs and the fraction found in the indexed results. Cases with no exact hits report `exactRecall: null` and are excluded from the mean; if all are empty, the mean is null. This overlap measures agreement with the exact top results, not relevance or safety. Both searches use the same query embedding, avoiding extra provider calls and differences caused by a changing embedding response. They still execute sequentially without a shared database snapshot, so changing records, permissions or clocks can change the comparison. Use stable, representative labeled data and a controlled corpus for deployment evaluation.
+
+## Draft evaluation set
+
+`packages/agent/test/fixtures/memory-evaluation-set.json` is a draft labelled set, pending owner review. It has 40 support-agent memories and 24 cases: 8 keyword, 8 paraphrase, 4 with several relevant entries, and 4 near-miss distractors. Keyword cases also carry an exact-term `lexicalQuery`. `memory-evaluation-set.test.mjs` loads it into PostgreSQL with pgvector, adds 900 synthetic distractors that reuse the corpus vocabulary, and reports every mode at `limit: 5` (`maxCandidates: 40` for indexed and lexical search). The embedder is a deterministic local reference that hashes words and character trigrams, so the numbers are a regression baseline for the harness, not the quality of a production embedding model. Last local report:
+
+| Mode | Recall | Precision@5 | MRR | nDCG | Recall against exact search |
+| --- | --- | --- | --- | --- | --- |
+| semantic | 0.792 | 0.183 | 0.743 | 0.755 | |
+| hybrid | 0.729 | 0.175 | 0.729 | 0.719 | |
+| indexed (HNSW) | 0.792 | 0.183 | 0.743 | 0.755 | 0.992 |
+| lexical, keyword terms | 0.875 | 0.175 | 0.750 | 0.783 | |
+| lexical, full questions | 0 | 0 | 0 | 0 | |
+
+The proposed floors are recall 0.75 and MRR 0.7 for semantic and indexed search, 0.7 and 0.7 for hybrid search, 0.8 and 0.7 for lexical search on keyword terms, and recall against exact search of 0.95 for the HNSW index. Lowering `ef_search` to 3 drops recall against exact search to 0.80, and the test fails. Findings for review:
+
+- Paraphrases are the weakest category, as expected for an embedder without learned semantics.
+- With this embedder, hybrid fusion is worse than plain semantic search on paraphrases, because word overlap promotes distractors.
+- Lexical search returns nothing for natural-language questions, because every token must match. Use it only for identifiers and exact terms.
+
+Before a deployment, an owner should review the labels, replace the reference embedder with the production model, and agree the thresholds for each mode from the report this test prints.
 
 
 To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-memory kind, configure `vectorIndex: {modelId, dimensions, scope}` with that exact scope. The scoped index contains only records in that scope, and indexed searches through that adapter reject other scopes before sending query text to the embedder. The scoped query uses a distinct indexed expression so an existing global vector index cannot supply its candidates. Host authorization and per-record checks remain mandatory. Expired or unauthorized records within that scope can still affect recall and timing, and shared database resources can still create cross-tenant timing effects. Manage index count, database privileges and separate deployment boundaries according to the isolation required. A scoped index is not a replacement for database tenant isolation or a representative retrieval evaluation.
