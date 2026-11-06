@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {importOpenAPI,CapabilityRegistry} from '../dist/index.js';
+import {importOpenAPI,CapabilityRegistry,CAPABILITY_EFFECT,markNoEffect,hadNoEffect} from '../dist/index.js';
 
 const spec={openapi:'3.1.0',paths:{'/customers':{get:{operationId:'listCustomers',summary:'List customers'}},'/customers/{id}':{get:{operationId:'getCustomer'}}}};
 test('imports operation candidates without registering or executing them',async()=>{
@@ -74,4 +74,15 @@ test('uncloneable invocation inputs retain fail-closed audit and authorization b
  const events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));let calls=0;
  registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:context=>context.principalId==='allowed',validate:()=>true,execute:()=>calls++});
  await assert.rejects(registry.invoke('write',{f:()=>{}},{tenantId:'t',principalId:'denied',origin:'ui'}),/forbidden/);await assert.rejects(registry.invoke('write',{f:()=>{}},{tenantId:'t',principalId:'allowed',origin:'ui'}));assert.deepEqual(events,['attempt','denied','attempt','failed']);assert.equal(calls,0);
+test('refusals before execution are marked as having no effect; execution failures are not',async()=>{
+ const registry=new CapabilityRegistry(event=>{if(event.operationId==='unaudited')throw Error('audit unavailable');});
+ registry.register({operationId:'op',method:'POST',path:'/op'},{authorize:ctx=>ctx.principalId==='allowed',validate:input=>input!=='bad',authorizeInput:(_ctx,input)=>input!=='restricted',execute:input=>{if(input==='boom')throw Error('provider failed');return input;}});
+ registry.register({operationId:'broken',method:'POST',path:'/broken'},{authorize:()=>{throw Error('policy unavailable');},validate:()=>true,execute:()=>null});
+ const context={tenantId:'t',principalId:'allowed',origin:'ui'},rejection=call=>call().then(()=>assert.fail('expected a rejection'),error=>error);
+ const refusals=[[()=>registry.invoke('missing',1,context),/not found/],[()=>registry.invoke('op',1,{...context,principalId:'other'}),/forbidden/],[()=>registry.invoke('op','bad',context),/Invalid capability input/],[()=>registry.invoke('op','restricted',context),/forbidden/],[()=>registry.invoke('broken',1,context),/policy unavailable/],[()=>registry.invoke('',1,context),/Invalid capability ID/],[()=>registry.invoke('op',1,{...context,origin:'bot'}),/Invalid invocation context/],[()=>registry.invoke('unaudited',1,context),/audit unavailable/]];
+ for(const [call,message] of refusals){const error=await rejection(call);assert.match(error.message,message);assert.equal(hadNoEffect(error),true);assert.equal(error[CAPABILITY_EFFECT],'none');assert.deepEqual(Object.keys(error),[],'the marker is not enumerable');assert.equal(JSON.stringify(error),'{}');}
+ const failed=await rejection(()=>registry.invoke('op','boom',context));assert.match(failed.message,/provider failed/);assert.equal(hadNoEffect(failed),false,'an execution failure may have had an effect');
+ assert.equal(await registry.invoke('op','fine',context),'fine');
+ assert.equal(CAPABILITY_EFFECT,Symbol.for('app-mixer.effect'));assert.equal(markNoEffect('text'),'text');assert.equal(hadNoEffect('text'),false);assert.equal(hadNoEffect(null),false);
+ const frozen=Object.freeze(Error('frozen'));assert.equal(markNoEffect(frozen),frozen);assert.equal(hadNoEffect(frozen),false,'a frozen error cannot carry the marker and stays ambiguous');
 });

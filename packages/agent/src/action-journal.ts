@@ -12,6 +12,10 @@ export type ActionReconciliationEvent=ActionReconciliationEvidence & {id:number;
 export type AgentActionPage={actions:AgentAction[];next?:string};
 export type ActionVerificationPass={results:({actionId:string;outcome:ActionVerification['outcome']}|{actionId:string;error:unknown})[];next?:string};
 const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+/** An error carrying `Symbol.for('app-mixer.effect') === 'none'` was thrown before any effect (CapabilityRegistry marks its refusals). */
+export const hadNoEffect=(error:unknown):boolean=>error!==null&&typeof error==='object'&&(error as Record<symbol,unknown>)[Symbol.for('app-mixer.effect')]==='none';
+/** Mark an error as thrown before any effect; the same error is returned. */
+export function markNoEffect<T>(error:T):T{if(error!==null&&typeof error==='object'&&Object.isExtensible(error))try{Object.defineProperty(error,Symbol.for('app-mixer.effect'),{value:'none',configurable:true});}catch{}return error;}
 export function actionJSON(value:unknown):string{
  let count=0;const stack=new Set<object>();
  const visit=(input:unknown,depth:number):unknown=>{
@@ -84,6 +88,8 @@ export class SqliteAgentActionJournal {
    this.transaction(()=>{const row=this.row(actionId);if(!row||row.status!=='dispatching')throw Error('Action state conflict');this.db.prepare("UPDATE agent_action_journal SET status='succeeded',result_json=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(result,...this.args(),actionId);});
    return JSON.parse(result);
   }catch(error){
+   // A refusal before any effect goes back to `ready` (or `failed` once attempts are exhausted) and is rethrown as is; anything else is uncertain.
+   if(hadNoEffect(error)){let settled=false;try{this.transaction(()=>{const row=this.row(actionId);if(row?.status!=='dispatching')return;this.db.prepare('UPDATE agent_action_journal SET status=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(Number(row.attempts)>=Number(row.max_attempts)?'failed':'ready',...this.args(),actionId);settled=true;});}catch{}if(settled)throw error;}
    try{this.transaction(()=>{const row=this.row(actionId);if(row?.status==='dispatching')this.db.prepare("UPDATE agent_action_journal SET status='uncertain' WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(...this.args(),actionId);});}catch{}
    throw Error('Action outcome uncertain',{cause:error});
   }

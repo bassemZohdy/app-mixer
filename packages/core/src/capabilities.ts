@@ -12,6 +12,19 @@ type Binding = {
 };
 const object = (value:unknown):value is Record<string,unknown> => value !== null && typeof value==='object' && !Array.isArray(value);
 const methods = new Set(['get','post','put','patch','delete','head','options','trace']);
+/**
+ * Errors thrown before a capability's `execute` runs carry this symbol with the value `'none'`: nothing was applied, so
+ * a journal may retry or fail the action instead of recording it as uncertain. Packages that do not import core can
+ * read it through `Symbol.for('app-mixer.effect')`.
+ */
+export const CAPABILITY_EFFECT=Symbol.for('app-mixer.effect');
+/** Mark an error as thrown before any effect; returns the same error. Non-extensible values are left unmarked. */
+export function markNoEffect<T>(error:T):T{
+  if(error!==null&&typeof error==='object'&&Object.isExtensible(error))try{Object.defineProperty(error,CAPABILITY_EFFECT,{value:'none',configurable:true});}catch{}
+  return error;
+}
+/** True when an error states that the operation had no effect (thrown before execution). */
+export function hadNoEffect(error:unknown):boolean{return error!==null&&typeof error==='object'&&(error as Record<symbol,unknown>)[CAPABILITY_EFFECT]==='none';}
 
 /** Discovers operations only; it does not trust servers, schemas, or grant execution authority. */
 export function importOpenAPI(document:unknown): CapabilityCandidate[] {
@@ -50,33 +63,37 @@ export class CapabilityRegistry {
     this.bindings.set(candidate.operationId,{candidate:structuredClone(candidate),binding:{...binding}});
   }
   async invoke(operationId:string,input:unknown,context:InvocationContext):Promise<unknown> {
-    if(typeof operationId!=='string' || !operationId.trim()) throw Error('Invalid capability ID');
-    if(!context || typeof context.tenantId!=='string' || !context.tenantId.trim() || typeof context.principalId!=='string' || !context.principalId.trim() || !['ui','agent','service'].includes(context.origin)) throw Error('Invalid invocation context');
-    // Origin is intentionally not part of authorization or execution context.
-    const policyContext={tenantId:context.tenantId,principalId:context.principalId};
-    // Capture caller-owned input before any asynchronous audit or authorization.
-    let safeInput:unknown, snapshotFailed=false, snapshotError:unknown;
-    try { safeInput=structuredClone(input); } catch(error) { snapshotFailed=true;snapshotError=error; }
-    const invocationId=randomUUID();
-    const audit = (outcome:CapabilityAuditEvent['outcome']) => this.audit({invocationId,operationId,...policyContext,outcome});
-    // An unavailable audit sink blocks execution before any side effect.
-    await audit('attempt');
-    const entry=this.bindings.get(operationId);
-    if(!entry) { await audit('not_found'); throw Error('Capability not found'); }
-    let authorized:boolean;
-    try { authorized=await entry.binding.authorize({...policyContext}) === true; }
-    catch(error) { await audit('failed'); throw error; }
-    if(!authorized) { await audit('denied'); throw Error('Capability forbidden'); }
-    let valid:boolean;
-    try { if(snapshotFailed)throw snapshotError; valid=await entry.binding.validate(structuredClone(safeInput)) === true; }
-    catch(error) { await audit('failed'); throw error; }
-    if(!valid) { await audit('invalid'); throw Error('Invalid capability input'); }
-    if(entry.binding.authorizeInput){
-      let allowed:boolean;
-      try { allowed=await entry.binding.authorizeInput({...policyContext},structuredClone(safeInput))===true; }
+    // Everything up to the call of `execute` has no effect; such failures are marked so journals need not treat them as uncertain.
+    let entry:{candidate:CapabilityCandidate;binding:Binding}|undefined,safeInput:unknown,policyContext:PolicyContext,audit:(outcome:CapabilityAuditEvent['outcome'])=>void|Promise<void>;
+    try{
+      if(typeof operationId!=='string' || !operationId.trim()) throw Error('Invalid capability ID');
+      if(!context || typeof context.tenantId!=='string' || !context.tenantId.trim() || typeof context.principalId!=='string' || !context.principalId.trim() || !['ui','agent','service'].includes(context.origin)) throw Error('Invalid invocation context');
+      // Origin is intentionally not part of authorization or execution context.
+      policyContext={tenantId:context.tenantId,principalId:context.principalId};
+      // Capture caller-owned input before any asynchronous audit or authorization.
+      let snapshotFailed=false, snapshotError:unknown;
+      try { safeInput=structuredClone(input); } catch(error) { snapshotFailed=true;snapshotError=error; }
+      const invocationId=randomUUID(),fixed=policyContext;
+      audit = outcome => this.audit({invocationId,operationId,...fixed,outcome});
+      // An unavailable audit sink blocks execution before any side effect.
+      await audit('attempt');
+      entry=this.bindings.get(operationId);
+      if(!entry) { await audit('not_found'); throw Error('Capability not found'); }
+      let authorized:boolean;
+      try { authorized=await entry.binding.authorize({...policyContext}) === true; }
       catch(error) { await audit('failed'); throw error; }
-      if(!allowed) { await audit('denied'); throw Error('Capability forbidden'); }
-    }
+      if(!authorized) { await audit('denied'); throw Error('Capability forbidden'); }
+      let valid:boolean;
+      try { if(snapshotFailed)throw snapshotError; valid=await entry.binding.validate(structuredClone(safeInput)) === true; }
+      catch(error) { await audit('failed'); throw error; }
+      if(!valid) { await audit('invalid'); throw Error('Invalid capability input'); }
+      if(entry.binding.authorizeInput){
+        let allowed:boolean;
+        try { allowed=await entry.binding.authorizeInput({...policyContext},structuredClone(safeInput))===true; }
+        catch(error) { await audit('failed'); throw error; }
+        if(!allowed) { await audit('denied'); throw Error('Capability forbidden'); }
+      }
+    }catch(error){throw markNoEffect(error);}
     let result:unknown;
     try { result=await entry.binding.execute(safeInput,{...policyContext}); }
     catch(error) { try{await audit('failed');}catch{throw new CapabilityOutcomeUncertainError();}throw error; }

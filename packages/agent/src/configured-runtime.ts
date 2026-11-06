@@ -7,7 +7,7 @@ import {AgentDelegationExpired} from './delegation-expired.js';
 import {LangGraphAGUIAdapter,type RunInput} from './index.js';
 import {createCapabilityTool} from './capability-tool.js';
 import {createToolCallingModel,type ToolModel,type LimitedToolModel,type CostLimitedToolModel} from './tool-model.js';
-import {SqliteAgentActionJournal} from './action-journal.js';
+import {SqliteAgentActionJournal,markNoEffect} from './action-journal.js';
 import {PostgresAgentActionJournalFoundation} from './postgres-action-journal-foundation.js';
 import {PostgresAgentTokenBudgetFoundation} from './postgres-token-budget-foundation.js';
 import {PostgresAgentCheckpointerFoundation} from './postgres-checkpointer-foundation.js';
@@ -93,7 +93,8 @@ export async function createConfiguredAgentRun(options:Options):Promise<{run:(in
    if(actionJournal){if(!context?.toolCallId)throw Error('Missing action ID');let required=false;
     if(approval){const decision=await approval.required({...identity},operationId,structuredClone(input));if(typeof decision!=='boolean')throw Error('Invalid approval policy result');required=decision;await checkActive();if(required){const request=await approval.store.request({tenantId,principalId:identity.servicePrincipalId},approval.leaseToken,context.toolCallId,operationId,input,approval.expiresAt,authority);if(request.status==='pending'){pendingActionId=context.toolCallId;throw new AgentApprovalRequired();}if(request.status!=='approved')throw Error('Approval unavailable');}}
     await checkDelegation(operationId,input);await checkActive();
-    return actionJournal.journal.invoke(context.toolCallId,operationId,input,actionJournal.maxAttempts,async (data,key)=>{await checkActive();await checkDelegation(operationId,data);await checkActive();const mapped=actionJournal.prepareInput(operationId,data,key);return registry.invoke(operationId,mapped,actor);},required,authority);}
+    // The runtime's own checks run before the registry is called, so their failures had no effect either.
+    return actionJournal.journal.invoke(context.toolCallId,operationId,input,actionJournal.maxAttempts,async (data,key)=>{let mapped:unknown;try{await checkActive();await checkDelegation(operationId,data);await checkActive();mapped=actionJournal.prepareInput(operationId,data,key);}catch(error){throw markNoEffect(error);}return registry.invoke(operationId,mapped,actor);},required,authority);}
    return registry.invoke(operationId,structuredClone(input),actor);
   })});
  });
