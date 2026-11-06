@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
+import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {mkdir,readFile,rm,writeFile} from 'node:fs/promises';
@@ -15,6 +16,8 @@ import {DataPlaneRequestMetrics,createMetricsServer} from '../../core/dist/index
 import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentActionJournal,SqliteAgentRunMetrics,createAgentMetricsServer} from '../../agent/dist/index.js';
 
 const run=promisify(execFile);
+const ALERTMANAGER_IMAGE='prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a';
+const routingPath=new URL('../../../deploy/observability/alertmanager-example.yml',import.meta.url);
 const PROMETHEUS_IMAGE='prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2';
 const rulesPath=new URL('../../../deploy/observability/prometheus-alerts.yml',import.meta.url),runbooksPath=new URL('../../../docs/runbooks.md',import.meta.url);
 const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'scraper'};
@@ -59,13 +62,26 @@ const enabled=process.env.APP_MIXER_TEST_PROMETHEUS==='docker';
 const freePort=async()=>{const {createServer}=await import('node:net'),probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const {port}=probe.address();await new Promise(resolve=>probe.close(resolve));return port;};
 const wait=async(predicate,label,limit=60000)=>{const end=Date.now()+limit;let last;while(Date.now()<end){try{if((last=await predicate())===true)return;}catch(error){last=error;}await new Promise(resolve=>setTimeout(resolve,500));}throw Error('Timed out waiting for '+label+(last&&last!==false?': '+(last.message??last):''));};
 
-test('a failure drill fires and resolves alerts in a real Prometheus',{skip:enabled?false:'set APP_MIXER_TEST_PROMETHEUS=docker to run against a Prometheus container',timeout:240000},async()=>{
- const dir=mkdtempSync(join(tmpdir(),'alert-drill-')),config=join(dir,'config'),path=join(dir,'runs.sqlite'),name='app-mixer-prom-'+process.pid+'-'+Date.now(),token='scrape-token-local-test-only';
- await mkdir(config);const linux=process.platform==='linux';let started=false,metrics,store;const servers=[];
+test('a failure drill fires, routes and resolves alerts through real Prometheus and Alertmanager',{skip:enabled?false:'set APP_MIXER_TEST_PROMETHEUS=docker to run against a Prometheus container',timeout:240000},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'alert-drill-')),config=join(dir,'config'),path=join(dir,'runs.sqlite'),name='app-mixer-prom-'+process.pid+'-'+Date.now(),amName=name.replace('-prom-','-am-'),token='scrape-token-local-test-only';
+ await mkdir(config);const linux=process.platform==='linux';const containers=[],servers=[],delivered=[];let metrics,store;
  try{
   // The drill shortens every for: so it runs in seconds; thresholds and expressions are the shipped ones.
   const rules=(await readFile(rulesPath,'utf8')).replace(/^( {8}for: ).+$/gm,'$10s');await writeFile(join(config,'alerts.yml'),rules);
   await run('docker',['run','--rm','-v',config+':/rules:ro','--entrypoint','promtool',PROMETHEUS_IMAGE,'check','rules','/rules/alerts.yml']);
+
+  // Stand-ins for the paging and ticketing integrations: they record every Alertmanager webhook delivery.
+  const receiver=createServer((req,res)=>{let body='';req.on('data',part=>body+=part);req.on('end',()=>{try{delivered.push({path:req.url,...JSON.parse(body)});}catch{}res.end();});});
+  receiver.listen(0,'127.0.0.1');await once(receiver,'listening');servers.push(receiver);
+  const host=linux?'127.0.0.1':'host.docker.internal',hook=route=>`http://${host}:${receiver.address().port}/${route}`;
+  // The shipped routing tree with its receivers pointed here and its timings shortened for the drill.
+  const routing=(await readFile(routingPath,'utf8')).replace('https://paging.example.invalid/app-mixer',hook('page')).replace('https://tickets.example.invalid/app-mixer',hook('ticket')).replace(/^( +group_wait: ).+$/m,'$11s').replace(/^( +group_interval: ).+$/m,'$11s');
+  assert.ok(routing.includes(hook('page'))&&routing.includes(hook('ticket')));await writeFile(join(config,'alertmanager.yml'),routing);
+  await run('docker',['run','--rm','-v',config+':/rules:ro','--entrypoint','amtool',ALERTMANAGER_IMAGE,'check-config','/rules/alertmanager.yml']);
+  const user=typeof process.getuid==='function'?['--user',process.getuid()+':'+process.getgid()]:[],amPort=linux?await freePort():9093;
+  await run('docker',['run','-d','--rm','--name',amName,...user,...(linux?['--network','host']:['-p','127.0.0.1::9093']),'-v',config+':/rules:ro',ALERTMANAGER_IMAGE,'--config.file=/rules/alertmanager.yml','--storage.path=/tmp/alertmanager','--cluster.listen-address=','--web.listen-address=:'+amPort]);containers.push(amName);
+  const amHostPort=linux?amPort:(await run('docker',['port',amName,'9093/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
+  const deliveries=(route,alertname,status)=>delivered.filter(d=>d.path==='/'+route&&d.alerts.some(a=>a.labels.alertname===alertname&&a.status===status));
 
   let now=30000;const plane=new DataPlaneRequestMetrics(()=>0);plane.setPublicationVersion(4);plane.observe({route:'application',outcome:'completed',statusClass:'2xx',durationMs:3});
   store=seed(path);metrics=new SqliteAgentRunMetrics(path,{scope,authorize:()=>true,includeOperational:true,includeSchedules:true,includeActions:true,clock:()=>now});
@@ -73,11 +89,11 @@ test('a failure drill fires and resolves alerts in a real Prometheus',{skip:enab
   const planeServer=createMetricsServer({metrics:plane,authorize:bearer,timeoutMs:2000,maxPending:10}),agentServer=createAgentMetricsServer({metrics,authenticate:req=>bearer(req)?actor:undefined,timeoutMs:2000,maxPending:10});
   for(const server of [planeServer,agentServer]){server.listen(0,'127.0.0.1');await once(server,'listening');servers.push(server);}
   // Linux shares the host network so Prometheus reaches loopback; Docker Desktop forwards host.docker.internal to it.
-  const host=linux?'127.0.0.1':'host.docker.internal',target=server=>`'${host}:${server.address().port}'`;
+  const target=server=>`'${host}:${server.address().port}'`;
   const job=(jobName,server)=>`  - job_name: ${jobName}\n    scrape_interval: 1s\n    authorization:\n      credentials: ${token}\n    static_configs:\n      - targets: [${target(server)}]\n`;
-  await writeFile(join(config,'prometheus.yml'),`global:\n  scrape_interval: 1s\n  evaluation_interval: 1s\nrule_files:\n  - /rules/alerts.yml\nscrape_configs:\n${job('app-mixer-data-plane',planeServer)}${job('app-mixer-agent',agentServer)}`);
-  const promPort=linux?await freePort():9090,user=typeof process.getuid==='function'?['--user',process.getuid()+':'+process.getgid()]:[];
-  await run('docker',['run','-d','--rm','--name',name,...user,...(linux?['--network','host']:['-p','127.0.0.1::9090']),'-v',config+':/rules:ro',PROMETHEUS_IMAGE,'--config.file=/rules/prometheus.yml','--storage.tsdb.path=/tmp/prometheus','--web.listen-address=:'+promPort]);started=true;
+  await writeFile(join(config,'prometheus.yml'),`global:\n  scrape_interval: 1s\n  evaluation_interval: 1s\nalerting:\n  alertmanagers:\n    - static_configs:\n        - targets: ['${host}:${amHostPort}']\nrule_files:\n  - /rules/alerts.yml\nscrape_configs:\n${job('app-mixer-data-plane',planeServer)}${job('app-mixer-agent',agentServer)}`);
+  const promPort=linux?await freePort():9090;
+  await run('docker',['run','-d','--rm','--name',name,...user,...(linux?['--network','host']:['-p','127.0.0.1::9090']),'-v',config+':/rules:ro',PROMETHEUS_IMAGE,'--config.file=/rules/prometheus.yml','--storage.tsdb.path=/tmp/prometheus','--web.listen-address=:'+promPort]);containers.push(name);
   const api=linux?'http://127.0.0.1:'+promPort:'http://127.0.0.1:'+(await run('docker',['port',name,'9090/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
   const get=async route=>{const response=await fetch(api+route);assert.equal(response.status,200);return (await response.json()).data;};
   const firing=async()=>new Set((await get('/api/v1/alerts')).alerts.filter(a=>a.state==='firing').map(a=>a.labels.alertname));
@@ -96,13 +112,19 @@ test('a failure drill fires and resolves alerts in a real Prometheus',{skip:enab
   await wait(async()=>(await firing()).has('AppMixerMetricsScrapeFailing'),'the scrape alert to fire');
   if(process.env.APP_MIXER_TEST_ALERT_EXPORT)await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT,JSON.stringify(await get('/api/v1/alerts'),null,2));
   const shown=(await get('/api/v1/alerts')).alerts.find(a=>a.labels.alertname==='AppMixerAgentScheduleBacklog');assert.equal(shown.labels.severity,'page');assert.equal(shown.annotations.runbook,'docs/runbooks.md#appmixeragentschedulebacklog');
+  // Alertmanager routes pages to on-call and the rest to tickets, carrying the runbook.
+  await wait(()=>deliveries('page','AppMixerAgentScheduleBacklog','firing').length>0&&deliveries('ticket','AppMixerAgentActionsUncertain','firing').length>0&&deliveries('page','AppMixerMetricsScrapeFailing','firing').length>0||JSON.stringify(delivered.map(d=>[d.path,d.status,d.alerts.map(a=>a.labels.alertname)])),'Alertmanager to deliver the drill alerts');
+  assert.equal(deliveries('page','AppMixerAgentScheduleBacklog','firing')[0].alerts.find(a=>a.labels.alertname==='AppMixerAgentScheduleBacklog').annotations.runbook,'docs/runbooks.md#appmixeragentschedulebacklog');
+  assert.equal(deliveries('ticket','AppMixerAgentScheduleBacklog','firing').length,0,'a page is not also ticketed');assert.equal(deliveries('page','AppMixerAgentActionsUncertain','firing').length,0,'a ticket does not page');
 
   // Recovery: the worker catches up and the action is reconciled, so those alerts resolve.
   const schedule=store.schedules.get(scope,'nightly');store.schedules.fire(scope,'nightly',schedule.revision,{definitionVersion:1,maxAttempts:1,runTimeoutMs:10000,maxPending:100},now);
   const db=new DatabaseSync(path);try{db.prepare("UPDATE agent_action_journal SET status='failed' WHERE action_id='charge'").run();}finally{db.close();}
   await wait(async()=>{const set=await firing();return (!set.has('AppMixerAgentScheduleBacklog')&&!set.has('AppMixerAgentActionsUncertain'))||[...set].join(',');},'the recovered alerts to resolve');
+  await wait(()=>deliveries('page','AppMixerAgentScheduleBacklog','resolved').length>0&&deliveries('ticket','AppMixerAgentActionsUncertain','resolved').length>0,'Alertmanager to send the resolved notices');
+  if(process.env.APP_MIXER_TEST_ALERT_EXPORT)await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT.replace(/(\.json)?$/,'-deliveries.json'),JSON.stringify(delivered,null,2));
  }finally{
-  if(started)await run('docker',['rm','-f',name]).catch(()=>{});
+  for(const container of containers)await run('docker',['rm','-f',container]).catch(()=>{});
   for(const server of servers){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
   metrics?.close();store?.close();await rm(dir,{recursive:true,force:true}).catch(()=>{});
  }

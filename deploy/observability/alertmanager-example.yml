@@ -1,0 +1,28 @@
+# Example Alertmanager routing for prometheus-alerts.yml: severity page goes to on-call, everything else to tickets.
+# Replace both receiver URLs with your paging and ticketing integrations (or swap webhook_configs for their native
+# receivers), and tune the timings. The failure drill in packages/cli/test/alert-rules.test.mjs routes through this
+# file with the URLs pointed at local receivers and the timings shortened.
+route:
+  receiver: tickets
+  group_by: [alertname, job]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  routes:
+    - matchers: ['severity="page"']
+      receiver: on-call
+      repeat_interval: 1h
+receivers:
+  - name: on-call
+    webhook_configs:
+      - url: https://paging.example.invalid/app-mixer
+        send_resolved: true
+  - name: tickets
+    webhook_configs:
+      - url: https://tickets.example.invalid/app-mixer
+        send_resolved: true
+# While a target cannot be scraped its other alerts are stale; page for the scrape failure, not for its tickets.
+inhibit_rules:
+  - source_matchers: ['alertname="AppMixerMetricsScrapeFailing"']
+    target_matchers: ['severity="ticket"']
+    equal: [job]
