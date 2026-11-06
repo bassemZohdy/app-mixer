@@ -90,3 +90,13 @@ test('data model limits reject unsafe or oversized updates atomically',()=>{
  const cycle=[];cycle.push(cycle);assert.throws(()=>store.apply(data(cycle)),/Cyclic/);
  assert.equal(store.snapshot()[0].root.text,'Safe');
 });
+
+test('a data update on a 1,000-component surface stays far below a frame (no incremental store needed)',()=>{
+ const store=new NativeSurfaceStore(),components=[{id:'root',component:'Column',children:[]}],data={t:{},f:{}};
+ for(let n=0;n<798;n++){components.push({id:'t'+n,component:'Text',text:{path:'/t/'+n}});components[0].children.push('t'+n);data.t[n]='x'+n;}
+ for(let n=0;n<199;n++){components.push({id:'f'+n,component:'TextField',label:'F'+n,value:{path:'/f/'+n}});components[0].children.push('f'+n);data.f[n]='v'+n;}
+ store.apply(create('main'));store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:data}});store.apply(update('main',components));
+ const started=performance.now();for(let n=0;n<100;n++){store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/f/'+(n%199),value:'typed '+n}});store.snapshot();}
+ const perUpdate=(performance.now()-started)/100;assert.ok(perUpdate<25,`${perUpdate.toFixed(2)} ms per update and snapshot (measured about 1.7 ms; a frame is 16 ms)`);
+ assert.equal(store.snapshot()[0].root.children[798+((99)%199)].value,'typed 99','the last typed value is in the snapshot');
+});
