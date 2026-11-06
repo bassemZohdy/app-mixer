@@ -61,3 +61,16 @@ A manifest may declare `integrity` as an SRI-style SHA-256 digest, `sha256-<base
 A host approval may pin the same `integrity` value. The manifest must then declare exactly that digest, or compatibility reports the extension as not approved; this applies to the registry, publication guard and Flutter plans. Without a pinned approval, an unpinned manifest remains valid, so require pins in host policy where integrity is mandatory.
 
 The host must read the bytes it actually loads, from storage it controls, and supply the implementations built from them. The registry hashes the supplied bytes; it does not prove that the supplied functions came from those bytes, verify a publisher signature, establish provenance, or check the package after registration. The digest in the manifest is only as trustworthy as the manifest and approval sources.
+
+## Shared approvals under load and during an outage
+
+`PostgresExtensionApprovals` has no cache: every check reads the primary. A revocation therefore applies to every check that starts after it commits, on every node. A check already in flight can still return its earlier answer. A check that cannot reach the database rejects, so the invocation is refused rather than allowed.
+
+`packages/core/test/postgres-extension-approval-operations.test.mjs` (run in the PostgreSQL CI job) measures this. Two nodes, each with its own pool, run 16 concurrent checks continuously while an administrator revokes through a third pool. On a local Windows machine with PostgreSQL 16 in Docker:
+- The nodes ran about 3,700 checks per second. Read latency was p50 6 ms and p99 19 ms.
+- None of the 6,400 checks started after the commit were allowed.
+- Two in-flight checks returned allowed up to 1.4 ms after the commit, and both nodes saw the first denial within 3 ms.
+
+The test then cuts one node's connection with a TCP proxy for 1.5 seconds. Of about 3,500 checks on that node during the outage, every one was rejected or denied, and none was allowed. A decision sent through the lost connection fails without writing anything. A revocation made through another node during the outage applied to the first check that succeeded after the database returned, 17 ms later.
+
+The test fails if a node caches approvals for half a second, or if a database error counts as allowed. These figures come from one machine. Production latency depends on the primary, network and pool sizing, so the host should repeat the measurement in its target environment and alert on approval-check errors.
