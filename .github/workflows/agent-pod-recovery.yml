@@ -78,6 +78,8 @@ jobs:
             kubectl delete -n "$ns" "pod/memory-worker-$phase" --grace-period=0 --force --wait=true --timeout=90s
             kubectl exec -n "$ns" agent-test-manager -- node "$script" "verify-$phase"
           done
+      - name: Verify scheduled run workers survive a crash and a rolling restart
+        run: sh deploy/kubernetes/test-support/agent-recovery/run-supervisor.sh agent-recovery-test
       - name: Verify HTTPS notice recovery after deleting sender and receiver pods
         run: |
           set -eu
@@ -133,3 +135,5 @@ jobs:
           kubectl logs -n agent-recovery-test agent-memory-postgres || true
           kubectl logs -n agent-recovery-test notice-sender || true
           kubectl logs -n agent-recovery-test notice-receiver || true
+          kubectl logs -n agent-recovery-test -l app=agent-run-workers --prefix --tail=200 || true
+          kubectl logs -n agent-recovery-test agent-run-effects || true

@@ -69,7 +69,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-07 Lifecycle manager and durable run registry
 - **Verified locally:** run registry, lease claim, renewal and fencing, expiry, pause, resume and cancel, process-kill lease recovery, PostgreSQL run slots.
 - **Still to prove:**
-  - [ ] Production scheduling of workers.
+  - [ ] Production scheduling of workers. `PostgresRunSupervisor` schedules workers on the shared registry. As a two-replica Deployment in kind, with a worker crashed mid-run and the Deployment rolled, every run finished with each external effect applied exactly once ([durable-agent-runs.md](durable-agent-runs.md#scheduling-workers-on-the-shared-registry)). Still to do: run it in the production cluster.
   - [x] A shared (non-SQLite) run registry. `PostgresAgentRuns` keeps runs and a lease-fenced action journal on one PostgreSQL primary. Workers killed mid-dispatch are recovered exactly once by racing survivor processes, with no duplicated external effect ([durable-agent-runs.md](durable-agent-runs.md#shared-run-registry-across-nodes)).
   - [x] Safe replay of external effects after recovery against a real provider. A worker killed before the write, after an applied write with a lost response, or after recording, recovers against a real S3-compatible provider with exactly one effect ([agent-action-journal.md](agent-action-journal.md#crash-recovery-against-a-real-provider)).
   - [ ] Production coordination between nodes, including node failure. Separate processes sharing PostgreSQL pass the node-failure test locally and in CI; a production multi-node deployment is still unproven.
@@ -86,7 +86,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-09 Action journal and reconciliation
 - **Verified locally:** lease-fenced journal with stable keys, explicit reconciliation, recovery workers, a worker host that drains them on shutdown, evidence records, process-kill and cross-process race tests, idempotency conformance helper.
 - **Still to prove:**
-  - [ ] Production scheduling of the recovery worker.
+  - [ ] Production scheduling of the recovery worker. The same supervisor runs recovery: it verifies interrupted actions and retries runs on every pass, and the kind Deployment test recovers the crashed worker's runs with no duplicated effect ([durable-agent-runs.md](durable-agent-runs.md#scheduling-workers-on-the-shared-registry)). Still to do: run it in production.
   - [ ] Provider-specific verification for each provider the agents may call.
   - [ ] Production storage and verification against real providers.
 - **Evidence:** a provider conformance run (using the idempotency contract helper) per provider, and a recovery transcript from a real ambiguous failure.
@@ -163,5 +163,5 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Production stores (not local SQLite or single-node kind).
   - [x] Real provider contracts under crash. Staged submissions and journaled actions are killed or lose responses against a real S3-compatible provider (SeaweedFS, signed requests), and the provider passes the idempotency contract check ([agent-action-journal.md](agent-action-journal.md#crash-recovery-against-a-real-provider), [business-data.md](business-data.md)).
-  - [ ] Node failure and production pod recovery.
+  - [ ] Node failure and production pod recovery. Locally: survivor processes recover workers killed mid-dispatch on the shared PostgreSQL run registry exactly once, and a kind Deployment recovers a crashed worker pod with no duplicated effect ([durable-agent-runs.md](durable-agent-runs.md#scheduling-workers-on-the-shared-registry)). Still to do: take down a node in production.
 - **Evidence:** the same crash scenarios replayed against the production stores with a node taken down, and the recovery outcomes compared with the local expectations.

@@ -114,6 +114,8 @@ export {SqliteAgentSchedules} from './agent-schedules.js';
 export {PostgresAgentSchedules} from './postgres-agent-schedules.js';
 export {PostgresAgentRuns,PostgresAgentActionJournal} from './postgres-agent-runs.js';
 export type {PostgresAgentRunsOptions,PostgresAgentRun,PostgresRunClaimLimits} from './postgres-agent-runs.js';
+export {PostgresRunSupervisor} from './postgres-run-supervisor.js';
+export type {PostgresRunSupervisorOptions,PostgresRunExecution,PostgresRunSupervisorEvent} from './postgres-run-supervisor.js';
 export type {PostgresAgentSchedulesOptions,AgentScheduledRun,AgentScheduledRunClaim,AgentScheduleHistoryEvent,AgentScheduleFirePass} from './postgres-agent-schedules.js';
 export type {AgentSchedule,AgentScheduleRule,AgentScheduleConfig,AgentScheduleFireOptions,AgentScheduleCursor,AgentSchedulePage} from './agent-schedules.js';
 export {SqliteAgentScheduleHistory} from './agent-schedule-history.js';

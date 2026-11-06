@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-run-effects
+  labels: {app: agent-run-effects}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: effects
+      image: app-mixer-agent-recovery:test
+      imagePullPolicy: Never
+      args: [node, deploy/kubernetes/test-support/agent-recovery/run-supervisor.mjs, effects]
+      readinessProbe: {tcpSocket: {port: 3000}, periodSeconds: 1}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-run-effects
+spec:
+  selector: {app: agent-run-effects}
+  ports: [{port: 3000, targetPort: 3000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-run-workers
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: agent-run-workers}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 1, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: agent-run-workers}
+    spec:
+      # Long enough for a worker to finish the runs it holds after SIGTERM.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: worker
+          image: app-mixer-agent-recovery:test
+          imagePullPolicy: Never
+          args: [node, deploy/kubernetes/test-support/agent-recovery/run-supervisor.mjs, pod]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}

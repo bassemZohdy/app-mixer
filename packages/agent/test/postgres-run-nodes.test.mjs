@@ -93,11 +93,11 @@ test('runs on killed nodes are recovered exactly once with no duplicated externa
   response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(apply()));
  });
  server.listen(0,'127.0.0.1');await once(server,'listening');const effectsUrl=`http://127.0.0.1:${server.address().port}`;
- const start=nodeId=>{const child=fork(nodePath,[url,db.schema,nodeId,effectsUrl],{stdio:['ignore','inherit','inherit','ipc']});nodes.set(nodeId,child);child.on('message',message=>events.push({nodeId,...message}));return new Promise((resolve,reject)=>{child.on('message',message=>{if(message.type==='ready')resolve();});child.once('exit',code=>reject(Error(nodeId+' exited '+code)));});};
+ const start=(nodeId,concurrency='4')=>{const child=fork(nodePath,[url,db.schema,nodeId,effectsUrl,concurrency],{stdio:['ignore','inherit','inherit','ipc']});nodes.set(nodeId,child);child.on('message',message=>events.push({nodeId,...message}));return new Promise((resolve,reject)=>{child.on('message',message=>{if(message.type==='ready')resolve();});child.once('exit',code=>reject(Error(nodeId+' exited '+code)));});};
  try{
   const runs=new PostgresAgentRuns(db.options);await runs.initialize();
   const ids=['run-1','run-2','run-3','run-4','run-5','run-6'];for(const runId of ids)await runs.create(scope,runId,{definitionVersion:1,maxAttempts:3,deadline:Date.now()+600000});
-  await Promise.all([start('node-a'),start('node-b')]);
+  await Promise.all([start('node-a','1'),start('node-b','1')]);
   for(const deadline=Date.now()+20000;held.size<2;await sleep(20))assert.ok(Date.now()<deadline,'both workers reached their first dispatch');
   for(const nodeId of ['node-a','node-b']){const child=nodes.get(nodeId),gone=once(child,'exit');child.kill('SIGKILL');await gone;}
   t.diagnostic(`killed node-a mid-dispatch of ${JSON.stringify(held.get('node-a'))} (applied) and node-b of ${JSON.stringify(held.get('node-b'))} (not applied)`);
@@ -107,6 +107,7 @@ test('runs on killed nodes are recovered exactly once with no duplicated externa
    assert.ok(Date.now()<deadline,'all runs finish: '+all.map(run=>run.runId+'='+run.status).join(' '));
   }
   for(const nodeId of ['node-c','node-d']){const child=nodes.get(nodeId),gone=once(child,'exit');child.send('stop');const [code]=await gone;assert.equal(code,0,nodeId+' stopped cleanly');}
+  assert.deepEqual(events.filter(event=>event.type==='error'),[],'the surviving supervisors reported no errors');
   const killedRuns=[held.get('node-a').runId,held.get('node-b').runId].sort();
   // Each killed run was recovered exactly once, by one of the surviving nodes, and retried once.
   const recoveries=events.filter(event=>event.type==='recovered');
@@ -123,4 +124,28 @@ test('runs on killed nodes are recovered exactly once with no duplicated externa
   const completed=events.filter(event=>event.type==='completed');assert.deepEqual(completed.map(event=>event.runId).sort(),[...ids].sort(),'each run completed once');
   t.diagnostic(`${ids.length} runs, ${applications.length} external effects, each once; recovered ${killedRuns.join(', ')} by ${recoveries.map(event=>event.nodeId).join(', ')}`);
  }finally{for(const child of nodes.values())if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');server.closeAllConnections();server.close();await db.close();}
+});
+
+test('a stopping worker drains its running executions and claims nothing new',{skip,timeout:60000},async()=>{
+ const db=await database('run_drain_'),held=[],applications=[],events=[];let child;
+ // Every first action is held until the test releases it, so the worker is mid-run when it is told to stop.
+ const server=createServer(async(request,response)=>{
+  let body='';for await(const chunk of request)body+=chunk;const input=JSON.parse(body);applications.push(input);
+  const reply=()=>response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({applied:true,...input}));
+  if(input.actionId==='a1')held.push(reply);else reply();
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{
+  const runs=new PostgresAgentRuns(db.options);await runs.initialize();
+  const ids=['run-1','run-2','run-3','run-4'];for(const runId of ids)await runs.create(scope,runId,{definitionVersion:1,maxAttempts:3,deadline:Date.now()+600000});
+  child=fork(nodePath,[url,db.schema,'drainer',`http://127.0.0.1:${server.address().port}`,'2'],{stdio:['ignore','inherit','inherit','ipc']});child.on('message',message=>events.push(message));
+  for(const deadline=Date.now()+20000;held.length<2;await sleep(20))assert.ok(Date.now()<deadline,'two runs in flight');
+  const exited=once(child,'exit');child.send('stop');await sleep(500);
+  assert.equal(child.exitCode,null,'the worker waits for its running executions');
+  for(const reply of held.splice(0))reply();const [code]=await exited;assert.equal(code,0);
+  const final=await Promise.all(ids.map(runId=>runs.get(scope,runId)));
+  assert.deepEqual(final.map(run=>run.status).sort(),['queued','queued','succeeded','succeeded'],'in-flight runs finished; no new run was claimed');
+  assert.equal(events.filter(event=>event.type==='claimed').length,2);assert.equal(events.filter(event=>event.type==='error').length,0);
+  assert.equal(applications.length,6,'each finished run applied its three actions once');
+ }finally{if(child&&child.exitCode===null)child.kill('SIGKILL');server.closeAllConnections();server.close();await db.close();}
 });

@@ -126,3 +126,26 @@ Slots limit execution, not queued runs; the local registries still own run state
 Approval and delegation waits, token budgets, lifecycle history, metrics and expiry audit belong to the SQLite registry only. The host authenticates nodes, authorizes every call and protects the primary connection. It must call `recoverExpired` only once the old worker can no longer act; a killed process or an expired lease plus the journal fence meets that.
 
 `packages/agent/test/postgres-run-nodes.test.mjs` (run in the PostgreSQL CI job) starts two worker processes against six runs of three journaled actions each. Both are killed with SIGKILL during their first dispatch. One is killed after the external system applied the effect but before the reply arrived. The other is killed before the effect was applied. Two new processes then race to recover. Each interrupted run is recovered exactly once and retried once. The applied action is verified and reused, and the unapplied one is dispatched once. The external system, which does not deduplicate, records exactly 18 effects under 18 distinct idempotency keys. Treating a verified effect as unapplied, creating a run twice, or removing the journal's lease fence each makes the test fail.
+
+## Scheduling workers on the shared registry
+
+`PostgresRunSupervisor` is the loop a deployed worker process runs against `PostgresAgentRuns`. Construct it with:
+- the registry, scope and a stable `workerId` (for example the pod name)
+- an `execute({run, journal, signal})` callback that performs one run through the lease-fenced journal
+- a `verify(request)` callback that asks the external system whether an interrupted action took effect
+- `onError`, an optional `onEvent`, and optional `leaseMs`, `pollMs`, `maxConcurrent` (per worker), claim `limits` and `recoveryGraceMs`
+
+Every `pollMs`, after `start()`:
+1. **Recovers expired leases.** A run whose lease expired more than `recoveryGraceMs` ago becomes uncertain. The grace period lets a worker that is only slow notice its lost lease before its run is taken over.
+2. **Reconciles uncertain runs.** It marks each dispatching action uncertain and calls `verify`. If any action is still `unknown`, the run is left for review (`review` event). Otherwise the run is retried, or failed once its attempts or deadline are used up.
+3. **Claims queued runs** up to `maxConcurrent` and executes them in the background.
+
+While a run executes, the supervisor renews its lease every third of `leaseMs`. If the lease is lost, or a pause or cancel is requested, it aborts `signal`. When `execute` returns, it settles the run. A thrown error or an unknown result settles as uncertain.
+
+`stop()` stops claiming and waits for the runs this worker holds. Call it on SIGTERM and set the termination grace period above the longest run. `stop({abort: true})` signals the runs to stop; one stopped this way is handed back as uncertain, so another worker reconciles and retries it.
+
+Several workers on different nodes can run supervisors on the same scope. Claims, recovery and reconciliation are all revision-checked, so a lost race is skipped quietly. The external system must accept the action's idempotency key: a worker that lost its lease mid-dispatch may still reach the provider before it stops.
+
+Tests:
+- `packages/agent/test/postgres-run-nodes.test.mjs`: the node-failure processes run this supervisor. A drain test stops a worker while two runs are in flight; it finishes both, claims nothing new and exits cleanly.
+- `deploy/kubernetes/test-support/agent-recovery/run-supervisor.sh` (run by the agent pod recovery workflow in kind): schedules the supervisor as a two-replica Deployment against PostgreSQL with 60 runs. It crashes one worker process with SIGKILL while it holds a run, so the container restarts in place, then rolls the Deployment so every old pod drains on SIGTERM. Every run succeeds, the external system, which does not deduplicate, records exactly 180 effects, and at least one run was recovered after the crash.
