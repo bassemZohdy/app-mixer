@@ -57,7 +57,9 @@ test('the review pages run their inline scripts under the policy without violati
  let client;
  try{
   let port;for(let i=0;i<100&&!port;i++){try{port=readFileSync(join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];}catch{await new Promise(resolve=>setTimeout(resolve,100));}}
-  const target=(await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item=>item.type==='page');
+  // The port file can appear before the DevTools server accepts connections: retry until a page target is listed.
+  let target;for(let i=0;i<100&&!target;i++){try{target=(await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item=>item.type==='page');}catch{}if(!target)await new Promise(resolve=>setTimeout(resolve,100));}
+  assert.ok(target,'the browser listed a page target');
   client=await devtools(target.webSocketDebuggerUrl);await client.send('Page.enable');await client.send('Runtime.enable');await client.send('Log.enable');
   const problems=[];client.on?.('Log.entryAdded',()=>{});
   for(const [url,button,output] of pages){
