@@ -77,7 +77,8 @@ export class SqliteOfflineQueue {
         if(row.operation_id!==operationId||!isDeepStrictEqual(JSON.parse(row.payload as string),normalized))throw Error('Offline request conflict');
         const previous=this.get(scope,principalId,row.id as string)!;if(sharedKey!==undefined&&previous.idempotencyKey!==sharedKey)throw Error('Offline request conflict');this.db.exec('COMMIT');return previous;
       }
-      const total=this.db.prepare('SELECT COUNT(*) AS count FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=?').get(scope.tenantId,scope.applicationId,principalId);
+      // Only live work counts toward the cap; settled operations (succeeded or discarded) are history that `purge` can remove.
+      const total=this.db.prepare("SELECT COUNT(*) AS count FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND status NOT IN ('succeeded','discarded')").get(scope.tenantId,scope.applicationId,principalId);
       if(Number(total?.count)>=1000)throw Error('Offline queue full');
       const id=randomUUID(),idempotencyKey=sharedKey??randomUUID();
       this.db.prepare('INSERT INTO offline_operations VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,operationId,requestKey,idempotencyKey,serialized,'pending',0,0);
@@ -131,6 +132,17 @@ export class SqliteOfflineQueue {
     checkKey(scope,'principal',principalId);checkKey(scope,'operation',operationId);if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid offline recovery query');if(options.after!==undefined)checkKey(scope,'offline',options.after);
     const limit=options.limit??50,rows=this.db.prepare("SELECT id,status,attempts FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND status IN ('running','uncertain') AND id>? ORDER BY id LIMIT ?").all(scope.tenantId,scope.applicationId,principalId,operationId,options.after??'',limit+1);
     const checked:OfflineRecoveryCandidate[]=rows.map(row=>{if(typeof row.id!=='string'||(row.status!=='running'&&row.status!=='uncertain')||!Number.isSafeInteger(row.attempts)||Number(row.attempts)<1)throw Error('Invalid offline recovery candidate');checkKey(scope,'offline',row.id);return {id:row.id,status:row.status,attempts:Number(row.attempts)};});const items=checked.slice(0,limit);return {items,...(checked.length>limit?{nextAfter:items[items.length-1]!.id}:{})};
+  }
+  /**
+   * Host-authorized retention: delete at most `limit` (1 to 1,000) of one principal's operations in the given terminal statuses (`succeeded`, `discarded`,
+   * `exhausted`), oldest first, and return the count. Live work (`pending`, `running`, `conflict`, `uncertain`) is never removed. A purged operation's request key is
+   * forgotten, so purge only history the client can no longer resubmit.
+   */
+  purge(scope:DataScope,principalId:string,options:{statuses:('succeeded'|'discarded'|'exhausted')[];limit:number}):number {
+    checkKey(scope,'principal',principalId);
+    if(!options||!Array.isArray(options.statuses)||options.statuses.length<1||options.statuses.length>3||new Set(options.statuses).size!==options.statuses.length||!options.statuses.every(status=>['succeeded','discarded','exhausted'].includes(status))||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid offline retention query');
+    const marks=options.statuses.map(()=>'?').join(',');
+    return Number(this.db.prepare(`DELETE FROM offline_operations WHERE rowid IN (SELECT rowid FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND status IN (${marks}) ORDER BY rowid LIMIT ?)`).run(scope.tenantId,scope.applicationId,principalId,...options.statuses,options.limit).changes);
   }
   /** Process one due item; only a host-confirmed pre-effect failure may be retried automatically. */
   async processOne(scope:DataScope,context:InvocationContext,registry:CapabilityRegistry,classify:(error:unknown)=>OfflineFailure,now=Date.now()):Promise<OfflineOperation|undefined> {
