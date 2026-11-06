@@ -121,7 +121,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Production scheduling of the poller.
   - [ ] Comprehensive rollback protection across all stores. The connector's promotion floor can now be anchored outside the target database; other stores still rely on their own database's history.
-  - [ ] Disconnected replication.
+  - [x] Disconnected replication. Signed, version-bound promotion documents carried as files apply on a target with no network in order exactly once. Replayed, older, altered, relabelled, foreign or untrusted documents are refused, and a target restored behind its host-held floor is refused ([remote-control-connector.md](remote-control-connector.md#disconnected-replication)).
   - [ ] Production identity for source and target.
 - **Evidence:** a source outage and recovery transcript, and a replay attempt rejected on the production target.
 

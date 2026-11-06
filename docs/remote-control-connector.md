@@ -32,3 +32,26 @@ The PostgreSQL acceptance test kills a rollout worker before and after its promo
 If a failed pass leaves any non-idle journal state, or the state cannot be read, the poller stops and reports `needsReview: true`. A `running` state may belong to another live process: investigate and stop all relevant workers before considering recovery. The poller never calls `recover` or restarts itself after review; an authorized host must reconcile, explicitly recover the coordinator, and start it again. Optional `jitterRatio` (0 to 0.5, default 0) shortens each wait, including backoff, by a random fraction up to that ratio, so a fleet of pollers does not contact the source in lockstep; waits never exceed `maxBackoffMs`. This process-local timer has no durable schedule, leader election or availability guarantee, and does not replace production orchestration, monitoring or identity.
 
 The connector itself does not poll, distribute releases, migrate business data, or implement production identity. Its import is explicit and has no automatic retry. Once a local promotion is attempted, any exception or failed completion audit raises `RemoteControlImportUncertainError`: inspect the local publication and provenance before deciding whether to retry. Attempts and completion audit are not atomic with the publication. A source outage or a failed pre-import step leaves the local publication available, and a successful import survives a remote outage according to the local repository's durability. Use a persistent repository, backups and host-managed storage for production.
+
+## Disconnected replication
+
+A target that cannot reach its source, such as an air-gapped site, can receive promotions as files carried on removable media or over another one-way channel.
+
+**On the source.** `exportDisconnectedPromotion(store, {applicationId, sourceEnvironment, targetEnvironment, sourceVersion, expectedVersion, sign})` wraps one published version in a document. `sign` is the host's authorized signer, `signPromotionPackage` with the expected target version, so each document is bound to the target version it must follow.
+
+**On the target.** `createDisconnectedPromotionImporter({applicationId, sourceEnvironment, targetEnvironment, repository, authorize, audit, verifyWithEvidence, promotionFloorAnchor?})` returns `importDocument({actor, document})`. It accepts the document as parsed JSON or text up to 2 MiB, and uses no network. Pass `verifyWithEvidence` from `createSignedPromotionVerifier(..., {requireVersionBound: true})`. The repository must implement `promoteAdvancing` and `getPromotionFloor`, as `ApplicationStore`, `SqliteApplicationStore` and `PostgresPromotionTarget` do. Each import:
+1. authorizes the actor
+2. checks the cover sheet against its configuration
+3. refuses a source version that does not advance past every earlier promotion, so a replayed or older document is refused
+4. verifies the signature, environment, application and version binding, and that the signed package matches the cover sheet
+5. authorizes again, then promotes atomically with its signature evidence
+
+A document applied in the wrong order is refused, because its expected version does not match the target, and nothing is written. With `promotionFloorAnchor` (a host-held floor stored outside the target, as for the connector), a target restored from an older backup is refused. Audit events cover each phase.
+
+Documents are signed but not encrypted. Protect the media if the definition is confidential. Carry documents in version order. A target that missed one needs the source to export the missing versions, or a new document bound to the target's current version.
+
+`packages/core/test/disconnected-promotion.test.mjs` carries five versions as files to a target with `fetch` disabled.
+- Accepted: the versions apply in order, and a document applied out of order is refused without changes.
+- Refused: replays, an altered package, a relabelled cover sheet, an untrusted key, a document for another target, unparsable text and an unauthorized actor.
+- After the refusals, the genuine document still applies.
+- A target restored behind the host-held floor is refused.
