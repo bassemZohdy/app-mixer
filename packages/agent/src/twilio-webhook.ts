@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
-import twilio from 'twilio';
+import {validTwilioSignature} from './twilio-signature.js';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
 
 export type TwilioMessageWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;accountSid:string;url:string;authToken:string;previousAuthTokens?:string[]};
@@ -26,7 +26,7 @@ export function createTwilioMessageWebhookAdapter(options:TwilioMessageWebhookOp
    for(let i=0;i<req.rawHeaders.length;i+=2)if(req.rawHeaders[i].toLowerCase()==='x-twilio-signature'){if(signature!==undefined)return undefined;signature=req.rawHeaders[i+1];}
    if(!signature||!/^[A-Za-z0-9+/]{27}=$/.test(signature)||Buffer.from(signature,'base64').toString('base64')!==signature)return undefined;
    let params:Record<string,string>;try{params=form(body);}catch{return undefined;}
-   let valid=false;for(const key of keys)valid=twilio.validateRequest(key,signature,url,params)||valid;
+   let valid=false;for(const key of keys)valid=validTwilioSignature(key,signature,url,params)||valid;
    if(!valid)return undefined;verified.set(req,createHash('sha256').update(body).digest('hex'));return {...fixed};
   },
   mapAuthenticatedBody(body:Buffer,_identity:AgentEventSourceIdentity,req:IncomingMessage):AgentEventRequest {

@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**25 / 67 tasks complete (37%)**
+**26 / 67 tasks complete (39%)**
 
-`███████░░░░░░░░░░░░░`
+`████████░░░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 11 / 36 | 25 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-33..P4-36) |
+| P4 fixes and improvements from the 2026-11-06 code review | 12 / 36 | 24 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-21, P4-23..P4-27, P4-33..P4-36) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -138,8 +138,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: the identifier regex, `object`/`record`, `integer`, single-header lookup, JSON body readers and `reply` are copied into about 40 files with small differences (for example `text()` allows 256 characters where `id()` allows 128). Fix: an internal `@app-mixer/core/internal` module (not a public export) used by both packages, with one test for the shared limits.
 - [ ] P4-21 Generate the editor previews from the CLI templates
   - Found: `packages/core/src/data-editor-preview.ts` and `staged-editor-preview.ts` embed hand-maintained copies of `packages/cli/templates/data-editor.mjs` (286 lines) and `staged-editor.mjs`; a test only checks that the copies agree. Fix: generate the preview modules from the templates in the build (or ship the template as the single source and inert it at load), and delete the copies.
-- [ ] P4-22 Drop the `twilio` SDK dependency
-  - Found: `twilio-webhook.ts` imports the whole SDK (axios, jsonwebtoken, qs, dayjs, https-proxy-agent, xmlbuilder) for `validateRequest`, an HMAC-SHA1 over the URL and sorted form fields. Fix: implement the signature check locally with `timingSafeEqual`, keep the existing fixtures and fuzz test, and remove the dependency.
+- [x] P4-22 Drop the `twilio` SDK dependency
+  - Found: `twilio-webhook.ts` imports the whole SDK (axios, jsonwebtoken, qs, dayjs, https-proxy-agent, xmlbuilder) for `validateRequest`, an HMAC-SHA1 over the URL and sorted form fields. Fixed 2026-11-06: `twilio-signature.ts` implements the check with `timingSafeEqual` and the SDK's URL candidates (with and without port, normalized, legacy query string), cross-checked against the SDK on 15,360 combinations with no difference; the existing trigger and fuzz tests pass unchanged apart from computing the reference signature with `createHmac`, SDK-generated vectors are fixtures, and `twilio` is gone from `packages/agent/package.json` and the lock file.
 - [ ] P4-23 Subpath exports and lazy imports for the agent package
   - Found: `packages/agent/src/index.ts` imports LangChain, LangGraph, OpenAI and the webhook adapters at module load, so a host that only runs webhooks or stores pays for all of them. Fix: `./webhooks`, `./stores`, `./runtime` subpath exports (plus the root for compatibility), lazy `import()` of the model packages, and a test that `import '@app-mixer/agent/webhooks'` does not load `@langchain/*`.
 - [ ] P4-24 Tighten the TypeScript configuration
