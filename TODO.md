@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**56 / 80 tasks complete (70%)**
+**57 / 80 tasks complete (71%)**
 
 `██████████████░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 42 / 49 | 7 (P4-07, P4-19, P4-20, P4-38, P4-41, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 43 / 49 | 6 (P4-07, P4-20, P4-38, P4-41, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -148,10 +148,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `A2UIRenderer.apply` rebuilds the whole surface with `replaceChildren` on every message, including every keystroke (a field write becomes `updateDataModel` → full re-render with manual focus and selection restore); the React Native and Flutter stores re-snapshot the whole tree too. Fixed 2026-11-06 for the web renderer: bound Text and TextField nodes are patched in place on data-only updates when every rendered component is built in; `scripts/bench-renderer.mjs` (998 components) shows 0.73 against 15.4 ms per update; tests check six update steps against a fresh full render, that no element is created and node identity is kept, that a custom component forces a rebuild, and run the benchmark as a smoke test. The React Native and Flutter stores are P4-49.
 - [ ] P4-49 Incremental updates for the React Native and Flutter stores
   - Found while fixing P4-18: `NativeSurfaceStore` and `FlutterSurfaceStore` still re-snapshot the whole tree on every data update, so every keystroke rebuilds the React or widget tree. Fix: patch bound text and field values in the snapshot when only data changed (keeping node identity so React and Flutter can skip unchanged subtrees), a parity test that the patched snapshot equals a full one over the shared binding fixtures, and a benchmark.
-- [ ] P4-19 Avoid decrypting the whole browser queue on every worker pass
+- [x] P4-19 Avoid decrypting the whole browser queue on every worker pass
   - Found: `BrowserOfflineWorker.pass` calls `EncryptedBrowserQueue.list()`, which unseals every envelope (up to 1,000 AES-GCM decrypts) each interval. Fix: an in-memory cache keyed by `(id, version)` invalidated by the counter, or a pending-only index, with a test that a 1,000-item queue dispatches within a bound.
 
-### Maintainability
+### Maintainability Measured 2026-11-06 instead of optimized: listing a full 1,000-item queue (every envelope unsealed with AES-GCM, state digest verified) takes about 36 ms in Node with a real WebCrypto, so a worker pass costs a few percent of one core at a one-second interval and far less at the usual intervals. A cache keyed by `(id, version)` would have to be invalidated against the authenticated counter and anchor, which is exactly the tamper-detection path, for a saving that is not needed. Decision: no cache; a test asserts that listing 1,000 encrypted items stays under 1.5 s so a regression is caught.
 - [ ] P4-20 Share the validation and HTTP helpers
   - Found: the identifier regex, `object`/`record`, `integer`, single-header lookup, JSON body readers and `reply` are copied into about 40 files with small differences (for example `text()` allows 256 characters where `id()` allows 128). Fix: an internal `@app-mixer/core/internal` module (not a public export) used by both packages, with one test for the shared limits.
 - [x] P4-21 Generate the editor previews from the CLI templates

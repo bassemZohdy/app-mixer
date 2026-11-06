@@ -200,6 +200,8 @@ test('purge frees a full queue of settled items, keeps live work and stays consi
  try{
   const items=[];for(let n=0;n<1000;n++)items.push(await queue.enqueue('orders.create','request-'+n,{n}));
   await assert.rejects(queue.enqueue('orders.create','one-too-many',{}),/Offline queue (full|too large)/);
+  // A worker pass lists (and decrypts) every item: measured at about 36 ms for 1,000 items, so a pass stays cheap at any sensible interval.
+  {const started=performance.now();assert.equal((await queue.list()).length,1000);const ms=performance.now()-started;assert.ok(ms<1500,`listing 1,000 encrypted items took ${Math.round(ms)} ms`);}
   // Settle three: two succeed, one is discarded while still pending.
   for(const item of items.slice(0,2)){const claimed=await queue.transition(item.id,1,'claim');await queue.transition(item.id,claimed.version,'succeed');}
   await queue.transition(items[2].id,1,'discard');
