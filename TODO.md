@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**36 / 73 tasks complete (49%)**
+**37 / 74 tasks complete (50%)**
 
 `██████████░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 22 / 42 | 20 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41, P4-42) |
+| P4 fixes and improvements from the 2026-11-06 code review | 23 / 43 | 20 (P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41..P4-43) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -90,8 +90,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `packages/cli/src/index.ts` detected the entry with `process.argv[1]?.endsWith('/dist/index.js')`; on Windows `argv[1]` uses backslashes, so `node packages\cli\dist\index.js create demo` exited 0 and created nothing (reproduced 2026-11-06). Fixed 2026-11-06: the entry is compared by resolved path (case-insensitively on Windows), and a test runs the command through absolute and relative paths, the usage error and an invalid name (verified on Windows and in CI).
 - [x] P4-02 Stop recording pre-effect failures as uncertain actions
   - Found: `SqliteAgentActionJournal.invoke` and `PostgresAgentActionJournal.invoke` mark the action `uncertain` for any error thrown by `dispatch`, including `Capability forbidden`, `Invalid capability input`, `Capability not found` and delegation refusals that `CapabilityRegistry.invoke` raises before `execute` (and audits as `denied`/`invalid`/`not_found`). The run then settles `uncertain` and needs manual reconciliation although nothing was applied. Fixed 2026-11-06: the registry marks every error thrown before `execute` with the non-enumerable `Symbol.for('app-mixer.effect') === 'none'` (`markNoEffect`/`hadNoEffect`, usable without a package dependency), the configured runtime marks its own activity and delegation refusals, and both journals return a marked action to `ready` (or `failed` once attempts are exhausted) and rethrow the original error; unmarked errors stay uncertain. Tests cover each refusal class in core, the SQLite and PostgreSQL journals and a configured run refused by the registry and by the runtime. Typed error classes remain P4-16.
-- [ ] P4-03 Replace lifetime caps that count terminal rows with retention
-  - Found: `SqliteOfflineQueue.enqueue` counts every row for the principal (succeeded and discarded included), so a principal is refused after 1,000 operations ever and nothing can remove rows; `EncryptedBrowserQueue.enqueue` has the same 1,000 cap per partition and no purge; `SqliteAgentMemory`/`PostgresAgentMemory.put` refuse new IDs once history (tombstones included) reaches `10 × maxEntries`, with no compaction. Fix: authorized, audited retention (`purge(scope, principal, {olderThan, statuses, limit})` for both queues; tombstone compaction for memory after an owner-chosen horizon), count only live rows toward quotas, document the retention policy, and add tests that a queue keeps accepting work after 1,000 settled operations.
+- [x] P4-03 Replace lifetime caps that count terminal rows with retention
+  - Found: `SqliteOfflineQueue.enqueue` counts every row for the principal (succeeded and discarded included), so a principal is refused after 1,000 operations ever and nothing can remove rows; `EncryptedBrowserQueue.enqueue` has the same 1,000 cap per partition and no purge; `SqliteAgentMemory`/`PostgresAgentMemory.put` refuse new IDs once history (tombstones included) reaches `10 × maxEntries`, with no compaction. Fixed 2026-11-06 for the SQLite offline queue: only live operations count toward the cap and `purge(scope, principalId, {statuses, limit})` removes settled history (there is no timestamp column, so retention is by status and age order, not `olderThan`); a test enqueues, settles and purges 1,000 operations and a mutation of the count fails it. The encrypted browser queue and the memory tombstones are P4-43.
+- [ ] P4-43 Retention for the encrypted browser queue and agent memory tombstones
+  - Found while fixing P4-03: `EncryptedBrowserQueue.enqueue` has the same 1,000 cap per partition with no purge (its counter and rollback anchor must stay consistent with any deletion), and `SqliteAgentMemory`/`PostgresAgentMemory.put` refuse new IDs once history, tombstones included, reaches `10 x maxEntries`. Fix: count only live entries, add authorized purge and tombstone compaction after an owner-chosen horizon, keep the rollback anchor valid, and test that both keep accepting work after the cap of settled entries.
 - [x] P4-04 Let the Development Agent work on schema version 2 drafts and extension patches
   - Found: `DevelopmentAgent.propose` throws `Invalid development request` for `draft.schemaVersion !== 1`, so an application migrated under P2-05 cannot be developed by the agent, and its prompt lists only `addPage`, `setPageTitle` and `addComponent` with the four basic component types (no `setPageDescription`, `setExtensions`, `setExtensionOperations` or `Extension` components). Fixed 2026-11-06: versions 1 and 2 are accepted, the prompt's operation list follows the draft version, and a test submits a version-2 `setPageDescription` proposal and checks version 1 and unsupported versions.
 - [ ] P4-05 Dispatch runs in creation order

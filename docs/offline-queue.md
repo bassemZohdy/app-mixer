@@ -185,3 +185,7 @@ It makes no network request. The returned publication can seed `EncryptedPublica
 ## Operator listings
 
 `SqliteOfflineQueue.listAll(scope, {status?, after?, limit?})` lists a tenant and application across every principal, oldest first, optionally by status (`uncertain`, `conflict`, `running`, ...). It returns `{items, next?}` with each item carrying its `principalId`; pass `next` as `after` for the next page (at most 100 per page, 50 by default). `PostgresOfflineExecutions.list(scope, {status?, after?, limit?})` is the equivalent scan of shared executions in key order; its items carry the principal, key, operation, status and the attempt token that `markUncertain` needs, never payloads or results. Both require the host to authorize the operator.
+
+## Capacity and retention
+
+`SqliteOfflineQueue` accepts up to 1,000 live operations per principal (`pending`, `running`, `conflict`, `uncertain`, `exhausted`); `succeeded` and `discarded` operations no longer count, so a principal is never locked out by history. `purge(scope, principalId, {statuses, limit})` is the host-authorized retention call: it deletes at most `limit` (up to 1,000) operations of that principal in the given terminal statuses (`succeeded`, `discarded`, `exhausted`), oldest first, and returns the count; live work is never removed. A purged operation's request key is forgotten, so purge only history that the client can no longer resubmit.

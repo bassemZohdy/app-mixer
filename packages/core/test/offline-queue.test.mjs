@@ -142,3 +142,20 @@ test('operators can list a tenant across principals by status with pagination',a
   for(const bad of [{status:'unknown'},{limit:0},{limit:101},{after:-1},null])assert.throws(()=>queue.listAll(scope,bad),/Invalid offline operation query/);
  }finally{queue.close();}
 });
+
+test('a queue keeps accepting work after 1,000 settled operations and retention removes only history',async()=>{
+ const queue=new SqliteOfflineQueue(':memory:',{...policy,maxAttempts:3}),registry=new CapabilityRegistry(()=>{});registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>null});
+ try{
+  for(let n=0;n<1000;n++)queue.enqueue(scope,'p','update','settled-'+n,{n});
+  assert.throws(()=>queue.enqueue(scope,'p','update','one-too-many',{}),/queue full/,'1,000 live operations fill the queue');
+  for(let n=0;n<1000;n++)assert.equal((await queue.processOne(scope,actor,registry,()=>'retry',n+1)).status,'succeeded');
+  const fresh=queue.enqueue(scope,'p','update','after-settling',{});assert.equal(fresh.status,'pending','settled operations no longer count toward the cap');
+  const live=queue.enqueue(scope,'p','update','kept-live',{}),discarded=queue.enqueue(scope,'p','update','to-discard',{});queue.discard(scope,'p',discarded.id);
+  for(const bad of [{statuses:[],limit:1},{statuses:['pending'],limit:1},{statuses:['succeeded','succeeded'],limit:1},{statuses:['succeeded'],limit:0},{statuses:['succeeded'],limit:1001},{statuses:'succeeded',limit:1},null])assert.throws(()=>queue.purge(scope,'p',bad),/Invalid offline retention query/);
+  assert.equal(queue.purge(scope,'p',{statuses:['succeeded'],limit:600}),600,'the limit bounds one pass');
+  assert.equal(queue.purge(scope,'p',{statuses:['succeeded','discarded'],limit:1000}),401,'the rest of the history');
+  assert.equal(queue.purge(scope,'p',{statuses:['succeeded','discarded','exhausted'],limit:1000}),0);
+  assert.deepEqual(queue.list(scope,'p').map(item=>item.id).sort(),[fresh.id,live.id].sort(),'live work is untouched');
+  assert.equal(queue.purge(scope,'other',{statuses:['succeeded'],limit:10}),0,'another principal is untouched');
+ }finally{queue.close();}
+});
