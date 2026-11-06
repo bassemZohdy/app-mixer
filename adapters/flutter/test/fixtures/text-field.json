@@ -3,8 +3,8 @@
   {"message":{"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Column","children":["field","display"]},{"id":"field","component":"TextField","label":"Name","value":{"path":"/form/name"}},{"id":"display","component":"Text","text":{"path":"/form/name"}}]}},"field":{"label":"Name","value":"","variant":null},"text":""},
   {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/name","value":"Ada"}},"field":{"label":"Name","value":"Ada","variant":null},"text":"Ada"},
   {"input":"Grace","field":{"label":"Name","value":"Grace","variant":null},"text":"Grace"},
-  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/name","value":42}},"field":{"label":"Name","value":"","variant":null},"text":""},
-  {"message":{"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"field","component":"TextField","label":"Full name","value":{"path":"/form/name"},"variant":"longText"}]}},"field":{"label":"Full name","value":"","variant":"longText"},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/name","value":42}},"field":{"label":"Name","value":"","variant":null},"text":"42"},
+  {"message":{"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"field","component":"TextField","label":"Full name","value":{"path":"/form/name"},"variant":"longText"}]}},"field":{"label":"Full name","value":"","variant":"longText"},"text":"42"},
   {"input":"Lin\nQian","field":{"label":"Full name","value":"Lin\nQian","variant":"longText"},"text":"Lin\nQian"},
   {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/name"}},"field":{"label":"Full name","value":"","variant":"longText"},"text":""}
 ]

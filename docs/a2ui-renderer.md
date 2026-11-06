@@ -4,7 +4,7 @@
 
 | Component | Supported properties (in addition to `id` and `component`) |
 | --- | --- |
-| Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Text is displayed literally, including Markdown syntax. |
+| Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Text is displayed literally, including Markdown syntax. A bound value that is a finite number or a boolean is shown in its JSON spelling (`3`, `2.5`, `true`; a whole number never gains `.0`); null, a missing path, an object or an array shows nothing. The web, React Native and Flutter renderers behave the same and the shared fixture checks it. |
 | Column, Row | `children`: array of component IDs; optional `justify` and `align` flex alignment. |
 | Card | `child`: component ID. |
 | TextField | Literal `label`, absolute `value.path`, and optional `variant` (`shortText` or `longText`); writes changes to the local model. |

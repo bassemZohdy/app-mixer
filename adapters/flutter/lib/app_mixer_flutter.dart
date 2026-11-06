@@ -54,6 +54,15 @@ dynamic _export(dynamic value) {
   if (value is Map) return value.map((key, item)=>MapEntry(key, _export(item)));
   return value;
 }
+/// Display text of a Text component: strings as is; finite numbers and booleans in their JSON spelling
+/// (`3`, `2.5`, `true`, never `2.0`); anything else (null, missing, maps, lists) is empty.
+String _displayText(dynamic value) {
+  if (value is String) return value;
+  if (value is bool) return value.toString();
+  if (value is num && value.isFinite) return value == value.truncateToDouble() && value.abs() < 1e21 ? value.truncate().toString() : value.toString();
+  return '';
+}
+
 dynamic _read(dynamic data, String path) {
   var value=data;
   for (final key in _pointer(path)) {
@@ -309,7 +318,7 @@ class FlutterSurfaceStore {
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
-      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextStretchDepth)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
+      return NativeNode(id, c['component'] as String, ids.map((child) => visit(child, next, nextStretchDepth)).whereType<NativeNode>().toList(), text: c['component']=='Text' ? _displayText(bound) : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props);
     }
     return visit('root', {}, 0);
   }

@@ -80,6 +80,11 @@ function textValue(value: unknown, data: unknown): string {
   const result = typeof value === 'string' ? value : obj(value) && typeof value.path === 'string' ? read(data, value.path) : undefined;
   return typeof result === 'string' ? result : '';
 }
+/** Display text of a Text component: strings as is; finite numbers and booleans in their JSON spelling (`3`, `2.5`, `true`); anything else (null, missing, objects, arrays) is empty. */
+function displayText(value: unknown, data: unknown): string {
+  const result = typeof value === 'string' ? value : obj(value) && typeof value.path === 'string' ? read(data, value.path) : undefined;
+  return typeof result === 'string' ? result : (typeof result === 'number' && Number.isFinite(result)) || typeof result === 'boolean' ? String(result) : '';
+}
 function children(c: Obj): string[] {
   if (!Array.isArray(c.children) || !c.children.every(id)) throw Error('Invalid children');
   return c.children;
@@ -123,7 +128,7 @@ export function basicRegistry(): ComponentRegistry {
     if (!(typeof c.text === 'string' || (obj(c.text) && typeof c.text.path === 'string'))) throw Error('Invalid Text');
     const variants: Record<string,string> = {h1:'h1', h2:'h2', h3:'h3', h4:'h4', h5:'h5', caption:'small', body:'p'};
     const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant] : 'p';
-    const element = doc.createElement(tag); element.textContent = textValue(c.text, data); return element;
+    const element = doc.createElement(tag); element.textContent = displayText(c.text, data); return element;
   }, validateBasic);
   for (const type of ['Column', 'Row']) registry.register(type, (c, child, _data, doc) => {
     if (!only(c, ['id','component','children','justify','align'])) throw Error('Unsupported layout property');

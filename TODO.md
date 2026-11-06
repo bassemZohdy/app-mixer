@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**41 / 76 tasks complete (54%)**
+**42 / 77 tasks complete (55%)**
 
 `███████████░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 27 / 45 | 18 (P4-07, P4-09, P4-17..P4-21, P4-33..P4-38, P4-41..P4-45) |
+| P4 fixes and improvements from the 2026-11-06 code review | 28 / 46 | 18 (P4-07, P4-09, P4-17..P4-21, P4-33, P4-35..P4-38, P4-41..P4-46) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -184,9 +184,12 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fixed 2026-11-06: the image installs and builds only `core` and `web` (497 MB -> 332 MB, no LangChain or Twilio in `node_modules`), has a TCP `HEALTHCHECK` that works for the TLS and plain transports, and the kind workflow fails above 400 MB; verified by building the image, loading `@app-mixer/core` in it and a static test.
 - [ ] P4-33 Replace sleep-based waits in tests
   - Found: 64 `setTimeout(resolve, …)` waits across the test suites; the schedule-node test failed in CI on 2026-11-06 because of one such assumption. Fix: condition polling helpers with deadlines and injected clocks where a store accepts one, and a lint rule against bare sleeps in tests.
-- [ ] P4-34 Decide and document the renderer's unspecified behaviour
-  - Found: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter; a `Text` bound to a number or boolean renders as an empty string on web, React Native and Flutter; rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fix: specify each in `docs/a2ui-renderer.md` and the catalog (style variants, string coercion for scalars, stable attributes), implement on all adapters through the shared fixtures, and extend the parity tests.
+- [x] P4-34 Decide and document the renderer's unspecified behaviour
+  - Found: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter; a `Text` bound to a number or boolean renders as an empty string on web, React Native and Flutter; rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fixed 2026-11-06 for the scalar coercion (the functional bug): numbers and booleans render in their JSON spelling on web, React Native and Flutter (Dart whole doubles print without `.0`), documented in `docs/a2ui-renderer.md`, with five new Text components in the shared fixture checked by the browser, react-native-web and Flutter parity tests. Style variants for Button and TextField and stable DOM hooks are P4-46.
 
 Persistent-agent details: [requirements and architecture](docs/specs/persistent-agents.md), [ADR 0010](docs/adr/0010-configurable-persistent-agents.md). The manifest store is implemented; the remaining persistent-agent capabilities are planned.
 
 A checked item means documentation or implementation is verified; future requirements are not completed merely by being described.
+
+- [ ] P4-46 Specify and implement renderer style variants and stable test hooks
+  - Found while fixing P4-34: `Button` variants (`primary`, `borderless`) and `TextField` variants change nothing visually on any adapter, and rendered DOM has no stable hooks (`data-component-id`, class names) for host styling or test selection. Fix: specify the visual meaning of each variant in `docs/a2ui-renderer.md` and the catalog, implement it on all adapters through the shared fixtures, add `data-component-id` (and the equivalent keys on React Native and Flutter), and extend the parity tests.
