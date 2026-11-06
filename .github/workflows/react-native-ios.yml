@@ -5,6 +5,10 @@ on:
       - 'packages/native/**'
       - '.github/workflows/react-native-ios.yml'
   workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * 1'
 permissions:
   contents: read
 jobs:

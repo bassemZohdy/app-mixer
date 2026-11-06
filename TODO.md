@@ -7,6 +7,7 @@
 
 `████████░░░░░░░░░░░░`
 **22 / 66 tasks complete (33%)**
+**23 / 67 tasks complete (34%)**
 
 `███████░░░░░░░░░░░░░`
 
@@ -26,6 +27,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
 | P4 fixes and improvements from the 2026-11-06 code review | 24 / 43 | 19 (P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41..P4-43) |
 | P4 fixes and improvements from the 2026-11-06 code review | 8 / 35 | 27 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-28, P4-31..P4-35) |
+| P4 fixes and improvements from the 2026-11-06 code review | 9 / 36 | 27 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-28, P4-32..P4-36) |
 
 Each open task's remaining proof and required evidence: [acceptance checklists](docs/acceptance-checklists.md).
 

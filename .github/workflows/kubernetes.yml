@@ -11,6 +11,10 @@ on:
       - 'tsconfig.base.json'
       - '.github/workflows/kubernetes.yml'
   workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * 1'
 permissions:
   contents: read
 jobs:
