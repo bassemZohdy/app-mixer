@@ -18,3 +18,7 @@ Keep a database on a local disk: WAL needs shared memory between processes on on
 ## Adding a store
 
 Open the database with `PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;`. `packages/core/test/sqlite-wal.test.mjs` fails for any source file that calls `new DatabaseSync(` without the WAL pragma.
+
+## Contention benchmark
+
+`node scripts/bench-sqlite.mjs [workers] [writesPerWorker]` runs several worker processes that each append rows to one shared database the way the run registry, journal and approvals do, once with the rollback journal and once with WAL. On the Windows development machine (4 workers, 300 write transactions each, `synchronous=FULL`) the rollback journal managed 144 transactions per second and WAL 436 (about 3 times), with no lock errors either way thanks to `busy_timeout`. Each store keeps its own connection; a shared-connection constructor was not added because WAL removes most of the contention it would address and sharing would couple the stores' lifecycles.

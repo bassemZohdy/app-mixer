@@ -29,3 +29,10 @@ test('stores use WAL on disk, readers see committed rows while a writer is mid-t
   assert.deepEqual(readdirSync(dir).filter(file=>/-(wal|shm)$/.test(file)),[],'the WAL and shared-memory files are removed when the last connection closes');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+test('the contention benchmark runs for both journal modes without lock errors',async()=>{
+ const {spawnSync}=await import('node:child_process'),script=fileURLToPath(new URL('../../../scripts/bench-sqlite.mjs',import.meta.url));
+ const run=spawnSync(process.execPath,['--no-warnings',script,'2','10'],{encoding:'utf8',timeout:60000});assert.equal(run.status,0,run.stderr);
+ const results=run.stdout.trim().split('\n').map(line=>JSON.parse(line));assert.deepEqual(results.map(result=>result.mode),['DELETE','WAL']);
+ for(const result of results){assert.equal(result.transactions,20);assert.equal(result.busyErrors,0);assert.ok(result.perSecond>0);}
+});

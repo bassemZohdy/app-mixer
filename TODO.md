@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**62 / 92 tasks complete (67%)**
+**63 / 92 tasks complete (68%)**
 
-`█████████████░░░░░░░`
+`██████████████░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 48 / 61 | 13 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42, P4-45) |
+| P4 fixes and improvements from the 2026-11-06 code review | 49 / 61 | 12 (P4-07, P4-09, P4-17..P4-21, P4-38, P4-41, P4-41, P4-42, P4-42) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -112,8 +112,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: 26 SQLite stores and 17 PostgreSQL stores create their tables with `CREATE TABLE IF NOT EXISTS` on open or `initialize()`; only `SqliteStagedOperations` adds missing columns, nothing records a schema version, and the PostgreSQL stores need DDL privileges at runtime. Fix: a schema version (`PRAGMA user_version` / an `app_mixer_schema` table), one migration runner per database (`node packages/cli migrate`), a documented least-privilege runtime role, and a test that opens a database written by the previous release.
 - [x] P4-10 Use WAL mode and one shared SQLite connection per database
   - Found: every store opens its own `DatabaseSync` on the same file (runs, journal, approvals, delegations, budget, notices, checkpointer, …) with `BEGIN IMMEDIATE` and the default rollback journal, so concurrent workers contend on the file lock. Fixed 2026-11-06 for WAL: every store opens with `journal_mode=WAL` (all 26 files, enforced by a test) and keeps `synchronous=FULL` on purpose: with `NORMAL` a power loss could drop a committed `dispatching` journal record and allow a duplicate effect, which the action journal exists to prevent. The full suite and the Docker S3 crash tests (SIGKILL mid-journal) pass unchanged, and `docs/sqlite-stores.md` documents the three files and consistent backups. The optional shared-connection constructor and a contention benchmark are P4-45.
-- [ ] P4-45 Shared SQLite connections and a contention benchmark
-  - Found while fixing P4-10: each store still opens its own `DatabaseSync` on the shared file. Fix: an optional constructor taking an existing connection for stores that share a database, a benchmark with concurrent workers (and the kill tests) showing the contention before and after WAL and sharing, and a decision on whether sharing is worth the added coupling.
+- [x] P4-45 Shared SQLite connections and a contention benchmark
+  - Found while fixing P4-10: each store still opens its own `DatabaseSync` on the shared file. Done 2026-11-06: `scripts/bench-sqlite.mjs` measures it (4 worker processes, 1,200 transactions: rollback journal 144/s, WAL 436/s, no lock errors; the kill tests run on WAL unchanged) and is smoke-tested. Decision: no shared-connection constructor. WAL removes most of the contention, each store keeping its own connection keeps lifecycles independent, and a shared handle would need coordinated close and transaction ownership across stores; revisit only if a benchmark of a real deployment shows lock waits.
 - [x] P4-11 Give the SQLite stores the retention their PostgreSQL counterparts have
   - Found: `SqliteAgentRuns.agent_run_starts` grows forever (`PostgresAgentRunSlots.pruneStarts` exists), `SqliteCapabilityAudit` has no `prune` (`PostgresCapabilityAudit` has), business-record deletes keep `deleted=1` rows forever, and notices, receipts and delivery history are documented as growing until the database is retired. Fixed 2026-11-06 for the two stores with a PostgreSQL counterpart: `SqliteCapabilityAudit.prune` (same contract as the PostgreSQL sink: tenant, `before`, `through`, `limit`) and `SqliteAgentRuns.pruneStarts`, with tests and doc sections; the host authorizes callers. Business-record tombstones and notice, receipt and delivery history are P4-38.
 - [ ] P4-38 Retention for notice, receipt and delivery history
