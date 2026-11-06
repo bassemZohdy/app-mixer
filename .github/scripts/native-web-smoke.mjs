@@ -141,6 +141,19 @@ try{
  });
  const replacementField=document.querySelector('[aria-label="Repeated"]');
  assert.notEqual(replacementField,oldField);assert.equal(replacementField.value,'New');assert.notEqual(document.activeElement,replacementField);assert.deepEqual(errors,[]);
+ await React.act(()=>{
+  receive({version:'v0.9.1',createSurface:{surfaceId:'incremental',catalogId:APP_MIXER_CATALOG}});
+  receive({version:'v0.9.1',updateDataModel:{surfaceId:'incremental',value:{name:'Ada'}}});
+  receive({version:'v0.9.1',updateComponents:{surfaceId:'incremental',components:[{id:'root',component:'Row',children:['left','middle','field']},{id:'left',component:'Text',text:'Left'},{id:'field',component:'TextField',label:'Incremental field',value:{path:'/name'}}]}});
+ });
+ const incrementalInput=document.querySelector('[aria-label="Incremental field"]');incrementalInput.focus();
+ await React.act(()=>{
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(incrementalInput,'Grace');incrementalInput.dispatchEvent(new window.Event('input',{bubbles:true}));
+ });
+ assert.equal(incrementalInput.value,'Grace');
+ await React.act(()=>receive({version:'v0.9.1',updateComponents:{surfaceId:'incremental',components:[{id:'middle',component:'Text',text:'Middle'}]}}));
+ assert.equal(document.querySelector('[aria-label="Incremental field"]'),incrementalInput);assert.equal(incrementalInput.value,'Grace');assert.equal(document.activeElement,incrementalInput);assert.equal(document.getElementById('app').textContent.includes('Middle'),true);
+ await React.act(()=>receive({version:'v0.9.1',deleteSurface:{surfaceId:'incremental'}}));
  await React.act(()=>root.unmount());
  const reference={id:'example.chart',version:'1.0.0',scope:'application'},manifest={manifestVersion:1,...reference,runtimeVersions:['0.1.0'],renderers:['react-native'],components:['chart'],tools:[],providers:[],permissions:[]},extension=props=>React.createElement(Text,null,props.label),validator=component=>typeof component.label==='string',extensions=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react-native',approved:[{...reference,permissions:[]}]});
  extensions.register(manifest,{components:{chart:extension},tools:{},providers:{}});const application={id:'demo',schemaVersion:1,revision:1,extensions:[reference],pages:[{id:'home',title:'Home',route:'/',components:[{id:'c',type:'Extension',extensionId:reference.id,name:'chart'}]}]},keys=generateKeyPairSync('ed25519'),plan=signNativeExtensionPlanFromRegistry(application,extensions,{tenantId:'tenant',environment:'test',keyId:'key',privateKey:keys.privateKey,issuedAt:100,expiresAt:200}),nativeRegistry=await NativeComponentRegistry.fromSignedPlan(plan,[{...reference,components:{chart:{render:extension,validate:validator}}}],{tenantId:'tenant',environment:'test',applicationId:'demo',revision:1,clock:()=>150},({keyId,signingInput,signature})=>keyId==='key'&&verifySignature(null,Buffer.from(signingInput,'utf8'),keys.publicKey,Buffer.from(signature,'base64url'))),NativeWithExtensions=createReactNativeA2UIComponent(React,{View,Text,TextInput,Pressable,Platform},nativeRegistry),extensionRoot=createRoot(document.getElementById('app')),extensionErrors=[];let receiveExtension;

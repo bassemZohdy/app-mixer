@@ -18,7 +18,7 @@ const domTree=node=>{
  return {kind,...(kind==='Text'?{text:node.textContent}:{}),...(kind==='Row'||kind==='Column'?{justify:node.style.justifyContent??null,align:node.style.alignItems??null}:{}),children:node.children.map(domTree).filter(Boolean)};
 };
 const styleValues={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
-const nativeTree=node=>({kind:node.kind,...(node.kind==='Text'?{text:node.text}:{}),...(node.kind==='Row'||node.kind==='Column'?{justify:node.justify?styleValues[node.justify]:null,align:node.align?styleValues[node.align]:null}:{}),children:node.children.map(nativeTree)});
+const nativeTree=node=>node.kind==='Missing'?undefined:{kind:node.kind,...(node.kind==='Text'?{text:node.text}:{}),...(node.kind==='Row'||node.kind==='Column'?{justify:node.justify?styleValues[node.justify]:null,align:node.align?styleValues[node.align]:null}:{}),children:node.children.map(nativeTree).filter(Boolean)};
 const message=(kind,payload)=>({version:'v0.9.1',[kind]:payload});
 
 test('web and native render the same supported static component hierarchy across updates',()=>{
@@ -86,6 +86,21 @@ test('shared Flutter fixture matches web and native layout trees',async()=>{
  const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/layout.json',import.meta.url),'utf8'));
  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
  for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0];const nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?domTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeTree(nativeRoot):null,step.tree);}
+});
+
+test('shared incremental layout fixture retains unresolved child slots until resolution',async()=>{
+ const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/assets/incremental-missing-child.json',import.meta.url),'utf8'));
+ for(const mode of fixture.modes){
+  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+  for(const renderer of [web,native])renderer.apply(fixture.create);
+  const root={...fixture.root,justify:mode};for(const renderer of [web,native])renderer.apply(message('updateComponents',{surfaceId:'main',components:[...fixture.children,root]}));
+  const row=host.children[0].children[0],nativeRow=native.snapshot()[0].root,renderRow=native.renderRoot('main');
+  assert.deepEqual(row.children.map(child=>child.tagName),['p','span','p']);assert.deepEqual(nativeRow.children.map(child=>child.kind),['Text','Text']);assert.deepEqual(renderRow.children.map(child=>child.kind),['Text','Missing','Text']);
+  assert.equal(row.children[1].textContent,'');assert.equal(renderRow.children[1].id,'middle');
+  for(const renderer of [web,native])renderer.apply(message('updateComponents',{surfaceId:'main',components:[fixture.resolve]}));
+  assert.deepEqual(host.children[0].children[0].children.map(child=>child.textContent),['Left','Middle','Right']);
+  assert.deepEqual(native.snapshot()[0].root.children.map(child=>child.text),['Left','Middle','Right']);assert.deepEqual(native.renderRoot('main').children.map(child=>child.kind),['Text','Text','Text']);
+ }
 });
 
 test('deep same-axis stretch trees are accepted by web and native',()=>{
@@ -197,7 +212,7 @@ test('late children cannot insert an interactive control inside a button',()=>{
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['button','field']},{id:'button',component:'Button',child:'late',action:{event:{name:'go'}}},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}}]}));
  const invalid=message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Row',children:['field']}]});
  assert.throws(()=>web.apply(invalid),/Interactive component inside button/);assert.throws(()=>native.apply(invalid),/Interactive component inside button/);
- assert.equal(native.snapshot()[0].root.children[0].children.length,0);assert.equal(host.children[0].children[0].children[1].tagName,'label');
+ assert.equal(native.snapshot()[0].root.children[0].children.length,0);assert.equal(native.renderRoot('main').children[0].children[0].kind,'Missing');assert.equal(host.children[0].children[0].children[1].tagName,'label');
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Text',text:'Continue'}]}));
  assert.equal(native.snapshot()[0].root.children[0].children[0].text,'Continue');
 });

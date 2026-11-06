@@ -162,12 +162,14 @@ export class NativeSurfaceStore {
     return {version:'v0.9.1',action:{name:event.name as string,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context}};
   }
   snapshot():NativeSurface[]{return [...this.surfaces.values()].map(surface=>({id:surface.id,revision:surface.revision,root:this.root(surface.components,surface.data)}));}
-  private root(components:Map<string,Obj>,data:unknown):NativeNode|undefined {
+  /** Render-only tree. Unlike snapshot(), this retains unresolved child slots for layout. */
+  renderRoot(surfaceId:string):NativeNode|undefined {const surface=this.surfaces.get(surfaceId);return surface?this.root(surface.components,surface.data,true):undefined;}
+  private root(components:Map<string,Obj>,data:unknown,retainMissing=false):NativeNode|undefined {
     if(!components.has('root'))return undefined;
     let count=0;
     const visit=(key:string,ancestors:Set<string>,inButton=false):NativeNode|undefined=>{
       if(++count>5000)throw Error('Component tree too large');
-      const c=components.get(key);if(!c)return undefined;
+      const c=components.get(key);if(!c)return retainMissing?{id:key,kind:'Missing',children:[]}:undefined;
       if(inButton&&(c.component==='Button'||c.component==='TextField'))throw Error('Interactive component inside button');
       if(ancestors.has(key)||ancestors.size>=100)throw Error('Cyclic or deeply nested components');
       const next=new Set(ancestors);next.add(key);
@@ -196,11 +198,11 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
   return function NativeA2UI({subscribe,onError,onAction}:NativeA2UIProps):any{
-    const [surfaces,setSurfaces]=React.useState<Array<{surface:NativeSurface;key:number}>>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null),publishRef=React.useRef<(()=>void)|null>(null),nextKey=React.useRef(0);
+    const [surfaces,setSurfaces]=React.useState<Array<{surface:NativeSurface;key:number;renderRoot?:NativeNode}>>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null),publishRef=React.useRef<(()=>void)|null>(null),nextKey=React.useRef(0);
     React.useEffect(()=>{errors.current=onError;actions.current=onAction;},[onError,onAction]);
     React.useEffect(()=>{
       let active=true;const store=new NativeSurfaceStore(fixedRegistry),keys=new Map<string,number>();storeRef.current=store;setSurfaces([]);let stop:void|(()=>void);
-      const publish=()=>setSurfaces(store.snapshot().map(surface=>({surface,key:keys.get(surface.id)!})));publishRef.current=publish;
+      const publish=()=>setSurfaces(store.snapshot().map(surface=>({surface,key:keys.get(surface.id)!,renderRoot:store.renderRoot(surface.id)})));publishRef.current=publish;
       try{stop=subscribe(message=>{if(!active)return;try{
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.TextInput&&message.updateComponents.components.some(c=>obj(c)&&c.component==='TextField'))throw Error('TextInput primitive is required');
         if(obj(message)&&obj(message.updateComponents)&&Array.isArray(message.updateComponents.components)&&!primitives.Pressable&&message.updateComponents.components.some(c=>obj(c)&&c.component==='Button'))throw Error('Pressable primitive is required');
@@ -215,6 +217,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
     const render=(node:NativeNode,surface:NativeSurface,inButton=false,inRow=false,key=node.id):any=>{
       const extension=installed.get(node.kind);
       const renderChildren=(insideButton:boolean,insideRow:boolean)=>{const occurrences=new Map<string,number>();return node.children.map(child=>{const occurrence=occurrences.get(child.id)??0;occurrences.set(child.id,occurrence+1);return render(child,surface,insideButton,insideRow,JSON.stringify([child.id,occurrence]));});};
+      if(node.kind==='Missing')return React.createElement(primitives.View,{key,collapsable:false,pointerEvents:'none'});
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key});
       if(node.kind==='Text')return React.createElement(primitives.Text,{key,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:inRow?{...textStyles[node.variant??'body'],flexShrink:1}:textStyles[node.variant??'body']},node.text);
       if(node.kind==='Button')return React.createElement(primitives.Pressable,{key,accessibilityRole:'button',...(inRow?{style:{flexShrink:1,minWidth:0}}:{}),disabled:!onAction,onPress:()=>{
@@ -230,6 +233,6 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
       const style={...(inRow?{flexShrink:1,minWidth:0}:{}),...(node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:{})};
       return React.createElement(primitives.View,{key,style},...renderChildren(inButton,node.kind==='Row'));
     };
-    return React.createElement(primitives.View,null,...surfaces.map(({surface,key})=>React.createElement(primitives.View,{key},...(surface.root?[render(surface.root,surface)]:[]))));
+    return React.createElement(primitives.View,null,...surfaces.map(({surface,key,renderRoot:root})=>React.createElement(primitives.View,{key},...(root?[render(root,surface)]:[]))));
   };
 }

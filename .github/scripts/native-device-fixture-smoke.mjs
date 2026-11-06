@@ -39,6 +39,8 @@ try{
  await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(repeated[0],'Grace');repeated[0].dispatchEvent(new window.Event('input',{bubbles:true}));});assert.deepEqual(repeated.map(field=>field.value),['Grace','Grace']);
  await click('Reorder fields');const reordered=[...document.querySelectorAll('input[aria-label="Repeated"]')];assert.deepEqual(reordered,repeated);await React.act(()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(reordered[1],'Lin');reordered[1].dispatchEvent(new window.Event('input',{bubbles:true}));});assert.deepEqual(reordered.map(field=>field.value),['Lin','Lin']);
  await click('Check signed extension');await React.act(async()=>{});assert.ok(text('Verified signed extension'));assert.ok(text('Tampered plan rejected'));
+ await click('Check incremental layout');await React.act(async()=>{});assert.ok(text('LTR Left'));assert.ok(text('LTR Right'));assert.ok(text('RTL Left'));assert.ok(text('RTL Right'));assert.ok(!text('LTR Middle'));assert.ok(!text('RTL Middle'));
+ await click('Resolve missing child');assert.ok(text('LTR Middle'));assert.ok(text('RTL Middle'));
  assert.ok(!text('FAIL renderer'));
  await React.act(()=>root.unmount());
 }finally{dom.window.close();}

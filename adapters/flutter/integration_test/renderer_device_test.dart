@@ -39,6 +39,8 @@ void main() {
 
   testWidgets('narrow nested row remains usable on a mobile device', verifyNarrowNestedRowParity);
   testWidgets('row spacing modes place children consistently on a mobile device', verifyRowSpacing);
+  testWidgets('unresolved row references reserve flex slots until later updates resolve them on a mobile device', verifyIncrementalMissingChildSpacing);
+  testWidgets('unresolved column references reserve vertical flex slots until resolved on a mobile device', verifyIncrementalMissingColumnSpacing);
   testWidgets('row cross-axis alignment places children consistently on a mobile device', verifyRowAlignment);
   testWidgets('column cross-axis alignment places children consistently on a mobile device', verifyColumnAlignment);
 
