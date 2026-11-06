@@ -127,6 +127,8 @@ jobs:
           kubectl apply -f deploy/kubernetes/admission-example/binding.yaml
           kubectl label namespace app-mixer-test app-mixer.dev/enforce-data-plane=true
           node deploy/kubernetes/test-support/admission-test.mjs
+      - name: Verify namespace workload admission policies against the Kubernetes API
+        run: node deploy/kubernetes/test-support/admission-workloads-test.mjs
       - name: Diagnostics on failure
         if: failure()
         run: |

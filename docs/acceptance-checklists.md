@@ -131,7 +131,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] Production identity provisioning and certificate operations.
   - [ ] High availability of the revocation and release-floor stores.
   - [ ] Independent rollback protection.
-  - [ ] Broader admission enforcement beyond the example policy.
+  - [x] Broader admission enforcement beyond the example policy. Namespace-wide policies stop bare, relabelled or debugged Data Plane pods. They also block other workload kinds carrying the Data Plane template, rogue or exposed Services selecting it, and unpinned, privileged or host-access pods. A real API server passes 35 checks ([kubernetes-data-plane.md](kubernetes-data-plane.md)).
   - [ ] Control Plane, workers and durable stores deployed to the target cluster, validated there.
 - **Evidence:** a target-cluster validation run (rollout, node drain, pod loss, store failover) with versions recorded.
 
