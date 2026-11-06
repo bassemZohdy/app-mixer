@@ -29,7 +29,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-02 Extension SDK and compatibility manifests
 - **Verified locally:** manifest and configuration validation, package digest verification (canonical spelling only), approval pinning and revocation lifecycle, hostile-key tests.
 - **Still to prove:**
-  - [ ] Full SDK integration in a generated application using a third-party package built outside this repository.
+  - [x] Full SDK integration in a generated application using a third-party package built outside this repository. A package packed with `npm pack` outside the repository is installed into a generated app with npm, approved with a pinned digest of its tarball, published, rendered, used as a tool and revoked ([extensions.md](extensions.md#installing-a-third-party-package); the test's diagnostics are the transcript).
   - [ ] Production operational verification of the shared approval store: revocation latency under load and behaviour during a database outage.
 - **Evidence:** a transcript of installing, approving, using and revoking an external package, and a revocation-latency measurement.
 

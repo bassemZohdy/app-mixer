@@ -30,6 +30,19 @@ For live tool and provider approval, a host may pass `authorizeExtension(actor, 
 These are asynchronous checks, not a transaction with the extension's side effects: approval can change after the final check, and the implementation or downstream service must enforce any stronger commit-time policy. They do not revoke a component already delivered to a browser or native app. Hosts still need authenticated policy storage, update propagation, cache control and runtime replacement for component changes.
 
 
+## Installing a third-party package
+
+`packages/cli/test/third-party-extension.test.mjs` runs the whole lifecycle with a package built outside this repository. Each step is reported as a test diagnostic, so the test output is the transcript.
+
+1. **Build.** A vendor package, `acme-chart-extension`, with its own `manifest.json`, a web component and a tool, is written to a temporary directory and packed with `npm pack`.
+2. **Install.** A generated application installs the tarball with `npm install --offline --ignore-scripts`. Its host-owned `extensions.mjs` imports the component by package name.
+3. **Approve.** The host computes the tarball's SHA-256 digest, adds it to the manifest it trusts, and pins it in the approval. Registering with the tarball bytes succeeds; different bytes are refused.
+4. **Publish.** An application that references the component and the tool is published through the publication guard.
+5. **Use.** The generated workspace renders the component from the installed package, and its validator rejects bad properties. The tool runs through `createExtensionRuntime` with a live `authorizeExtension` check and capability audit.
+6. **Revoke.** After revocation, the next tool call is refused. A host without the approval can neither register the package nor publish an application that uses it.
+
+The vendor's manifest cannot carry a digest of the package that contains it. The host supplies the digest of the bytes it installed. Generated-app properties for extension components must be scalars.
+
 ## Shared operation approvals
 
 `PostgresExtensionApprovals` provides an optional shared approval source for declared tool and provider invocations. The host supplies a PostgreSQL primary query function, a clock, and an `authorize(actor, action, applicationScope, reference, operation)` callback. Call `initialize()` with a migration identity. Approvals are bound to tenant, application, exact extension ID/version/scope, and declared operation kind/name. `decide` creates or changes one approval using `expectedRevision` (0 for a new record) and an explicit expiry; a revocation uses `allowed: false` and `expiresAt: 0`. Successful changes append an actor-attributed audit event in the same database statement. Stale decisions fail rather than overwriting another administrator's decision.
