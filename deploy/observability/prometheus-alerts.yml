@@ -1,0 +1,96 @@
+# Prometheus alerting rules for the metrics App Mixer exposes. Each alert names its runbook in docs/runbooks.md.
+# Thresholds and durations are starting points; tune them to the deployment's SLOs and grace periods.
+# Jobs are expected to be named app-mixer-data-plane and app-mixer-agent (the scrape-health alert matches app-mixer-*).
+groups:
+  - name: app-mixer-data-plane
+    rules:
+      - alert: AppMixerMetricsScrapeFailing
+        expr: up{job=~"app-mixer-.*"} == 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: An App Mixer metrics endpoint has not been scraped successfully for 5 minutes.
+          runbook: docs/runbooks.md#appmixermetricsscrapefailing
+      - alert: AppMixerDataPlaneErrorRate
+        expr: sum by (job) (rate(app_mixer_data_plane_requests_total{status_class="5xx"}[5m])) / sum by (job) (rate(app_mixer_data_plane_requests_total{outcome="completed"}[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: More than 5% of completed Data Plane requests return a server error.
+          runbook: docs/runbooks.md#appmixerdataplaneerrorrate
+      - alert: AppMixerDataPlaneSlowApplication
+        expr: histogram_quantile(0.99, sum by (job, le) (rate(app_mixer_data_plane_request_duration_seconds_bucket{route="application",outcome="completed"}[5m]))) > 1
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: The 99th percentile of application responses is above one second.
+          runbook: docs/runbooks.md#appmixerdataplaneslowapplication
+      - alert: AppMixerDataPlaneStuckDraining
+        expr: app_mixer_data_plane_draining == 1
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: A Data Plane process has been draining for longer than the 30 second termination grace period allows.
+          runbook: docs/runbooks.md#appmixerdataplanestuckdraining
+      - alert: AppMixerDataPlaneVersionSkew
+        expr: count by (job) (count_values by (job) ("version", app_mixer_data_plane_publication_version)) > 1
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Data Plane processes in one job have served different publication versions for 15 minutes.
+          runbook: docs/runbooks.md#appmixerdataplaneversionskew
+      - alert: AppMixerDataPlaneRestarting
+        expr: changes(app_mixer_data_plane_start_time_seconds[30m]) > 2
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: A Data Plane process restarted more than twice in 30 minutes.
+          runbook: docs/runbooks.md#appmixerdataplanerestarting
+  - name: app-mixer-agent
+    rules:
+      - alert: AppMixerAgentScheduleBacklog
+        expr: app_mixer_agent_oldest_due_schedule_seconds > 300
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: A due agent schedule occurrence has not fired for more than 5 minutes.
+          runbook: docs/runbooks.md#appmixeragentschedulebacklog
+      - alert: AppMixerAgentRunsOverdue
+        expr: app_mixer_agent_oldest_overdue_seconds > 300
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: An agent run has been past its deadline or lease for more than 5 minutes.
+          runbook: docs/runbooks.md#appmixeragentrunsoverdue
+      - alert: AppMixerAgentRunsUncertain
+        expr: app_mixer_agent_runs{status="uncertain",archived="false"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Agent runs are waiting for a decision on whether their effects happened.
+          runbook: docs/runbooks.md#appmixeragentrunsuncertain
+      - alert: AppMixerAgentActionsUncertain
+        expr: app_mixer_agent_actions{status="uncertain"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Journaled agent actions have an unknown outcome and need reconciliation.
+          runbook: docs/runbooks.md#appmixeragentactionsuncertain
+      - alert: AppMixerAgentActionsDispatchingStuck
+        expr: app_mixer_agent_actions{status="dispatching"} > 0
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Journaled agent actions have stayed in dispatching for 30 minutes.
+          runbook: docs/runbooks.md#appmixeragentactionsdispatchingstuck
