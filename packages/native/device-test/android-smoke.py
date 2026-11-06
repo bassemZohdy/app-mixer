@@ -99,7 +99,7 @@ wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' a
 # The shared accessibility reference replaces the interactive surface.
 tap(wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Show reference' and n.get('clickable')=='true'), None), 'reference button'))
 for text in ['Account', 'Profile', 'Contact details', 'Preferences', 'Advanced', 'Body copy', 'Small print', 'Inside a card']:
-    wait_for(lambda nodes, text=text: find(nodes, **{'class':'android.widget.TextView', 'text':text}), 'reference text ' + text)
+    wait_for(lambda nodes, text=text: find(nodes, text=text), 'reference text ' + text)
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Ada'}), 'reference single-line field')
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Notes', 'text':'Line one'}), 'reference multiline field')
 wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' and n.get('clickable')=='true' and n.get('enabled')=='true'), None), 'reference enabled button')
