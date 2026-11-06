@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {checkPromotionPackage, createPromotionPackage,validEnvironment} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
 import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
+import { AppMixerError } from './errors.js';
 
 type Published = { version: number; definition: ApplicationDefinition };
 
@@ -149,7 +150,7 @@ export class SqliteApplicationStore {
   publish(expectedRevision: number): Published {
     return this.transaction(() => {
       const draft = this.getDraft();
-      if (draft.revision !== expectedRevision) throw Error('Revision conflict');
+      if (draft.revision !== expectedRevision) throw new AppMixerError('conflict','Revision conflict');
       enforcePublicationGuard(this.publicationGuard, draft);
       const row = this.db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM application_publications WHERE app_id = ?').get(this.id);
       const version = Number(row!.version) + 1;
@@ -173,7 +174,7 @@ export class SqliteApplicationStore {
     const item=checkPromotionPackage(input,targetEnvironment,this.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence,expectedVersion);
     return this.transaction(() => {
       const latest=this.getPublished()?.version ?? 0;
-      if(latest!==expectedVersion)throw Error('Publication version conflict');
+      if(latest!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
       if(advancing){const row=this.db.prepare('SELECT MAX(source_version) AS version FROM application_promotions WHERE app_id=? AND source_environment=? AND target_environment=?').get(this.id,item.sourceEnvironment,targetEnvironment);if(row?.version!==null&&row?.version!==undefined&&item.sourceVersion<=Number(row.version))throw Error('Source publication did not advance');}
       enforcePublicationGuard(this.publicationGuard,item.definition);
       const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
@@ -191,10 +192,10 @@ export class SqliteApplicationStore {
     if (!Number.isSafeInteger(sourceVersion) || sourceVersion < 1 || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw Error('Invalid version');
     return this.transaction(() => {
       const latest = this.getPublished();
-      if (!latest || latest.version !== expectedVersion) throw Error('Publication version conflict');
+      if (!latest || latest.version !== expectedVersion) throw new AppMixerError('conflict','Publication version conflict');
       const source = this.getPublished(sourceVersion);
-      if (!source) throw Error('Publication not found');
-      if (sourceVersion >= expectedVersion) throw Error('Rollback requires an earlier version');
+      if (!source) throw new AppMixerError('not_found','Publication not found');
+      if (sourceVersion >= expectedVersion) throw new AppMixerError('conflict','Rollback requires an earlier version');
       enforcePublicationGuard(this.publicationGuard, source.definition);
       const version = latest.version + 1;
       if (!Number.isSafeInteger(version)) throw Error('Invalid version');

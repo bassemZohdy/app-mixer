@@ -2,6 +2,7 @@ import {definitionSha256,enforcePublicationGuard,type ApplicationDefinition,type
 import {checkPromotionPackage,validEnvironment,type PromotionPackage} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+import { AppMixerError } from './errors.js';
 
 type Options={enabled:boolean;tenantId:string;applicationId:string;sourceEnvironment:string;targetEnvironment:string;query:PostgresJwtRevocationQuery;transaction:<T>(operation:(query:PostgresJwtRevocationQuery)=>Promise<T>)=>Promise<T>;authorizeSignature:(evidence:PromotionSignatureEvidence,pkg:PromotionPackage)=>boolean|Promise<boolean>;publicationGuard?:PublicationGuard};
 type Published={version:number;definition:ApplicationDefinition};
@@ -39,7 +40,7 @@ export class PostgresPromotionTarget {
   if(!validVersion(expectedVersion,0)||target!==this.scope[2]||evidence===undefined)throw Error('Invalid promotion');const pkg=checkPromotionPackage(input,target,this.scope[1]);if(pkg.sourceEnvironment!==this.source||!validVersion(pkg.sourceVersion,1))throw Error('Invalid promotion environment');const signature=checkPromotionEvidence(pkg,target,evidence,expectedVersion);if(signature.expectedVersion!==expectedVersion)throw Error('Version-bound signature required');await this.permit(signature,pkg);
   return this.transaction(async query=>{
    const locked=await query('SELECT app_id FROM app_mixer_promotion_scopes WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 FOR UPDATE',[...this.scope]);if(!Array.isArray(locked.rows)||locked.rows.length!==1)throw Error('Invalid promotion scope');
-   await this.permit(signature,pkg);const current=await this.read(query),latest=current?.publication.version??0;if(latest!==expectedVersion)throw Error('Publication version conflict');
+   await this.permit(signature,pkg);const current=await this.read(query),latest=current?.publication.version??0;if(latest!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
    const floor=await query('SELECT COALESCE(MAX(source_version),0) AS version FROM app_mixer_promoted_publications WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 AND source_environment=$4',[...this.scope,this.source]);const previous=Number(floor.rows?.[0]?.version);if(!Array.isArray(floor.rows)||floor.rows.length!==1||!validVersion(previous,0))throw Error('Invalid promotion history');if(pkg.sourceVersion<=previous)throw Error('Source publication did not advance');
    enforcePublicationGuard(this.guard,pkg.definition);const version=latest+1;if(!validVersion(version,1))throw Error('Invalid version');await query('INSERT INTO app_mixer_promoted_publications (tenant_id,app_id,target_environment,version,source_environment,source_version,package_digest,definition,signature) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[...this.scope,version,this.source,pkg.sourceVersion,pkg.digest,JSON.stringify(pkg.definition),JSON.stringify(signature)]);return {version,definition:structuredClone(pkg.definition)};
   });

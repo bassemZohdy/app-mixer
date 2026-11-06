@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isValidExtensionReferences, type ApplicationDefinition, type ExtensionReference, type PublicationGuard } from './index.js';
+import { AppMixerError } from './errors.js';
 
 export type ExtensionConfigRule =
   | {type:'string'; required:boolean; minLength?:number; maxLength?:number; enum?:string[]; default?:string}
@@ -171,22 +172,22 @@ export function createExtensionPublicationGuard(manifests: ExtensionManifest[], 
   checkExtensionCompatibility(installed, target, {components:[], tools:[], providers:[]});
   return draft => {
     for (const ref of draft.extensions ?? []) {
-      if (!installed.some(manifest => manifest.id === ref.id && manifest.version === ref.version && manifest.scope === ref.scope)) throw Error('Extension compatibility failed');
+      if (!installed.some(manifest => manifest.id === ref.id && manifest.version === ref.version && manifest.scope === ref.scope)) throw new AppMixerError('conflict','Extension compatibility failed');
     }
     for (const page of draft.pages) for (const component of page.components) {
       if (component.type !== 'Extension') continue;
       const ref = draft.extensions?.find(item => item.id === component.extensionId);
       const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
-      if (!manifest || !manifest.components.includes(component.name)) throw Error('Extension compatibility failed');
+      if (!manifest || !manifest.components.includes(component.name)) throw new AppMixerError('conflict','Extension compatibility failed');
     }
     for (const operation of draft.extensionOperations ?? []) {
       const ref = draft.extensions?.find(item => item.id === operation.extensionId);
       const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
-      if (!manifest || !manifest[operation.kind === 'tool' ? 'tools' : 'providers'].includes(operation.name)) throw Error('Extension compatibility failed');
+      if (!manifest || !manifest[operation.kind === 'tool' ? 'tools' : 'providers'].includes(operation.name)) throw new AppMixerError('conflict','Extension compatibility failed');
     }
     const requirements = requirementsFor(structuredClone(draft));
     const result = checkExtensionCompatibility(installed, target, requirements);
-    if (!result.compatible) throw Error('Extension compatibility failed');
+    if (!result.compatible) throw new AppMixerError('conflict','Extension compatibility failed');
     return true;
   };
 }
@@ -217,7 +218,7 @@ export class ExtensionRegistry {
   register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}, options: {packageBytes?: Uint8Array} = {}): void {
     const snapshot = structuredClone(manifest);
     const result = checkExtensionCompatibility([...this.manifests, snapshot], this.host, {components:[], tools:[], providers:[]});
-    if (!result.compatible) throw Error('Extension compatibility failed');
+    if (!result.compatible) throw new AppMixerError('conflict','Extension compatibility failed');
     if (!fields(options, optional(options,['packageBytes']))) throw Error('Invalid extension registration options');
     if (snapshot.integrity !== undefined || options.packageBytes !== undefined) {
       if (snapshot.integrity === undefined || !(options.packageBytes instanceof Uint8Array) || !verifyExtensionIntegrity(snapshot.integrity, options.packageBytes)) throw Error('Extension integrity failed');
@@ -246,7 +247,7 @@ export class ExtensionRegistry {
     if (!isValidExtensionReferences(references)) throw Error('Invalid extension references');
     return references.map(ref => {
       const manifest = this.manifests.find(m => m.id === ref.id && m.version === ref.version && m.scope === ref.scope);
-      if (!manifest) throw Error('Extension compatibility failed');
+      if (!manifest) throw new AppMixerError('conflict','Extension compatibility failed');
       return manifest;
     });
   }

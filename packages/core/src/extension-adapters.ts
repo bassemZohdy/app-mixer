@@ -2,6 +2,7 @@ import { ComponentRegistry, basicRegistry } from '@app-mixer/web';
 import { CapabilityRegistry, type CapabilityCandidate, type CapabilityAuditSink } from './capabilities.js';
 import { ExtensionRegistry, createExtensionPublicationGuard, type ExtensionManifest, type ExtensionHost } from './extensions.js';
 import { isValidExtensionOperations, validate, type ApplicationDefinition, type ExtensionOperation, type ExtensionReference } from './index.js';
+import { AppMixerError } from './errors.js';
 
 export type ExtensionInvocationApproval=(context:{tenantId:string;principalId:string},reference:ExtensionReference,operation:ExtensionOperation)=>boolean|Promise<boolean>;
 type CapabilityPolicy = {authorize:(context:{tenantId:string;principalId:string})=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>};
@@ -105,7 +106,7 @@ export function createFlutterExtensionPlan(application:ApplicationDefinition, ma
   for(const page of snapshot.pages)for(const component of page.components){
     if(component.type!=='Extension')continue;
     const ref=snapshot.extensions?.find(item=>item.id===component.extensionId);
-    if(!ref)throw Error('Extension compatibility failed');
+    if(!ref)throw new AppMixerError('conflict','Extension compatibility failed');
     if(owners.has(component.name)){if(owners.get(component.name)!==ref.id)throw Error('Duplicate extension component');continue;}
     owners.set(component.name,ref.id);components.push({...ref,name:component.name});
     if(components.length>1000)throw Error('Too many extension components');
