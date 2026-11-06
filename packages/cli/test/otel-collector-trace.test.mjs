@@ -22,11 +22,11 @@ import {ApplicationStore,createDataPlane,CapabilityRegistry,createCapabilityServ
 const run=promisify(execFile);
 const COLLECTOR_IMAGE='otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6';
 const enabled=process.env.APP_MIXER_TEST_OTEL_COLLECTOR==='docker';
-const collectorConfig=`receivers:
+const collectorConfig=port=>`receivers:
   otlp:
     protocols:
       http:
-        endpoint: 0.0.0.0:4318
+        endpoint: 0.0.0.0:${port}
 exporters:
   file:
     path: /out/traces.jsonl
@@ -46,6 +46,7 @@ import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-http';
 context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 trace.setGlobalTracerProvider(new TracerProvider({resource:resourceFromAttributes({'service.name':'app-mixer-workspace'}),spanProcessors:[new SimpleSpanProcessor({exporter:new OTLPTraceExporter({url:process.env.TEST_OTLP_TRACES_URL})})]}));
 `;
+const freePort=async()=>{const {createServer}=await import('node:net'),probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const {port}=probe.address();await new Promise(resolve=>probe.close(resolve));return port;};
 const wait=async(predicate,label,limit=20000)=>{const end=Date.now()+limit;while(Date.now()<end){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('Timed out waiting for '+label);};
 async function listen(server){server.listen(0,'127.0.0.1');await once(server,'listening');return `http://127.0.0.1:${server.address().port}`;}
 async function close(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
@@ -53,14 +54,15 @@ async function close(server){server.closeAllConnections();await new Promise(reso
 function collected(text){const spans=[];for(const line of text.split('\n')){if(!line.trim())continue;for(const resource of JSON.parse(line).resourceSpans??[]){const service=resource.resource?.attributes?.find(a=>a.key==='service.name')?.value?.stringValue;for(const scope of resource.scopeSpans??[])for(const span of scope.spans??[])spans.push({service,name:span.name,kind:span.kind,traceId:span.traceId,spanId:span.spanId,parentSpanId:span.parentSpanId||undefined,attributes:Object.fromEntries((span.attributes??[]).map(a=>[a.key,Object.values(a.value??{})[0]]))});}}return spans;}
 
 test('one trace spans browser, workspace, Data Plane, capabilities and Control Plane in a real collector',{skip:enabled?false:'set APP_MIXER_TEST_OTEL_COLLECTOR=docker to run against a collector container',timeout:180000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'otel-collector-')),out=join(dir,'out'),name='app-mixer-otel-'+process.pid+'-'+Date.now();await mkdir(out);await mkdir(join(dir,'config'));await mkdir(join(dir,'workspace'));await writeFile(join(dir,'config','config.yaml'),collectorConfig);
+ const dir=await mkdtemp(join(tmpdir(),'otel-collector-')),out=join(dir,'out'),name='app-mixer-otel-'+process.pid+'-'+Date.now();await mkdir(out);await mkdir(join(dir,'config'));await mkdir(join(dir,'workspace'));const linux=process.platform==='linux',listenPort=linux?await freePort():4318;await writeFile(join(dir,'config','config.yaml'),collectorConfig(listenPort));
  const manager=new AsyncLocalStorageContextManager().enable();context.setGlobalContextManager(manager);propagation.setGlobalPropagator(new W3CTraceContextPropagator());
  const providers=[],servers=[];let child,started=false;
  try{
-  // On Linux the bind-mounted temp directory is private to this user, so the collector runs as the same user.
+  // On Linux the bind-mounted temp directory is private to this user, so the collector runs as the same user,
+  // and it shares the host network on a free port; elsewhere Docker Desktop publishes the port to loopback.
   const user=typeof process.getuid==='function'?['--user',process.getuid()+':'+process.getgid()]:[];
-  await run('docker',['run','-d','--rm','--name',name,...user,'-p','127.0.0.1::4318','-v',join(dir,'config')+':/etc/otelcol-contrib:ro','-v',out+':/out',COLLECTOR_IMAGE,'--config=/etc/otelcol-contrib/config.yaml']);started=true;
-  const port=(await run('docker',['port',name,'4318/tcp'])).stdout.trim().split('\n')[0].split(':').pop(),tracesUrl=`http://127.0.0.1:${port}/v1/traces`;
+  await run('docker',['run','-d','--rm','--name',name,...user,...(linux?['--network','host']:['-p','127.0.0.1::4318']),'-v',join(dir,'config')+':/etc/otelcol-contrib:ro','-v',out+':/out',COLLECTOR_IMAGE,'--config=/etc/otelcol-contrib/config.yaml']);started=true;
+  const port=linux?listenPort:(await run('docker',['port',name,'4318/tcp'])).stdout.trim().split('\n')[0].split(':').pop(),tracesUrl=`http://127.0.0.1:${port}/v1/traces`;
   await wait(async()=>{try{return (await fetch(tracesUrl,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).ok;}catch{return false;}},'the collector to accept OTLP');
   const tracer=service=>{const provider=new TracerProvider({resource:resourceFromAttributes({'service.name':service}),spanProcessors:[new SimpleSpanProcessor({exporter:new OTLPTraceExporter({url:tracesUrl})})]});providers.push(provider);return provider.getTracer(service);};
 
