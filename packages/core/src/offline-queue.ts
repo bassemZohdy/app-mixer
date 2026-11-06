@@ -1,7 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {CapabilityRegistry, type InvocationContext} from './capabilities.js';
+import {CapabilityRegistry, hadNoEffect, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 
 export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
@@ -76,8 +76,9 @@ export class SqliteOfflineQueue {
       await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);
       this.transition(scope,context.principalId,id,'running','succeeded',0);
     }catch(error){
-      let classification:OfflineFailure='uncertain';
-      try{const candidate=classify(error);if(candidate==='retry'||candidate==='conflict')classification=candidate;}catch{}
+      // A refusal the registry marked as thrown before execution had no effect, so it is a retry (bounded by the attempt limit) whatever the classifier says.
+      let classification:OfflineFailure=hadNoEffect(error)?'retry':'uncertain';
+      try{if(!hadNoEffect(error)){const candidate=classify(error);if(candidate==='retry'||candidate==='conflict')classification=candidate;}}catch{}
       const status=classification==='retry'?(operation.attempts>=this.maxAttempts?'exhausted':'pending'):classification;
       this.transition(scope,context.principalId,id,'running',status,status==='pending'?now+this.retryDelayMs:0);
     }

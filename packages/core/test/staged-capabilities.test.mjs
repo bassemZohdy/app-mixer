@@ -13,7 +13,7 @@ test('authenticated staging is explicit and external submission rechecks actor p
   assert.equal((await call('stage',{payload:{quantity:2}},'t','denied')).status,403);
   assert.equal((await call('stage',{payload:{quantity:2},tenantId:'other'})).status,400);
   const viewerOp=(await call('stage',{payload:{quantity:2}},'t','viewer')).body.result;
-  assert.equal((await call('submit',{id:viewerOp.id},'t','viewer')).status,403);assert.equal((await call('get',{id:viewerOp.id},'t','viewer')).body.result.status,'uncertain');assert.equal(executions,0);
+  assert.equal((await call('submit',{id:viewerOp.id},'t','viewer')).status,403);assert.equal((await call('get',{id:viewerOp.id},'t','viewer')).body.result.status,'staged','a denied submission had no effect, so the intent stays staged');assert.equal(executions,0);
   const op=(await call('stage',{payload:{quantity:2},requestKey:'req-1'})).body.result;assert.equal(op.status,'staged');assert.equal(executions,0);
   assert.equal((await call('stage',{payload:{quantity:2},requestKey:'req-1'},'t','allowed','agent')).body.result.id,op.id);
   assert.equal((await call('stage',{payload:{quantity:3},requestKey:'req-1'})).status,409);

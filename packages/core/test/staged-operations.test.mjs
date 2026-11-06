@@ -34,13 +34,16 @@ test('concurrent submissions claim once and uncertainty requires explicit reconc
   assert.deepEqual(calls,[op.idempotencyKey,op.idempotencyKey]);assert.equal(staged.get(scope,op.id).status,'succeeded');
  } finally {staged.close();}
 });
-test('unapproved submissions fail closed and require reconciliation before retry',async()=>{
- const staged=new SqliteStagedOperations(':memory:'),op=staged.stage(scope,'change',{value:1}),registry=new CapabilityRegistry(()=>{});let calls=0;
- registry.register({operationId:'change',method:'POST',path:'/change'}, {authorize:()=>false,validate:()=>true,execute:()=>calls++});
+test('a refusal before execution leaves the intent staged and an execution failure requires reconciliation before retry',async()=>{
+ const staged=new SqliteStagedOperations(':memory:'),op=staged.stage(scope,'change',{value:1}),registry=new CapabilityRegistry(()=>{});let calls=0,allowed=false,fail=true;
+ registry.register({operationId:'change',method:'POST',path:'/change'}, {authorize:()=>allowed,validate:()=>true,execute:()=>{calls++;if(fail)throw Error('response lost');return {ok:true};}});
  try {
   await assert.rejects(staged.submit(scope,op.id,registry,{...context,tenantId:'other'}),/context/);assert.equal(staged.get(scope,op.id).status,'staged');
-  await assert.rejects(staged.submit(scope,op.id,registry,context),/forbidden/);assert.equal(calls,0);assert.equal(staged.get(scope,op.id).status,'uncertain');
-  staged.reconcile(scope,op.id,'applied');assert.equal(staged.get(scope,op.id).status,'succeeded');
+  // The registry refused before executing: nothing was applied, so the same intent (and key) can be submitted again.
+  await assert.rejects(staged.submit(scope,op.id,registry,context),/forbidden/);assert.equal(calls,0);assert.equal(staged.get(scope,op.id).status,'staged');
+  allowed=true;await assert.rejects(staged.submit(scope,op.id,registry,context),/response lost/);assert.equal(calls,1);assert.equal(staged.get(scope,op.id).status,'uncertain','an execution failure may have had an effect');
+  await assert.rejects(staged.submit(scope,op.id,registry,context),/not staged/);
+  staged.reconcile(scope,op.id,'applied');assert.equal(staged.get(scope,op.id).status,'succeeded');fail=false;
  } finally {staged.close();}
 });
 

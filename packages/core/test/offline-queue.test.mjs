@@ -106,12 +106,20 @@ test('separate workers cannot claim the same intent concurrently',async()=>{
  }finally{one.close();two.close();rmSync(dir,{recursive:true,force:true});}
 });
 
-test('denial and invalid failure classification fail closed',async()=>{
+test('a refusal before execution is retried within the attempt limit and an unclassified execution failure fails closed',async()=>{
  const queue=new SqliteOfflineQueue(':memory:',policy),events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));let calls=0;
  registry.register(candidate,{authorize:()=>false,validate:()=>true,execute:()=>calls++});
  try{
   const item=queue.enqueue(scope,'p','update','req',{});
-  assert.equal((await queue.processOne(scope,actor,registry,()=> 'unexpected',1)).status,'uncertain');
-  assert.equal(queue.get(scope,'p',item.id).status,'uncertain');assert.equal(calls,0);assert.deepEqual(events,['attempt','denied']);
+  // The registry marks the denial as thrown before execution: nothing was applied, so the classifier is not consulted and the item is retried.
+  assert.equal((await queue.processOne(scope,actor,registry,()=>{throw Error('classifier must not decide');},1)).status,'pending');
+  assert.equal(queue.get(scope,'p',item.id).status,'pending');assert.equal(calls,0);assert.deepEqual(events,['attempt','denied']);
+  assert.equal((await queue.processOne(scope,actor,registry,()=> 'unexpected',200)).status,'exhausted','the second refusal reaches the attempt limit');
+  assert.equal(calls,0);
  }finally{queue.close();}
+ const failing=new SqliteOfflineQueue(':memory:',policy),lossy=new CapabilityRegistry(()=>{});lossy.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('response lost');}});
+ try{
+  const item=failing.enqueue(scope,'p','update','req2',{});
+  assert.equal((await failing.processOne(scope,actor,lossy,()=> 'unexpected',1)).status,'uncertain');assert.equal(failing.get(scope,'p',item.id).status,'uncertain');
+ }finally{failing.close();}
 });

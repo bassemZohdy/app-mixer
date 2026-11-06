@@ -1,7 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {CapabilityRegistry, type InvocationContext} from './capabilities.js';
+import {CapabilityRegistry, hadNoEffect, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
@@ -82,8 +82,9 @@ export class SqliteStagedOperations {
       const result=await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);
       this.transition(snapshotScope,id,'submitting','succeeded');return result;
     } catch(error) {
-      // Even an error can follow an external effect or failed outcome audit; never retry automatically.
-      this.transition(snapshotScope,id,'submitting','uncertain');throw error;
+      // An error the registry marked as thrown before execution (refused, invalid, unknown) had no effect: the intent can be submitted again with the same key.
+      // Any other error can follow an external effect or a failed outcome audit; never retry automatically.
+      this.transition(snapshotScope,id,'submitting',hadNoEffect(error)?'staged':'uncertain');throw error;
     }
   }
   /** Call only after confirming that the process which submitted the operation is no longer running. */
