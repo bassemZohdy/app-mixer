@@ -43,3 +43,10 @@ test('every document under docs is reachable from the README and the generated i
  const unreachable=files(join(root,'docs')).filter(path=>path.endsWith('.md')&&![...seen].some(item=>norm(item)===norm(path)));
  assert.deepEqual(unreachable.map(path=>norm(path).slice(norm(root).length)),[]);
 });
+
+test('the Data Plane image installs only its workspaces, has a healthcheck and CI bounds its size',()=>{
+ const dockerfile=read('Dockerfile.data-plane'),workflow=read('.github/workflows/kubernetes.yml');
+ assert.match(dockerfile,/npm ci --workspace @app-mixer\/core --workspace @app-mixer\/web/);assert.doesNotMatch(dockerfile,/npm ci\s*&&/,'no whole-workspace install');
+ assert.doesNotMatch(dockerfile,/npm run build\s*&&|npm run build --workspaces/,'only core and web are built');
+ assert.match(dockerfile,/^HEALTHCHECK /m);assert.match(workflow,/docker image inspect app-mixer-data-plane:test[^\n]*\.Size/);assert.match(workflow,/test "\$size" -le \d+/);
+});

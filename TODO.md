@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**24 / 67 tasks complete (36%)**
+**25 / 67 tasks complete (37%)**
 
 `███████░░░░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 10 / 36 | 26 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-32..P4-36) |
+| P4 fixes and improvements from the 2026-11-06 code review | 11 / 36 | 25 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-33..P4-36) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -162,8 +162,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `ci.yml` has no `concurrency` group (superseded pushes keep running) and no `timeout-minutes` on its jobs; the Kubernetes, agent pod recovery, Flutter and React Native workflows run only on pull requests or manual dispatch, so pushes to `main` never exercise them; Docker images are pulled on every run. Fixed 2026-11-06: `concurrency` with `cancel-in-progress` in `ci.yml`, `timeout-minutes` on every job, and `push` on `main` plus a weekly schedule for the seven other workflows, with a test for all three. Image caching is P4-36.
 - [ ] P4-36 Cache Docker images in CI
   - Found while fixing P4-31: the Keycloak, S3, OpenTelemetry Collector, Prometheus and pgvector images are pulled on every run. Fix: a cached `docker save`/`load` step keyed by the pinned image digest (or a registry mirror), measured against the current pull time.
-- [ ] P4-32 Slim the Data Plane image
-  - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fix: install only the `core` and `web` workspaces (`npm ci --workspace`), add a `HEALTHCHECK`, and fail CI if the image grows beyond a bound.
+- [x] P4-32 Slim the Data Plane image
+  - Found: `Dockerfile.data-plane` runs `npm ci` for the whole workspace, so the image's `node_modules` carries the agent package's dependencies (LangChain, Twilio, …) that the Data Plane never loads; no `HEALTHCHECK` for Compose use. Fixed 2026-11-06: the image installs and builds only `core` and `web` (497 MB -> 332 MB, no LangChain or Twilio in `node_modules`), has a TCP `HEALTHCHECK` that works for the TLS and plain transports, and the kind workflow fails above 400 MB; verified by building the image, loading `@app-mixer/core` in it and a static test.
 - [ ] P4-33 Replace sleep-based waits in tests
   - Found: 64 `setTimeout(resolve, …)` waits across the test suites; the schedule-node test failed in CI on 2026-11-06 because of one such assumption. Fix: condition polling helpers with deadlines and injected clocks where a store accepts one, and a lint rule against bare sleeps in tests.
 - [ ] P4-34 Decide and document the renderer's unspecified behaviour
