@@ -78,3 +78,17 @@ test('separate SQLite connections observe revision conflicts',()=>{
   assert.equal(second.get(scope,'items','one').value.value,2);
  } finally {first.close();second.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('tombstones can be compacted in bounded passes without touching live records or other collections',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'app-mixer-tombstones-')),provider=new SqliteDataProvider(join(dir,'db.sqlite')),scope={tenantId:'t',applicationId:'a'};
+ try{
+  for(const id of ['a','b','c','d','e'])provider.put(scope,'orders',id,{id},null);provider.put(scope,'other','x',{id:'x'},null);
+  for(const id of ['a','b','c'])provider.delete(scope,'orders',id,1);provider.delete(scope,'other','x',1);
+  for(const bad of [{limit:0},{limit:1001},{limit:1.5},null,undefined])assert.throws(()=>provider.compactTombstones(scope,'orders',bad),/Invalid tombstone compaction/);
+  assert.equal(provider.compactTombstones(scope,'orders',{limit:2}),2,'the limit bounds one pass');
+  assert.equal(provider.compactTombstones(scope,'orders',{limit:10}),1,'the last tombstone of the collection');assert.equal(provider.compactTombstones(scope,'orders',{limit:10}),0);
+  assert.deepEqual(provider.list(scope,'orders').items.map(item=>item.id),['d','e'],'live records are never compacted');
+  assert.equal(provider.compactTombstones({...scope,tenantId:'other'},'orders',{limit:10}),0,'another tenant is untouched');assert.equal(provider.compactTombstones(scope,'other',{limit:10}),1,'another collection compacts separately');
+  assert.equal(provider.put(scope,'orders','a',{again:true},null).revision,1,'a compacted ID restarts at revision 1');
+ }finally{provider.close?.();rmSync(dir,{recursive:true,force:true});}
+});

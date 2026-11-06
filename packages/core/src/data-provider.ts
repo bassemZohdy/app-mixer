@@ -203,4 +203,13 @@ export class SqliteDataProvider implements DataProvider {
       if(result.changes!==1)throw Error('Data revision conflict');this.db.exec('COMMIT');
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
+  /**
+   * Host-authorized retention: physically delete up to `limit` (1 to 1,000) deleted-record tombstones of one collection, lowest id first, and return the count.
+   * A tombstone keeps the record ID's revision counter, so a compacted ID restarts at revision 1 when written again; compact only IDs no client can still hold a revision for.
+   */
+  compactTombstones(scope:DataScope,collection:string,options:{limit:number}):number {
+    checkKey(scope,collection,'tombstones');
+    if(!options||typeof options!=='object'||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid tombstone compaction');
+    return Number(this.db.prepare('DELETE FROM business_records WHERE rowid IN (SELECT rowid FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=1 ORDER BY record_id LIMIT ?)').run(scope.tenantId,scope.applicationId,collection,options.limit).changes);
+  }
 }
