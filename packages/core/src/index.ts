@@ -197,7 +197,7 @@ export {PostgresAuthenticationFailureAudit} from './postgres-auth-failure-audit.
 export type {AuthenticationFailureEvent,StoredAuthenticationFailure,PostgresAuthenticationFailureAuditOptions} from './postgres-auth-failure-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportUncertainError} from './remote-control-connector.js';
-export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
+export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent,RemotePromotionFloorAnchor} from './remote-control-connector.js';
 export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
 export {createMetricsServer} from './metrics-server.js';
 export type {MetricsServerOptions} from './metrics-server.js';

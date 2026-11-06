@@ -120,7 +120,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** authenticated discovery, digest and identity checks, optimistic promotion, signed delivery with replay and older-source rejection, SQLite and PostgreSQL rollout journals, poller backoff and jitter.
 - **Still to prove:**
   - [ ] Production scheduling of the poller.
-  - [ ] Comprehensive rollback protection across all stores.
+  - [ ] Comprehensive rollback protection across all stores. The connector's promotion floor can now be anchored outside the target database; other stores still rely on their own database's history.
   - [ ] Disconnected replication.
   - [ ] Production identity for source and target.
 - **Evidence:** a source outage and recovery transcript, and a replay attempt rejected on the production target.
