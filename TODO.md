@@ -6,6 +6,9 @@
 **24 / 67 tasks complete (36%)**
 
 `████████░░░░░░░░░░░░`
+**35 / 73 tasks complete (48%)**
+
+`██████████░░░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -22,6 +25,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
 | P4 fixes and improvements from the 2026-11-06 code review | 10 / 36 | 26 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-32..P4-36) |
+| P4 fixes and improvements from the 2026-11-06 code review | 21 / 42 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25, P4-33..P4-38, P4-41, P4-42) |
 
 Each open task's remaining proof and required evidence: [acceptance checklists](docs/acceptance-checklists.md).
 
@@ -158,8 +162,16 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: complete the metadata, align the version ranges, move the web-serving and `ComponentRegistry` glue into a small `@app-mixer/host` (or into the CLI), and add `npm pack --dry-run` to CI.
 - [ ] P4-27 Dependency updates and automation
   - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fix: update with the collector and browser tests green, add `.github/dependabot.yml` grouped by ecosystem, and run `npm audit --omit=dev` in CI.
+- [x] P4-26 Package metadata and layering before any publish
+  - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fixed 2026-11-06 for the metadata: `license`, `repository`, `files` and `types` are declared, the web dependency is `0.1.0` in both core and cli, and `packages/cli/test/package-metadata.test.mjs` (run by `npm test` in CI) checks them and `npm pack --dry-run` contents. The layering change is P4-41.
+- [ ] P4-41 Move the web-serving and ComponentRegistry glue out of core
+  - Found while fixing P4-26: `packages/core` imports `@app-mixer/web` (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: move that glue into a small `@app-mixer/host` package (or the CLI), keep core free of renderer imports, and keep the public exports working through a re-export for one release.
+- [x] P4-27 Dependency updates and automation
+  - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fixed 2026-11-06 for automation and the safe update: `.github/dependabot.yml` is grouped by ecosystem (OpenTelemetry, LangChain, TypeScript tooling, others), CI runs `npm audit --omit=dev` (0 vulnerabilities), and `jose` is at 6.2.15 with the JWT tests green. The major updates (OpenTelemetry 3.x, jsdom 31, LangGraph 1.7, TypeScript 7) are P4-42, to be taken one group at a time with the collector and browser tests.
 
 ### Documentation and process
+- [ ] P4-42 Take the major dependency updates one group at a time
+  - Found while fixing P4-27: `@opentelemetry/*` 2.x to 3.x with the OTLP exporter 0.223 to 0.301, `jsdom` 26 to 31, `@langchain/langgraph` 1.5 to 1.7 and TypeScript 5.9 to 7. Fix: update each group in its own commit with the OpenTelemetry collector, browser and agent tests green, and record any API change in the CHANGELOG.
 - [x] P4-28 Index every document from the README and retire the orphans
   - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fixed 2026-11-06: `npm run docs` generates `docs/README.md` from the file headings (a test fails when it is stale), the README links it and its status paragraph is refreshed, the three orphans (`roadmap.md`, `requirements.md`, `architecture.md`, M0-era stubs that duplicated `docs/specs/*` and `TODO.md`) were deleted, and a test checks every `docs/**/*.md` is reachable from the README.
 - [x] P4-29 Compute the progress table instead of maintaining it by hand

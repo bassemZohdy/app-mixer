@@ -43,3 +43,8 @@ test('every document under docs is reachable from the README and the generated i
  const unreachable=files(join(root,'docs')).filter(path=>path.endsWith('.md')&&![...seen].some(item=>norm(item)===norm(path)));
  assert.deepEqual(unreachable.map(path=>norm(path).slice(norm(root).length)),[]);
 });
+
+test('dependency updates are automated and production vulnerabilities fail CI',()=>{
+ const dependabot=read('.github/dependabot.yml');for(const ecosystem of ['npm','github-actions','docker'])assert.match(dependabot,new RegExp('package-ecosystem: '+ecosystem));
+ assert.match(dependabot,/interval: weekly/);assert.match(read('.github/workflows/ci.yml'),/run: npm audit --omit=dev/);
+});
