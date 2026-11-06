@@ -207,3 +207,5 @@ export type {PostgresAgentMemoryOptions,PostgresAgentMemoryQuery} from './postgr
 
 export {AgentMemoryRetentionWorker} from './agent-memory-retention.js';
 export type {AgentMemoryRetentionWorkerOptions} from './agent-memory-retention.js';
+export {AgentWorkerHost} from './worker-host.js';
+export type {AgentHostedWorker,AgentWorkerHostState,AgentWorkerHostStopResult,AgentWorkerHostOptions} from './worker-host.js';

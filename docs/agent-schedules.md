@@ -12,6 +12,21 @@ Cron rules can also specify `excludeDates`, an array of up to 366 distinct ISO d
 
 Definition lookups can be asynchronous, including an authorized PostgreSQL definition view. Lookup failures prevent activation; stopping waits for an in-flight lookup and prevents a subsequent enqueue. The definition recheck and SQLite transaction are not atomic across stores, so hosts must enforce current authorization and definition policy again when executing a queued run.
 
+## Running workers in one process
+
+`AgentWorkerHost` runs a fixed set of workers that share the `start()`/`stop()` contract, such as `AgentScheduleWorker`, `AgentActionRecoveryWorker` and `AgentNoticeDeliveryWorker`, and drains them together:
+
+```js
+const host = new AgentWorkerHost({workers: {schedules, recovery, notices}, stopTimeoutMs: 20000, onError: (name, error) => log(name, error)});
+host.handleSignals(process, result => process.exit(result.timedOut.length || result.failed.length ? 1 : 0));
+await host.start();
+// readiness probe: host.ready()
+```
+
+Workers start in the order given. If one throws while starting, those already started are stopped and the error is rethrown, so the process does not run with a partial set. `stop()` stops every started worker in parallel, bounds each with `stopTimeoutMs` (100 ms to 10 minutes), and resolves with the names that stopped, timed out or failed; repeated calls return the same result. `ready()` is true only while all workers run, and becomes false as soon as shutdown begins. `handleSignals` stops on the first SIGTERM or SIGINT and removes its handlers; the host decides whether and how to exit. Set `stopTimeoutMs` below the platform's termination grace period (for example Kubernetes `terminationGracePeriodSeconds`) so the result is reported before the process is killed.
+
+A schedule pass interrupted by shutdown does not fire after the stop request; the occurrence stays due and the next worker fires it. A worker that times out may still be running its pass when the process exits, so the fencing and reconciliation each worker already relies on still apply. Windows does not deliver SIGTERM to Node.js handlers. The host does not restart failed workers, choose replica counts or coordinate firing across hosts; that remains the deployment's job.
+
 ## Schedule history
 
 Each successful `save` or `fire` appends an immutable schedule event in the same SQLite transaction as its configuration change or occurrence and run creation. Events include the schedule revision, generation, configuration, next time and host-supplied operation time; fired events also include the run ID and scheduled time. A failed history insert rolls back the entire operation. Hosts may pass an authenticated, authorized principal ID as the final `actorId` argument to `save` or `fire`; `AgentScheduleWorker` accepts a host-configured `auditActorId` for its activations. Omitted actors are recorded as null. The schedule's configured principal is a separate field and is not proof of who made the change.

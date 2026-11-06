@@ -84,7 +84,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Evidence:** one captured live delivery per provider verified by the adapter, and a two-node schedule test showing a single fire per occurrence.
 
 ### P2-09 Action journal and reconciliation
-- **Verified locally:** lease-fenced journal with stable keys, explicit reconciliation, recovery workers, evidence records, process-kill and cross-process race tests, idempotency conformance helper.
+- **Verified locally:** lease-fenced journal with stable keys, explicit reconciliation, recovery workers, a worker host that drains them on shutdown, evidence records, process-kill and cross-process race tests, idempotency conformance helper.
 - **Still to prove:**
   - [ ] Production scheduling of the recovery worker.
   - [ ] Provider-specific verification for each provider the agents may call.
