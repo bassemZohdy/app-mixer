@@ -55,3 +55,8 @@ test('the shared TypeScript configuration keeps its strictness flags',()=>{
  const options=JSON.parse(read('tsconfig.base.json')).compilerOptions;
  for(const flag of ['strict','noFallthroughCasesInSwitch','noImplicitOverride','verbatimModuleSyntax'])assert.equal(options[flag],true,flag);
 });
+
+test('dependency updates are automated and production vulnerabilities fail CI',()=>{
+ const dependabot=read('.github/dependabot.yml');for(const ecosystem of ['npm','github-actions','docker'])assert.match(dependabot,new RegExp('package-ecosystem: '+ecosystem));
+ assert.match(dependabot,/interval: weekly/);assert.match(read('.github/workflows/ci.yml'),/run: npm audit --omit=dev/);
+});
