@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomUUID,createHash} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
+import {AgentError} from './errors.js';
 
 type EventInput={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown};
 type EnqueueOptions={definitionVersion:number;maxAttempts:number;deadline:number;maxPending:number;traceParent?:string};
@@ -10,14 +11,14 @@ const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._
 function canonical(value:unknown):string {
  let count=0;const ancestors=new Set<object>();
  const copy=(x:unknown,depth:number):unknown=>{
-  if(++count>10000||depth>40)throw Error('Invalid trigger payload');
+  if(++count>10000||depth>40)throw new AgentError('invalid','Invalid trigger payload');
   if(x===null||typeof x==='boolean'||typeof x==='string'||(typeof x==='number'&&Number.isFinite(x)))return x;
-  if(!x||typeof x!=='object'||ancestors.has(x))throw Error('Invalid trigger payload');ancestors.add(x);let result:unknown;
-  if(Array.isArray(x)){if(x.length>10000||Object.keys(x).length!==x.length||Array.from({length:x.length},(_,i)=>Object.hasOwn(x,i)).some(v=>!v))throw Error('Invalid trigger payload');result=x.map(y=>copy(y,depth+1));}
-  else{if(![Object.prototype,null].includes(Object.getPrototypeOf(x)))throw Error('Invalid trigger payload');const obj:Record<string,unknown>={};for(const key of Object.keys(x).sort()){if(['__proto__','constructor','prototype'].includes(key))throw Error('Invalid trigger payload');obj[key]=copy((x as Record<string,unknown>)[key],depth+1);}result=obj;}
+  if(!x||typeof x!=='object'||ancestors.has(x))throw new AgentError('invalid','Invalid trigger payload');ancestors.add(x);let result:unknown;
+  if(Array.isArray(x)){if(x.length>10000||Object.keys(x).length!==x.length||Array.from({length:x.length},(_,i)=>Object.hasOwn(x,i)).some(v=>!v))throw new AgentError('invalid','Invalid trigger payload');result=x.map(y=>copy(y,depth+1));}
+  else{if(![Object.prototype,null].includes(Object.getPrototypeOf(x)))throw new AgentError('invalid','Invalid trigger payload');const obj:Record<string,unknown>={};for(const key of Object.keys(x).sort()){if(['__proto__','constructor','prototype'].includes(key))throw new AgentError('invalid','Invalid trigger payload');obj[key]=copy((x as Record<string,unknown>)[key],depth+1);}result=obj;}
   ancestors.delete(x);return result;
  };
- const text=JSON.stringify(copy(value,0));if(Buffer.byteLength(text)>256*1024)throw Error('Invalid trigger payload');return text;
+ const text=JSON.stringify(copy(value,0));if(Buffer.byteLength(text)>256*1024)throw new AgentError('invalid','Invalid trigger payload');return text;
 }
 /** Local trigger inbox; caller must authenticate and authorize the source and scope. */
 export class SqliteAgentTriggers {
@@ -43,9 +44,9 @@ export class SqliteAgentTriggers {
   const payload=canonical(event.payload),hash=createHash('sha256').update(payload).digest('hex');this.db.exec('BEGIN IMMEDIATE');
   try{
    const existing=this.db.prepare('SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.source_id=? AND i.event_id=?').get(scope.tenantId,scope.agentId,event.sourceId,event.eventId);
-   if(existing){if(existing.principal_id!==event.principalId||existing.event_type!==event.eventType||existing.payload_hash!==hash||(existing.redacted===null&&existing.payload!==payload))throw Error('Trigger identity conflict');this.db.exec('COMMIT');return {runId:String(existing.run_id),duplicate:true};}
+   if(existing){if(existing.principal_id!==event.principalId||existing.event_type!==event.eventType||existing.payload_hash!==hash||(existing.redacted===null&&existing.payload!==payload))throw new AgentError('conflict','Trigger identity conflict');this.db.exec('COMMIT');return {runId:String(existing.run_id),duplicate:true};}
    const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);
-   if(Number(count?.n)>=options.maxPending)throw Error('Trigger backlog full');
+   if(Number(count?.n)>=options.maxPending)throw new AgentError('limit','Trigger backlog full');
    const runId=randomUUID();this.db.prepare("INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,options.definitionVersion,options.maxAttempts,options.deadline);
    insertAgentTraceParent(this.db,scope,runId,options.traceParent);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,event.sourceId,event.eventId,event.principalId,event.eventType,payload,hash,runId);

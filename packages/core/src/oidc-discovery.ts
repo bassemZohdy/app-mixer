@@ -26,7 +26,7 @@ export async function discoverOidcJwks(options:OidcDiscoveryOptions):Promise<{is
   const metadata=data as Record<string,unknown>;if(metadata.issuer!==issuer)throw Error('Issuer mismatch');
   const jwks=checkedUrl(metadata.jwks_uri,allow);if(!origins.has(jwks.origin))throw Error('Untrusted JWKS origin');
   return {issuer,jwksUrl:jwks.href};
- }catch{throw Error('OIDC discovery failed');}
+ }catch(error){throw Error('OIDC discovery failed',{cause:error});}
 }
 
 /** Bind discovery to the authenticator's issuer before creating the key manager. */

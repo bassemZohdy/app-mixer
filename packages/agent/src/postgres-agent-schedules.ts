@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
 import {checkConfig,next,type AgentSchedule,type AgentScheduleConfig,type AgentScheduleCursor,type AgentScheduleFireOptions,type AgentSchedulePage} from './agent-schedules.js';
+import {AgentError} from './errors.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 export type PostgresAgentSchedulesOptions={enabled:true;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
@@ -66,7 +67,7 @@ export class PostgresAgentSchedules {
    const row=(await query('SELECT * FROM app_mixer_agent_schedules WHERE tenant_id=$1 AND agent_id=$2 AND schedule_id=$3 FOR UPDATE',[tenantId,agentId,scheduleId])).rows[0];
    const schedule=row?this.parse(row):undefined;if(!schedule||schedule.revision!==expectedRevision)throw Error('Schedule revision conflict');
    const now=options.now??await this.now(query);if(!schedule.config.enabled||schedule.nextAt>now)throw Error('Schedule not due');if(!Number.isSafeInteger(now+policy.runTimeoutMs))throw Error('Invalid schedule fire');
-   const pending=Number((await query(`SELECT COUNT(*)::bigint AS n FROM app_mixer_agent_scheduled_runs WHERE tenant_id=$1 AND agent_id=$2 AND ${ACTIVE}`,[tenantId,agentId])).rows[0]?.n);if(pending>=policy.maxPending)throw Error('Trigger backlog full');
+   const pending=Number((await query(`SELECT COUNT(*)::bigint AS n FROM app_mixer_agent_scheduled_runs WHERE tenant_id=$1 AND agent_id=$2 AND ${ACTIVE}`,[tenantId,agentId])).rows[0]?.n);if(pending>=policy.maxPending)throw new AgentError('limit','Trigger backlog full');
    const scheduledAt=schedule.nextAt,coalesce=schedule.config.misfire==='coalesce',rule=schedule.config.rule;
    const nextAt=coalesce&&rule.kind==='interval'?now+(rule.intervalMs-((now-scheduledAt)%rule.intervalMs)):next(rule,coalesce?now:scheduledAt);if(!Number.isSafeInteger(nextAt))throw Error('Invalid schedule time');
    const runId=randomUUID(),payload=JSON.stringify({scheduleId,scheduledAt,...(coalesce?{coalescedThrough:now}:{})});

@@ -32,3 +32,12 @@ test('discovered manager refreshes its trusted key set before authenticating',as
  globalThis.fetch=(url,options)=>url===issuer+'/.well-known/openid-configuration'?Promise.resolve(new Response(JSON.stringify({issuer,jwks_uri:base+'/keys'}),{headers:{'content-type':'application/json'}})):originalFetch(url,options);
  let manager;try{manager=await createOidcJwtJwksManager({authenticator,issuer,allowedJwksOrigins:[base],allowLoopbackHttp:true,pollMs:100,maxStaleMs:1000,timeoutMs:500,onError:()=>{}});const token=await new SignJWT({iss:issuer,aud:'api',sub:'u',client_id:'c',jti:'id',iat:now,exp:now+60}).setProtectedHeader({alg:'RS256',kid:'key',typ:'at+jwt'}).sign(pair.privateKey),req={rawHeaders:['Authorization','Bearer '+token]};assert.equal(await manager.authenticate(req),undefined);await manager.refresh();assert.deepEqual(await manager.authenticate(req),{tenantId:'t',principalId:'u'});}finally{globalThis.fetch=originalFetch;await manager?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+test('a failed discovery keeps its cause for operators while the message stays generic',async()=>{
+ const server=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end('not json at all');});server.listen(0,'127.0.0.1');await once(server,'listening');
+ const issuer=`http://127.0.0.1:${server.address().port}/tenant/`;
+ try{
+  const error=await discoverOidcJwks({issuer,timeoutMs:500,allowLoopbackHttp:true}).then(()=>assert.fail('expected a rejection'),failure=>failure);
+  assert.equal(error.message,'OIDC discovery failed');assert.ok(error.cause instanceof Error,'the underlying parse failure is attached as the cause');assert.notEqual(error.cause.message,error.message);
+ }finally{server.close();server.closeAllConnections?.();}
+});

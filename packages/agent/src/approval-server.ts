@@ -1,5 +1,6 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
 import {limitServer,guard} from './server-limits.js';
+import {agentErrorStatus} from './errors.js';
 import {inlineHashes} from './csp.js';
 import {SqliteAgentNotices} from './agent-notices.js';
 import {SqliteAgentApprovals,type AgentApprovalActor} from './agent-approvals.js';
@@ -36,7 +37,7 @@ export function createAgentApprovalServer(options:Options):Server{
    try{const scope={tenantId:actor.tenantId,agentId},store=await options.resolveNotices?.(scope);if(!(store instanceof SqliteAgentNotices)||!store.isBoundTo(scope)){reply(res,404,{error:'Not found'});return}
     if(req.method==='POST'){if(url.search||!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')){reply(res,400,{error:'Invalid request'});return}let size=0;const parts:Buffer[]=[];for await(const chunk of req){const part=Buffer.from(chunk);size+=part.length;if(size>1024){reply(res,413,{error:'Invalid request'});return}parts.push(part)}let value:unknown;try{value=JSON.parse(Buffer.concat(parts).toString('utf8'))}catch{reply(res,400,{error:'Invalid request'});return}if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length){reply(res,400,{error:'Invalid request'});return}reply(res,200,await store.acknowledge(actor,noticeId!));return}
     if([...url.searchParams.keys()].some(key=>key!=='after')||url.searchParams.getAll('after').length>1){reply(res,400,{error:'Invalid request'});return}const value=url.searchParams.get('after');if(value!==null&&(!/^[1-9][0-9]*$/.test(value)||!Number.isSafeInteger(Number(value)))){reply(res,400,{error:'Invalid request'});return}reply(res,200,await store.list(actor,value===null?{}:{after:Number(value)}));
-   }catch(error){const message=error instanceof Error?error.message:'';const status=message==='Notice access denied'?403:message==='Notice not found'?404:message==='Notice changed'?409:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Notice changed':'Notices unavailable'});}return;
+   }catch(error){const known=agentErrorStatus(error),status=known===403||known===404||known===409?known:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Notice changed':'Notices unavailable'});}return;
   }
   const match=/^\/api\/agents\/([^/]+)\/runs\/([^/]+)\/approvals(?:\/([^/]+)\/(decision|history))?$/.exec(url.pathname);if(!match||!['GET','POST'].includes(req.method??'')){reply(res,404,{error:'Not found'});return}
   let agentId:string,runId:string,actionId:string|undefined;try{agentId=decodeURIComponent(match[1]);runId=decodeURIComponent(match[2]);actionId=match[3]?decodeURIComponent(match[3]):undefined}catch{reply(res,400,{error:'Invalid request'});return}
@@ -47,7 +48,7 @@ export function createAgentApprovalServer(options:Options):Server{
    if(req.method==='POST'){if(url.search){reply(res,400,{error:'Invalid request'});return}let value;try{value=await decision(req)}catch(error){reply(res,error instanceof Error&&error.message==='size'?413:error instanceof Error&&error.message==='content'?415:400,{error:'Invalid decision'});return}reply(res,200,await store.decide(actor,actionId!,value));return}
    if(actionId){if(url.search){reply(res,400,{error:'Invalid request'});return}reply(res,200,{events:await store.history(actor,actionId)});return}
    if([...url.searchParams.keys()].some(k=>k!=='after')||url.searchParams.getAll('after').length>1){reply(res,400,{error:'Invalid request'});return}const after=url.searchParams.get('after');if(after!==null&&!valid(after)){reply(res,400,{error:'Invalid request'});return}reply(res,200,await store.list(actor,after===null?{}:{after}));
-  }catch(error){const m=error instanceof Error?error.message:'';const status=m==='Approval access denied'?403:m==='Approval not found'?404:['Approval already decided','Approval expired','Run is terminal'].includes(m)?409:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Decision unavailable':'Review unavailable'})}
+  }catch(error){const known=agentErrorStatus(error),status=known===403||known===404||known===409?known:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Decision unavailable':'Review unavailable'})}
  })));
 }
 export type {Options as AgentApprovalServerOptions};

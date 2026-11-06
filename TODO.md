@@ -2,9 +2,9 @@
 
 ## Overall progress
 
-**44 / 77 tasks complete (57%)**
+**45 / 78 tasks complete (58%)**
 
-`███████████░░░░░░░░░`
+`████████████░░░░░░░░`
 
 Progress counts checked items equally; a task is complete only after verification.
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 30 / 46 | 16 (P4-07, P4-09, P4-17..P4-21, P4-33, P4-36..P4-38, P4-41, P4-42, P4-44..P4-46) |
+| P4 fixes and improvements from the 2026-11-06 code review | 31 / 47 | 16 (P4-07, P4-09, P4-17..P4-21, P4-33, P4-36..P4-38, P4-41, P4-42, P4-45..P4-47) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -136,8 +136,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: HTTP status mapping is done by comparing message strings (`planes.ts`, `capability-server.ts`, `approval-server.ts`, `event-ingress.ts`, the supervisor's `lostRace` regex, the disconnected importer's `/version conflict|.../`), so a new or reworded message silently becomes a 500 or a wrong class; `remote-promotion.ts`, `remote-control-connector.ts`, `oidc-discovery.ts`, `jwt-jwks-manager.ts` and `notice-https-transport.ts` swallow the cause (`catch{throw Error('… failed')}`). Fixed 2026-11-06 for the control and Data Plane mapping: `AppMixerError` with `code` (`invalid`, `not_found`, `conflict`, `limit`), `cause` support and `httpStatus`, 53 core throw sites converted by codemod with unchanged messages, the request runner maps by code only, and tests check the class, that every thrown code maps, and that a plain `Error('Revision conflict')` is a 500. The capability, approval and event-ingress servers, the supervisor's `lostRace` regex, the disconnected importer and the swallowed causes are P4-44.
 
 ### Performance
-- [ ] P4-44 Finish typed errors: remaining servers, supervisor, importer and swallowed causes
-  - Found while fixing P4-16: `capability-server.ts`, `approval-server.ts`, `event-ingress.ts` and the agent package still map statuses by message text; the supervisor's `lostRace` regex and the disconnected importer's `/version conflict|.../` match messages; `remote-promotion.ts`, `remote-control-connector.ts`, `oidc-discovery.ts`, `jwt-jwks-manager.ts` and `notice-https-transport.ts` swallow the cause (`catch{throw Error('... failed')}`). Fix: an agent-side error class with the same shape (the agent package does not import core), mapping by code in each server, `cause` attached without secrets in the swallowing modules, and tests that every thrown code has a mapping.
+- [x] P4-44 Finish typed errors: remaining servers, supervisor, importer and swallowed causes
+  - Found while fixing P4-16: `capability-server.ts`, `approval-server.ts`, `event-ingress.ts` and the agent package still map statuses by message text; the supervisor's `lostRace` regex and the disconnected importer's `/version conflict|.../` match messages; `remote-promotion.ts`, `remote-control-connector.ts`, `oidc-discovery.ts`, `jwt-jwks-manager.ts` and `notice-https-transport.ts` swallow the cause (`catch{throw Error('... failed')}`). Fixed 2026-11-06 except the capability server: `AgentError` with `agentErrorStatus` (33 throw sites converted; legacy messages still honoured for host-supplied stores), the approval, event-ingress and metrics servers map by code and answer with fixed texts (a test checks statuses and that no message is echoed), and the eight swallowing sites keep their cause (a test checks one). The supervisor's `lostRace` regex, the disconnected importer's message match and the capability server's message table are P4-47.
+- [ ] P4-47 Map the capability server, supervisor and importer by code
+  - Found while fixing P4-44: `capability-server.ts` still derives statuses from message text (`Capability not found`, `Capability forbidden`, `Data revision conflict`, ...), the run supervisor's `lostRace` regex and the disconnected importer's `/version conflict|.../` match messages. Fix: codes for those refusals (the registry's errors already carry the no-effect marker; add a code next to it), mapping by code, and tests that rewording a message cannot change a response.
 - [ ] P4-17 Cut the round trips of exact search and listings on PostgreSQL
   - Found: `AgentSemanticMemory.search`/`searchHybrid` on `PostgresAgentMemory` page through `list`, which calls `get` per row (three reads and three authorize calls each) and then `get` again per hit, so one query costs more than 3N round trips for N ≤ 1,000 entries; `PostgresAgentDefinitions.list` costs six per agent. Fix: one page read with the fence applied once per page and per-record authorization in memory, a benchmark at `maxEntries: 1000`, and the same for the definition listing.
 - [ ] P4-18 Incremental rendering and a renderer benchmark

@@ -3,6 +3,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {actionJSON} from './action-journal.js';
 import {type AgentRunScope} from './durable-runs.js';
+import {AgentError} from './errors.js';
 
 type Actor={tenantId:string;principalId:string};
 type ApprovalStatus='pending'|'approved'|'rejected'|'cancelled'|'expired';
@@ -31,7 +32,7 @@ export class SqliteAgentApprovals {
  private args():[string,string,string]{return [this.scope.tenantId,this.scope.agentId,this.runId];}
  private now():number{const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid clock');return n;}
  private actor(value:Actor):Actor{if(!value||value.tenantId!==this.scope.tenantId||!valid(value.principalId))throw Error('Invalid approval actor');return {tenantId:value.tenantId,principalId:value.principalId};}
- private async permit(actor:Actor,action:ApprovalAccess,actionId:string,operationId:string):Promise<void>{if(await this.authorize({...actor},action,{...this.scope,runId:this.runId,actionId,operationId})!==true)throw Error('Approval access denied');}
+ private async permit(actor:Actor,action:ApprovalAccess,actionId:string,operationId:string):Promise<void>{if(await this.authorize({...actor},action,{...this.scope,runId:this.runId,actionId,operationId})!==true)throw new AgentError('denied','Approval access denied');}
  private row(actionId:string):Record<string,unknown>|undefined{return this.db.prepare('SELECT * FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);}
  private convert(row:Record<string,unknown>,now:number):AgentApproval{const status=(row.status==='pending'||row.status==='approved')&&Number(row.expires_at)<=now?'expired':row.status as ApprovalStatus;return {actionId:String(row.action_id),operationId:String(row.operation_id),input:JSON.parse(String(row.input_json)),inputHash:String(row.input_hash),definitionVersion:Number(row.definition_version),status,expiresAt:Number(row.expires_at),requestedBy:String(row.requested_by),authority:(this.db.prepare('SELECT authority FROM agent_approval_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),String(row.action_id))?.authority as string|undefined)??null,decidedBy:row.decided_by===null?null:String(row.decided_by),decidedAt:row.decided_at===null?null:Number(row.decided_at)};}
  private transaction<T>(fn:()=>T):T{this.db.exec('BEGIN IMMEDIATE');try{const result=fn();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
@@ -52,13 +53,13 @@ export class SqliteAgentApprovals {
  }
  async decide(actor:Actor,actionId:string,decision:'approved'|'rejected'|'cancelled'):Promise<AgentApproval>{
   const who=this.actor(actor);if(!valid(actionId)||!['approved','rejected','cancelled'].includes(decision))throw Error('Invalid approval decision');const existing=this.row(actionId);await this.permit(who,decision==='cancelled'?'cancel':'decide',actionId,existing?String(existing.operation_id):'unknown');
-  return this.transaction(()=>{const now=this.now(),row=this.row(actionId),run=this.db.prepare('SELECT status,archived FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());if(!row)throw Error('Approval not found');if(!run||run.archived===1||['succeeded','failed','cancelled'].includes(String(run.status)))throw Error('Run is terminal');if(row.status!=='pending'&&!(decision==='cancelled'&&row.status==='approved'))throw Error('Approval already decided');if(now>=Number(row.expires_at))throw Error('Approval expired');
+  return this.transaction(()=>{const now=this.now(),row=this.row(actionId),run=this.db.prepare('SELECT status,archived FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());if(!row)throw new AgentError('not_found','Approval not found');if(!run||run.archived===1||['succeeded','failed','cancelled'].includes(String(run.status)))throw new AgentError('conflict','Run is terminal');if(row.status!=='pending'&&!(decision==='cancelled'&&row.status==='approved'))throw new AgentError('conflict','Approval already decided');if(now>=Number(row.expires_at))throw new AgentError('conflict','Approval expired');
    this.db.prepare('UPDATE agent_approvals SET status=?,decided_by=?,decided_at=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').run(decision,who.principalId,now,...this.args(),actionId);this.event(actionId,decision,who.principalId,now);return this.convert(this.row(actionId)!,now);
   });
  }
  async expire(actor:Actor,actionId:string):Promise<AgentApproval>{
   const who=this.actor(actor);if(!valid(actionId))throw Error('Invalid approval');const existing=this.row(actionId);await this.permit(who,'expire',actionId,existing?String(existing.operation_id):'unknown');
-  return this.transaction(()=>{const now=this.now(),row=this.row(actionId);if(!row)throw Error('Approval not found');if(!['pending','approved'].includes(String(row.status))||now<Number(row.expires_at))throw Error('Approval not expired');this.db.prepare("UPDATE agent_approvals SET status='expired',decided_by=?,decided_at=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(who.principalId,now,...this.args(),actionId);this.event(actionId,'expired',who.principalId,now);return this.convert(this.row(actionId)!,now);});
+  return this.transaction(()=>{const now=this.now(),row=this.row(actionId);if(!row)throw new AgentError('not_found','Approval not found');if(!['pending','approved'].includes(String(row.status))||now<Number(row.expires_at))throw Error('Approval not expired');this.db.prepare("UPDATE agent_approvals SET status='expired',decided_by=?,decided_at=? WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(who.principalId,now,...this.args(),actionId);this.event(actionId,'expired',who.principalId,now);return this.convert(this.row(actionId)!,now);});
  }
  async history(actor:Actor,actionId:string):Promise<{event:string;actorId:string;at:number}[]>{const who=this.actor(actor);if(!valid(actionId))throw Error('Invalid approval');const existing=this.row(actionId);await this.permit(who,'history',actionId,existing?String(existing.operation_id):'unknown');return this.db.prepare('SELECT event,actor_id,event_at FROM agent_approval_events WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=? ORDER BY event_id').all(...this.args(),actionId).map(row=>({event:String(row.event),actorId:String(row.actor_id),at:Number(row.event_at)}));}
 }
