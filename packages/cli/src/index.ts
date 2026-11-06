@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {mkdir,writeFile,access,readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 export async function createProject(name:string,parent=process.cwd()):Promise<string>{
  if(!/^[a-z][a-z0-9-]{1,48}$/.test(name))throw Error("Invalid project name");
  const target=resolve(parent,name);
@@ -224,4 +225,6 @@ export function prepareWorkspace(app){
  await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nWORKSPACE_TRACING_PROPAGATE_AGENT=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\n")]);
  return target;
 }
-if(process.argv[1]?.endsWith('/dist/index.js')){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
+// Run as a command only when this file is the script Node started (compared by path, so Windows backslash paths work).
+const self=fileURLToPath(import.meta.url),entry=process.argv[1]===undefined?undefined:resolve(process.argv[1]),same=process.platform==='win32'?entry?.toLowerCase()===self.toLowerCase():entry===self;
+if(same){const [, , command,name]=process.argv;if(command==='create'&&name)createProject(name).then(p=>console.log('Created '+p),e=>{console.error(e.message);process.exitCode=1});else{console.error('Usage: app-mixer create <name>');process.exitCode=1;}}
