@@ -405,3 +405,14 @@ test('registration verifies declared package integrity and approval-pinned diges
  registry.register(m,bindings(),{},{packageBytes:bytes});assert.equal(registry.getManifests()[0].integrity,integrity);assert.equal(registry.get('components','chart')(),1);
  const open=new ExtensionRegistry(host());assert.throws(()=>open.register(manifest(),bindings(),{},{packageBytes:bytes}),/integrity failed/);open.register(manifest(),bindings());assert.equal(open.getManifests()[0].integrity,undefined);
 });
+
+test('non-canonical digest spellings are rejected by verification, manifests and approval pins',async()=>{
+ const {computeExtensionIntegrity,verifyExtensionIntegrity}=await import('../dist/index.js');
+ const bytes=new TextEncoder().encode('export const chart=()=>1;'),integrity=computeExtensionIntegrity(bytes),alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+ // The final data character carries only two meaningful bits; flipping its low bit decodes to the same 32 bytes.
+ const last=integrity[49],flipped=alphabet[alphabet.indexOf(last)^1],lax=integrity.slice(0,49)+flipped+integrity.slice(50);
+ assert.notEqual(lax,integrity);assert.deepEqual(Buffer.from(lax.slice(7),'base64'),Buffer.from(integrity.slice(7),'base64'));
+ assert.equal(verifyExtensionIntegrity(integrity,bytes),true);assert.equal(verifyExtensionIntegrity(lax,bytes),false);
+ assert.throws(()=>check([{...manifest(),integrity:lax}],host(),required()),/Invalid extension manifest/);
+ const pinned=host();pinned.approved[0].integrity=lax;assert.throws(()=>check([manifest()],pinned,required()));
+});
