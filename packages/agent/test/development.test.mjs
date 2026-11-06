@@ -66,3 +66,18 @@ test('developer UI requests a model proposal, reviews it, approves and publishes
     assert.equal(repo.getPublished().definition.pages[0].title,'Generated');
   }finally{await stop(planes.control);await stop(planes.proposal);}
 });
+
+test('the development agent proposes against schema version 2 drafts with the version 2 operations',async()=>{
+  const repo=new ApplicationStore({id:'demo',schemaVersion:2,revision:0,pages:[{id:'home',title:'Home',description:'',route:'/',components:[]}]});
+  const planes=createDevelopmentPlanes(repo,developer,token);
+  try{
+    const url=await start(planes.proposal),prompts=[];
+    const model={async *stream(messages){prompts.push(messages[0].content);yield JSON.stringify({patches:[{op:'setPageDescription',pageId:'home',description:'Start here'}]});}};
+    const agent=new DevelopmentAgent(model,createProposalClient(`${url}/proposals`,token));
+    const proposal=await agent.propose('Describe the home page',repo.getDraft());
+    assert.equal(proposal.preview.pages[0].description,'Start here');assert.match(prompts[0],/setPageDescription/);assert.match(prompts[0],/setExtensions/);assert.match(prompts[0],/Extension with extensionId and name/);
+    const v1=new DevelopmentAgent(model,async()=>{throw Error('not reached');});
+    await assert.rejects(v1.propose('x',{id:'demo',schemaVersion:3,revision:0,pages:[]}),/Invalid development request/);
+    prompts.length=0;await assert.rejects(v1.propose('x',{id:'demo',schemaVersion:1,revision:0,pages:[]}),/not reached/);assert.doesNotMatch(prompts[0],/setPageDescription|setExtensions/,'version 1 drafts keep the basic operation list');
+  }finally{await stop(planes.control);await stop(planes.proposal);}
+});

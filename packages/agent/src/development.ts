@@ -32,12 +32,16 @@ export class DevelopmentAgent {
   async propose(instruction:string, draft:DraftSnapshot, signal?:AbortSignal): Promise<ProposalResult> {
     if(typeof instruction !== 'string' || !instruction.trim() || instruction.length>10000 || !draft ||
        typeof draft.id !== 'string' || !Number.isSafeInteger(draft.revision) || draft.revision<0 ||
-       draft.schemaVersion!==1 || !Array.isArray(draft.pages)) throw Error('Invalid development request');
+       (draft.schemaVersion!==1&&draft.schemaVersion!==2) || !Array.isArray(draft.pages)) throw Error('Invalid development request');
     const snapshot=JSON.stringify(draft);
     if(snapshot.length>200000) throw Error('Draft is too large');
+    // Version 2 drafts add page descriptions and extension references; the operation list follows the draft's version.
+    const v2=draft.schemaVersion===2;
     const prompt='Return only a JSON object with a patches array. Supported operations: '+
       'addPage with page {id,title,route,components}; setPageTitle with pageId and title; '+
-      'addComponent with pageId and component {id,type,props}. Component types: Text, Card, Table, Input. '+
+      (v2?'setPageDescription with pageId and description; ':'')+
+      'addComponent with pageId and component {id,type,props}. Component types: Text, Card, Table, Input'+(v2?', or Extension with extensionId and name':'')+'. '+
+      (v2?'setExtensions with extensions [{id,version,scope}]; setExtensionOperations with operations [{extensionId,kind,name}]. ':'')+
       'Do not include code or additional properties. Proposals require separate human approval.\n'+
       'Current draft: '+snapshot+'\nRequest: '+instruction;
     let output='';
