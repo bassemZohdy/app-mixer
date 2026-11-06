@@ -16,6 +16,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- Package metadata: every package declares `license`, `repository` (with its directory) and `files`, `@app-mixer/core` declares `types`, internal dependencies use one exact version, and a test checks the metadata and that `npm pack --dry-run` ships the build output, templates and catalog but no sources or tests.
 - Operator scans for stranded offline work: `SqliteOfflineQueue.listAll` (across principals, by status, paginated) and `PostgresOfflineExecutions.list` (by status, paginated, no payloads), with a runbook entry.
 - `SqliteStagedOperations.list` gives operators a paginated, status-filtered listing of staged business operations (find `submitting` and `uncertain` work without raw SQL), with a runbook entry.
 - SQLite retention: `SqliteCapabilityAudit.prune` (bounded, tenant-scoped, pinned to a reviewed sequence) and `SqliteAgentRuns.pruneStarts`, matching the PostgreSQL stores; the run-start table no longer grows without bound.

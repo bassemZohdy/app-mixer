@@ -1,10 +1,20 @@
 {
   "name": "@app-mixer/web",
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bassemZohdy/app-mixer.git",
+    "directory": "packages/web"
+  },
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "catalog"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
