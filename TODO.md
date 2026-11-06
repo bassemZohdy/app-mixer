@@ -4,6 +4,7 @@
 
 **13 / 31 tasks complete (42%)**
 **24 / 67 tasks complete (36%)**
+**34 / 72 tasks complete (47%)**
 
 `████████░░░░░░░░░░░░`
 **35 / 73 tasks complete (48%)**
@@ -26,6 +27,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
 | P4 fixes and improvements from the 2026-11-06 code review | 10 / 36 | 26 (P4-03, P4-05, P4-07, P4-09..P4-14, P4-16..P4-27, P4-32..P4-36) |
 | P4 fixes and improvements from the 2026-11-06 code review | 21 / 42 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25, P4-33..P4-38, P4-41, P4-42) |
+| P4 fixes and improvements from the 2026-11-06 code review | 20 / 41 | 21 (P4-03, P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-23, P4-25, P4-27, P4-33..P4-38, P4-41) |
 
 Each open task's remaining proof and required evidence: [acceptance checklists](docs/acceptance-checklists.md).
 
@@ -158,8 +160,10 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `tsconfig.base.json` enables `strict` only. Fix: add `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noFallthroughCasesInSwitch`, `noPropertyAccessFromIndexSignature` and `verbatimModuleSyntax`, fix the fallout package by package, and keep the build warning-free.
 - [ ] P4-25 Add a lint and format baseline
   - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fix: typescript-eslint with `no-floating-promises`, `no-misused-promises` and import rules, a formatter configured to the project's style, `npm run lint` in CI, and an initial pass that fixes or documents each rule.
-- [ ] P4-26 Package metadata and layering before any publish
-  - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: complete the metadata, align the version ranges, move the web-serving and `ComponentRegistry` glue into a small `@app-mixer/host` (or into the CLI), and add `npm pack --dry-run` to CI.
+- [x] P4-26 Package metadata and layering before any publish
+  - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fixed 2026-11-06 for the metadata: `license`, `repository`, `files` and `types` are declared, the web dependency is `0.1.0` in both core and cli, and `packages/cli/test/package-metadata.test.mjs` (run by `npm test` in CI) checks them and `npm pack --dry-run` contents. The layering change is P4-41.
+- [ ] P4-41 Move the web-serving and ComponentRegistry glue out of core
+  - Found while fixing P4-26: `packages/core` imports `@app-mixer/web` (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: move that glue into a small `@app-mixer/host` package (or the CLI), keep core free of renderer imports, and keep the public exports working through a re-export for one release.
 - [ ] P4-27 Dependency updates and automation
   - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fix: update with the collector and browser tests green, add `.github/dependabot.yml` grouped by ecosystem, and run `npm audit --omit=dev` in CI.
 - [x] P4-26 Package metadata and layering before any publish

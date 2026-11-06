@@ -2,10 +2,19 @@
   "name": "@app-mixer/agent",
   "license": "Apache-2.0",
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bassemZohdy/app-mixer.git",
+    "directory": "packages/agent"
+  },
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },

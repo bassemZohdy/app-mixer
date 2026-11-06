@@ -2,11 +2,21 @@
   "name": "@app-mixer/cli",
   "license": "Apache-2.0",
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bassemZohdy/app-mixer.git",
+    "directory": "packages/cli"
+  },
   "private": true,
   "type": "module",
   "bin": {
     "app-mixer": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "templates"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },

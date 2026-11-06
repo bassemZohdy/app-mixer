@@ -2,9 +2,19 @@
   "name": "@app-mixer/core",
   "license": "Apache-2.0",
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bassemZohdy/app-mixer.git",
+    "directory": "packages/core"
+  },
   "private": true,
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
@@ -16,7 +26,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@app-mixer/web": "^0.1.0",
+    "@app-mixer/web": "0.1.0",
     "@opentelemetry/api": "1.9.0",
     "ajv": "^8.20.0",
     "jose": "^6.2.13",
