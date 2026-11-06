@@ -28,7 +28,7 @@ export class SqliteAgentMemory {
  constructor(path:string,options:Options){
   if(!options||options.enabled!==true||!Number.isSafeInteger(options.maxTtlMs)||options.maxTtlMs<1||options.maxTtlMs>365*86400000||!Number.isSafeInteger(options.maxEntries)||options.maxEntries<1||options.maxEntries>1000||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.audit!==undefined&&typeof options.audit!=='boolean'))throw Error('Invalid memory configuration');
   this.maxTtlMs=options.maxTtlMs;this.maxEntries=options.maxEntries;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.audit=options.audit===true;this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_memories (
     tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,memory_id TEXT NOT NULL,
     revision INTEGER NOT NULL,value TEXT,provenance TEXT,expires_at INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,

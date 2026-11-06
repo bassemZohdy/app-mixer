@@ -39,7 +39,7 @@ export class SqliteAgentDefinitions {
  private readonly db:DatabaseSync;
  constructor(path:string){
   this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_definitions (
     tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,version INTEGER NOT NULL,manifest TEXT NOT NULL,
     PRIMARY KEY(tenant_id,agent_id,version)

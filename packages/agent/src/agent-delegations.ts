@@ -14,7 +14,7 @@ export class SqliteAgentDelegations {
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid delegation configuration');
   this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,revoked INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id));
    CREATE TABLE IF NOT EXISTS agent_delegation_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision INTEGER NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,event_at INTEGER NOT NULL);
    CREATE TRIGGER IF NOT EXISTS delegation_events_no_replace BEFORE INSERT ON agent_delegation_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_delegation_events WHERE event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Delegation events are immutable'); END;

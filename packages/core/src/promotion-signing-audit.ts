@@ -23,7 +23,7 @@ export class SqlitePromotionSigningAudit {
  constructor(path:string,options:{clock?:()=>number}={}){
   if(typeof path!=='string'||!path||!options||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid promotion signing audit configuration');
   this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS promotion_signing_audit (sequence INTEGER PRIMARY KEY, previous_hash TEXT NOT NULL, recorded_at INTEGER NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, application_id TEXT NOT NULL, source_environment TEXT NOT NULL, source_version INTEGER NOT NULL, package_digest TEXT NOT NULL, target_environment TEXT NOT NULL, key_id TEXT NOT NULL, expected_version INTEGER, signer_principal TEXT, signature TEXT NOT NULL, hash TEXT NOT NULL UNIQUE);
    CREATE INDEX IF NOT EXISTS promotion_signing_audit_signature ON promotion_signing_audit(signature);
    CREATE TRIGGER IF NOT EXISTS promotion_signing_audit_no_update BEFORE UPDATE ON promotion_signing_audit BEGIN SELECT RAISE(ABORT,'promotion signing audit is append-only'); END;

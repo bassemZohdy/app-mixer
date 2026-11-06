@@ -34,7 +34,7 @@ export class SqliteAgentActionJournal {
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||!valid(options.leaseToken)||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid action journal configuration');
   this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.token=options.leaseToken;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_action_journal (
     tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,
     input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,

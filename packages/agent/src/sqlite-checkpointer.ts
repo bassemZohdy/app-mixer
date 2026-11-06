@@ -11,7 +11,7 @@ export class SqliteAgentCheckpointer extends BaseCheckpointSaver {
  constructor(path:string,options:Options){
   super();if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||!valid(options.leaseToken)||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid checkpoint configuration');
   this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.token=options.leaseToken;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_checkpoints (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT NOT NULL,checkpoint_id TEXT NOT NULL,parent_id TEXT,checkpoint_type TEXT NOT NULL,checkpoint BLOB NOT NULL,metadata_type TEXT NOT NULL,metadata BLOB NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id));
    CREATE TABLE IF NOT EXISTS agent_checkpoint_writes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT NOT NULL,checkpoint_id TEXT NOT NULL,task_id TEXT NOT NULL,idx INTEGER NOT NULL,task_path TEXT NOT NULL,channel TEXT NOT NULL,value_type TEXT NOT NULL,value BLOB NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id,task_id,idx));`);
   }catch(error){this.db.close();throw error;}

@@ -20,6 +20,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- All 26 SQLite stores open their databases in WAL mode (readers no longer wait behind the writer; `synchronous` stays `FULL`), with `docs/sqlite-stores.md` on the file layout and consistent backups and a test that fails for any store source that opens SQLite without it.
 - `AppMixerError` (codes `invalid`, `not_found`, `conflict`, `limit`) and `httpStatus`: the control and Data Plane map their expected refusals by code instead of comparing message strings (53 throw sites in core converted, messages unchanged); a plain `Error` with a matching message is now a 500.
 - A lint baseline (`npm run lint`, run in CI): typescript-eslint with `no-floating-promises`, `no-misused-promises`, `await-thenable` and unused variables over every package's sources, plus an `.editorconfig`. The first run found six issues, all fixed.
 - `@app-mixer/agent/webhooks` and `@app-mixer/agent/stores` subpath entries that never load LangChain, LangGraph, AG-UI or OpenAI (the root entry is unchanged); a test checks their import graphs and coverage.

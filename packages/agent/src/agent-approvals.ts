@@ -16,7 +16,7 @@ export class SqliteAgentApprovals {
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid approval configuration');
   this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec(`PRAGMA busy_timeout=5000;
+  try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_approvals (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,definition_version INTEGER NOT NULL,status TEXT NOT NULL,expires_at INTEGER NOT NULL,requested_by TEXT NOT NULL,decided_by TEXT,decided_at INTEGER,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
    CREATE TABLE IF NOT EXISTS agent_approval_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
    CREATE TABLE IF NOT EXISTS agent_approval_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,event_at INTEGER NOT NULL);

@@ -12,7 +12,7 @@ export class SqliteCapabilityAudit {
  constructor(path:string,options:{clock?:()=>number}={}){
   if(typeof path!=='string'||!path||!options||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid capability audit configuration');
   this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
-  try{this.db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, invocation_id TEXT NOT NULL, operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,sequence);');}catch(error){this.db.close();throw error;}
+  try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, invocation_id TEXT NOT NULL, operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,sequence);');}catch(error){this.db.close();throw error;}
  }
  /** Compatible with CapabilityRegistry's required audit sink. */
  record=(event:CapabilityAuditEvent):void=>{

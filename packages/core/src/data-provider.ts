@@ -55,7 +55,7 @@ export class SqliteDataProvider implements DataProvider {
   private readonly db:DatabaseSync;
   constructor(path:string){
     this.db=new DatabaseSync(path);
-    try {this.db.exec(`PRAGMA busy_timeout=5000;
+    try {this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS business_records (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, collection_id TEXT NOT NULL,
         record_id TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,

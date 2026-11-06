@@ -15,7 +15,7 @@ function scopeKey(scope:RunScope,runId:string):void{if(!scope||!id(scope.tenantI
 /** Local lifecycle registry. Host must authenticate, authorize, and reconcile external effects. */
 export class SqliteAgentRuns {
  private readonly db:DatabaseSync;
- constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000;
+ constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
   CREATE TABLE IF NOT EXISTS agent_runs (
    tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,
    revision INTEGER NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline INTEGER NOT NULL,

@@ -11,7 +11,7 @@ export class SqliteAgentTriggerRetention {
  constructor(path:string,options:Options){
   if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function')throw Error('Invalid trigger retention');
   this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.db=new DatabaseSync(path);
-  try{this.db.exec('PRAGMA busy_timeout=5000');for(const name of ['agent_runs','agent_trigger_inbox','agent_trigger_redactions'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Trigger inbox unavailable');}catch(error){this.db.close();throw error;}
+  try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL');for(const name of ['agent_runs','agent_trigger_inbox','agent_trigger_redactions'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Trigger inbox unavailable');}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
  private actor(actor:Actor,runId:string):Actor{if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId)||!id(runId))throw Error('Invalid trigger retention request');return {tenantId:actor.tenantId,principalId:actor.principalId};}

@@ -17,7 +17,7 @@ export class SqliteStagedOperations {
   constructor(path:string){
     this.db=new DatabaseSync(path);
     try {
-      this.db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
+      this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; BEGIN IMMEDIATE');
       try {
         this.db.exec(`CREATE TABLE IF NOT EXISTS staged_business_operations (
           tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, id TEXT NOT NULL,

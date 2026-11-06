@@ -19,6 +19,7 @@ export class SqliteApplicationStore {
     try {
       this.db.exec(`
         PRAGMA busy_timeout = 5000;
+        PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS application_drafts (
           app_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, definition TEXT NOT NULL
         );
