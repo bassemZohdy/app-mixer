@@ -28,6 +28,9 @@ export class PostgresAgentRuns {
  constructor(options:PostgresAgentRunsOptions){if(!options||options.enabled!==true||typeof options.query!=='function'||typeof options.transaction!=='function')throw Error('Invalid agent run registry configuration');this.query=options.query;this.transaction=options.transaction;}
  async initialize():Promise<void>{
   await this.query("CREATE TABLE IF NOT EXISTS app_mixer_agent_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,revision BIGINT NOT NULL,status TEXT NOT NULL CHECK (status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(tenant_id,agent_id,run_id))",[]);
+  // Runs start in creation order: an identity column numbers every run (existing rows are numbered when the column is added).
+  await this.query('ALTER TABLE app_mixer_agent_runs ADD COLUMN IF NOT EXISTS sequence BIGINT GENERATED ALWAYS AS IDENTITY',[]);
+  await this.query("CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_queue ON app_mixer_agent_runs(tenant_id,agent_id,sequence) WHERE status='queued' AND NOT archived",[]);
   await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_status ON app_mixer_agent_runs(tenant_id,agent_id,status,archived,run_id)',[]);
   await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))',[]);
   await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_first_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id))',[]);
@@ -46,7 +49,7 @@ export class PostgresAgentRuns {
   });
  }
  /** Queued runs, oldest ID first (bounded). */
- async queued(scope:AgentRunScope,limit=50):Promise<PostgresAgentRun[]>{const {tenantId,agentId}=scopeKey(scope,'validation');if(!number(limit)||limit<1||limit>100)throw Error('Invalid run query');return (await this.query("SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND status='queued' AND NOT archived ORDER BY run_id LIMIT $3",[tenantId,agentId,limit])).rows.map(parse);}
+ async queued(scope:AgentRunScope,limit=50):Promise<PostgresAgentRun[]>{const {tenantId,agentId}=scopeKey(scope,'validation');if(!number(limit)||limit<1||limit>100)throw Error('Invalid run query');return (await this.query("SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND status='queued' AND NOT archived ORDER BY sequence LIMIT $3",[tenantId,agentId,limit])).rows.map(parse);}
  /** Leased runs whose lease expired by database time at least `graceMs` ago: candidates for recoverExpired once their worker has stopped. */
  async expiredLeases(scope:AgentRunScope,limit=50,graceMs=0):Promise<PostgresAgentRun[]>{const {tenantId,agentId}=scopeKey(scope,'validation');if(!number(limit)||limit<1||limit>100||!number(graceMs)||graceMs>86400000)throw Error('Invalid run query');return (await this.query(`SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND status IN ('running','pause_requested','cancel_requested') AND lease_until<=${NOW}-$4 ORDER BY run_id LIMIT $3`,[tenantId,agentId,limit,graceMs])).rows.map(parse);}
  /** Unarchived uncertain runs awaiting reconciliation (bounded). */

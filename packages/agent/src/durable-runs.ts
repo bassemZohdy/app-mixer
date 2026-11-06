@@ -32,7 +32,16 @@ export class SqliteAgentRuns {
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
+  CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);this.ensureCreationOrder();ensureAgentNoticeSchema(this.db);ensureAgentRunHistory(this.db);ensureAgentTraceSchema(this.db);}catch(error){this.db.close();throw error;}}
+ /** Runs start in creation order: every run gets a monotonic `created_seq` (backfilled from the row order of databases written before the column existed). */
+ private ensureCreationOrder():void{
+  this.db.exec('BEGIN IMMEDIATE');
+  try{
+   if(!this.db.prepare('PRAGMA table_info(agent_runs)').all().some(column=>column.name==='created_seq'))this.db.exec('ALTER TABLE agent_runs ADD COLUMN created_seq INTEGER NOT NULL DEFAULT 0;UPDATE agent_runs SET created_seq=rowid;');
+   this.db.exec('CREATE INDEX IF NOT EXISTS agent_runs_created ON agent_runs(created_seq);CREATE INDEX IF NOT EXISTS agent_runs_queued_order ON agent_runs(tenant_id,agent_id,status,archived,created_seq,run_id);CREATE TRIGGER IF NOT EXISTS agent_runs_sequence AFTER INSERT ON agent_runs WHEN NEW.created_seq=0 BEGIN UPDATE agent_runs SET created_seq=(SELECT COALESCE(MAX(created_seq),0)+1 FROM agent_runs) WHERE rowid=NEW.rowid; END;');
+   this.db.exec('COMMIT');
+  }catch(error){this.db.exec('ROLLBACK');throw error;}
+ }
  /**
   * Delete run-start records older than `retainDays` (1 to 3,660) from `now`, for every tenant and agent of this database, and return how many were removed.
   * Daily quotas only count today's starts, so records older than a day are history; a run that is retried after its record was pruned counts as a new start.
@@ -57,7 +66,8 @@ export class SqliteAgentRuns {
  /** Return a bounded page of queued run IDs; host authorization remains required. */
  queuedPage(scope:RunScope,options:{after?:string;limit?:number}={}):{runIds:string[];next?:string}{
   scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid queued run query');
-  const limit=options.limit??50,rows=this.db.prepare("SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status='queued' AND archived=0 AND run_id>? ORDER BY run_id LIMIT ?").all(scope.tenantId,scope.agentId,options.after??'',limit+1),runIds=rows.slice(0,limit).map(row=>String(row.run_id));return {runIds,...(rows.length>limit?{next:runIds[runIds.length-1]!}:{})};
+  // Oldest first: the cursor is the last run ID of the previous page, resolved to its creation sequence (an unknown cursor starts from the beginning).
+  const limit=options.limit??50,after=options.after===undefined?undefined:this.db.prepare('SELECT created_seq FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,options.after),cursorSeq=after?Number(after.created_seq):0,cursorId=after?options.after!:'',rows=this.db.prepare("SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status='queued' AND archived=0 AND (created_seq>? OR (created_seq=? AND run_id>?)) ORDER BY created_seq,run_id LIMIT ?").all(scope.tenantId,scope.agentId,cursorSeq,cursorSeq,cursorId,limit+1),runIds=rows.slice(0,limit).map(row=>String(row.run_id));return {runIds,...(rows.length>limit?{next:runIds[runIds.length-1]!}:{})};
  }
  /** Scan deadline-expired queued and paused runs in stable keyset order. */
  expiredPage(scope:RunScope,now:number,options:{after?:{deadline:number;runId:string};limit?:number}={}):{items:DurableAgentRun[];next?:{deadline:number;runId:string}}{
@@ -67,8 +77,8 @@ export class SqliteAgentRuns {
  getTraceParent(scope:RunScope,runId:string):string|undefined{scopeKey(scope,runId);const row=this.db.prepare('SELECT trace_parent FROM agent_run_trace_context WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);if(!row)return undefined;if(!parseAgentTraceParent(row.trace_parent))throw Error('Invalid agent trace context');return String(row.trace_parent);}
  create(scope:RunScope,runId:string,config:{definitionVersion:number;maxAttempts:number;deadline:number;traceParent?:string},now=Date.now()):DurableAgentRun {
   scopeKey(scope,runId);if(!config||![Object.prototype,null].includes(Object.getPrototypeOf(config))||!number(config.definitionVersion)||config.definitionVersion<1||!number(config.maxAttempts)||config.maxAttempts<1||config.maxAttempts>100||!number(config.deadline)||!number(now)||config.deadline<=now||(config.traceParent!==undefined&&!parseAgentTraceParent(config.traceParent)))throw Error('Invalid run configuration');
-  if(config.traceParent!==undefined){this.db.exec('BEGIN IMMEDIATE');try{const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);if(result.changes!==1)throw Error('Run already exists');insertAgentTraceParent(this.db,scope,runId,config.traceParent);const run=this.get(scope,runId)!;this.db.exec('COMMIT');return run;}catch(error){this.db.exec('ROLLBACK');throw error;}}
-  const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);
+  if(config.traceParent!==undefined){this.db.exec('BEGIN IMMEDIATE');try{const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);if(result.changes!==1)throw Error('Run already exists');insertAgentTraceParent(this.db,scope,runId,config.traceParent);const run=this.get(scope,runId)!;this.db.exec('COMMIT');return run;}catch(error){this.db.exec('ROLLBACK');throw error;}}
+  const result=this.db.prepare("INSERT OR IGNORE INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,config.definitionVersion,config.maxAttempts,config.deadline);
   if(result.changes!==1)throw Error('Run already exists');return this.get(scope,runId)!;
  }
  private transition(scope:RunScope,runId:string,expectedRevision:number,fn:(run:DurableAgentRun)=>void):DurableAgentRun {

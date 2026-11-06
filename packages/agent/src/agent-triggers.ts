@@ -46,7 +46,7 @@ export class SqliteAgentTriggers {
    if(existing){if(existing.principal_id!==event.principalId||existing.event_type!==event.eventType||existing.payload_hash!==hash||(existing.redacted===null&&existing.payload!==payload))throw Error('Trigger identity conflict');this.db.exec('COMMIT');return {runId:String(existing.run_id),duplicate:true};}
    const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);
    if(Number(count?.n)>=options.maxPending)throw Error('Trigger backlog full');
-   const runId=randomUUID();this.db.prepare("INSERT INTO agent_runs VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,options.definitionVersion,options.maxAttempts,options.deadline);
+   const runId=randomUUID();this.db.prepare("INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,options.definitionVersion,options.maxAttempts,options.deadline);
    insertAgentTraceParent(this.db,scope,runId,options.traceParent);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,event.sourceId,event.eventId,event.principalId,event.eventType,payload,hash,runId);
    this.db.exec('COMMIT');return {runId,duplicate:false};

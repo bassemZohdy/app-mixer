@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Fixed
+- Queued agent runs start in creation order instead of run ID order (random UUIDs started them in random order): `SqliteAgentRuns` adds a `created_seq` column and `PostgresAgentRuns` an identity `sequence` column, both backfilled for existing databases.
 - Agent memory scopes no longer become permanently unwritable after `10 x maxEntries` writes and deletes: `compactTombstones` (SQLite and PostgreSQL, `purge` permission, audited) removes tombstones in bounded passes.
 - `SqliteOfflineQueue` no longer refuses a principal after 1,000 operations ever: only live operations count toward the cap, and a host-authorized `purge` removes settled history.
 - Capability refusals before execution no longer strand staged business operations and offline items as `uncertain`: `SqliteStagedOperations.submit` returns the intent to `staged`, `SqliteOfflineQueue` retries within its attempt limit without consulting the classifier, and `PostgresOfflineExecutions` returns the key to `ready`. Execution errors stay uncertain.

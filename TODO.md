@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**37 / 74 tasks complete (50%)**
+**38 / 74 tasks complete (51%)**
 
 `██████████░░░░░░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 23 / 43 | 20 (P4-05, P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41..P4-43) |
+| P4 fixes and improvements from the 2026-11-06 code review | 24 / 43 | 19 (P4-07, P4-09, P4-10, P4-16..P4-21, P4-25, P4-33..P4-38, P4-41..P4-43) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -96,8 +96,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found while fixing P4-03: `EncryptedBrowserQueue.enqueue` has the same 1,000 cap per partition with no purge, and its counter and rollback anchor must stay consistent with any deletion. Fixed 2026-11-06 for agent memory (the other half of the original finding): `compactTombstones` on `SqliteAgentMemory` and `PostgresAgentMemory` removes tombstones in bounded, audited passes, tested against SQLite and PostgreSQL (tombstones carry no timestamp, so there is no age horizon; the owner chooses when to compact). Fix for the browser queue: count only live entries, add an authorized purge that keeps the rollback anchor valid, and test that it keeps accepting work after the cap of settled entries.
 - [x] P4-04 Let the Development Agent work on schema version 2 drafts and extension patches
   - Found: `DevelopmentAgent.propose` throws `Invalid development request` for `draft.schemaVersion !== 1`, so an application migrated under P2-05 cannot be developed by the agent, and its prompt lists only `addPage`, `setPageTitle` and `addComponent` with the four basic component types (no `setPageDescription`, `setExtensions`, `setExtensionOperations` or `Extension` components). Fixed 2026-11-06: versions 1 and 2 are accepted, the prompt's operation list follows the draft version, and a test submits a version-2 `setPageDescription` proposal and checks version 1 and unsupported versions.
-- [ ] P4-05 Dispatch runs in creation order
-  - Found: `SqliteAgentRuns.queuedPage`, `PostgresAgentRuns.queued`, the dispatcher cursor and `expiredPage` order by `run_id`, and event and schedule runs get `randomUUID()` IDs, so queued runs start in random order; there is no created-at column. Fix: add a creation sequence (`created_at` or a monotonic `sequence`) to both registries, order claims by it, keep keyset pagination, and test that 50 queued runs start in order across two nodes.
+- [x] P4-05 Dispatch runs in creation order
+  - Found: `SqliteAgentRuns.queuedPage`, `PostgresAgentRuns.queued`, the dispatcher cursor and `expiredPage` order by `run_id`, and event and schedule runs get `randomUUID()` IDs, so queued runs start in random order; there is no created-at column. Fixed 2026-11-06: `created_seq` (SQLite, trigger-assigned, backfilled from row order on open) and an identity `sequence` (PostgreSQL) order `queuedPage` and `queued`; the cursor is still a run ID resolved to its sequence; tests cover 50 runs whose IDs sort opposite to creation order paged in sevens, migration of databases written before the column existed (SQLite and PostgreSQL) and two PostgreSQL nodes alternately claiming the head of the queue. `expiredPage` still orders by deadline then run ID, which is its purpose.
 - [x] P4-06 Evict settled development proposals
   - Found: `DevelopmentProposals` keeps approved and rejected proposals in memory and counts them toward the 100 limit, so after 100 proposals the proposal plane answers 429 until the process restarts; an agent can exhaust it. Fixed 2026-11-06: only pending proposals count toward the limit and settled ones are evicted beyond a `settledLimit` bound (tested). A SQLite store so proposals survive a restart is P4-35.
 - [ ] P4-35 Persist development proposals in SQLite

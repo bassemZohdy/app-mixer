@@ -155,3 +155,22 @@ test('a stopping worker drains its running executions and claims nothing new',{s
   assert.equal(applications.length,6,'each finished run applied its three actions once');
  }finally{if(child&&child.exitCode===null)child.kill('SIGKILL');server.closeAllConnections();server.close();await db.close();}
 });
+
+test('queued runs start in creation order across two nodes and a registry created before the sequence column keeps its order',{skip,timeout:60000},async()=>{
+ const db=await database('run_order_');
+ try{
+  // A registry written before the sequence column existed: three runs inserted in a known order.
+  await db.pool.query("CREATE TABLE app_mixer_agent_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,revision BIGINT NOT NULL,status TEXT NOT NULL CHECK (status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(tenant_id,agent_id,run_id))");
+  for(const runId of ['zulu','alpha','mike'])await db.pool.query("INSERT INTO app_mixer_agent_runs VALUES ('tenant','agent',$1,1,1,'queued',0,2,$2,NULL,NULL,NULL,false)",[runId,Date.now()+600000]);
+  const first=new PostgresAgentRuns(db.options),second=new PostgresAgentRuns(db.options);await first.initialize();await second.initialize();await first.initialize();
+  const deadline=Date.now()+600000,config={definitionVersion:1,maxAttempts:2,deadline};
+  assert.deepEqual((await first.queued(scope)).map(run=>run.runId),['zulu','alpha','mike'],'migrated rows are numbered in their insertion order');
+  // New runs have IDs sorted opposite to creation order, as random UUIDs are.
+  const ids=Array.from({length:50},(_,n)=>'run-'+String(99-n).padStart(2,'0'));for(const runId of ids)await first.create(scope,runId,config);
+  assert.deepEqual((await second.queued(scope,100)).map(run=>run.runId),['zulu','alpha','mike',...ids].slice(0,100),'every node sees the same creation order');
+  // Two nodes alternately claim the head of the queue: runs start in creation order.
+  const started=[];const limits={maxConcurrentRuns:100,maxRunsPerDay:1000};
+  for(let turn=0;turn<53;turn++){const node=turn%2?second:first,head=(await node.queued(scope,1))[0];const lease=await node.claim(scope,head.runId,head.revision,'node-'+turn%2,60000,limits);started.push(lease.runId);}
+  assert.deepEqual(started,['zulu','alpha','mike',...ids]);
+ }finally{await db.close();}
+});

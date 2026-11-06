@@ -170,3 +170,7 @@ The host still configures limits, reconciles open reservations, and enforces pro
 ## Run-start history retention
 
 `SqliteAgentRuns` records one start per run for the daily run quota. `pruneStarts(retainDays, now?)` (the SQLite counterpart of `PostgresAgentRunSlots.pruneStarts`) deletes records older than `retainDays` (1 to 3,660) for every tenant and agent in the database and returns the count. Quotas only count the current day, so older records are history; a run that is retried after its record was pruned counts as a new start. The host decides who may call it and how long to keep history.
+
+## Dispatch order
+
+Queued runs start in creation order. `SqliteAgentRuns` numbers every run with a monotonic `created_seq` (added to existing databases on open and backfilled from their row order) and `queuedPage` returns the oldest queued runs first; its `next` cursor is still the last run ID and is resolved to its sequence. `PostgresAgentRuns` numbers runs with an identity column `sequence` (added by `initialize()`, which numbers existing rows in their physical order) and `queued` orders by it. Run IDs no longer influence dispatch order, so random UUIDs from schedules, triggers and event ingress start in the order they were created. `list` still pages by run ID.
