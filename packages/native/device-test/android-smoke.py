@@ -103,7 +103,7 @@ for text in ['Account', 'Profile', 'Contact details', 'Preferences', 'Advanced',
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Ada'}), 'reference single-line field')
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Notes', 'text':'Line one'}), 'reference multiline field')
 wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' and n.get('clickable')=='true' and n.get('enabled')=='true'), None), 'reference enabled button')
-sizes = wait_for(lambda nodes: (lambda found: found if all(found.values()) else None)({text: next((n for n in nodes if n.get('text')==text), None) for text in ['Account', 'Profile', 'Contact details', 'Body copy', 'Small print']}), 'reference text bounds')
+sizes = wait_for(lambda nodes: (lambda found: found if all(node is not None for node in found.values()) else None)({text: next((n for n in nodes if n.get('text')==text), None) for text in ['Account', 'Profile', 'Contact details', 'Body copy', 'Small print']}), 'reference text bounds')
 heights = {text: (lambda m: int(m.group(4))-int(m.group(2)))(re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.get('bounds'))) for text, node in sizes.items()}
 # Line heights follow the reference sizes: h1 > h2 > h3 > body > caption.
 if not heights['Account'] > heights['Profile'] > heights['Contact details'] > heights['Body copy'] > heights['Small print']:
