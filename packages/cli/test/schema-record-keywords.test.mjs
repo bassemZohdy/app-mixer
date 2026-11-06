@@ -123,3 +123,56 @@ test('unsupported uses of the new keywords are rejected in runtime and preview',
   assert.doesNotThrow(()=>factory(options({type:'object',properties:{v:{$ref:'#/$defs/d',$comment:'shared'}},$defs:{d:{type:'string',format:'email',default:'a@example.com'}}})));
  }
 }finally{await rm(s.dir,{recursive:true,force:true});}});
+
+test('allOf merges parts that cannot conflict and rejects merges that would change what is accepted',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
+ const jsonSchema={$defs:{named:{type:'object',properties:{name:{type:'string',title:'Name'}},required:['name']}},allOf:[{$ref:'#/$defs/named'},{properties:{code:{allOf:[{type:'string',title:'Code'},{maxLength:3}]}},required:['code']}],type:'object'},validate=createRecordJsonSchemaValidator(jsonSchema);
+ for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){dom=new JSDOM('<!doctype html>');const root=factory(options(jsonSchema)).render({},null,null,dom.window.document);assert.ok(labelled(root,'Name (required)'));assert.ok(labelled(root,'Code (required)'));dom.window.close();dom=undefined;}
+ let saved;const page=await open(s,jsonSchema,null,value=>{saved=value;});dom=page.dom;
+ page.set(labelled(page.root,'Name'),'Ada');page.set(labelled(page.root,'Code'),'ABCD');page.save.click();assert.equal(saved,undefined,'maxLength from the second part applies');
+ page.set(labelled(page.root,'Code'),'ABC');page.save.click();await wait(()=>saved!==undefined);assert.deepEqual(saved,{name:'Ada',code:'ABC'});assert.equal(validate(saved),true);assert.equal(validate({name:'Ada',code:'ABCD'}),false);
+ const bad=[
+  {allOf:[]},{allOf:[true]},{allOf:{}},
+  {type:'object',properties:{a:{type:'string'}},allOf:[{properties:{a:{type:'integer'}}}]},
+  {type:'object',properties:{a:{allOf:[{type:'string',maxLength:3},{maxLength:5}]}}},
+  {type:'object',properties:{a:{type:'string'}},additionalProperties:false,allOf:[{properties:{b:{type:'string'}}}]},
+  {type:'object',allOf:[{properties:{a:{type:'string'}},patternProperties:{'^x':{type:'string'}}}]},
+  {type:'object',properties:{list:{type:'array',items:{type:'string'},allOf:[{contains:{const:'a'}},{minContains:2}]}}},
+  {type:'object',properties:{a:{type:'string'}},allOf:[{if:{properties:{a:{const:'x'}}}},{then:{required:['a']}}]},
+ ];
+ for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const shape of bad)assert.throws(()=>factory(options(shape)),/Unsupported/,JSON.stringify(shape));
+}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
+
+test('object-array items use their title as the item legend',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
+ const page=await open(s,{type:'object',properties:{lines:{type:'array',title:'Lines',items:{type:'object',title:'Order line',properties:{sku:{type:'string',title:'SKU'}}}}}},{lines:[{sku:'a'},{sku:'b'}]},()=>{});dom=page.dom;
+ const legends=[...page.root.querySelectorAll('legend')].map(x=>x.textContent);assert.ok(legends.includes('Order line 1'),legends.join('|'));assert.ok(legends.includes('Order line 2'));
+}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
+
+test('objects with scalar additionalProperties or one patternProperties schema edit as key/value entries',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
+ const jsonSchema={type:'object',properties:{name:{type:'string'},prices:{type:'object',title:'Prices',additionalProperties:{type:'number',minimum:0},maxProperties:3},tags:{type:'object',title:'Tags',patternProperties:{'^[a-z]+$':{type:'string'}},additionalProperties:false}},required:['prices']},validate=createRecordJsonSchemaValidator(jsonSchema);
+ for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){dom=new JSDOM('<!doctype html>');const root=factory(options(jsonSchema)).render({},null,null,dom.window.document);assert.ok([...root.querySelectorAll('button')].some(x=>x.textContent==='Add Prices entry'));dom.window.close();dom=undefined;}
+ let saved;const page=await open(s,jsonSchema,{name:'x',prices:{eur:2,usd:3}},value=>{saved=value;});dom=page.dom;const button=text=>[...page.root.querySelectorAll('button')].find(x=>x.textContent===text);
+ assert.equal(labelled(page.root,'Prices key 1').value,'eur');assert.equal(labelled(page.root,'Prices value 2').value,'3');
+ page.set(labelled(page.root,'Prices value 2'),'-1');page.save.click();assert.equal(saved,undefined,'value constraints apply');
+ page.set(labelled(page.root,'Prices value 2'),'5');button('Add Prices entry').click();assert.equal(button('Add Prices entry').disabled,true,'maxProperties caps the entries');
+ page.set(labelled(page.root,'Prices key 3'),'eur');page.set(labelled(page.root,'Prices value 3'),'7');page.save.click();assert.equal(saved,undefined,'keys must be unique');
+ page.set(labelled(page.root,'Prices key 3'),'');page.save.click();assert.equal(saved,undefined,'keys must not be empty');
+ page.set(labelled(page.root,'Prices key 3'),'gbp');
+ const include=labelled(page.root,' Include Tags');include.checked=true;include.dispatchEvent(new page.dom.window.Event('change'));button('Add Tags entry').click();
+ page.set(labelled(page.root,'Tags key 1'),'Bad1');page.set(labelled(page.root,'Tags value 1'),'v');page.save.click();assert.equal(saved,undefined,'patternProperties constrains keys');
+ page.set(labelled(page.root,'Tags key 1'),'good');page.save.click();await wait(()=>saved!==undefined);
+ assert.deepEqual(saved,{name:'x',prices:{eur:2,usd:5,gbp:7},tags:{good:'v'}});assert.equal(validate(saved),true);assert.equal(validate({...saved,tags:{Bad1:'v'}}),false);
+ page.dom.window.close();dom=undefined;
+ for(const stored of [{prices:{eur:'2'}},{prices:{'':1}},{prices:{a:1,b:2,c:3,d:4}},{prices:{},tags:{Bad:'v'}},{prices:[]}]){const other=await open(s,jsonSchema,stored,()=>{});dom=other.dom;assert.match(other.status.textContent,/cannot edit/,JSON.stringify(stored));other.dom.window.close();dom=undefined;}
+ const wrap=d=>({type:'object',properties:{d}}),bad=[
+  {type:'object',additionalProperties:{type:'object',properties:{}}},
+  {type:'object',additionalProperties:{type:'array',items:{type:'string'}}},
+  {type:'object',additionalProperties:{type:'string',default:'x'}},
+  {type:'object',patternProperties:{'^a':{type:'string'}}},
+  {type:'object',patternProperties:{'^a':{type:'string'},'^b':{type:'string'}},additionalProperties:false},
+  {type:'object',properties:{a:{type:'string'}},additionalProperties:{type:'string'}},
+  {type:'object',additionalProperties:{type:'string'},maxProperties:51},
+  {type:'object',additionalProperties:{type:'string'},propertyNames:{maxLength:3}},
+ ].map(wrap);
+ bad.push({type:'object',properties:{list:{type:'array',items:{type:'object',properties:{d:{type:'object',additionalProperties:{type:'string'}}}}}}});
+ for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const shape of bad)assert.throws(()=>factory(options(shape)),/Unsupported/,JSON.stringify(shape));
+}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
