@@ -348,7 +348,7 @@ void main() {
   });
   testWidgets('matches the shared accessibility and typography reference', (tester) async {
     final summary=await expectAccessibilityParity(tester);
-    expect(summary.length,11);
+    expect(summary.length,16);
   });
   testWidgets('text variants use the host theme and heading semantics', (tester) async {
     late void Function(Object?) receive;

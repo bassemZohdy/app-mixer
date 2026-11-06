@@ -12,7 +12,7 @@ void main() {
   testWidgets('matches the shared accessibility and typography reference on a mobile device', (tester) async {
     final summary=await expectAccessibilityParity(tester);
     debugPrint('accessibility parity: ${summary.join(', ')}');
-    expect(summary.length,11);
+    expect(summary.length,16);
   });
 
   testWidgets('root row fills bounded width on a mobile device', (tester) async {
