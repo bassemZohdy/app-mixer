@@ -27,6 +27,8 @@ Future<List<String>> expectAccessibilityParity(WidgetTester tester) async {
       };
       expect(finder, findsOneWidget, reason: name);
       final data = tester.getSemantics(finder).getSemanticsData();
+      // hasFlag is deprecated after 3.32 in favour of flagsCollection, whose shape is still changing; the pinned SDK supports both.
+      // ignore: deprecated_member_use
       bool flag(SemanticsFlag value) => data.hasFlag(value);
       expect(flag(SemanticsFlag.isHeader), role == 'heading', reason: '$name heading');
       expect(flag(SemanticsFlag.isButton), role == 'button', reason: '$name button');
