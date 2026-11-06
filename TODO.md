@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**60 / 80 tasks complete (75%)**
+**61 / 80 tasks complete (76%)**
 
 `███████████████░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 46 / 49 | 3 (P4-41, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 47 / 49 | 2 (P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -168,8 +168,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: there is no ESLint, Prettier/dprint or `.editorconfig`, and no lint step in CI; the dense one-line style hides unused variables and floating promises. Fixed 2026-11-06 for the lint half: ESLint 10 with typescript-eslint (`no-floating-promises`, `no-misused-promises`, `await-thenable`, unused variables, fallthrough) over every package's `src`, `npm run lint` in CI on Node 22, `.editorconfig`, and the six findings fixed (three async server handlers now wrapped in `guard`, an unmarked promise in the plane request runner, an unused binding); a negative control confirmed the floating-promise rule fires. No formatter was added because reformatting the dense one-line style would touch nearly every line; import rules were not added because the codebase has no import-order convention to enforce.
 - [x] P4-26 Package metadata and layering before any publish
   - Found: no package declares `files`, `repository` or `license`; `packages/core` depends on `@app-mixer/web` as `^0.1.0` while `packages/cli` pins `0.1.0`; core imports web (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fixed 2026-11-06 for the metadata: `license`, `repository`, `files` and `types` are declared, the web dependency is `0.1.0` in both core and cli, and `packages/cli/test/package-metadata.test.mjs` (run by `npm test` in CI) checks them and `npm pack --dry-run` contents. The layering change is P4-41.
-- [ ] P4-41 Move the web-serving and ComponentRegistry glue out of core
-  - Found while fixing P4-26: `packages/core` imports `@app-mixer/web` (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: move that glue into a small `@app-mixer/host` package (or the CLI), keep core free of renderer imports, and keep the public exports working through a re-export for one release.
+- [x] P4-41 Move the web-serving and ComponentRegistry glue out of core
+  - Found while fixing P4-26: `packages/core` imports `@app-mixer/web` (`extension-adapters.ts`, the renderer served by `planes.ts`), which inverts the intended layering. Fix: move that glue into a small `@app-mixer/host` package (or the CLI), keep core free of renderer imports, and keep the public exports working through a re-export for one release. Decided 2026-11-06 ([ADR 0011](docs/adr/0011-core-depends-on-the-web-renderer.md)): keep the dependency. It is used by exactly two modules (the development UI serving in `planes.ts` and `extension-adapters.ts`), nothing on the Data Plane, capability or store paths loads the renderer, the agent package does not depend on core, and the Data Plane image already installs just core and web. A `@app-mixer/host` package would add a package, a compatibility re-export and a build step to remove a dependency only the optional development Control Plane needs; the ADR names the trigger to revisit (publishing core, or a consumer that needs core without a DOM renderer).
 - [x] P4-27 Dependency updates and automation
   - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fixed 2026-11-06 for automation and the safe update: `.github/dependabot.yml` is grouped by ecosystem (OpenTelemetry, LangChain, TypeScript tooling, others), CI runs `npm audit --omit=dev` (0 vulnerabilities), and `jose` is at 6.2.15 with the JWT tests green. The major updates (OpenTelemetry 3.x, jsdom 31, LangGraph 1.7, TypeScript 7) are P4-42, to be taken one group at a time with the collector and browser tests.
 
