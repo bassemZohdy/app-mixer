@@ -58,6 +58,8 @@ test('two nodes sharing PostgreSQL schedules fire each occurrence once, survive 
   }
   await Promise.all([...nodes.values()].map(child=>new Promise((resolve,reject)=>{const listener=message=>{if(message.type==='ready'){child.off('message',listener);resolve();}};child.on('message',listener);child.once('exit',code=>reject(Error('node exited '+code)));})));
   await sleep(3500);
+  // Under load one node can win every race for a while; kill node-a only once it has fired, so the kill interrupts a participant.
+  for(let waited=0;!(totals.get('node-a')?.fired>0)&&waited<30000;waited+=250)await sleep(250);
   // Kill node-a without warning; node-b must keep every schedule firing on time and pick up any claim it left.
   const killed=nodes.get('node-a'),gone=once(killed,'exit');killed.kill('SIGKILL');await gone;t.diagnostic('killed node-a after '+JSON.stringify(totals.get('node-a')));
   await sleep(4500);
