@@ -84,6 +84,11 @@ jobs:
       - name: Docker Compose outage smoke test
         if: matrix.node == '22'
         run: node deploy/local/compose-smoke.mjs
+      - name: Prometheus alert rules failure drill
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_PROMETHEUS: docker
+        run: node --test packages/cli/test/alert-rules.test.mjs
       - name: Browser smoke test
         run: |
           node .github/scripts/browser-smoke.mjs

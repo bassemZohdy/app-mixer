@@ -70,6 +70,15 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- Optional `promotionFloorAnchor` for the remote Control Plane connector detects a restored or replaced target database by comparing its retained promotion floor with a host-held floor before fetching.
+- Agent metrics can report due-but-unfired schedules with the oldest one's age, and journaled actions by state, so a stalled schedule or recovery worker is visible.
+- `AgentWorkerHost` runs schedule, recovery and notice workers in one process, rolls back a partial start, drains them in parallel with a bounded stop on SIGTERM or SIGINT, and exposes readiness.
+- Shared TextField fixture (rendering, data-model updates, user input, the long-text variant and removal) checked on the web renderer, the React Native store and the Flutter VM renderer, plus a component-by-adapter parity table in the acceptance checklists.
+- Prometheus alert rules (`deploy/observability/prometheus-alerts.yml`) and a runbook per alert (`docs/runbooks.md`), with a test tying each rule to emitted metrics and a failure drill against a real Prometheus (opt-in locally, run in CI).
+- Collector integration test exporting one OTLP trace across browser, workspace, Data Plane, capabilities and Control Plane to a pinned OpenTelemetry Collector container (opt-in locally, run in CI); the exporter packages are CLI development dependencies only.
+- JSON Schema record forms show a scalar property's `description` as accessible help text in the editor and preview.
+- JSON Schema record forms support `$comment`, `deprecated`, `examples`, object and array `description`, scalar array item `title`, `default` for new records, `readOnly`, `format` `date`/`date-time`/`email` (also checked by the server validator through `RECORD_FORMATS`), and one discriminated `oneOf`/`anyOf` per object.
+- Two-process race test showing schedule workers that share one store fire each due occurrence exactly once.
 - Credential fuzz test for JWT-authenticated capability calls.
 - Hostile HTTP fuzz test for the Control Plane and Data Plane boundaries.
 - Hostile-source fuzz test for the remote Control Plane connector.
