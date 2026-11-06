@@ -7,14 +7,14 @@ export type DataRecord = {id:string; revision:number; value:Record<string,unknow
 export type DataRecordPage = {items:DataRecord[];nextAfter?:string};
 export type MigrationPreview={schemaVersion:number;count:number;digest:string};
 export type DataMigrationEvidence={principalId:string;reference:string;observedAt:number};
-export type DataMigration={fromVersion:number;toVersion:number;digest:string;transform:(value:Record<string,unknown>,id:string)=>Record<string,unknown>;validate:(value:Record<string,unknown>,id:string)=>boolean;evidence?:DataMigrationEvidence};
-export type DataRollback={fromVersion:number;targetVersion:number;digest:string;transform:DataMigration['transform'];validate:DataMigration['validate'];evidence?:DataMigrationEvidence};
+export type DataMigration={fromVersion:number;toVersion:number;digest:string;transform:(value:Record<string,unknown>,id:string)=>Record<string,unknown>;validate:(value:Record<string,unknown>,id:string)=>boolean;evidence?:DataMigrationEvidence|undefined};
+export type DataRollback={fromVersion:number;targetVersion:number;digest:string;transform:DataMigration['transform'];validate:DataMigration['validate'];evidence?:DataMigrationEvidence|undefined};
 export type DataMigrationAuditEvent={fromVersion:number;toVersion:number;targetVersion:number|null;digest:string;recordCount:number;principalId:string;reference:string;observedAt:number};
 export type DataRollbackEvent={fromVersion:number;toVersion:number;targetVersion:number;digest:string;recordCount:number};
 export interface DataProvider {
   readonly supportsSchemaRead?:boolean;
   get(scope:DataScope, collection:string, id:string,expectedSchemaVersion?:number):DataRecord|undefined;
-  list?(scope:DataScope,collection:string,options?:{after?:string;limit?:number;expectedSchemaVersion?:number}):DataRecordPage;
+  list?(scope:DataScope,collection:string,options?:{after?:string|undefined;limit?:number|undefined;expectedSchemaVersion?:number}):DataRecordPage;
   put(scope:DataScope, collection:string, id:string, value:Record<string,unknown>, expectedRevision:number|null,expectedSchemaVersion?:number):DataRecord;
   delete(scope:DataScope, collection:string, id:string, expectedRevision:number,expectedSchemaVersion?:number):void;
 }
@@ -129,12 +129,12 @@ export class SqliteDataProvider implements DataProvider {
     if(!rollback||!Number.isSafeInteger(rollback.fromVersion)||rollback.fromVersion<1||rollback.fromVersion>=Number.MAX_SAFE_INTEGER||!Number.isSafeInteger(rollback.targetVersion)||rollback.targetVersion<0||rollback.targetVersion>=rollback.fromVersion)throw Error('Invalid data rollback');
     const {fromVersion,targetVersion,digest,transform,validate,evidence}=rollback;return this.applyMigration(scope,collection,{fromVersion,toVersion:fromVersion+1,digest,transform,validate,evidence},targetVersion);
   }
-  rollbackHistory(scope:DataScope,collection:string,options:{after?:number;limit?:number}={}):{items:DataRollbackEvent[];nextAfter?:number}{
+  rollbackHistory(scope:DataScope,collection:string,options:{after?:number|undefined;limit?:number|undefined}={}):{items:DataRollbackEvent[];nextAfter?:number}{
     checkKey(scope,collection,'validation');const after=options?.after??0,limit=options?.limit??50;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid rollback history');
     const rows=this.db.prepare('SELECT from_version,to_version,target_version,snapshot_digest,record_count FROM business_schema_rollbacks WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?').all(scope.tenantId,scope.applicationId,collection,after,limit+1),items=rows.slice(0,limit).map(row=>({fromVersion:Number(row.from_version),toVersion:Number(row.to_version),targetVersion:Number(row.target_version),digest:String(row.snapshot_digest),recordCount:Number(row.record_count)}));return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.toVersion}:{})};
   }
   /** Bounded actor-attributed history; the caller must separately authorize access. */
-  migrationAudit(scope:DataScope,collection:string,options:{after?:number;limit?:number}={}):{items:DataMigrationAuditEvent[];nextAfter?:number}{
+  migrationAudit(scope:DataScope,collection:string,options:{after?:number|undefined;limit?:number|undefined}={}):{items:DataMigrationAuditEvent[];nextAfter?:number}{
     checkKey(scope,collection,'validation');const after=options?.after??0,limit=options?.limit??50;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid migration audit');
     const rows=this.db.prepare('SELECT from_version,to_version,target_version,snapshot_digest,record_count,actor_id,evidence,observed_at FROM business_schema_migration_audit WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?').all(scope.tenantId,scope.applicationId,collection,after,limit+1),items=rows.slice(0,limit).map(row=>({fromVersion:Number(row.from_version),toVersion:Number(row.to_version),targetVersion:row.target_version===null?null:Number(row.target_version),digest:String(row.snapshot_digest),recordCount:Number(row.record_count),principalId:String(row.actor_id),reference:String(row.evidence),observedAt:Number(row.observed_at)}));return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.toVersion}:{})};
   }
@@ -166,7 +166,7 @@ export class SqliteDataProvider implements DataProvider {
     if(expectedSchemaVersion===undefined)return read();
     this.db.exec('BEGIN');try{this.requireSchema(scope,collection,expectedSchemaVersion);const result=read();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}
   }
-  list(scope:DataScope,collection:string,options:{after?:string;limit?:number;expectedSchemaVersion?:number}={}):DataRecordPage {
+  list(scope:DataScope,collection:string,options:{after?:string|undefined;limit?:number|undefined;expectedSchemaVersion?:number}={}):DataRecordPage {
     checkKey(scope,collection,'validation');if(!options||typeof options!=='object'||Array.isArray(options)||(options.after!==undefined&&!identifier(options.after))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid data listing');
     const limit=options.limit??50,items:DataRecord[]=[];let bytes=0,more=false;
     // Read small metadata first and copy each BLOB separately; Node 22 SQLite text iteration can corrupt large values.

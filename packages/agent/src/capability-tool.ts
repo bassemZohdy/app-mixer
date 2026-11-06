@@ -2,7 +2,7 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 
 type Scalar = string | number | boolean;
-type CapabilityInput = {path?:Record<string,Scalar>;query?:Record<string,Scalar>};
+type CapabilityInput = {path?:Record<string,Scalar>|undefined;query?:Record<string,Scalar>|undefined};
 /** Host binds a single explicitly authorized capability; identity stays outside model-controlled input. */
 export function createCapabilityTool(options:{name:string; description:string; invoke:(input:CapabilityInput,context?:{toolCallId?:string})=>Promise<unknown>}) {
   if(!/^[A-Za-z0-9_-]{1,64}$/.test(options.name)||typeof options.description!=='string'||!options.description.trim()||typeof options.invoke!=='function') throw Error('Invalid capability tool');

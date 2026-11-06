@@ -6,7 +6,7 @@ import { AppMixerError } from './errors.js';
 
 export type ExtensionInvocationApproval=(context:{tenantId:string;principalId:string},reference:ExtensionReference,operation:ExtensionOperation)=>boolean|Promise<boolean>;
 type CapabilityPolicy = {authorize:(context:{tenantId:string;principalId:string})=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>};
-type DeclaredCapabilityPolicy = CapabilityPolicy & {authorizeExtension?:ExtensionInvocationApproval};
+type DeclaredCapabilityPolicy = CapabilityPolicy & {authorizeExtension?:ExtensionInvocationApproval|undefined};
 
 /** Install a host-selected trusted extension component for an application. */
 export function registerExtensionComponent(target: ComponentRegistry, extensions: ExtensionRegistry, references: ExtensionReference[], name: string, validate?: Parameters<ComponentRegistry['register']>[2]): void {

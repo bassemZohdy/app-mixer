@@ -2,7 +2,7 @@ import {PostgresAgentMemory} from './postgres-agent-memory.js';
 import {SqliteAgentMemory,type AgentMemoryScope,type AgentMemoryActor,type AgentMemoryProvenance} from './agent-memory.js';
 
 type Embedder={modelId:string;dimensions:number;embed:(text:string)=>Promise<number[]>};
-export type SemanticMemorySearchOptions={minSimilarity?:number};
+export type SemanticMemorySearchOptions={minSimilarity?:number|undefined};
 export const validSimilarity=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=-1&&value<=1;
 export type SemanticMemoryRecord={id:string;revision:number;text:string;provenance:AgentMemoryProvenance;expiresAt:number};
 export type SemanticMemoryHit=SemanticMemoryRecord&{score:number};

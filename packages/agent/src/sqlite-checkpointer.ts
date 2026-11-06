@@ -17,7 +17,7 @@ export class SqliteAgentCheckpointer extends BaseCheckpointSaver {
   }catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}
- private fields(config:RunnableConfig,requireId=false):{ns:string;checkpointId?:string}{
+ private fields(config:RunnableConfig,requireId=false):{ns:string;checkpointId?:string|undefined}{
   const c=config?.configurable,thread=c?.thread_id,ns=c?.checkpoint_ns??'',checkpointId=c?.checkpoint_id;
   if(thread!==this.runId||!valid(ns,true)||(checkpointId!==undefined&&!valid(checkpointId))||(requireId&&!valid(checkpointId)))throw Error('Invalid checkpoint scope');
   return {ns,checkpointId:checkpointId as string|undefined};

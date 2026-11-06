@@ -21,7 +21,7 @@ export class SqliteCapabilityAudit {
   this.db.prepare('INSERT INTO capability_audit(recorded_at,invocation_id,operation_id,tenant_id,principal_id,outcome) VALUES (?,?,?,?,?,?)').run(time,event.invocationId,event.operationId,event.tenantId,event.principalId,event.outcome);
  };
  /** Read only a host-authorized tenant, with stable sequence pagination. */
- list(tenantId:string,options:{after?:number;limit?:number}={}):StoredCapabilityAuditEvent[]{
+ list(tenantId:string,options:{after?:number|undefined;limit?:number|undefined}={}):StoredCapabilityAuditEvent[]{
   if(!text(tenantId)||!options||!integer(options.after??0)||!integer(options.limit??100)||(options.limit??100)<1||(options.limit??100)>1000)throw Error('Invalid capability audit query');
   const rows=this.db.prepare('SELECT sequence,recorded_at,invocation_id,operation_id,tenant_id,principal_id,outcome FROM capability_audit WHERE tenant_id=? AND sequence>? ORDER BY sequence LIMIT ?').all(tenantId,options.after??0,options.limit??100);
   return rows.map(row=>({sequence:Number(row.sequence),recordedAt:Number(row.recorded_at),invocationId:String(row.invocation_id),operationId:String(row.operation_id),tenantId:String(row.tenant_id),principalId:String(row.principal_id),outcome:row.outcome as CapabilityAuditEvent['outcome']}));

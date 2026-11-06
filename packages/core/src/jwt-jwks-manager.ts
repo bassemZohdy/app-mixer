@@ -3,7 +3,7 @@ import type {JSONWebKeySet} from 'jose';
 import type {createJwtCapabilityAuthenticator,JwtCapabilityActor} from './jwt-capability-auth.js';
 
 type Authenticator=ReturnType<typeof createJwtCapabilityAuthenticator>;
-export type JwtJwksManagerOptions={authenticator:Authenticator;jwksUrl:string;pollMs:number;maxStaleMs:number;timeoutMs:number;onError:(error:unknown)=>void;allowLoopbackHttp?:boolean;clock?:()=>number};
+export type JwtJwksManagerOptions={authenticator:Authenticator;jwksUrl:string;pollMs:number;maxStaleMs:number;timeoutMs:number;onError:(error:unknown)=>void;allowLoopbackHttp?:boolean|undefined;clock?:(()=>number)|undefined};
 const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
 /** Select only supported public signing keys from a heterogeneous issuer key set. */
 function compatibleKeys(value:unknown):JSONWebKeySet{
@@ -19,7 +19,7 @@ function compatibleKeys(value:unknown):JSONWebKeySet{
 /** Host-configured, bounded key refresh. Use authenticate, not the underlying authenticator. */
 export class JwtJwksManager {
  private readonly auth:Authenticator;private readonly url:string;private readonly pollMs:number;private readonly maxStaleMs:number;private readonly timeoutMs:number;private readonly clock:()=>number;private readonly onError:(error:unknown)=>void;
- private lastSuccess?:number;private lastDocument?:string;private epoch=0;private cancelled=0;private closed=false;private active=false;private pending?:Promise<void>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;private closePromise?:Promise<void>;
+ private lastSuccess?:number|undefined;private lastDocument?:string|undefined;private epoch=0;private cancelled=0;private closed=false;private active=false;private pending?:Promise<void>|undefined;private controller?:AbortController|undefined;private timer?:ReturnType<typeof setTimeout>|undefined;private closePromise?:Promise<void>|undefined;
  constructor(options:JwtJwksManagerOptions){
   if(!options||typeof options.authenticator!=='function'||typeof options.authenticator.replaceKeys!=='function'||typeof options.authenticator.close!=='function'||typeof options.jwksUrl!=='string'||options.jwksUrl.length>2048||!integer(options.pollMs)||options.pollMs<100||options.pollMs>3600000||!integer(options.maxStaleMs)||options.maxStaleMs<options.pollMs||options.maxStaleMs>86400000||!integer(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000||typeof options.onError!=='function'||(options.allowLoopbackHttp!==undefined&&typeof options.allowLoopbackHttp!=='boolean')||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid JWKS manager configuration');
   let url:URL;try{url=new URL(options.jwksUrl);}catch{throw Error('Invalid JWKS manager configuration');}if(url.username||url.password||url.search||url.hash||!(url.protocol==='https:'||(options.allowLoopbackHttp===true&&url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname))))throw Error('Invalid JWKS manager configuration');

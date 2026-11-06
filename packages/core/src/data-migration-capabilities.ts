@@ -5,7 +5,7 @@ type Actor={tenantId:string;principalId:string};
 type Plan={kind:'forward';fromVersion:number;toVersion:number;transform:DataMigration['transform'];validate:DataMigration['validate']}|{kind:'rollback';fromVersion:number;targetVersion:number;transform:DataRollback['transform'];validate:DataRollback['validate']};
 type Base={provider:SqliteDataProvider;scope:DataScope;collection:string;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
 type ApplyOptions=Base&{plan:Plan;authorizeApply:(actor:Actor,input:{digest:string;reference:string})=>boolean|Promise<boolean>;clock?:()=>number};
-type Page={after?:number;limit?:number};
+type Page={after?:number|undefined;limit?:number|undefined};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const query=(input:unknown):Record<string,unknown>|undefined=>object(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&object(input.query)?input.query:undefined;
 const applyInput=(input:unknown):{digest:string;reference:string}|undefined=>{const value=query(input);if(!value||Object.keys(value).length!==2||!Object.hasOwn(value,'digest')||!Object.hasOwn(value,'reference')||typeof value.digest!=='string'||!/^[a-f0-9]{64}$/.test(value.digest)||typeof value.reference!=='string'||!value.reference.trim()||value.reference.length>512||/[\u0000-\u001f\u007f]/.test(value.reference))return;return {digest:value.digest,reference:value.reference};};

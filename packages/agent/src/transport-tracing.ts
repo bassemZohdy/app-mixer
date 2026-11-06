@@ -1,7 +1,7 @@
 import {context,propagation,ROOT_CONTEXT,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 
-export type AgentTransportTracingOptions={tracer:Tracer;trustRemoteParent?:boolean};
+export type AgentTransportTracingOptions={tracer:Tracer;trustRemoteParent?:boolean|undefined};
 export function traceAgent(options:AgentTransportTracingOptions){
  return (req:IncomingMessage,res:ServerResponse,run:()=>void):void=>{
   let started=false;try{

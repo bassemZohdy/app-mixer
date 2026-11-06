@@ -139,7 +139,7 @@ function validateConfiguration(schema:ExtensionConfigSchema, config:unknown):Ext
  * Exact versions only; neither approval nor this check enforces runtime authorization. */
 export function checkExtensionCompatibility(manifests: unknown, host: unknown, requirements: unknown): { compatible: boolean; errors: string[] } {
   if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved']) || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
-  const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string}>();
+  const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string|undefined}>();
   for (const a of host.approved) {
     if (!fields(a, ['id','version','scope','permissions', ...optional(a,['integrity'])]) || (Object.hasOwn(a,'integrity') && (typeof a.integrity !== 'string' || !validIntegrity(a.integrity))) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
     approvals.set(a.id, {version:a.version,scope:a.scope,permissions:a.permissions,integrity:a.integrity as string|undefined});

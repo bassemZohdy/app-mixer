@@ -1,16 +1,16 @@
 import {SqliteAgentRuns,type AgentRunScope} from './durable-runs.js';
 import {DurableAgentWorker} from './durable-worker.js';
 
-type Options={runs:SqliteAgentRuns;worker:DurableAgentWorker;scope:AgentRunScope;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void};
+type Options={runs:SqliteAgentRuns;worker:DurableAgentWorker;scope:AgentRunScope;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string|undefined)=>void};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
 /** Explicitly started local dispatcher; run policy and side effects remain with the worker. */
 export class DurableAgentDispatcher {
- private readonly scope:AgentRunScope;private active=false;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;private cursor?:string;
+ private readonly scope:AgentRunScope;private active=false;private pending?:Promise<number>|undefined;private timer?:ReturnType<typeof setTimeout>|undefined;private cursor?:string|undefined;
  constructor(private readonly options:Options){
   if(!options||!(options.runs instanceof SqliteAgentRuns)||!(options.worker instanceof DurableAgentWorker)||!options.worker.usesRegistry(options.runs)||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||!Number.isSafeInteger(options.maxPerPass)||options.maxPerPass<1||options.maxPerPass>100||!Number.isSafeInteger(options.pollMs)||options.pollMs<100||options.pollMs>3600000||typeof options.onError!=='function')throw Error('Invalid agent dispatcher');
   this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};
  }
- private report(error:unknown,runId?:string):void{try{this.options.onError(error,runId);}catch{}}
+ private report(error:unknown,runId?:string|undefined):void{try{this.options.onError(error,runId);}catch{}}
  private async pass(keepGoing:()=>boolean):Promise<number>{
   const page=this.options.runs.queuedPage(this.scope,{after:this.cursor,limit:this.options.maxPerPass});let processed=0;
   for(const runId of page.runIds){if(!keepGoing())return processed;try{await this.options.worker.runOnce(this.scope,runId);processed++;}catch(error){this.report(error,runId);}finally{if(keepGoing())this.cursor=runId;}}

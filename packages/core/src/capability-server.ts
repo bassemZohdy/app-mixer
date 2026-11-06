@@ -7,7 +7,7 @@ import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 
 type Actor = {tenantId:string; principalId:string};
 type Authenticate = (request:IncomingMessage) => Actor | undefined | Promise<Actor | undefined>;
-type AuditFailure = (event:{reason:'unauthenticated';remoteAddress?:string}) => void | Promise<void>;
+type AuditFailure = (event:{reason:'unauthenticated';remoteAddress?:string|undefined}) => void | Promise<void>;
 export type CapabilityServerTracingOptions=HttpServerTracingOptions;
 export type CapabilityHttpsOptions={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
 function reply(res:ServerResponse,status:number,value:unknown):void {

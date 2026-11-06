@@ -23,7 +23,7 @@ export function createOpenAIModel(config: OpenAIModelConfig): StreamingModel {
       const input: BaseMessage[] = [];
       if (config.systemPrompt) input.push(new SystemMessage(config.systemPrompt));
       for (const message of messages) input.push(message.role === 'user' ? new HumanMessage(message.content) : new AIMessage(message.content));
-      const chunks = await model.stream(input, {signal});
+      const chunks = await model.stream(input, signal?{signal}:{});
       for await (const chunk of chunks) {
         if (typeof chunk.content === 'string') yield chunk.content;
         else for (const part of chunk.content) if (part.type === 'text' && typeof part.text === 'string') yield part.text;
@@ -63,7 +63,7 @@ export class LangGraphAGUIAdapter {
     yield {type:EventType.RUN_STARTED,threadId,runId};
     let started = false;
     try {
-      const stream = this.options.direct ? this.model.stream(input.messages, options.signal) : await graph.stream({messages:input.messages}, {streamMode:'custom',signal:options.signal});
+      const stream = this.options.direct ? this.model.stream(input.messages, options.signal) : await graph.stream({messages:input.messages}, {streamMode:'custom',...(options.signal?{signal:options.signal}:{})});
       for await (const delta of stream) {
         if (typeof delta !== 'string') throw Error('Invalid graph chunk');
         if (!started) { started = true; yield {type:EventType.TEXT_MESSAGE_START,messageId,role:'assistant'}; }

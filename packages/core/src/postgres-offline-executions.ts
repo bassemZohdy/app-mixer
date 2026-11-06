@@ -20,7 +20,7 @@ export class PostgresOfflineExecutions {
   * Operator scan across every principal of a tenant and application, optionally by status (`uncertain` and `running` are the stranded ones), in key order with keyset
   * pagination: pass `next` as `after`. Results carry no payloads or results; `attemptToken` is the fence `markUncertain` needs. The host authorizes the operator.
   */
- async list(scope:DataScope,options:{status?:SharedOfflineExecution['status'];after?:string;limit?:number}={}):Promise<{items:{principalId:string;key:string;operationId:string;status:SharedOfflineExecution['status'];attemptToken:string}[];next?:string}>{
+ async list(scope:DataScope,options:{status?:SharedOfflineExecution['status'];after?:string|undefined;limit?:number|undefined}={}):Promise<{items:{principalId:string;key:string;operationId:string;status:SharedOfflineExecution['status'];attemptToken:string}[];next?:string}>{
   checkKey(scope,'principal','list');const status=options?.status,after=options?.after??'',limit=options?.limit??50;
   if(!options||(status!==undefined&&!['ready','running','uncertain','succeeded'].includes(status))||(after!==''&&!uuid(after))||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid shared offline query');
   const response=await this.query(`SELECT idempotency_key,principal_id,operation_id,status,attempt_token FROM app_mixer_offline_executions WHERE tenant_id=$1 AND application_id=$2 AND idempotency_key>$3${status!==undefined?' AND status=$5':''} ORDER BY idempotency_key LIMIT $4`,[scope.tenantId,scope.applicationId,after||'00000000-0000-0000-0000-000000000000',limit+1,...(status!==undefined?[status]:[])]);

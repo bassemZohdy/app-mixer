@@ -3,7 +3,7 @@ export const APP_MIXER_CATALOG='https://raw.githubusercontent.com/bassemZohdy/ap
 export const BASIC_CATALOG='https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj=Record<string,unknown>;
 export type NativeNode={id:string;kind:string;text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;extensionProps?:Record<string,unknown>;children:NativeNode[]};
-export type NativeSurface={id:string;revision:number;root?:NativeNode};
+export type NativeSurface={id:string;revision:number;root?:NativeNode|undefined};
 export type ActionMessage={version:'v0.9.1';action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string,unknown>}};
 const obj=(value:unknown):value is Obj=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const id=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=256;

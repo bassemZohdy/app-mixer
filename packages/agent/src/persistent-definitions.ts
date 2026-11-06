@@ -61,7 +61,7 @@ export class SqliteAgentDefinitions {
   const row=version===undefined?this.db.prepare('SELECT version,manifest FROM agent_definitions WHERE tenant_id=? AND agent_id=? ORDER BY version DESC LIMIT 1').get(tenantId,agentId):this.db.prepare('SELECT version,manifest FROM agent_definitions WHERE tenant_id=? AND agent_id=? AND version=?').get(tenantId,agentId,version);
   return row?this.parse(row,tenantId,agentId):undefined;
  }
- list(tenantId:string,options:{after?:string;limit?:number}={}):AgentDefinitionVersion[]{
+ list(tenantId:string,options:{after?:string|undefined;limit?:number|undefined}={}):AgentDefinitionVersion[]{
   key(tenantId);if(!options||typeof options!=='object'||(options.after!==undefined&&!identifier.safeParse(options.after).success)||!Number.isSafeInteger(options.limit??100)||(options.limit??100)<1||(options.limit??100)>100)throw Error('Invalid agent listing');
   const rows=this.db.prepare(`SELECT a.agent_id,a.version,a.manifest FROM agent_definitions a WHERE a.tenant_id=? AND a.agent_id>? AND a.version=(SELECT MAX(b.version) FROM agent_definitions b WHERE b.tenant_id=a.tenant_id AND b.agent_id=a.agent_id) ORDER BY a.agent_id LIMIT ?`).all(tenantId,options.after??'',options.limit??100);
   return rows.map(row=>this.parse(row,tenantId,String(row.agent_id)));

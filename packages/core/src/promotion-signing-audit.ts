@@ -43,7 +43,7 @@ export class SqlitePromotionSigningAudit {
    this.db.exec('COMMIT');return entry;
   }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
  }
- list(options:{after?:number;limit?:number}={}):PromotionSigningAuditEntry[]{
+ list(options:{after?:number|undefined;limit?:number|undefined}={}):PromotionSigningAuditEntry[]{
   const after=options?.after??0,limit=options?.limit??100;if(!integer(after)||!integer(limit)||limit<1||limit>1000)throw Error('Invalid promotion signing audit query');
   return (this.db.prepare('SELECT * FROM promotion_signing_audit WHERE sequence>? ORDER BY sequence LIMIT ?').all(after,limit) as Record<string,unknown>[]).map(row);
  }

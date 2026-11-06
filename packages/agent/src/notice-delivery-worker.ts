@@ -5,7 +5,7 @@ const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._
 
 /** Explicit host-operated delivery of already queued notices. */
 export class AgentNoticeDeliveryWorker {
- private readonly outbox:SqliteAgentNoticeDelivery;private readonly actor:AgentNoticeDeliveryActor;private readonly send:Options['send'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly onError:Options['onError'];private cursor?:number;private active=false;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;
+ private readonly outbox:SqliteAgentNoticeDelivery;private readonly actor:AgentNoticeDeliveryActor;private readonly send:Options['send'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly onError:Options['onError'];private cursor?:number|undefined;private active=false;private pending?:Promise<number>|undefined;private timer?:ReturnType<typeof setTimeout>|undefined;
  constructor(options:Options){
   if(!options||!(options.outbox instanceof SqliteAgentNoticeDelivery)||!options.actor||!id(options.actor.tenantId)||!id(options.actor.principalId)||typeof options.send!=='function'||!Number.isSafeInteger(options.maxPerPass)||options.maxPerPass<1||options.maxPerPass>100||!Number.isSafeInteger(options.pollMs)||options.pollMs<100||options.pollMs>3600000||typeof options.onError!=='function')throw Error('Invalid notice delivery worker');
   this.outbox=options.outbox;this.actor={tenantId:options.actor.tenantId,principalId:options.actor.principalId};this.send=options.send;this.maxPerPass=options.maxPerPass;this.pollMs=options.pollMs;this.onError=options.onError;

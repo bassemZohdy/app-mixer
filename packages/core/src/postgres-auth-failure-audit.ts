@@ -2,7 +2,7 @@ import {createHmac} from 'node:crypto';
 import {isIP} from 'node:net';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
 
-export type AuthenticationFailureEvent={reason:'unauthenticated';remoteAddress?:string};
+export type AuthenticationFailureEvent={reason:'unauthenticated';remoteAddress?:string|undefined};
 export type StoredAuthenticationFailure={sequence:number;recordedAt:number;reason:'unauthenticated';addressHash:string|null};
 type Options={query:PostgresJwtRevocationQuery;clock?:()=>number;addressKey?:Uint8Array};
 const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
@@ -23,7 +23,7 @@ export class PostgresAuthenticationFailureAudit {
   if(!Array.isArray(result.rows)||result.rows.length>options.limit||result.rows.some(row=>!integer(Number(row.sequence))||Number(row.sequence)<1||Number(row.sequence)>options.through))throw Error('Invalid authentication audit retention result');return result.rows.length;
  }
  /** Host must separately authorize global security-audit access. */
- async list(options:{after?:number;limit?:number}={}):Promise<StoredAuthenticationFailure[]>{
+ async list(options:{after?:number|undefined;limit?:number|undefined}={}):Promise<StoredAuthenticationFailure[]>{
   if(!options||!integer(options.after??0)||!integer(options.limit??100)||(options.limit??100)<1||(options.limit??100)>1000)throw Error('Invalid authentication audit query');const after=options.after??0,limit=options.limit??100,result=await this.query('SELECT sequence,recorded_at,reason,address_hash FROM app_mixer_auth_failure_audit WHERE sequence>$1 ORDER BY sequence LIMIT $2',[after,limit]);if(!Array.isArray(result.rows)||result.rows.length>limit)throw Error('Invalid authentication audit result');let previous=after;return result.rows.map(row=>{const sequence=Number(row.sequence),recordedAt=Number(row.recorded_at);if(!integer(sequence)||sequence<=previous||!integer(recordedAt)||row.reason!=='unauthenticated'||(row.address_hash!==null&&(typeof row.address_hash!=='string'||!/^[a-f0-9]{64}$/.test(row.address_hash))))throw Error('Invalid authentication audit result');previous=sequence;return {sequence,recordedAt,reason:'unauthenticated',addressHash:row.address_hash as string|null};});
  }
 }

@@ -64,7 +64,7 @@ export class SqliteOfflineQueue {
    * Operator listing across every principal of a tenant and application, optionally by status (for example `uncertain`, `conflict` or `running`),
    * oldest first with keyset pagination: pass `next` from the previous page as `after`. The host authorizes the operator; payloads are returned as by `get`.
    */
-  listAll(scope:DataScope,options:{status?:OfflineStatus;after?:number;limit?:number}={}):{items:(OfflineOperation&{principalId:string})[];next?:number} {
+  listAll(scope:DataScope,options:{status?:OfflineStatus|undefined;after?:number|undefined;limit?:number|undefined}={}):{items:(OfflineOperation&{principalId:string})[];next?:number} {
     checkKey(scope,'offline','list');const status=options?.status,after=options?.after??0,limit=options?.limit??50;
     if(!options||(status!==undefined&&!['pending','running','conflict','uncertain','exhausted','succeeded','discarded'].includes(status))||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid offline operation query');
     const rows=this.db.prepare(`SELECT rowid AS position,* FROM offline_operations WHERE tenant_id=? AND application_id=? AND rowid>?${status!==undefined?' AND status=?':''} ORDER BY rowid LIMIT ?`).all(...[scope.tenantId,scope.applicationId,after,...(status!==undefined?[status]:[]),limit+1] as (string|number)[]);

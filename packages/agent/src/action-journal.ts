@@ -57,12 +57,12 @@ export class SqliteAgentActionJournal {
  private metadata(row:Record<string,unknown>):AgentAction{return {actionId:String(row.action_id),operationId:String(row.operation_id),idempotencyKey:String(row.idempotency_key),status:row.status as ActionStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts)};}
  get(actionId:string):AgentAction|undefined{if(!valid(actionId))throw Error('Invalid action');const row=this.row(actionId);return row?this.metadata(row):undefined;}
  /** Host-authorized, scope-bound action discovery; results contain no input or outcome payloads. */
- list(options:{after?:string;limit?:number;status?:ActionStatus}={}):AgentActionPage{
+ list(options:{after?:string|undefined;limit?:number|undefined;status?:ActionStatus|undefined}={}):AgentActionPage{
   if(!options||typeof options!=='object'||(options.after!==undefined&&!valid(options.after))||!Number.isSafeInteger(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100||(options.status!==undefined&&!['ready','dispatching','uncertain','succeeded','failed'].includes(options.status)))throw Error('Invalid action listing');
   const limit=options.limit??50,rows=this.db.prepare('SELECT action_id,operation_id,idempotency_key,status,attempts,max_attempts FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id>? AND (? IS NULL OR status=?) ORDER BY action_id LIMIT ?').all(...this.args(),options.after??'',options.status??null,options.status??null,limit+1),hasMore=rows.length>limit,actions=rows.slice(0,limit).map(row=>this.metadata(row));return {actions,...(hasMore?{next:actions[actions.length-1]!.actionId}:{})};
  }
  /** One bounded, sequential pass; the host authorizes and schedules recovery. */
- async reconcilePending(verify:(request:ActionVerificationRequest)=>Promise<ActionVerification>,options:{after?:string;limit?:number}={}):Promise<ActionVerificationPass>{
+ async reconcilePending(verify:(request:ActionVerificationRequest)=>Promise<ActionVerification>,options:{after?:string|undefined;limit?:number|undefined}={}):Promise<ActionVerificationPass>{
   if(typeof verify!=='function'||!options||typeof options!=='object')throw Error('Invalid action verification pass');
   this.transaction(()=>this.requireUncertainRun(),false);const page=this.list({...options,status:'uncertain'}),results:ActionVerificationPass['results']=[];
   for(const action of page.actions){try{results.push({actionId:action.actionId,outcome:await this.reconcileWith(action.actionId,verify)});}catch(error){results.push({actionId:action.actionId,error});}}
@@ -112,7 +112,7 @@ export class SqliteAgentActionJournal {
   },false);
  }
  /** Host must authorize access to the whole run and protect evidence references. */
- listReconciliations(options:{after?:number;limit?:number}={}):ActionReconciliationEvent[]{
+ listReconciliations(options:{after?:number|undefined;limit?:number|undefined}={}):ActionReconciliationEvent[]{
   const after=options?.after??0,limit=options?.limit??100;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid action reconciliation listing');
   return this.db.prepare('SELECT id,action_id,principal_id,reference,outcome,method,recorded_at FROM agent_action_reconciliations WHERE tenant_id=? AND agent_id=? AND run_id=? AND id>? ORDER BY id LIMIT ?').all(...this.args(),after,limit).map(row=>({id:Number(row.id),actionId:String(row.action_id),principalId:String(row.principal_id),reference:String(row.reference),outcome:row.outcome as ActionReconciliationEvent['outcome'],method:row.method as ActionReconciliationEvent['method'],recordedAt:Number(row.recorded_at)}));
  }

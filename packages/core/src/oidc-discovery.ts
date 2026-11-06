@@ -1,7 +1,7 @@
 import {JwtJwksManager,type JwtJwksManagerOptions} from './jwt-jwks-manager.js';
 
-export type OidcDiscoveryOptions={issuer:string;timeoutMs:number;allowedJwksOrigins?:string[];allowLoopbackHttp?:boolean};
-export type OidcJwtJwksManagerOptions=Omit<JwtJwksManagerOptions,'jwksUrl'> & {issuer:string;allowedJwksOrigins?:string[]};
+export type OidcDiscoveryOptions={issuer:string;timeoutMs:number;allowedJwksOrigins?:string[]|undefined;allowLoopbackHttp?:boolean|undefined};
+export type OidcJwtJwksManagerOptions=Omit<JwtJwksManagerOptions,'jwksUrl'> & {issuer:string;allowedJwksOrigins?:string[]|undefined};
 
 function checkedUrl(value:unknown,allowLoopbackHttp:boolean):URL{
  if(typeof value!=='string'||!value||value.length>2048||/[\x00-\x20\x7f]/.test(value))throw Error('Invalid OIDC discovery configuration');

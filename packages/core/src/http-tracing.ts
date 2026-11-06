@@ -1,8 +1,8 @@
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import {context,propagation,ROOT_CONTEXT,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
 
-export type HttpServerTracingOptions={tracer:Tracer;trustRemoteParent?:boolean};
-export function traceHttp(options:HttpServerTracingOptions,route:(req:IncomingMessage)=>{method:string;path?:string}){
+export type HttpServerTracingOptions={tracer:Tracer;trustRemoteParent?:boolean|undefined};
+export function traceHttp(options:HttpServerTracingOptions,route:(req:IncomingMessage)=>{method:string;path?:string|undefined}){
  return (req:IncomingMessage,res:ServerResponse,run:()=>void):void=>{
   let started=false;try{
    let parent=ROOT_CONTEXT;

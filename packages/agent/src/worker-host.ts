@@ -10,7 +10,7 @@ const NAME=/^[a-z][a-z0-9-]{0,62}$/;
 /** Runs a fixed set of workers in one process and drains them together on shutdown. The host decides when to exit. */
 export class AgentWorkerHost {
  private readonly workers:[string,AgentHostedWorker][];private readonly stopTimeoutMs:number;private readonly onError:((name:string,error:unknown)=>void)|undefined;
- private current:AgentWorkerHostState='idle';private started:[string,AgentHostedWorker][]=[];private stopping?:Promise<AgentWorkerHostStopResult>;
+ private current:AgentWorkerHostState='idle';private started:[string,AgentHostedWorker][]=[];private stopping?:Promise<AgentWorkerHostStopResult>|undefined;
  constructor(options:Options){
   if(!options||typeof options!=='object'||!options.workers||typeof options.workers!=='object'||Array.isArray(options.workers)||!Number.isSafeInteger(options.stopTimeoutMs)||options.stopTimeoutMs<100||options.stopTimeoutMs>600000||(options.onError!==undefined&&typeof options.onError!=='function'))throw Error('Invalid worker host');
   const entries=Object.entries(options.workers);

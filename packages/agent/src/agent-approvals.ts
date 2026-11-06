@@ -47,7 +47,7 @@ export class SqliteAgentApprovals {
   });
  }
  async get(actor:Actor,actionId:string):Promise<AgentApproval|undefined>{const who=this.actor(actor);if(!valid(actionId))throw Error('Invalid approval');const row=this.row(actionId);await this.permit(who,'read',actionId,row?String(row.operation_id):'unknown');const current=this.row(actionId);return current?this.convert(current,this.now()):undefined;}
- async list(actor:Actor,options:{after?:string;limit?:number}={}):Promise<{items:AgentApproval[];nextAfter?:string}>{
+ async list(actor:Actor,options:{after?:string|undefined;limit?:number|undefined}={}):Promise<{items:AgentApproval[];nextAfter?:string}>{
   const who=this.actor(actor);if(!options||(options.after!==undefined&&!valid(options.after))||!Number.isSafeInteger(options.limit??100)||(options.limit??100)<1||(options.limit??100)>100)throw Error('Invalid approval listing');await this.permit(who,'list','all','all');const rows=this.db.prepare('SELECT action_id,operation_id FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id>? ORDER BY action_id').all(...this.args(),options.after??''),items:AgentApproval[]=[];const limit=options.limit??100;
   for(const row of rows){const actionId=String(row.action_id),operationId=String(row.operation_id);if(await this.authorize({...who},'read',{...this.scope,runId:this.runId,actionId,operationId})!==true)continue;const current=this.row(actionId);if(!current)continue;if(items.length===limit)return {items,nextAfter:items.at(-1)!.actionId};items.push(this.convert(current,this.now()));}return {items};
  }

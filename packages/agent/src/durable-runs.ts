@@ -58,19 +58,19 @@ export class SqliteAgentRuns {
   const approvalWait=this.db.prepare('SELECT action_id FROM agent_approval_waits WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,runId);
   return {approvalWait:approvalWait?{actionId:String(approvalWait.action_id)}:null,delegationWait:wait?{grantId:String(wait.grant_id),revision:Number(wait.grant_revision),principalId:String(wait.principal_id)}:null,tenantId:scope.tenantId,agentId:scope.agentId,runId,definitionVersion:Number(row.definition_version),revision:Number(row.revision),status:row.status as RunStatus,attempts:Number(row.attempts),maxAttempts:Number(row.max_attempts),deadline:Number(row.deadline),leaseOwner:row.lease_owner as string|null,leaseToken:row.lease_token as string|null,leaseUntil:row.lease_until===null?null:Number(row.lease_until),archived:row.archived===1};
  }
- list(scope:RunScope,options:{after?:string;limit?:number;includeArchived?:boolean}={}):DurableAgentRun[] {
+ list(scope:RunScope,options:{after?:string|undefined;limit?:number|undefined;includeArchived?:boolean}={}):DurableAgentRun[] {
   scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??100)||(options.limit??100)<1||(options.limit??100)>100||(options.includeArchived!==undefined&&typeof options.includeArchived!=='boolean'))throw Error('Invalid run listing');
   const rows=this.db.prepare('SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id>? AND (?=1 OR archived=0) ORDER BY run_id LIMIT ?').all(scope.tenantId,scope.agentId,options.after??'',options.includeArchived?1:0,options.limit??100);
   return rows.map(row=>this.get(scope,String(row.run_id))!);
  }
  /** Return a bounded page of queued run IDs; host authorization remains required. */
- queuedPage(scope:RunScope,options:{after?:string;limit?:number}={}):{runIds:string[];next?:string}{
+ queuedPage(scope:RunScope,options:{after?:string|undefined;limit?:number|undefined}={}):{runIds:string[];next?:string}{
   scopeKey(scope,'validation');if(!options||typeof options!=='object'||(options.after!==undefined&&!id(options.after))||!number(options.limit??50)||(options.limit??50)<1||(options.limit??50)>100)throw Error('Invalid queued run query');
   // Oldest first: the cursor is the last run ID of the previous page, resolved to its creation sequence (an unknown cursor starts from the beginning).
   const limit=options.limit??50,after=options.after===undefined?undefined:this.db.prepare('SELECT created_seq FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(scope.tenantId,scope.agentId,options.after),cursorSeq=after?Number(after.created_seq):0,cursorId=after?options.after!:'',rows=this.db.prepare("SELECT run_id FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status='queued' AND archived=0 AND (created_seq>? OR (created_seq=? AND run_id>?)) ORDER BY created_seq,run_id LIMIT ?").all(scope.tenantId,scope.agentId,cursorSeq,cursorSeq,cursorId,limit+1),runIds=rows.slice(0,limit).map(row=>String(row.run_id));return {runIds,...(rows.length>limit?{next:runIds[runIds.length-1]!}:{})};
  }
  /** Scan deadline-expired queued and paused runs in stable keyset order. */
- expiredPage(scope:RunScope,now:number,options:{after?:{deadline:number;runId:string};limit?:number}={}):{items:DurableAgentRun[];next?:{deadline:number;runId:string}}{
+ expiredPage(scope:RunScope,now:number,options:{after?:{deadline:number;runId:string}|undefined;limit?:number|undefined}={}):{items:DurableAgentRun[];next?:{deadline:number;runId:string}}{
   scopeKey(scope,'validation');const limit=options?.limit??50,after=options?.after;if(!number(now)||!options||!number(limit)||limit<1||limit>100||(after!==undefined&&(!after||!number(after.deadline)||!id(after.runId))))throw Error('Invalid expired run query');
   const rows=this.db.prepare("SELECT run_id,deadline FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('queued','paused') AND deadline<=? AND (deadline>? OR (deadline=? AND run_id>?)) ORDER BY deadline,run_id LIMIT ?").all(scope.tenantId,scope.agentId,now,after?.deadline??0,after?.deadline??0,after?.runId??'',limit+1);const items=rows.slice(0,limit).map(row=>this.get(scope,String(row.run_id))!),last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{deadline:last.deadline,runId:last.runId}}:{})};
  }

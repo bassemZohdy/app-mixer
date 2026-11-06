@@ -10,10 +10,10 @@ export interface ToolModel {
   invoke(messages:BaseMessage[], options?:{signal?:AbortSignal}):Promise<BaseMessage>;
 }
 export interface LimitedToolModel extends ToolModel {
-  invokeLimited(messages:BaseMessage[], options:{signal?:AbortSignal;maxTotalTokens:number;callId:string}):Promise<{message:BaseMessage;usedTokens:number}>;
+  invokeLimited(messages:BaseMessage[], options:{signal?:AbortSignal|undefined;maxTotalTokens:number;callId:string}):Promise<{message:BaseMessage;usedTokens:number}>;
 }
 export interface CostLimitedToolModel extends ToolModel {
-  invokeLimitedCost(messages:BaseMessage[], options:{signal?:AbortSignal;maxTotalTokens:number;maxCostMicros:number;currency:string;callId:string}):Promise<{message:BaseMessage;usedTokens:number;usedCostMicros:number}>;
+  invokeLimitedCost(messages:BaseMessage[], options:{signal?:AbortSignal|undefined;maxTotalTokens:number;maxCostMicros:number;currency:string;callId:string}):Promise<{message:BaseMessage;usedTokens:number;usedCostMicros:number}>;
 }
 const State=Annotation.Root({
   messages:Annotation<BaseMessage[],BaseMessage[]>({reducer:(previous,next)=>previous.concat(next),default:()=>[]}),
@@ -23,10 +23,10 @@ const State=Annotation.Root({
 export function createOpenAIToolModel(config:OpenAIModelConfig, tools:CapabilityTool[]):ToolModel {
   if(!config.model||!config.apiKey) throw Error('Model and API key are required');
   const model=new ChatOpenAI({model:config.model,apiKey:config.apiKey,...(config.baseURL?{configuration:{baseURL:config.baseURL}}:{})}).bindTools(tools);
-  return {invoke:async(messages,options)=>model.invoke(config.systemPrompt?[new SystemMessage(config.systemPrompt),...messages]:messages,{signal:options?.signal})};
+  return {invoke:async(messages,options)=>model.invoke(config.systemPrompt?[new SystemMessage(config.systemPrompt),...messages]:messages,options?.signal?{signal:options.signal}:{})};
 }
 /** Runs a bounded LangGraph model/tool loop, yielding only the final text response. */
-export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], options:{systemPrompt?:string;maxTurns?:number;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean}}={}):StreamingModel {
+export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], options:{systemPrompt?:string|undefined;maxTurns?:number|undefined;checkpoint?:{saver:BaseCheckpointSaver;threadId:string;resume:boolean}|undefined}={}):StreamingModel {
   const maxTurns=options.maxTurns??4,checkpoint=options.checkpoint;
   if(checkpoint&&(!checkpoint.saver||typeof checkpoint.saver.getTuple!=='function'||typeof checkpoint.threadId!=='string'||!checkpoint.threadId||typeof checkpoint.resume!=='boolean'))throw Error('Invalid checkpoint configuration');
   if(!Number.isSafeInteger(maxTurns)||maxTurns<1||maxTurns>10||tools.length>50) throw Error('Invalid tool configuration');
@@ -63,7 +63,7 @@ export function createToolCallingModel(model:ToolModel, tools:CapabilityTool[], 
         .addEdge(START,'model')
         .addConditionalEdges('model',state=>{const last=state.messages.at(-1);return last&&isAIMessage(last)&&(last.tool_calls?.length??0)>0?'tools':END;},['tools',END])
         .addEdge('tools','model').compile(checkpoint?{checkpointer:checkpoint.saver}:{});
-      const config=checkpoint?{signal,configurable:{thread_id:checkpoint.threadId}}:{signal};
+      const config={...(signal?{signal}:{}),...(checkpoint?{configurable:{thread_id:checkpoint.threadId}}:{})};
       if(checkpoint){const existing=await checkpoint.saver.getTuple(config);if(checkpoint.resume&&!existing)throw Error('Checkpoint unavailable');if(!checkpoint.resume&&existing)throw Error('Checkpoint already exists');}
       const result=await graph.invoke(checkpoint?.resume?null:{messages:initial,turns:0},config);
       const last=result.messages.at(-1);

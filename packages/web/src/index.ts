@@ -335,7 +335,7 @@ export class ClientPublishedCache {
   private key:string;
   private generation=0;
   private refreshSequence=0;
-  private entry?:{etag:string;publication:ClientPublication};
+  private entry?:{etag:string|undefined;publication:ClientPublication}|undefined;
   constructor(scope:ClientCacheScope,private readonly loader:PublicationLoader,private readonly compatible:(definition:unknown)=>boolean){
     this.key=scopeKey(scope);this.scope=structuredClone(scope);
     if(typeof loader!=='function'||typeof compatible!=='function')throw Error('Loader and compatibility check are required');

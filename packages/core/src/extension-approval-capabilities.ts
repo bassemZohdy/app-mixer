@@ -4,7 +4,7 @@ import {isValidExtensionReferences,isValidExtensionOperations,type ExtensionRefe
 
 type Actor={tenantId:string;principalId:string};
 type Decision={allowed:boolean;expiresAt:number;expectedRevision:number};
-type Page={after?:number;limit?:number};
+type Page={after?:number|undefined;limit?:number|undefined};
 type Base={store:PostgresExtensionApprovals;scope:ExtensionApprovalScope;reference:ExtensionReference;operation:ExtensionOperation;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
 type DecisionOptions=Base&{authorizeDecision:(actor:Actor,decision:Decision)=>boolean|Promise<boolean>};
 type ReadOptions=Base;

@@ -92,12 +92,12 @@ export class SqliteAgentSchedules {
   const rows=this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit);return rows.map(row=>this.parse(row));
  }
  /** Bounded keyset scan; callers must restart a scan to revisit changed schedules. */
- duePage(scope:AgentRunScope,now:number,limit=100,after?:AgentScheduleCursor):AgentSchedulePage{
+ duePage(scope:AgentRunScope,now:number,limit=100,after?:AgentScheduleCursor|undefined):AgentSchedulePage{
   this.check(scope,'validation');if(!integer(now)||!integer(limit)||limit<1||limit>100||(after!==undefined&&(!after||!integer(after.nextAt)||!id(after.scheduleId))))throw Error('Invalid schedule query');
   const rows=after===undefined?this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit+1):this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? AND (next_at>? OR (next_at=? AND schedule_id>?)) ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,after.nextAt,after.nextAt,after.scheduleId,limit+1);
   const items=rows.slice(0,limit).map(row=>this.parse(row)),last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{nextAt:last.nextAt,scheduleId:last.scheduleId}}:{})};
  }
- save(scope:AgentRunScope,scheduleId:string,config:ScheduleConfig,expectedRevision:number,now=Date.now(),actorId?:string):AgentSchedule{
+ save(scope:AgentRunScope,scheduleId:string,config:ScheduleConfig,expectedRevision:number,now=Date.now(),actorId?:string|undefined):AgentSchedule{
   this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId)))throw Error('Invalid schedule');const safe=checkConfig(config),nextAt=next(safe.rule,now);
   this.db.exec('BEGIN IMMEDIATE');try{const old=this.get(scope,scheduleId);if((old?.revision??0)!==expectedRevision)throw Error('Schedule revision conflict');const revision=expectedRevision+1,generation=(old?.generation??0)+1;if(!Number.isSafeInteger(generation))throw Error('Invalid schedule');
    this.db.prepare('INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config').run(scope.tenantId,scope.agentId,scheduleId,revision,generation,nextAt,safe.enabled?1:0,JSON.stringify(safe));this.db.prepare('INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?)').run(scope.tenantId,scope.agentId,scheduleId,old?'updated':'created',revision,generation,nextAt,JSON.stringify(safe),actorId??null,now);this.db.exec('COMMIT');return this.get(scope,scheduleId)!;
@@ -108,7 +108,7 @@ export class SqliteAgentSchedules {
   const sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${generation}:t${scheduledAt}`;
   const row=this.db.prepare('SELECT run_id FROM agent_trigger_inbox WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId);return row?String(row.run_id):undefined;
  }
- fire(scope:AgentRunScope,scheduleId:string,expectedRevision:number,policy:FireOptions,now=Date.now(),actorId?:string):{runId:string;scheduledAt:number}{
+ fire(scope:AgentRunScope,scheduleId:string,expectedRevision:number,policy:FireOptions,now=Date.now(),actorId?:string|undefined):{runId:string;scheduledAt:number}{
   this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId))||!policy||!integer(policy.definitionVersion)||policy.definitionVersion<1||!integer(policy.maxAttempts)||policy.maxAttempts<1||policy.maxAttempts>100||!integer(policy.runTimeoutMs)||policy.runTimeoutMs<1000||policy.runTimeoutMs>86400000||!integer(policy.maxPending)||policy.maxPending<1||policy.maxPending>10000||!Number.isSafeInteger(now+policy.runTimeoutMs))throw Error('Invalid schedule fire');
   this.db.exec('BEGIN IMMEDIATE');try{
    const schedule=this.get(scope,scheduleId);if(!schedule||schedule.revision!==expectedRevision)throw Error('Schedule revision conflict');if(!schedule.config.enabled||schedule.nextAt>now)throw Error('Schedule not due');

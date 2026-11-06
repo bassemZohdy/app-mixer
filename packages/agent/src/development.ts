@@ -10,7 +10,7 @@ export function createProposalClient(endpoint:string, token:string): ProposalCli
   try { url=new URL(endpoint); } catch { throw Error('Invalid proposal endpoint'); }
   if (url.protocol !== 'http:' || !['127.0.0.1','localhost'].includes(url.hostname) || url.pathname !== '/proposals' || url.search || url.hash || url.username || url.password || typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Invalid proposal endpoint or token');
   return async (baseRevision,patches,signal) => {
-    const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},body:JSON.stringify({baseRevision,patches}),signal,redirect:'error'});
+    const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},body:JSON.stringify({baseRevision,patches}),signal:signal??null,redirect:'error'});
     if(!response.ok) throw Error('Proposal service rejected the request');
     if (!response.body) throw Error('Invalid proposal response');
     const reader=response.body.getReader(), chunks:Uint8Array[]=[]; let length=0;

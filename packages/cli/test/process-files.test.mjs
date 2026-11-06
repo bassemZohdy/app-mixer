@@ -53,7 +53,7 @@ test('the Data Plane image installs only its workspaces, has a healthcheck and C
 
 test('the shared TypeScript configuration keeps its strictness flags',()=>{
  const options=JSON.parse(read('tsconfig.base.json')).compilerOptions;
- for(const flag of ['strict','noFallthroughCasesInSwitch','noImplicitOverride','verbatimModuleSyntax'])assert.equal(options[flag],true,flag);
+ for(const flag of ['strict','noFallthroughCasesInSwitch','noImplicitOverride','exactOptionalPropertyTypes','verbatimModuleSyntax'])assert.equal(options[flag],true,flag);
 });
 
 test('dependency updates are automated and production vulnerabilities fail CI',()=>{

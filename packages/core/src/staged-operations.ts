@@ -64,7 +64,7 @@ export class SqliteStagedOperations {
    * Operator listing for one tenant and application, optionally by status (for example `uncertain` or `submitting` to find stranded work), in id order with keyset
    * pagination: pass `next` from the previous page as `after`. The host authorizes access; payloads are returned as by `get`.
    */
-  list(scope:DataScope,options:{status?:StagedStatus;after?:string;limit?:number}={}):{items:StagedOperation[];next?:string} {
+  list(scope:DataScope,options:{status?:StagedStatus|undefined;after?:string|undefined;limit?:number|undefined}={}):{items:StagedOperation[];next?:string} {
     checkKey(scope,'staged','list');const status=options?.status,after=options?.after??'',limit=options?.limit??50;
     if(!options||(status!==undefined&&!['staged','submitting','uncertain','succeeded'].includes(status))||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid staged operation query');
     if(after!=='')checkKey(scope,'staged',after);
@@ -113,7 +113,7 @@ export class SqliteStagedOperations {
     this.finishReconciliation(scope,id,outcome,this.checkEvidence(scope,evidence));
   }
   /** Host must authorize access to this tenant/application and protect the returned references. */
-  listReconciliationEvidence(scope:DataScope,id:string,options:{after?:number;limit?:number}={}):StagedReconciliationRecord[] {
+  listReconciliationEvidence(scope:DataScope,id:string,options:{after?:number|undefined;limit?:number|undefined}={}):StagedReconciliationRecord[] {
     checkKey(scope,'staged',id);const after=options?.after??0,limit=options?.limit??100;if(!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid reconciliation query');
     return this.db.prepare('SELECT revision,principal_id,reference,outcome,recorded_at FROM staged_reconciliation_evidence WHERE tenant_id=? AND application_id=? AND operation_id=? AND revision>? ORDER BY revision LIMIT ?').all(scope.tenantId,scope.applicationId,id,after,limit).map(row=>({revision:row.revision as number,principalId:row.principal_id as string,reference:row.reference as string,outcome:row.outcome as 'applied'|'not_applied',recordedAt:row.recorded_at as number}));
   }

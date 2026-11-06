@@ -5,7 +5,7 @@ import type {PostgresAgentActionJournal,PostgresAgentRun,PostgresAgentRuns,Postg
 type Outcome='succeeded'|'failed'|'stopped'|'uncertain';
 export type PostgresRunExecution={run:PostgresAgentRun;journal:PostgresAgentActionJournal;signal:AbortSignal};
 export type PostgresRunSupervisorEvent=
- {type:'claimed'|'settled'|'recovered'|'retried'|'failed'|'review';runId:string;status?:string}|
+ {type:'claimed'|'settled'|'recovered'|'retried'|'failed'|'review';runId:string;status?:string|undefined}|
  {type:'reconciled';runId:string;actionId:string;outcome:ActionVerification['outcome']};
 export type PostgresRunSupervisorOptions={
  runs:PostgresAgentRuns;scope:AgentRunScope;workerId:string;
