@@ -71,7 +71,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Production scheduling of workers.
   - [ ] A shared (non-SQLite) run registry.
-  - [ ] Safe replay of external effects after recovery against a real provider.
+  - [x] Safe replay of external effects after recovery against a real provider. A worker killed before the write, after an applied write with a lost response, or after recording, recovers against a real S3-compatible provider with exactly one effect ([agent-action-journal.md](agent-action-journal.md#crash-recovery-against-a-real-provider)).
   - [ ] Production coordination between nodes, including node failure.
 - **Evidence:** a node-failure test report showing runs recovered exactly once and no duplicated external effect.
 
@@ -162,6 +162,6 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** process-kill tests for actions, token reservations, schedules, run leases, approvals, definitions, delegations, publication, the offline queue and staged submissions; PostgreSQL memory, definition and promotion kill tests; kind pod-deletion tests.
 - **Still to prove:**
   - [ ] Production stores (not local SQLite or single-node kind).
-  - [ ] Real provider contracts under crash.
+  - [x] Real provider contracts under crash. Staged submissions and journaled actions are killed or lose responses against a real S3-compatible provider (SeaweedFS, signed requests), and the provider passes the idempotency contract check ([agent-action-journal.md](agent-action-journal.md#crash-recovery-against-a-real-provider), [business-data.md](business-data.md)).
   - [ ] Node failure and production pod recovery.
 - **Evidence:** the same crash scenarios replayed against the production stores with a node taken down, and the recovery outcomes compared with the local expectations.

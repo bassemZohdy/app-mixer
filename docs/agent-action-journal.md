@@ -28,6 +28,16 @@ Protected actions can require a matching approval as described in [agent approva
 
 The automated process-crash acceptance test terminates a separate Node worker before an external dispatch, after a simulated HTTP service commits but before it returns, and after the journal records the result. It reopens SQLite, confirms that lease expiry alone does not replay an action, explicitly reconciles the external outcome, and checks the stable key and tenant isolation. The service is a local idempotent test double; these tests do not establish the behavior of a real provider, distributed storage, pod termination, or production key retention.
 
+## Crash recovery against a real provider
+
+`packages/agent/test/action-s3-provider-crash.test.mjs` (opt-in with `APP_MIXER_TEST_S3=docker`, run in CI) runs a journaled action against a real S3-compatible provider. The provider is SeaweedFS in Docker, reached with signed requests through a proxy that can lose responses. The action writes a create-only object named by the journal's idempotency key. A worker process claims the run and is killed with SIGKILL at one of three points:
+
+1. **Before the write.** The provider holds nothing. After lease expiry the action must be reconciled, and the verifier first answers `unknown`. Once the worker is dead and a settle period has passed, it answers `not_applied`, and the retried run dispatches the action once more.
+2. **After the provider applied the write, with its response lost.** The verifier finds the matching object and reconciles the action as `applied` with its result. The retried run returns that result without dispatching again.
+3. **After the result was recorded.** No reconciliation is needed, and the retried run returns the recorded result.
+
+In every case the provider ends up with exactly one object for the key, holding the journaled input. The same provider then passes `checkIdempotencyContract`. When `If-None-Match` is removed from the write, the contract's conflicting-input check fails.
+
 ## Downstream idempotency check
 
 `checkIdempotencyContract({dispatch, countEffects, input, conflictingInput, concurrency?})` exercises how a downstream operation handles idempotency keys before a host relies on it for journaled actions. `dispatch(input, key)` must call the operation exactly as the capability binding would, against a sandbox or staging target; `countEffects(key)` must read the number of applied effects for that key independently, for example from the provider's records. The check sends a sequential replay, `concurrency` simultaneous attempts (5 by default) with one key, the reused key with `conflictingInput`, and a fresh key. It returns `{passed, findings, keys}`; findings name the check and problem, such as more than one effect for one key, replays returning different results, or a reused key accepted for different content, including silently returning the original result.

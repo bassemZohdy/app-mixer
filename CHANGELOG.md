@@ -9,6 +9,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- An opt-in process-kill test (`APP_MIXER_TEST_S3=docker`, run in CI) kills a worker before, during and after a journaled action's write to a real S3-compatible provider and checks that recovery reconciles it with exactly one effect; the provider also passes the idempotency contract check.
 - An opt-in test (`APP_MIXER_TEST_S3=docker`, run in CI) submits staged intents to a real S3-compatible provider (SeaweedFS, SigV4) through a proxy that loses responses or requests, and checks that every ambiguous outcome reconciles with exactly one object per intent.
 - Retained builds of the first and last IndexedDB version-1 offline clients and the last version-2 client, with a test that their queued work and cached publications migrate to the current client, resume, rotate keys, and that those builds are fenced out afterwards.
 - An opt-in real-browser test (`APP_MIXER_TEST_BROWSER=1`, run in CI) restores an older copy of a headless Chrome or Edge profile and checks that the offline queue and request-identity store refuse it against server-held rollback floors, with a control showing the same profile opens without the floor.

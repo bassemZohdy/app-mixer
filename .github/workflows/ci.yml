@@ -79,7 +79,7 @@ jobs:
         if: matrix.node == '22'
         env:
           APP_MIXER_TEST_S3: docker
-        run: node --test packages/core/test/staged-s3-provider.test.mjs
+        run: node --test packages/core/test/staged-s3-provider.test.mjs packages/agent/test/action-s3-provider-crash.test.mjs
       - name: Prometheus alert rules failure drill
         if: matrix.node == '22'
         env:
