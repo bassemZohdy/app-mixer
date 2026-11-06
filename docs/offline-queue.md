@@ -152,3 +152,30 @@ The identity database stores only a hashed scope/slot identifier, random request
 This catches the case the stores could not before. A restored older profile would give a new intent an old request key, which the server would treat as a request it had already handled, or would silently lose a device's generation fence. The first anchored open of a database written without an anchor adopts its rows as they are, but only while the host floor is zero. Use one floor per store, scoped to the same tenant, application and principal, and kept outside the browser profile. The queue's floor is separate. Every instance for a database must configure the anchor; an unanchored write makes anchored instances report tampering.
 
 These stores hold no key, so the counter and digest are not authenticated. They detect a restored or partly restored copy of browser storage, not deliberate edits by code that can write the database and recompute the digest; that code is already outside the threat model. Each write and each lookup reads every row, so the cost grows with the number of slots.
+
+## Provisioning a device that has never been online
+
+A device that has never reached the server has no publication, no trust decisions and no identity to work under. A trusted host can prepare all three ahead of time as one signed grant, carried to the device out of band, for example by QR code, removable media or an installer.
+
+**On the server (`@app-mixer/core`).** `signOfflineProvisioning(grant, {keyId, privateKey, releaseKeys})` signs, with Ed25519, a grant naming:
+- the device, tenant, application and principal
+- the environment
+- a validity window of at most 30 days (`issuedAt`, `notAfter`)
+- a signed release (`signPublicationRelease`)
+
+It refuses a release that does not verify against `releaseKeys`. The host must authorize the principal and device first. Signing grants no authority by itself.
+
+**On the device (`@app-mixer/web/offline-provisioning`).** `openOfflineProvisioning(bundle, {environment, applicationId, deviceId, keys, releaseKeys, now})` verifies everything locally with WebCrypto Ed25519, against raw public keys (base64url) pinned in the installed app:
+- the grant's signature, with canonical encoding only
+- its fields, device, application and window
+- the embedded release's own signature and application
+
+It makes no network request. The returned publication can seed `EncryptedPublicationCache`, and the scope can open `EncryptedBrowserQueue`, so the device works offline from its first start.
+
+**First connection.** When the device first connects, the server calls `verifyOfflineProvisioning(bundle, {environment, applicationId, deviceId, keys, releaseKeys, now})` before accepting its queued work. It must still authenticate the device and principal and authorize every operation as usual. The grant only says what the device was provisioned for.
+
+**Not covered.** Grants cannot be revoked before `notAfter`. A host that needs revocation must check a server-side list at first connection, and keep windows short. The grant is not secret but is bound to one device ID. Protect the channel that carries it if the device ID is guessable. The device's clock decides whether the window is current while offline.
+
+**Tests.**
+- `packages/web/test/offline-provisioning.test.mjs`: with `fetch` disabled, a device opens a grant, seeds the encrypted cache and queue, enqueues work, and keeps both across a restart. Later the server accepts the same grant and each queued operation is delivered once. The device rejects altered, foreign, expired, over-long, untrusted-key and tampered-release grants. Skipping either signature check makes the test fail.
+- `packages/web/test/browser-offline-provisioning.test.mjs` (opt-in, run in CI with headless Chrome): a real browser verifies the grant with its own WebCrypto and rejects a tampered copy. After a browser restart without the grant, it still has its publication and queued work, and it made no requests.

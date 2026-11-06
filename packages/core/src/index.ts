@@ -205,6 +205,8 @@ export type {MetricsServerOptions} from './metrics-server.js';
 
 export {signPublicationRelease,verifyPublicationRelease} from './signed-publication.js';
 export type {ReleasePublication,SignedPublicationRelease,PublicationReleaseKey} from './signed-publication.js';
+export {signOfflineProvisioning,verifyOfflineProvisioning,MAX_OFFLINE_PROVISIONING_MS} from './offline-provisioning.js';
+export type {OfflineProvisioningGrant,SignedOfflineProvisioning} from './offline-provisioning.js';
 
 export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
 export type {PublicationReleaseScope,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
