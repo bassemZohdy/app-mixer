@@ -23,6 +23,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- `exactOptionalPropertyTypes` is on in the shared TypeScript configuration: optional properties that receive `undefined` are declared as such, and values passed to LangChain and `fetch` option types that reject `undefined` are spread conditionally.
 - In-range dependency updates: `@langchain/langgraph` 1.5.3 to 1.7.1, `@langchain/core` 1.3.5, `@langchain/langgraph-checkpoint` 1.2.2, `@ag-ui/core` 1.0.4 and `fake-indexeddb` 6.2.7 (full suite green, `npm audit --omit=dev` clean).
 - CI caches the five pinned container-test images (Keycloak, SeaweedFS, OpenTelemetry Collector, Prometheus, Alertmanager) with `actions/cache`, keyed by the image list that `.github/scripts/docker-images.mjs` derives from the tests.
 - The capability server maps its statuses by `AppMixerError` code (new codes `denied` and `unavailable`; 23 more throw sites converted), still honouring the documented messages for plain errors from host executors and providers, which keeps the generated offline runtime's conflict handling working.
