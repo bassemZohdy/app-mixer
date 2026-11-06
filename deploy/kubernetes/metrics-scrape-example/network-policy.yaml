@@ -1,0 +1,16 @@
+# Optional addition to the Data Plane deployment: lets a scraper that carries the label below reach the metrics listener over the pod network.
+# Enable the listener with APP_MIXER_METRICS_PORT and APP_MIXER_METRICS_BIND=0.0.0.0 (see docs/kubernetes-data-plane.md); the JWT scope check stays mandatory.
+# NetworkPolicies add up, so this does not widen the rule that admits publication clients to port 3002. Replace 39092 with your metrics port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-mixer-data-plane-metrics
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app-mixer-metrics-scraper: "true"}
+      ports: [{protocol: TCP, port: 39092}]

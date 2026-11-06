@@ -25,6 +25,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Agent manifests must be plain JSON data; values that satisfied validation through inherited fields, accessors or class instances are now rejected.
 - Extension integrity digests must now use the canonical base64 spelling; non-canonical spellings that decoded to the same bytes were previously accepted.
 ### Added
+- `APP_MIXER_METRICS_BIND=0.0.0.0` opens the Data Plane metrics listener to the pod network (default stays loopback; token scope still mandatory), the admission example allows it, a NetworkPolicy example admits labelled scraper pods, and the kind workflow scrapes from another pod.
 - One shared identifier validator and non-negative integer check per package (`validation.ts`) replace 49 identical identifier validators and 22 integer checks; a test caps the copies so they cannot spread again.
 - Notice retention: `SqliteAgentNotices.prune` (notices with their receipts and delivery history, keeping undelivered work, with an immutable record of each prune) and `SqliteAgentNoticeReceiver.prune` (acknowledged notices), under a new `prune` access, bounded and oldest first; the immutability triggers are dropped and recreated inside the same transaction.
 - Schema versions: migrating stores record their layout in `app_mixer_schema` and refuse a database written by a newer release (recorded for the agent run registry on SQLite and PostgreSQL and for staged operations), documented in `docs/schema-versions.md`.

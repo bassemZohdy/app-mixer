@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**59 / 80 tasks complete (74%)**
+**60 / 80 tasks complete (75%)**
 
 `███████████████░░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 45 / 49 | 4 (P4-07, P4-41, P4-42, P4-49) |
+| P4 fixes and improvements from the 2026-11-06 code review | 46 / 49 | 3 (P4-41, P4-42, P4-49) |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -102,8 +102,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found: `DevelopmentProposals` keeps approved and rejected proposals in memory and counts them toward the 100 limit, so after 100 proposals the proposal plane answers 429 until the process restarts; an agent can exhaust it. Fixed 2026-11-06: only pending proposals count toward the limit and settled ones are evicted beyond a `settledLimit` bound (tested). A SQLite store so proposals survive a restart is P4-35.
 - [x] P4-35 Persist development proposals in SQLite
   - Found while fixing P4-06: `DevelopmentProposals` is in memory only, so pending proposals vanish on restart. Fixed 2026-11-06: `SqliteDevelopmentProposals` (same limits, errors and eviction as the in-memory store, WAL, settle and evict in one transaction) behind a new `ProposalStore` interface that the control and proposal planes and `createDevelopmentPlanes` accept; tests cover restart survival, stale approval, eviction and the planes across a restart.
-- [ ] P4-07 Make the Data Plane metrics endpoint scrapeable in Kubernetes
-  - Found: `deploy/kubernetes/data-plane.mjs` listens for `/metrics` on `127.0.0.1` inside the pod, so Prometheus cannot scrape it; the kind check probes it with `kubectl exec`. Fix: add `APP_MIXER_METRICS_BIND` (pod IP) with the JWT scope check kept mandatory, extend the NetworkPolicy and admission policy for the metrics port, scrape it from another pod in the kind workflow, and document the alternative sidecar layout.
+- [x] P4-07 Make the Data Plane metrics endpoint scrapeable in Kubernetes
+  - Found: `deploy/kubernetes/data-plane.mjs` listens for `/metrics` on `127.0.0.1` inside the pod, so Prometheus cannot scrape it; the kind check probes it with `kubectl exec`. Fixed 2026-11-06 (verified by the kubernetes workflow run on the branch, see the commit): `APP_MIXER_METRICS_BIND` accepts only `127.0.0.1` (default) or `0.0.0.0` (a pod IP cannot come from `valueFrom`, which the admission example forbids) and requires a metrics port; the admission example allows it at most once with those values and a metrics port; `deploy/kubernetes/metrics-scrape-example/network-policy.yaml` admits labelled scraper pods; the kind workflow scrapes from a labelled pod (200 with a scoped token, 401 without) and reports whether an unlabelled pod was refused; the probe and local tests cover the new setting; the sidecar trade-off is documented.
 - [x] P4-08 Bound the catch-up loop in `PostgresAgentSchedules.fireDue`
   - Found: every conflict sets `progressed` and rescans from the first page with no limit, so heavy contention or a long catch-up can loop until `maxFires` with unbounded scans. Fixed 2026-11-06: `maxScans` (default `maxFires + 100`) caps the rescans, the pass reports `scans` and `backlog`, and a PostgreSQL test checks both limits, two concurrent nodes (no occurrence fired twice) and a pass with nothing due.
 

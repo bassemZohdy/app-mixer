@@ -22,6 +22,11 @@ const metrics=structuredClone(original);metrics.spec.template.spec.containers[0]
 const withMetrics=value=>{const object=structuredClone(metrics);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_PORT',value});return object;};
 for(const value of ['39092','65535']){const result=apply(withMetrics(value));if(result.status!==0)throw Error('Expected metrics port '+value+' to pass: '+result.stderr);}
 for(const value of ['abc','0','65536','3002','070']){const result=apply(withMetrics(value));if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('Metrics port '+value+' was not denied: '+result.stderr);}
+const withBind=(value,port='39092')=>{const object=withMetrics(port);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value});return object;};
+for(const value of ['127.0.0.1','0.0.0.0']){const result=apply(withBind(value));if(result.status!==0)throw Error('Expected metrics bind '+value+' to pass: '+result.stderr);}
+for(const value of ['10.0.0.5','localhost','::','']){const result=apply(withBind(value));if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('Metrics bind '+value+' was not denied: '+result.stderr);}
+{const object=structuredClone(metrics);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value:'0.0.0.0'});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('A metrics bind without a metrics port was not denied: '+result.stderr);}
+{const object=withBind('0.0.0.0');object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value:'127.0.0.1'});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('A duplicate metrics bind was not denied: '+result.stderr);}
 changed('duplicate metrics port',(_,c)=>c.env.push({name:'APP_MIXER_METRICS_PORT',value:'39093'}));
 changed('unapproved extra variable',(_,c)=>c.env.push({name:'APP_MIXER_DEBUG',value:'1'}));
 changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value='unsigned');
