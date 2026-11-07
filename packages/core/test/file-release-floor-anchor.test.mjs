@@ -28,7 +28,7 @@ test('the file anchor rejects invalid scopes, floors and corrupt files',()=>{
   const anchor=createFileReleaseFloorAnchor(dir);
   for(const bad of [{...scope,tenantId:'../escape'},{...scope,applicationId:'a/b'},{tenantId:'t',applicationId:'a'},null])assert.throws(()=>anchor.read(bad),/Invalid publication release scope/);
   for(const bad of [-1,1.5,Number.NaN,'3'])assert.throws(()=>anchor.advance(scope,bad),/Invalid release floor/);
-  for(const text of ['abc\n','-1\n','1.5','007\n','','12\n34\n'])writeFileSync(join(dir,'tenant__app__prod.floor'),text),assert.throws(()=>anchor.read(scope),/Corrupt release floor anchor/,JSON.stringify(text));
+  for(const text of ['abc\n','-1\n','1.5','007\n','','12\n34\n'])writeFileSync(join(dir,'tenant__app__prod.floor'),text),assert.throws(()=>anchor.read(scope),/Corrupt anchor/,JSON.stringify(text));
  }finally{rmSync(join(dir,'..'),{recursive:true,force:true});}
 });
 

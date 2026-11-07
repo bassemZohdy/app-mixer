@@ -1,12 +1,10 @@
-import {closeSync,fsyncSync,mkdirSync,openSync,readFileSync,renameSync,writeSync} from 'node:fs';
-import {join} from 'node:path';
-import {randomUUID} from 'node:crypto';
 import type {PublicationReleaseFloorAnchor,PublicationReleaseScope} from './postgres-publication-releases.js';
+import {createFileCounters} from './file-counters.js';
 
-const pattern=/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/,id={test:(value:unknown):boolean=>typeof value==='string'&&pattern.test(value)};
-function file(directory:string,scope:PublicationReleaseScope):string{
- if(!scope||!id.test(scope.tenantId)||!id.test(scope.applicationId)||!id.test(scope.environment))throw Error('Invalid publication release scope');
- return join(directory,`${scope.tenantId}__${scope.applicationId}__${scope.environment}.floor`);
+const pattern=/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/,id=(value:unknown):boolean=>typeof value==='string'&&pattern.test(value);
+function name(scope:PublicationReleaseScope):string{
+ if(!scope||!id(scope.tenantId)||!id(scope.applicationId)||!id(scope.environment))throw Error('Invalid publication release scope');
+ return `${scope.tenantId}__${scope.applicationId}__${scope.environment}`;
 }
 /**
  * A release-floor anchor stored as one small file per scope in a directory. Point it at storage that a database restore cannot reach
@@ -16,20 +14,9 @@ function file(directory:string,scope:PublicationReleaseScope):string{
  */
 export function createFileReleaseFloorAnchor(directory:string):PublicationReleaseFloorAnchor{
  if(typeof directory!=='string'||!directory)throw Error('Invalid release floor anchor directory');
- mkdirSync(directory,{recursive:true,mode:0o700});
- const read=(path:string):number=>{
-  let text:string;try{text=readFileSync(path,'utf8');}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return 0;throw error;}
-  if(!/^(0|[1-9][0-9]{0,15})\n?$/.test(text))throw Error('Corrupt release floor anchor');const value=Number(text);if(!Number.isSafeInteger(value))throw Error('Corrupt release floor anchor');return value;
- };
+ const counters=createFileCounters(directory,'.floor');
  return {
-  read:scope=>read(file(directory,scope)),
-  advance:(scope,floor)=>{
-   if(!Number.isSafeInteger(floor)||floor<0)throw Error('Invalid release floor');
-   const path=file(directory,scope);if(read(path)>=floor)return;
-   const temporary=`${path}.${randomUUID()}.tmp`,descriptor=openSync(temporary,'wx',0o600);
-   try{writeSync(descriptor,`${floor}\n`);fsyncSync(descriptor);}finally{closeSync(descriptor);}
-   renameSync(temporary,path);
-   try{const directoryDescriptor=openSync(directory,'r');try{fsyncSync(directoryDescriptor);}finally{closeSync(directoryDescriptor);}}catch{/* directory fsync is not available on every platform */}
-  }
+  read:scope=>counters.read(name(scope)),
+  advance:(scope,floor)=>{if(!Number.isSafeInteger(floor)||floor<0)throw Error('Invalid release floor');counters.advance(name(scope),floor);}
  };
 }
