@@ -218,8 +218,10 @@ export type {OfflineProvisioningGrant,SignedOfflineProvisioning} from './offline
 
 export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
 export {createFileReleaseFloorAnchor} from './file-release-floor-anchor.js';
-export {createFileSequenceAnchor,capabilityAuditAnchorKey,authenticationFailureAnchorKey,jwtRevocationAnchorKey,extensionApprovalAnchorKey} from './file-sequence-anchor.js';
-export type {AuditSequenceAnchor} from './file-sequence-anchor.js';
+export {createFileSequenceAnchor,capabilityAuditAnchorKey,authenticationFailureAnchorKey,jwtRevocationAnchorKey,extensionApprovalAnchorKey,releaseFloorAnchorKey} from './file-sequence-anchor.js';
+export type {AuditSequenceAnchor,AnchorErrorHandler} from './file-sequence-anchor.js';
+export {createFileCounters} from './file-counters.js';
+export type {FileCounters} from './file-counters.js';
 export type {PublicationReleaseScope,PublicationReleaseFloorAnchor,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
 
 export {PostgresExtensionApprovals} from './postgres-extension-approvals.js';

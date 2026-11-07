@@ -1,17 +1,18 @@
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+import {reportAnchorError} from './file-sequence-anchor.js';
 
 export type PublicationReleaseScope={tenantId:string;applicationId:string;environment:string};
 /** A floor held outside the release database (for example platform secure storage or a separate service) so a restored database can be detected. */
 export type PublicationReleaseFloorAnchor={read:(scope:PublicationReleaseScope)=>number|Promise<number>;advance:(scope:PublicationReleaseScope,floor:number)=>void|Promise<void>};
-type Options={query:PostgresJwtRevocationQuery;floorAnchor?:PublicationReleaseFloorAnchor};
+type Options={query:PostgresJwtRevocationQuery;floorAnchor?:PublicationReleaseFloorAnchor;onAnchorError?:(error:unknown)=>void};
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(x);
 const version=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>0;
 const digest=(x:unknown):x is string=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 function args(scope:PublicationReleaseScope):[string,string,string]{if(!scope||!id(scope.tenantId)||!id(scope.applicationId)||!id(scope.environment))throw Error('Invalid publication release scope');return [scope.tenantId,scope.applicationId,scope.environment];}
 /** Shared release allowlist and monotonic floor; host owns authorization and the primary database. */
 export class PostgresPublicationReleaseRegistry {
- private readonly query:PostgresJwtRevocationQuery;private readonly anchor:PublicationReleaseFloorAnchor|undefined;
- constructor(options:Options){if(!options||typeof options.query!=='function'||(options.floorAnchor!==undefined&&(!options.floorAnchor||typeof options.floorAnchor.read!=='function'||typeof options.floorAnchor.advance!=='function')))throw Error('Invalid publication release configuration');this.query=options.query;this.anchor=options.floorAnchor;}
+ private readonly query:PostgresJwtRevocationQuery;private readonly anchor:PublicationReleaseFloorAnchor|undefined;private readonly onAnchorError:((error:unknown)=>void)|undefined;
+ constructor(options:Options){if(!options||typeof options.query!=='function'||(options.floorAnchor!==undefined&&(!options.floorAnchor||typeof options.floorAnchor.read!=='function'||typeof options.floorAnchor.advance!=='function')))throw Error('Invalid publication release configuration');this.query=options.query;this.anchor=options.floorAnchor;this.onAnchorError=options.onAnchorError;}
  /** Provision with a trusted migration identity before accepting traffic. */
  async initialize():Promise<void>{
   await this.query('CREATE TABLE IF NOT EXISTS app_mixer_release_authorizations (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,version BIGINT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(tenant_id,application_id,environment,version))',[]);
@@ -29,7 +30,7 @@ export class PostgresPublicationReleaseRegistry {
   const result=await this.query('INSERT INTO app_mixer_release_floors (tenant_id,application_id,environment,minimum_version) SELECT $1,$2,$3,$4 WHERE EXISTS (SELECT 1 FROM app_mixer_release_authorizations WHERE tenant_id=$1 AND application_id=$2 AND environment=$3 AND version=$4) ON CONFLICT (tenant_id,application_id,environment) DO UPDATE SET minimum_version=GREATEST(app_mixer_release_floors.minimum_version,EXCLUDED.minimum_version) RETURNING minimum_version',[...identity,minimumVersion]);
   const value=Number(result.rows?.[0]?.minimum_version);if(!Array.isArray(result.rows)||result.rows.length!==1||!version(value)||value<minimumVersion)throw Error('Invalid publication release floor result');
   // The database change is committed; an anchor failure leaves the anchor behind until the next check catches it up.
-  if(this.anchor)try{await this.anchor.advance({...scope},value);}catch{}
+  if(this.anchor)try{await this.anchor.advance({...scope},value);}catch(error){reportAnchorError(this.onAnchorError,error);}
   return value;
  }
  /** Refuses (fails closed) when the database floor is below the anchored floor, which means the database was restored to an older state. */
@@ -40,7 +41,7 @@ export class PostgresPublicationReleaseRegistry {
   if(!Array.isArray(result.rows)||result.rows.length>1)throw Error('Invalid publication release result');
   const stored=result.rows.length===0?0:Number(result.rows[0].minimum_version);if(!Number.isSafeInteger(stored)||stored<0)throw Error('Invalid publication release result');
   if(stored<(anchored as number))throw Error('Release floor was rolled back');
-  if(stored>(anchored as number))try{await anchor.advance({...scope},stored);}catch{}
+  if(stored>(anchored as number))try{await anchor.advance({...scope},stored);}catch(error){reportAnchorError(this.onAnchorError,error);}
  }
  /** Runtime reads must use the authoritative primary and separately verify the release signature. */
  async isAllowed(scope:PublicationReleaseScope,releaseVersion:number,definitionDigest:string):Promise<boolean>{

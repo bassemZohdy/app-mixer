@@ -36,6 +36,10 @@ test('the provider script passes a provider that honours idempotency keys and re
   const passing=await run(dir,config(good.url),{PROVIDER_HEADERS:JSON.stringify({authorization:'Bearer sandbox-token'})});assert.equal(passing.status,0,passing.stderr+passing.stdout);
   const report=JSON.parse(passing.stdout);assert.equal(report.passed,true);assert.deepEqual(report.findings,[]);
   assert.ok(good.requests.length>0&&good.requests.every(item=>item.authorization==='Bearer sandbox-token'),'credentials from the environment accompany every request');
+  // A key header supplied in another letter case must not survive next to the one the check sets (the provider would see both joined).
+  const cased=await run(dir,config(good.url),{PROVIDER_HEADERS:JSON.stringify({'idempotency-key':'not-the-checks-key'})});assert.equal(cased.status,0,cased.stderr+cased.stdout);
+  // Every {key} in the effects URL is replaced.
+  const twice=await run(dir,{...config(good.url),countEffects:{url:good.url+'/effects?key={key}&again={key}',path:'data'}});assert.equal(twice.status,0,twice.stderr+twice.stdout);
   const failing=await run(dir,config(bad.url));assert.equal(failing.status,1);const findings=JSON.parse(failing.stdout).findings.map(finding=>finding.check);
   assert.ok(findings.includes('sequential-replay')&&findings.includes('concurrent-replay'),'a provider that applies every request is reported: '+findings.join(','));
  }finally{good.close();bad.close();rmSync(dir,{recursive:true,force:true});}
@@ -46,7 +50,7 @@ test('the provider script refuses production, plain http to remote hosts, bad co
  try{
   const base=config('http://127.0.0.1:9');
   const cases=[
-   [{...base,environment:'production'},/not "production"/],[{...base,environment:undefined},/non-production target/],
+   [{...base,environment:'production'},/not "production"/],[{...base,environment:'prod'},/one of sandbox/],[{...base,environment:'live'},/one of sandbox/],[{...base,environment:'Production'},/not "production"/],[{...base,environment:''},/non-production target/],[{...base,environment:undefined},/non-production target/],
    [{...base,allowHttp:false},/must use https/],[{...base,dispatch:{...base.dispatch,url:'http://sandbox.example/charges'}},/must use https/],
    [{...base,dispatch:{...base.dispatch,url:'https://user:pass@sandbox.example/charges',},allowHttp:true},/must not contain credentials/],
    [{...base,dispatch:{...base.dispatch,method:'DELETE'}},/dispatch.method/],[{...base,dispatch:{...base.dispatch,idempotencyHeader:'bad header'}},/not a valid header name/],

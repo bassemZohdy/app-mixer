@@ -5,7 +5,7 @@
 //   PROVIDER_HEADERS='{"authorization":"Bearer ..."}'   (a JSON object of request headers)
 // Config (JSON):
 //   {
-//     "environment": "sandbox",                               // must not be "production"
+//     "environment": "sandbox",                               // sandbox, test, staging, development, local or emulator; anything else is refused
 //     "dispatch": {"url": "https://sandbox.example/charges", "method": "POST", "idempotencyHeader": "Idempotency-Key"},
 //     "countEffects": {"url": "https://sandbox.example/charges?key={key}", "path": "data.length"},   // an independent read; {key} is URL-encoded
 //     "input": {"amount": 100, "currency": "USD"},
@@ -30,25 +30,28 @@ function checkedUrl(text,allowHttp,what){
  if(url.protocol!=='https:'&&!(allowHttp&&local&&url.protocol==='http:'))throw Error(`${what} must use https (http is allowed only for 127.0.0.1 or localhost with allowHttp)`);
  if(url.username||url.password)throw Error(`${what} must not contain credentials`);return url;
 }
+const allowedEnvironments=['sandbox','test','staging','development','local','emulator'];
 export async function check(config,env=process.env,fetcher=fetch){
  if(!config||typeof config!=='object'||!config.dispatch||!config.countEffects)throw Error('The config needs dispatch and countEffects');
- if(String(config.environment??'').toLowerCase()==='production'||!config.environment)throw Error('Set "environment" to the non-production target being checked (not "production")');
+ if(!allowedEnvironments.includes(String(config.environment??'').toLowerCase()))throw Error(`Set "environment" to the non-production target being checked: one of ${allowedEnvironments.join(', ')} (not "production")`);
  const allowHttp=config.allowHttp===true,header=config.dispatch.idempotencyHeader??'Idempotency-Key',method=String(config.dispatch.method??'POST').toUpperCase();
  if(!['POST','PUT','PATCH'].includes(method))throw Error('dispatch.method must be POST, PUT or PATCH');
  if(typeof header!=='string'||!/^[A-Za-z0-9-]{1,64}$/.test(header))throw Error('dispatch.idempotencyHeader is not a valid header name');
  const dispatchUrl=checkedUrl(config.dispatch.url,allowHttp,'dispatch.url');if(typeof config.countEffects.url!=='string'||!config.countEffects.url.includes('{key}'))throw Error('countEffects.url must contain {key}');
- checkedUrl(config.countEffects.url.replace('{key}','x'),allowHttp,'countEffects.url');if(typeof config.countEffects.path!=='string'||!config.countEffects.path)throw Error('countEffects.path is required');
+ checkedUrl(config.countEffects.url.replaceAll('{key}','x'),allowHttp,'countEffects.url');if(typeof config.countEffects.path!=='string'||!config.countEffects.path)throw Error('countEffects.path is required');
  let extra={};if(env.PROVIDER_HEADERS){try{extra=JSON.parse(env.PROVIDER_HEADERS);}catch{throw Error('PROVIDER_HEADERS must be a JSON object');}if(!extra||typeof extra!=='object'||Array.isArray(extra)||Object.values(extra).some(value=>typeof value!=='string'))throw Error('PROVIDER_HEADERS must be a JSON object of strings');}
  const timeout=()=>AbortSignal.timeout(20000);
  return checkIdempotencyContract({
   input:config.input,conflictingInput:config.conflictingInput,...(config.concurrency!==undefined?{concurrency:config.concurrency}:{}),
   async dispatch(input,key){
-   const response=await fetcher(dispatchUrl,{method,redirect:'error',signal:timeout(),headers:{...extra,'content-type':'application/json',[header]:key},body:JSON.stringify(input)});
+   // Headers are case-insensitive: a key header from PROVIDER_HEADERS must not survive next to the one the check sets.
+   const headers=new Headers(extra);headers.set('content-type','application/json');headers.set(header,key);
+   const response=await fetcher(dispatchUrl,{method,redirect:'error',signal:timeout(),headers,body:JSON.stringify(input)});
    if(!response.ok)throw Error(`The provider answered ${response.status}`);
    const text=await response.text();try{return JSON.parse(text);}catch{return text;}
   },
   async countEffects(key){
-   const response=await fetcher(config.countEffects.url.replace('{key}',encodeURIComponent(key)),{method:'GET',redirect:'error',signal:timeout(),headers:{...extra}});
+   const response=await fetcher(config.countEffects.url.replaceAll('{key}',encodeURIComponent(key)),{method:'GET',redirect:'error',signal:timeout(),headers:{...extra}});
    if(!response.ok)throw Error(`The effects read answered ${response.status}`);return pick(await response.json(),config.countEffects.path);
   }
  });
