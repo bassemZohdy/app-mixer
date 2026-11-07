@@ -37,7 +37,8 @@ test('acknowledged revocations, release floors, extension approvals and audit lo
  try{
   await docker('network','create',network);
   await docker('run','-d','--name',primary,'--network',network,'-e','POSTGRES_PASSWORD='+password,'-p','127.0.0.1::5432',image,'postgres','-c','wal_level=replica','-c','max_wal_senders=5','-c','synchronous_standby_names=*','-c','synchronous_commit=remote_apply');
-  await waitFor('the primary',()=>docker('exec',primary,'pg_isready','-U','postgres'));
+  // The image first runs a temporary server on the socket only; a TCP check passes only for the real server.
+  await waitFor('the primary',()=>docker('exec',primary,'pg_isready','-h','127.0.0.1','-U','postgres'));
   await docker('exec',primary,'bash','-c','echo "host replication all all scram-sha-256" >> "$PGDATA/pg_hba.conf"');await docker('exec','-u','postgres',primary,'psql','-U','postgres','-c','SELECT pg_reload_conf()');
   await docker('run','-d','--name',standby,'--network',network,'-e','PGPASSWORD='+password,'-p','127.0.0.1::5432','--entrypoint','bash',image,'-c',`chown postgres "$PGDATA" && chmod 700 "$PGDATA" && gosu postgres pg_basebackup -h ${primary} -U postgres -D "$PGDATA" -R -X stream && exec gosu postgres postgres -c hot_standby=on`);
   await waitFor('a synchronous standby',async()=>(await docker('exec','-u','postgres',primary,'psql','-U','postgres','-Atc',"SELECT sync_state FROM pg_stat_replication")).trim()==='sync');
