@@ -107,3 +107,18 @@ test('PostgreSQL listing reads a page in a constant number of queries and keeps 
   assert.equal(first.items.length,10);assert.ok(first.nextAfter);assert.equal(second.items[0].id>first.items.at(-1).id,true,'pagination continues after the cursor');assert.ok(queries<=8,queries+' queries for two pages');
  }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
 });
+
+test('a memory denied by the authorization check after the first read is not returned by a listing',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
+ // list authorizes every memory three times (before the read, after it and after a second read). A policy that refuses only the middle check
+ // must still keep that memory out of the page, as `get` would, even if the last check allows it again.
+ const url=process.env.APP_MIXER_TEST_POSTGRES_URL,schema='app_mixer_memory_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+ try{
+  await admin.query(`CREATE SCHEMA "${schema}"`);let counting=false;const reads=new Map();
+  const memory=new PostgresAgentMemory({enabled:true,maxEntries:5,maxTtlMs:100000,clock:()=>100,authorize:(_who,_scope,action,id)=>{if(counting&&action==='read'){const n=(reads.get(id)??0)+1;reads.set(id,n);if(id==='flapping'&&n===2)return false;}return true;},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});
+  await memory.initialize();
+  for(const id of ['flapping','steady'])await memory.put(actor,scope,id,{v:1},{expectedRevision:null,expiresAt:5000,provenance});
+  counting=true;const page=await memory.list(actor,scope);
+  assert.deepEqual(page.items.map(item=>item.id),['steady'],'the memory refused after the first read is left out');
+  assert.equal(reads.get('flapping'),2,'it was not checked a third time');
+ }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});

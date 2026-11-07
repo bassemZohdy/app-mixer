@@ -39,8 +39,9 @@ export class PostgresAgentMemory {
   const allowed:string[]=[];for(const id of ids){try{await this.permit(actor,scope,'read',id);allowed.push(id);}catch(error){if(!(error instanceof MemoryAccessDenied))throw error;}}
   if(!allowed.length)return [];
   const sql=`SELECT * FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=ANY($6::text[])`,args=[...this.args(scope),allowed],rows=async()=>{const result=await this.options.query(sql,args);if(!Array.isArray(result.rows)||result.rows.length>allowed.length)throw Error('Invalid memory result');return result.rows;};
-  const first=await rows(),initial=new Map<string,RecordValue>();for(const id of allowed)try{await this.permit(actor,scope,'read',id);}catch(error){if(error instanceof MemoryAccessDenied){continue;}throw error;}
-  for(const row of first){const record=this.record(row,this.now());if(record&&allowed.includes(record.id))initial.set(record.id,record);}
+  // The second authorization (after the first read) decides too: a memory it refuses is out of the page, as `get` would refuse it, even if the last check allows it again.
+  const first=await rows(),initial=new Map<string,RecordValue>(),refused=new Set<string>();for(const id of allowed)try{await this.permit(actor,scope,'read',id);}catch(error){if(error instanceof MemoryAccessDenied){refused.add(id);continue;}throw error;}
+  for(const row of first){const record=this.record(row,this.now());if(record&&allowed.includes(record.id)&&!refused.has(record.id))initial.set(record.id,record);}
   if(!initial.size)return [];
   const latest=new Map<string,RecordValue>();for(const row of await rows()){const record=this.record(row,this.now());if(record)latest.set(record.id,record);}
   const result:RecordValue[]=[];
