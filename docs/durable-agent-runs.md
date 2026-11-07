@@ -133,16 +133,16 @@ Approval and delegation waits, token budgets, lifecycle history, metrics and exp
 - the registry, scope and a stable `workerId` (for example the pod name)
 - an `execute({run, journal, signal})` callback that performs one run through the lease-fenced journal
 - a `verify(request)` callback that asks the external system whether an interrupted action took effect
-- `onError`, an optional `onEvent`, and optional `leaseMs`, `pollMs`, `maxConcurrent` (per worker), claim `limits` and `recoveryGraceMs`
+- `onError`, an optional `onEvent`, and optional `leaseMs`, `pollMs`, `maxConcurrent` (per worker), claim `limits`, `recoveryGraceMs` and `reviewCooldownMs`
 
 Every `pollMs`, after `start()`:
 1. **Recovers expired leases.** A run whose lease expired more than `recoveryGraceMs` ago becomes uncertain. The grace period lets a worker that is only slow notice its lost lease before its run is taken over.
-2. **Reconciles uncertain runs.** It marks each dispatching action uncertain and calls `verify`. If any action is still `unknown`, the run is left for review (`review` event). Otherwise the run is retried, or failed once its attempts or deadline are used up.
-3. **Claims queued runs** up to `maxConcurrent` and executes them in the background.
+2. **Reconciles uncertain runs.** It marks each dispatching action uncertain and calls `verify`. If any action is still `unknown`, or the run is uncertain only because a reservation is still open (a model call whose usage is not known, which a person must reconcile), the run is reported once (`review` event) and left alone for `reviewCooldownMs` (30 seconds by default), so it is neither re-verified against the external system nor reported on every pass. Every uncertain run is examined, paging through them in run ID order, so runs waiting for review cannot hide the ones behind them. Otherwise the run is retried, or failed once its attempts or deadline are used up.
+3. **Claims queued runs** up to `maxConcurrent` and executes them in the background. `maxConcurrent` is this worker's own parallelism. The agent-wide cap is separate: unless `limits.maxConcurrentRuns` is set, an agent runs one run at a time across all workers. When a claim is refused by that cap or the daily run limit, the supervisor emits a `limited` event and stops claiming for that pass, so a worker configured with `maxConcurrent` above one but no `limits` is visibly limited instead of silently idle.
 
-While a run executes, the supervisor renews its lease every third of `leaseMs`. If the lease is lost, or a pause or cancel is requested, it aborts `signal`. When `execute` returns, it settles the run. A thrown error or an unknown result settles as uncertain.
+While a run executes, the supervisor renews its lease every third of `leaseMs`. If the lease is lost, or a pause or cancel is requested, it aborts `signal`. When `execute` returns, it settles the run. A thrown error or an unknown result settles as uncertain. A pause or cancel request can land between the supervisor reading the run and settling it; the settle then loses a revision race, and the supervisor reads the run again and retries up to three times rather than leaving a finished run leased until its lease expires.
 
-`stop()` stops claiming and waits for the runs this worker holds. Call it on SIGTERM and set the termination grace period above the longest run. `stop({abort: true})` signals the runs to stop; one stopped this way is handed back as uncertain, so another worker reconciles and retries it.
+`stop()` stops claiming and waits for the runs this worker holds; a later `start()` resumes claiming. Call it on SIGTERM and set the termination grace period above the longest run. `stop({abort: true})` signals the runs to stop; one stopped this way is handed back as uncertain, so another worker reconciles and retries it.
 
 Several workers on different nodes can run supervisors on the same scope. Claims, recovery and reconciliation are all revision-checked, so a lost race is skipped quietly. The external system must accept the action's idempotency key: a worker that lost its lease mid-dispatch may still reach the provider before it stops.
 
