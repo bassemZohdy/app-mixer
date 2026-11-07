@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- The React Native device checks place three rows justified to the start, centre and end and verify where each label lands across the screen width, on the Android emulator and the iOS simulator.
 - A run-worker freeze test (`postgres-run-nodes.test.mjs`): a worker stopped with SIGSTOP past its lease is replaced by another node, and when resumed it dispatches nothing and cannot complete the run it lost; every effect stays applied once.
 - A node-failure scenario for scheduled run workers (`node-failure.sh`, the `node-failure` job of the Agent pod recovery workflow): a kind worker node is killed under a running worker, the Deployment replaces the pod, and the survivor recovers the runs with every effect applied once. `run-supervisor.mjs verify` takes the minimum number of worker pods that must have done work.
 - A failover drill for the PostgreSQL revocation store (`postgres-revocation-failover.test.mjs`, `APP_MIXER_TEST_POSTGRES_FAILOVER=docker`, run in CI): a revocation acknowledged by a synchronous standby survives killing the primary, and lookups deny while no primary exists; the release-floor registry keeps refusing lower releases on the promoted standby, extension approvals keep their grants, revocations and audit history, and the capability and authentication-failure audit logs keep their events and sequences.
