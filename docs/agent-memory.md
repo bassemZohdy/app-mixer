@@ -114,8 +114,10 @@ To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-me
 | 20 x 500 | one index per tenant | 0.998 | 3 of 400 | 80 ms, 113 ms |
 | 50 x 300 | one shared index | 0.914 | 176 of 500 | 63 ms, 89 ms |
 | 50 x 300 | one index per tenant | 0.998 | 6 of 500 | 60 ms, 86 ms |
+| 100 x 200 | one shared index | 0.907 | 192 of 500 | 58 ms, 82 ms |
+| 100 x 200 | one index per tenant | 0.998 | 4 of 500 | 54 ms, 79 ms |
 
-The likely cause (not isolated by a separate experiment) is that the tenant filter is applied to the nearest candidates of the whole index, so a query can see a candidate list that belongs mostly to other tenants. A scoped index holds only one scope's memories and keeps recall near exact search at the same latency. The per-query time includes the exact comparison query, so it is not an index-only latency. The cost of scoped indexes is one index per tenant, agent, owner and kind to create, store and maintain, and a store object per scope. The choice (and the index-count limit that is acceptable for the deployment) still belongs to the owner. Production sizes, a production embedder and concurrent writes are not measured here.
+The likely cause (not isolated by a separate experiment) is that the tenant filter is applied to the nearest candidates of the whole index, so a query can see a candidate list that belongs mostly to other tenants. A scoped index holds only one scope's memories and keeps recall near exact search at the same latency. The per-query time includes the exact comparison query, so it is not an index-only latency. The cost of scoped indexes is one index per tenant, agent, owner and kind to create, store and maintain, and a store object per scope. The cost showed up in loading: at 100 tenants of 200 memories (20,000 memories) writing the corpus took 329 s with per-tenant indexes and 165 s with one shared index. The cause was not isolated (index creation for 100 scopes and per-scope set-up are both candidates), so measure write throughput and index creation time in your own environment. The choice (and the index-count limit that is acceptable for the deployment) still belongs to the owner. Production sizes, a production embedder and concurrent writes are not measured here.
 
 ### Decision: per-tenant indexes
 

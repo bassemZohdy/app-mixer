@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- The isolation benchmark was run at 100 tenants of 200 memories: a shared index found 0.907 of exact search's results and per-tenant indexes 0.998 at the same query latency, but loading took 329 s against 165 s (docs/agent-memory.md).
 - A store-failover test for run workers (`postgres-run-failover.test.mjs`, `APP_MIXER_TEST_POSTGRES_FAILOVER=docker`, run in CI): the PostgreSQL primary is killed while two workers hold runs, a synchronous standby is promoted, and every run finishes with each effect applied exactly once. A shared cluster fixture backs it, and the run-node fixture ignores idle-connection errors so a failover does not crash it.
 - `scripts/anchor-admin.mjs`: an operator tool to list, read and raise the file-based rollback anchors, and to lower one only with `--allow-lower` and a written reason; every change is appended to `anchor-admin.log`. The docs gain a recovery procedure for a rollback refusal, exercised in the restore test (re-applied state clears the refusals; the audit anchor is lowered only with the flag and a reason).
 - The Kubernetes Data Plane anchors the revocation epoch in the same `APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR`: token checks are denied while the revocation database's epoch is below the anchored epoch. The kind workflow provisions the epoch table and checks the copy to the anchor volume, the denial after the epoch is lowered, and recovery after it is restored.
