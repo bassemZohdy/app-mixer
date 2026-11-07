@@ -65,7 +65,7 @@ final class MixerDeviceUITests: XCTestCase {
 
     // Row `justify` places a label at the start, the centre and the end of the screen width.
     app.buttons["Show layout"].tap()
-    let start = app.staticTexts["Row start"], center = app.staticTexts["Row center"], end = app.staticTexts["Row end"]
+    let start = app.staticTexts["Row start"].firstMatch, center = app.staticTexts["Row center"].firstMatch, end = app.staticTexts["Row end"].firstMatch
     XCTAssertTrue(start.waitForExistence(timeout: 10))
     XCTAssertTrue(center.exists && end.exists)
     let width = app.windows.firstMatch.frame.width
