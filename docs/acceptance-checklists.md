@@ -69,6 +69,9 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] Each provider adapter against that provider's live or sandbox delivery, including a retry.
   - [ ] Additional providers the product commits to supporting.
   - [ ] Distributed coordination of schedule firing across nodes.
+  - [ ] Each provider adapter against that provider's live or sandbox delivery, including a retry. Locally, the Standard Webhooks specification vector and Slack's documented signing example (and Twilio's, among the SDK fixtures) authenticate through their adapters ([agent-event-ingress.md](agent-event-ingress.md#vendor-published-signature-examples)); no provider has delivered to an adapter.
+  - [ ] Additional providers the product commits to supporting. Discord interactions and the SendGrid Event Webhook were added as the first asymmetric-signature adapters ([agent-event-ingress.md](agent-event-ingress.md)). Still to do: the owner must list the providers the product commits to.
+  - [x] Distributed coordination of schedule firing across nodes. `PostgresAgentSchedules` fires each occurrence once across nodes; two processes with one killed mid-run fire every one-second occurrence exactly once with no gaps ([agent-schedules.md](agent-schedules.md#shared-schedules-across-nodes)). Handing a fired run to an executor is at least once until a shared run registry exists (P2-07). `PostgresAgentRuns.create` now refuses a second run for a reclaimed request.
 - **Evidence:** one captured live delivery per provider verified by the adapter, and a two-node schedule test showing a single fire per occurrence.
 
 ### P2-09 Action journal and reconciliation
