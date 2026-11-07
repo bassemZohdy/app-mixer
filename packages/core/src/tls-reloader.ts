@@ -3,7 +3,8 @@ import {createSecureContext} from 'node:tls';
 import type {Server as HttpsServer} from 'node:https';
 
 export type TlsCredentials={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
-export type TlsCredentialInfo={fingerprint:string;subject:string;validFrom:number;validTo:number};
+/** `subject` is empty for a certificate without one (cert-manager's default); `altNames` lists its subject alternative names. */
+export type TlsCredentialInfo={fingerprint:string;subject:string;altNames:string;validFrom:number;validTo:number};
 export type TlsCredentialReloaderOptions={
  load:()=>TlsCredentials|Promise<TlsCredentials>;
  intervalMs:number;
@@ -27,7 +28,7 @@ export function validateTlsCredentials(credentials:TlsCredentials,now:number=Dat
  // complete chain and trust bundle so a chain-only rotation is not skipped.
  const chain=Buffer.from(credentials.cert),ca=credentials.clientCa===undefined?Buffer.alloc(0):Buffer.from(credentials.clientCa);
  const fingerprint=createHash('sha256').update(`${chain.length}:`).update(chain).update(`${ca.length}:`).update(ca).digest('hex');
- return {fingerprint,subject:leaf.subject,validFrom,validTo};
+ return {fingerprint,subject:leaf.subject??'',altNames:leaf.subjectAltName??'',validFrom,validTo};
 }
 
 /** Periodically reload server credentials; invalid or unchanged credentials keep the current context. */

@@ -1,0 +1,36 @@
+name: Kubernetes certificate rotation
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile.data-plane'
+      - 'deploy/kubernetes/cert-manager-tls-example/**'
+      - 'deploy/kubernetes/test-support/cert-rotation.sh'
+      - 'deploy/kubernetes/data-plane.mjs'
+      - 'packages/core/src/tls-reloader.ts'
+      - '.github/workflows/kubernetes-certificates.yml'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  cert-manager-rotation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified kind
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  '"$RUNNER_TEMP/kind" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Start cluster and load the Data Plane image
+        run: |
+          kind create cluster --name cert-rotation
+          docker build -f Dockerfile.data-plane -t app-mixer-data-plane:test .
+          kind load docker-image app-mixer-data-plane:test --name cert-rotation
+      - name: Issue, renew and rotate the certificate with cert-manager
+        run: bash deploy/kubernetes/test-support/cert-rotation.sh

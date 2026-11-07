@@ -1,0 +1,47 @@
+# A private CA and the Data Plane's server certificate, both issued by cert-manager. Replace the issuer with your own
+# (an enterprise CA, Vault, ACME) in production; the Data Plane only reads the resulting Secret.
+# The DNS names assume the namespace app-mixer-test; change them with the namespace.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: app-mixer-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: app-mixer-ca
+spec:
+  isCA: true
+  commonName: app-mixer-ca
+  secretName: app-mixer-ca
+  duration: 87600h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: app-mixer-selfsigned, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: app-mixer-ca
+spec:
+  ca:
+    secretName: app-mixer-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: app-mixer-data-plane-tls
+spec:
+  secretName: app-mixer-data-plane-tls
+  duration: 2160h
+  renewBefore: 720h
+  usages: [server auth, digital signature, key encipherment]
+  dnsNames:
+    - app-mixer-data-plane
+    - app-mixer-data-plane.app-mixer-test
+    - app-mixer-data-plane.app-mixer-test.svc
+    - app-mixer-data-plane.app-mixer-test.svc.cluster.local
+  # A new key with every issuance, so a renewal never reuses a key that may have leaked.
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  issuerRef: {name: app-mixer-ca, kind: Issuer}

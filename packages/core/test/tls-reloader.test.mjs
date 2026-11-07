@@ -59,3 +59,12 @@ test('TLS reload snapshots the configured loader, CA policy and callbacks',async
   next=rogue;assert.equal(await reloader.reloadNow(),true);assert.equal(reloads.length,2);
  }finally{reloader.stop();plane.close();}
 });
+
+test('a certificate with no subject, such as cert-manager issues, is described by its names',()=>{
+ // Node reports no subject for it; the information must still be a string that a log line can print.
+ const sanOnly={cert:fixture('san-only-cert.pem'),key:fixture('san-only-key.pem')};
+ const info=validateTlsCredentials(sanOnly,Date.parse('2030-01-01'));
+ assert.equal(typeof info.subject,'string');assert.equal(info.subject,'');
+ assert.match(info.altNames,/DNS:app-mixer-data-plane\.app-mixer-test\.svc/);
+ assert.match(validateTlsCredentials(server,Date.parse('2030-01-01')).altNames,/^(|DNS:.*)$/);
+});
