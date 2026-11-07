@@ -81,3 +81,18 @@ test('queued runs are dispatched in creation order, not run ID order, and databa
   store.create(scope,'bravo',config,0);assert.deepEqual(store.queuedPage(scope).runIds,['zulu','alpha','mike','bravo'],'new runs follow the migrated ones');
  }finally{store?.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('resuming a paused run that has used all its attempts says so instead of reporting a retryable race',()=>{
+ // A run paused for approval or delegation after its last attempt started has attempts equal to maxAttempts; the pause is put in place directly here.
+ const dir=mkdtempSync(join(tmpdir(),'durable-runs-exhausted-')),path=join(dir,'db.sqlite'),store=new SqliteAgentRuns(path);let db;
+ try{
+  let run=store.create(scope,'one',{definitionVersion:1,maxAttempts:1,deadline:1000},10);
+  run=store.claim(scope,'one',run.revision,'worker',100,20);assert.equal(run.attempts,1);
+  db=new DatabaseSync(path);db.prepare("UPDATE agent_runs SET status='paused',lease_token=NULL,lease_until=NULL,lease_owner=NULL WHERE run_id='one'").run();
+  run=store.get(scope,'one');assert.equal(run.status,'paused');assert.equal(run.attempts,run.maxAttempts);
+  assert.throws(()=>store.request(scope,'one',run.revision,'resume',22),error=>error.name==='AgentError'&&error.code==='conflict'&&/attempts exhausted/.test(error.message),'a non-retryable conflict that names the cause');
+  // A stale revision is still the retryable race it always was.
+  assert.throws(()=>store.request(scope,'one',run.revision-1,'resume',22),error=>error.code==='lost_race');
+  assert.equal(store.get(scope,'one').status,'paused','the run is left as it was');
+ }finally{db?.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});

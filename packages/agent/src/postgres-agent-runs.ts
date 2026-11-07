@@ -99,6 +99,7 @@ export class PostgresAgentRuns {
    if(action==='pause'&&run.status==='queued')run.status='paused';
    else if(action==='pause'&&run.status==='running')run.status='pause_requested';
    else if(action==='resume'&&run.status==='paused'&&run.attempts<run.maxAttempts){if(now>=run.deadline)throw Error('Run deadline expired');run.status='queued';}
+   else if(action==='resume'&&run.status==='paused')throw new AgentError('conflict','Run attempts exhausted');
    else if(action==='cancel'&&(run.status==='queued'||run.status==='paused'))run.status='cancelled';
    else if(action==='cancel'&&(run.status==='running'||run.status==='pause_requested'))run.status='cancel_requested';
    else throw new AgentError('lost_race','Invalid run state');
