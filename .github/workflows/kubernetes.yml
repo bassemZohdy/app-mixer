@@ -168,7 +168,12 @@ jobs:
           [ "$(ready)" = 503 ]
           status=$(curl --cacert "$ca" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13004/application || true)
           [ "$status" != 200 ]
-          kubectl logs -n "$ns" -l app.kubernetes.io/component=data-plane --all-containers --prefix --max-log-requests=10 | grep -q 'Release floor was rolled back' || echo 'note: the rollback refusal is not logged'
+          logged=false
+          for i in $(seq 1 90); do
+            if kubectl logs -n "$ns" -l app.kubernetes.io/component=data-plane --all-containers --prefix --max-log-requests=10 | grep -q 'Release floor check failed: Release floor was rolled back'; then logged=true; break; fi
+            sleep 1
+          done
+          [ "$logged" = true ]
           # Putting the floor back (as re-applying the journal's floor after a restore would) restores service.
           psql "UPDATE app_mixer_release_floors SET minimum_version=$floor WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'"
           for i in $(seq 1 45); do [ "$(ready)" = 200 ] && break || sleep 1; done

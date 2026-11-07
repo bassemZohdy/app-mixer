@@ -50,7 +50,9 @@ if(floorAnchorDir!==undefined&&(floorMode!=='postgres'||!/^\/[A-Za-z0-9._\/-]{1,
 if(floorMode==='postgres'){
  if(!revocationPool||!authenticate||!releaseEnvironment||!releaseTenant||! /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(releaseTenant))throw Error('Invalid publication release floor configuration');
  const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args),...(floorAnchorDir!==undefined?{floorAnchor:createFileReleaseFloorAnchor(floorAnchorDir)}:{})}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
- releaseAllowed=()=>registry.isAllowed(releaseScope,snapshot.version,digest);
+ let lastReleaseWarning=0;
+ // A refused or failed release check is logged (at most once a minute, without database details) so an operator can tell a rolled-back floor from an outage.
+ releaseAllowed=async()=>{try{return await registry.isAllowed(releaseScope,snapshot.version,digest);}catch(error){const now=Date.now();if(now-lastReleaseWarning>60000){lastReleaseWarning=now;console.error('Release floor check failed: '+(error instanceof Error&&error.message.startsWith('Release floor')?error.message:'database error'));}throw error;}};
 }else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
 const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
 metrics?.setPublicationVersion(snapshot.version);
