@@ -60,3 +60,29 @@ test('supported lifecycle and emitted action match pinned upstream A2UI schemas'
   assert.equal(validateServer({version,updateComponents:{surfaceId,components:[]}}),false);
   assert.equal(validateServer({...deletion,unexpected:true}),false);
 });
+
+test('a data update elsewhere does not overwrite text that is being composed with an input method', () => {
+  // While an input method is composing (compositionstart ... compositionend) the field holds text that is not yet in the data model.
+  const doc={createElement:() => new Element(doc)}; const host=doc.createElement(); const writes=[];
+  const renderer = new A2UIRenderer(host,basicRegistry(),message => writes.push(message));
+  const version='v0.9.1', surfaceId='main';
+  for(const message of [
+    {version,createSurface:{surfaceId,catalogId:APP_MIXER_CATALOG}},
+    {version,updateDataModel:{surfaceId,value:{name:'Ada',other:'x'}}},
+    {version,updateComponents:{surfaceId,components:[
+      {id:'root',component:'Column',children:['name','other']},
+      {id:'name',component:'TextField',label:'Name',value:{path:'/name'}},
+      {id:'other',component:'Text',text:{path:'/other'}}
+    ]}}
+  ])renderer.apply(message);
+  const find=element => element.listeners.compositionstart ? element : element.children.map(find).find(Boolean);
+  const input=find(host);
+  assert.ok(input,'the text field was rendered');assert.equal(input.value,'Ada');
+  input.listeners.compositionstart();input.value='Adaに';
+  renderer.apply({version,updateDataModel:{surfaceId,path:'/other',value:'y'}});
+  assert.equal(input.value,'Adaに','the composition survives an unrelated update');
+  // When composition ends the text is committed to the data model and later updates apply as usual.
+  input.listeners.compositionend();
+  renderer.apply({version,updateDataModel:{surfaceId,path:'/name',value:'Grace'}});
+  assert.equal(input.value,'Grace','after composition ends, a data update changes the field again');
+});

@@ -165,7 +165,8 @@ export function basicRegistry(): ComponentRegistry {
     input.addEventListener('compositionend', () => { composing = false; interaction.write(path, input.value, input); });
     input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
     interaction.controls.set(c.id as string, input);
-    interaction.bind(next => { const value = textValue(c.value, next); if (input.value !== value) input.value = value; });
+    // Text being composed with an input method is not in the data model yet; an update to any other path must not overwrite it. The data catches up when composition ends.
+    interaction.bind(next => { if (composing) return; const value = textValue(c.value, next); if (input.value !== value) input.value = value; });
     wrapper.appendChild(input); return wrapper;
   }, validateBasic);
   registry.register('Button', (c, child, _data, doc, interaction) => {
