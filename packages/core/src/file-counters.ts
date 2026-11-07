@@ -31,10 +31,13 @@ export function createFileCounters(directory:string,suffix:string):FileCounters{
   const lockPath=path+'.lock';let handle;
   for(let attempt=0;;attempt++){
    try{handle=await open(lockPath,'wx',0o600);break;}catch(error){
-    if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;
+    // EEXIST is another writer holding the lock. On Windows, creating the file while a previous holder's deletion is still pending fails with EPERM, EACCES or
+    // EBUSY instead; that clears within milliseconds, so it is retried like EEXIST, and the real error is reported if it never clears.
+    const code=(error as NodeJS.ErrnoException).code;
+    if(code!=='EEXIST'&&!(['EPERM','EACCES','EBUSY'].includes(code??'')&&attempt<lockAttempts))throw error;
     // A lock left by a crashed writer is broken after it has been held for far longer than any write takes.
     try{if(Date.now()-(await stat(lockPath)).mtimeMs>staleLockMs)await unlink(lockPath);}catch{/* the holder released it meanwhile */}
-    if(attempt>=lockAttempts)throw Error('Anchor is locked by another writer');await sleep(lockWaitMs);
+    if(attempt>=lockAttempts){if(code!=='EEXIST')throw error;throw Error('Anchor is locked by another writer');}await sleep(lockWaitMs);
    }
   }
   try{return await work();}finally{await handle.close().catch(()=>{});await unlink(lockPath).catch(()=>{});}
