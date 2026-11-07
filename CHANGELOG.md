@@ -4,7 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
-- `PostgresPublicationReleaseRegistry` takes an optional `floorAnchor` held outside the database: a restored database whose floor is below the anchored floor makes `isAllowed` throw instead of allowing an older release, and an unreadable anchor fails closed. The restore test shows the detection.
+- `PostgresPublicationReleaseRegistry` takes an optional `floorAnchor` held outside the database: a restored database whose floor is below the anchored floor makes `isAllowed` throw instead of allowing an older release, and an unreadable anchor fails closed. The restore test shows the detection. `createFileReleaseFloorAnchor(directory)` provides a durable file-based anchor (atomic writes, never lowers the floor, corrupt file fails closed).
 - A backup-restore characterization test (`postgres-restore-rollback.test.mjs`, `APP_MIXER_TEST_POSTGRES_RESTORE=docker`, run in CI) and operator guidance: restoring an older PostgreSQL backup silently re-activates revoked tokens, lowers the release floor, re-grants revoked approvals and rewinds the audit log, because those stores keep no anchor outside their database.
 - Owner decisions recorded: per-tenant (scoped) vector indexes for agent memory, and support for every current webhook adapter (`docs/agent-memory.md`, `docs/agent-event-ingress.md`). The "providers the product commits to supporting" checklist item is closed by that list.
 - The React Native device checks place three rows justified to the start, centre and end and verify where each label lands across the screen width, on the Android emulator and the iOS simulator.
