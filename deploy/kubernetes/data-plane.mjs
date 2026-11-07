@@ -68,7 +68,7 @@ if(transport==='tls'){
  const loadTls=async()=>({cert:await readFile(certPath),key:await readFile(keyPath),...(caPath?{clientCa:await readFile(caPath)}:{})});
  server=createDataPlaneHttps(repository,await loadTls(),planeOptions);
  // Optional: pick up renewed Secret files (for example from cert-manager) without a restart; invalid files keep the current credentials.
- if(reloadText!==undefined){tlsReloader=createTlsCredentialReloader(server,{load:loadTls,intervalMs:Number(reloadText),clientCa:!!caPath,onReload:info=>console.log(`TLS credentials active: ${info.subject.replaceAll('\n',', ')} until ${new Date(info.validTo).toISOString()}`),onError:error=>console.error(`TLS reload rejected: ${error.message}`)});}
+ if(reloadText!==undefined){tlsReloader=createTlsCredentialReloader(server,{load:loadTls,intervalMs:Number(reloadText),clientCa:!!caPath,onReload:info=>console.log(`TLS credentials active: ${[info.subject.replaceAll('\n',', '),info.altNames].filter(Boolean).join(', ')} until ${new Date(info.validTo).toISOString()}`),onError:error=>console.error(`TLS reload rejected: ${error.message}`)});}
 }else if(transport==='http')server=createDataPlane(repository,planeOptions);else throw Error('Invalid data plane transport configuration');server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
 const metricsServer=metrics?createMetricsServer({metrics,authorize:async req=>!!await authenticateMetrics(req),timeoutMs:2500,maxPending:20}):undefined;
 metricsServer?.listen(Number(metricsPort),metricsBind);

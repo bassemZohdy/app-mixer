@@ -4,7 +4,8 @@ import type {Server as HttpsServer} from 'node:https';
 import {TLS_POLICY} from './server-limits.js';
 
 export type TlsCredentials={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
-export type TlsCredentialInfo={fingerprint:string;subject:string;validFrom:number;validTo:number};
+/** `subject` is empty for a certificate without one (cert-manager's default); `altNames` lists its subject alternative names. */
+export type TlsCredentialInfo={fingerprint:string;subject:string;altNames:string;validFrom:number;validTo:number};
 export type TlsCredentialReloaderOptions={
  load:()=>TlsCredentials|Promise<TlsCredentials>;
  intervalMs:number;
@@ -25,7 +26,7 @@ export function validateTlsCredentials(credentials:TlsCredentials,now:number=Dat
  const validFrom=Date.parse(leaf.validFrom),validTo=Date.parse(leaf.validTo);
  if(!Number.isFinite(validFrom)||!Number.isFinite(validTo)||now<validFrom||now>=validTo)throw Error('TLS certificate is not currently valid');
  const fingerprint=createHash('sha256').update(leaf.raw).update(credentials.clientCa===undefined?'':Buffer.from(credentials.clientCa)).digest('hex');
- return {fingerprint,subject:leaf.subject,validFrom,validTo};
+ return {fingerprint,subject:leaf.subject??'',altNames:leaf.subjectAltName??'',validFrom,validTo};
 }
 
 /** Periodically reload server credentials; invalid or unchanged credentials keep the current context. */

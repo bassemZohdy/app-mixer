@@ -34,3 +34,12 @@ test('a running HTTPS Data Plane reloads valid credentials and keeps serving on 
   assert.throws(()=>createTlsCredentialReloader({},{load:()=>server,intervalMs:1000,clientCa:false}),/Invalid TLS reloader configuration/);
  }finally{reloader.stop();assert.equal(await reloader.reloadNow(),false);plane.closeAllConnections();await new Promise(resolve=>plane.close(resolve));}
 });
+
+test('a certificate with no subject, such as cert-manager issues, is described by its names',()=>{
+ // Node reports no subject for it; the information must still be a string that a log line can print.
+ const sanOnly={cert:fixture('san-only-cert.pem'),key:fixture('san-only-key.pem')};
+ const info=validateTlsCredentials(sanOnly,Date.parse('2030-01-01'));
+ assert.equal(typeof info.subject,'string');assert.equal(info.subject,'');
+ assert.match(info.altNames,/DNS:app-mixer-data-plane\.app-mixer-test\.svc/);
+ assert.match(validateTlsCredentials(server,Date.parse('2030-01-01')).altNames,/^(|DNS:.*)$/);
+});
