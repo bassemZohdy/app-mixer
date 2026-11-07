@@ -7,7 +7,10 @@ on:
       - '.github/workflows/web-android.yml'
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, local-acceptance-hardening]
+    paths:
+      - 'packages/web/**'
+      - '.github/workflows/web-android.yml'
   schedule:
     - cron: '41 4 * * 1'
 permissions:
