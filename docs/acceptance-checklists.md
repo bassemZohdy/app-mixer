@@ -88,7 +88,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** lease-fenced journal with stable keys, explicit reconciliation, recovery workers, a worker host that drains them on shutdown, evidence records, process-kill and cross-process race tests, idempotency conformance helper.
 - **Still to prove:**
   - [ ] Production scheduling of the recovery worker. The same supervisor runs recovery: it verifies interrupted actions and retries runs on every pass, and the kind Deployment test recovers the crashed worker's runs with no duplicated effect ([durable-agent-runs.md](durable-agent-runs.md#scheduling-workers-on-the-shared-registry)). Still to do: run it in production.
-  - [ ] Provider-specific verification for each provider the agents may call.
+  - [ ] Provider-specific verification for each provider the agents may call. The owner defined the contract on 2026-11-07 (an HTTP API that honours an idempotency key) and `scripts/check-provider-idempotency.mjs` runs it against a sandbox ([agent-action-journal.md](agent-action-journal.md#verifying-an-outbound-provider)); what remains is a passing run, with a kept report, for each provider the agents will actually call, which needs each provider's sandbox.
   - [ ] Production storage and verification against real providers.
 - **Evidence:** a provider conformance run (using the idempotency contract helper) per provider, and a recovery transcript from a real ambiguous failure.
 
