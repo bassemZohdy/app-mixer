@@ -4,12 +4,16 @@
 // rollback detection and the guidance should be updated. Opt-in: APP_MIXER_TEST_POSTGRES_RESTORE=docker (one PostgreSQL container).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFile} from 'node:child_process';
+import {execFile,spawnSync} from 'node:child_process';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import pg from 'pg';
-import {PostgresJwtRevocations,PostgresPublicationReleaseRegistry,PostgresExtensionApprovals,PostgresCapabilityAudit} from '../dist/index.js';
+import {PostgresJwtRevocations,PostgresPublicationReleaseRegistry,PostgresExtensionApprovals,PostgresCapabilityAudit,createFileSequenceAnchor,capabilityAuditAnchorKey} from '../dist/index.js';
 
 const run=promisify(execFile),enabled=process.env.APP_MIXER_TEST_POSTGRES_RESTORE==='docker',image='pgvector/pgvector:0.8.7-pg16',password='restore-test-only';
 const docker=(...args)=>run('docker',args,{maxBuffer:10**7}).then(result=>result.stdout.trim());
@@ -17,6 +21,7 @@ const issuer='https://identity.example.test/',claims=jti=>({iss:issuer,jti}),rel
 const admin={tenantId:'tenant',principalId:'admin'},approvalScope={tenantId:'tenant',applicationId:'demo'},reference={id:'example.report',version:'1.0.0',scope:'application'},operation={extensionId:'example.report',kind:'tool',name:'lookup'};
 async function waitFor(description,check,attempts=120){for(let i=0;i<attempts;i++){try{const value=await check();if(value)return value;}catch{}await delay(500);}throw Error(`Timed out waiting for ${description}`);}
 
+let auditAnchorDirectory;
 test('restoring an older backup silently undoes revocations, release floors, approval revocations and audit sequences',{skip:!enabled&&'set APP_MIXER_TEST_POSTGRES_RESTORE=docker to run',timeout:240000},async t=>{
  const name='am-restore-'+randomUUID().slice(0,8);let pool;
  const psql=(sql,database='postgres')=>docker('exec','-u','postgres',name,'psql','-U','postgres','-d',database,'-Atc',sql);
@@ -33,7 +38,7 @@ test('restoring an older backup silently undoes revocations, release floors, app
   const held=new Map(),anchored=new PostgresPublicationReleaseRegistry({query,floorAnchor:{read:scope=>held.get(scope.tenantId)??0,advance:(scope,floor)=>{held.set(scope.tenantId,Math.max(held.get(scope.tenantId)??0,floor));}}});
   const marks=new Map(),mapAnchor={read:key=>marks.get(key)??0,advance:(key,value)=>{marks.set(key,Math.max(marks.get(key)??0,value));}};
   const anchoredRevocations=new PostgresJwtRevocations({issuer,clock:()=>now,query,epochAnchor:mapAnchor}),anchoredApprovals=new PostgresExtensionApprovals({query,clock:()=>now,authorize:()=>true,epochAnchor:mapAnchor});
-  const anchoredAudit=new PostgresCapabilityAudit({clock:()=>now,query,sequenceAnchor:mapAnchor});
+  const anchoredAudit=new PostgresCapabilityAudit({clock:()=>now,query,sequenceAnchor:createFileSequenceAnchor(auditAnchorDirectory=mkdtempSync(join(tmpdir(),'restore-audit-anchor-')))});
   const event=n=>({invocationId:'invocation-'+n,operationId:'write',tenantId:'tenant',principalId:'user',outcome:'attempt'});
   await Promise.all([revocations.initialize(),releases.initialize(),approvals.initialize(),audit.initialize()]);
   // State A: what the backup captures.
@@ -74,7 +79,20 @@ test('restoring an older backup silently undoes revocations, release floors, app
   assert.equal(outcome.revokedApprovalAllowedAgain,true,'an approval revoked after the backup is granted again');
   assert.deepEqual(outcome.auditSequences,[1,2,3],'the audit log lost its last two events');
   await audit.record(event(6));assert.deepEqual((await audit.list('tenant')).map(row=>row.sequence),[1,2,3,4],'sequence 4 is reused for a different event, with no sign of the gap');
+  // Recovery as documented: re-apply the lost state through the anchored write paths and the refusals clear by themselves.
+  await anchored.advanceFloor(release,4);
+  assert.equal(await anchored.isAllowed(release,4,digestOf(4)),true,'the floor is back at its real value');assert.equal(await anchored.isAllowed(release,3,digestOf(3)),false,'a release below the real floor is refused again');
+  await anchoredRevocations.revoke('revoked-after-backup',now+3600000);
+  assert.equal(await anchoredRevocations.isTokenActive(claims('revoked-after-backup')),false,'the re-applied revocation is in force and the epoch caught up');assert.equal(await anchoredRevocations.isTokenActive(claims('revoked-in-backup')),false);assert.equal(await anchoredRevocations.isTokenActive(claims('never-revoked')),true);
+  await anchoredApprovals.decide(admin,approvalScope,reference,operation,{allowed:false,expiresAt:0,expectedRevision:1});
+  assert.equal(await anchoredApprovals.isAllowed(admin,approvalScope,reference,operation),false,'the re-applied approval revocation is in force');
+  // The lost audit events cannot be re-applied, so the operator lowers that anchor deliberately with the tool, which demands a flag and a reason.
+  const adminTool=fileURLToPath(new URL('../../../scripts/anchor-admin.mjs',import.meta.url)),auditFile=capabilityAuditAnchorKey('tenant')+'.sequence';
+  const refused=spawnSync(process.execPath,[adminTool,auditAnchorDirectory,'set',auditFile,'4'],{encoding:'utf8'});assert.notEqual(refused.status,0);assert.match(refused.stderr,/without --allow-lower/);
+  await assert.rejects(anchoredAudit.record(event(7)),/Audit log was rolled back/,'still refusing until the anchor is lowered');
+  const lowered=spawnSync(process.execPath,[adminTool,auditAnchorDirectory,'set',auditFile,'4','--allow-lower','--reason','Restored from backup; events 4 and 5 were lost and are noted in the incident record'],{encoding:'utf8'});assert.equal(lowered.status,0,lowered.stderr);
+  await anchoredAudit.record(event(7));assert.deepEqual((await audit.list('tenant')).map(row=>row.sequence),[1,2,3,4,5],'recording resumes after the deliberate reset');
  }finally{
-  await pool?.end().catch(()=>{});await docker('rm','-f',name).catch(()=>{});
+  await pool?.end().catch(()=>{});await docker('rm','-f',name).catch(()=>{});if(auditAnchorDirectory)rmSync(auditAnchorDirectory,{recursive:true,force:true});
  }
 });

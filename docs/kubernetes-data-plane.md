@@ -97,7 +97,7 @@ A refusal is not recovery. After a restore the operator still has to re-apply wh
 
 ### Recovering after a rollback refusal
 
-When an anchored store refuses ("Release floor was rolled back", "Revocations were rolled back", "Extension approvals were rolled back", "Audit log was rolled back"), do not clear the anchor first. The anchor is the only record of how far the real state had advanced. This is guidance; the steps below are not tested end to end.
+When an anchored store refuses ("Release floor was rolled back", "Revocations were rolled back", "Extension approvals were rolled back", "Audit log was rolled back"), do not clear the anchor first. The anchor is the only record of how far the real state had advanced. The restore test (`postgres-restore-rollback.test.mjs`) walks through steps 2 and 3 for the release floor, revocations, approvals and the capability audit log, with the anchor tool: the re-applied floor, revocation and approval revocation clear their refusals without touching an anchor, the audit anchor cannot be lowered without the flag and a reason, and recording resumes after it is lowered. It does not cover reconstructing real lost changes, which depends on where your records live, and the authentication-failure audit log follows the audit steps but is not in that test.
 
 1. **Keep refusing** while you establish the restore point and the window of lost changes. Compare `node scripts/anchor-admin.mjs <directory> list` (the anchored values) with the database counters.
 2. **Re-apply what was lost** through the normal, anchored write paths, from the identity provider, the change record or the old primary's log.
