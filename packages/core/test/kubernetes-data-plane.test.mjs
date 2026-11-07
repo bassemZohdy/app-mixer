@@ -14,7 +14,9 @@ import {signPublicationRelease,verifyPublicationRelease} from '../dist/index.js'
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 const service=fileURLToPath(new URL('../../../deploy/kubernetes/data-plane.mjs',import.meta.url));
-async function port(){const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');const value=server.address().port;await new Promise(resolve=>server.close(resolve));return value;}
+// Ports come from below Linux's ephemeral range (32768 and up). Asking the kernel for port 0 hands out a port that a parallel test's
+// outgoing connection or listener can be given again before the child process binds it, which made the Data Plane exit with code 1.
+async function port(){for(let attempt=0;attempt<50;attempt++){const candidate=20000+Math.floor(Math.random()*10000),server=createServer();server.listen(candidate,'127.0.0.1');try{await once(server,'listening');}catch{continue;}await new Promise(resolve=>server.close(resolve));return candidate;}throw Error('No free port');}
 async function otherPort(excluded){let value=await port();while(value===excluded)value=await port();return value;}
 async function awaitReady(url,child){for(let i=0;i<100;i++){if(child.exitCode!==null)throw Error(`Data Plane exited: ${child.exitCode}`);try{return await fetch(url,{signal:AbortSignal.timeout(500)});}catch{await delay(50);}}throw Error('Data Plane failed to start');}
 test('mounted publication stays immutable and serves readiness without a Control Plane',async()=>{
