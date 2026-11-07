@@ -3,6 +3,8 @@
 All notable changes to App Mixer are tracked here. Version numbers describe repository development, not released production features.
 
 ## [Unreleased] — 2026-10-28
+### Changed
+- The supported Node floor is now 22.22.2 (was 22.13.0): `engines`, README and CONTRIBUTING, the CI matrix, the kind workflow and the Docker base images. This unblocked `jsdom` 31 and the OpenTelemetry 3.x group (`@opentelemetry/api` 1.10.0, `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0, OTLP exporter 0.301.0), taken in this release; the exporter is also a root dev dependency so the collector tests resolve it, and the browser collector test's module server resolves packages' `#imports`.
 ### Fixed
 - `PostgresAgentDefinitions.list` reads a page with three batch queries instead of six per agent, keeping the per-agent authorization sequence and the change check of `get`.
 - `PostgresAgentMemory.list`, and with it semantic and hybrid search, reads a page of memories with two batch queries instead of two per memory (a 50-memory page: 3 queries instead of about 101) while keeping the per-record authorization before, during and after the read.

@@ -59,10 +59,17 @@ const browserBinary=process.env.CHROME_BIN||['/usr/bin/google-chrome','/usr/bin/
 const missing=[];
 const modulesRoot=fileURLToPath(new URL('../../../node_modules/',import.meta.url));
 function packageRoot(file){const parts=relative(modulesRoot,file).split(sep);return join(modulesRoot,...parts.slice(0,parts[0].startsWith('@')?2:1));}
+// A package's own `#name` imports (its package.json "imports" map, which the OpenTelemetry 3.x packages use for platform code) are rewritten to the
+// file a bundler would pick for the browser: the first browser, module, import or default entry, never the node, require or source-only ones.
+function withPackageImports(root,file,source){
+ const imports=JSON.parse(readFileSync(join(root,'package.json'),'utf8')).imports;if(!imports||!source.includes('#'))return source;
+ const target=value=>{if(typeof value==='string')return value;if(!value||typeof value!=='object')return undefined;for(const key of ['browser','module','import','default']){const found=target(value[key]);if(found)return found;}return undefined;};
+ return source.replace(/(\bfrom\s*|\bimport\s*\(?\s*)(['"])(#[\w-]+)\2/g,(match,lead,quote,name)=>{const resolved=target(imports[name]);if(!resolved)return match;return lead+quote+'/m/'+relative(modulesRoot,join(root,resolved)).split(sep).join('/')+quote;});
+}
 function serveModule(path,res){
  const file=join(modulesRoot,...path.split('/'));if(!file.startsWith(modulesRoot)||!file.includes(sep+'@opentelemetry'+sep)){res.writeHead(404).end();return;}
  const redirect=to=>res.writeHead(302,{location:'/m/'+relative(modulesRoot,to).split(sep).join('/')}).end();
- if(existsSync(file)&&statSync(file).isFile()){const root=packageRoot(file),browser=JSON.parse(readFileSync(join(root,'package.json'),'utf8')).browser,mapped=typeof browser==='object'?browser['./'+relative(root,file).split(sep).join('/')]:undefined;if(typeof mapped==='string'&&join(root,mapped)!==file){redirect(join(root,mapped));return;}res.writeHead(200,{'content-type':'text/javascript'}).end(readFileSync(file));return;}
+ if(existsSync(file)&&statSync(file).isFile()){const root=packageRoot(file),browser=JSON.parse(readFileSync(join(root,'package.json'),'utf8')).browser,mapped=typeof browser==='object'?browser['./'+relative(root,file).split(sep).join('/')]:undefined;if(typeof mapped==='string'&&join(root,mapped)!==file){redirect(join(root,mapped));return;}res.writeHead(200,{'content-type':'text/javascript'}).end(withPackageImports(root,file,readFileSync(file,'utf8')));return;}
  if(existsSync(file+'.js')){redirect(file+'.js');return;}if(existsSync(join(file,'index.js'))){redirect(join(file,'index.js'));return;}missing.push(path);res.writeHead(404).end();
 }
 // Follows package export conditions the way a browser bundler does: browser and ESM entries, never require or types.

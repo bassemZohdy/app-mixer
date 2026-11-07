@@ -2,7 +2,7 @@
 
 ## Overall progress
 
-**62 / 80 tasks complete (78%)**
+**63 / 80 tasks complete (79%)**
 
 `████████████████░░░░`
 
@@ -14,7 +14,7 @@ Progress counts checked items equally; a task is complete only after verificatio
 | P1 vertical slice | 8 / 8 | 0 |
 | P2 portability, data and persistent-agent foundation | 1 / 10 | 9 (P2-01, P2-02, P2-04..P2-10) |
 | P3 production and persistent-agent operations | 0 / 8 | 8 (P3-01..P3-08) |
-| P4 fixes and improvements from the 2026-11-06 code review | 48 / 49 | 1 (P4-42) |
+| P4 fixes and improvements from the 2026-11-06 code review | 49 / 49 | 0 |
 
 Each open P2 and P3 task has an acceptance checklist of what must still be proven on a real system, with the evidence required: [docs/acceptance-checklists.md](docs/acceptance-checklists.md). P4 items come from a full code review; each states what was found, where, and the fix.
 
@@ -174,8 +174,8 @@ Each item names what was found and where, and the fix. An item is done when the 
   - Found (`npm outdated` 2026-11-06): `@opentelemetry/*` 2.x → 3.x and the OTLP exporter 0.223 → 0.301, `jsdom` 26 → 31, `@langchain/langgraph` 1.5 → 1.7, `jose` 6.2.13 → 6.2.15, `twilio` 6.2 → 6.3, TypeScript 5.9 (7.0 available); no Dependabot or Renovate configuration. Fixed 2026-11-06 for automation and the safe update: `.github/dependabot.yml` is grouped by ecosystem (OpenTelemetry, LangChain, TypeScript tooling, others), CI runs `npm audit --omit=dev` (0 vulnerabilities), and `jose` is at 6.2.15 with the JWT tests green. The major updates (OpenTelemetry 3.x, jsdom 31, LangGraph 1.7, TypeScript 7) are P4-42, to be taken one group at a time with the collector and browser tests.
 
 ### Documentation and process
-- [ ] P4-42 Take the major dependency updates once the Node floor allows
-  - Found while fixing P4-27. Done 2026-11-06: the in-range updates (`@langchain/langgraph` 1.5.3 to 1.7.1, `@langchain/core`, `@langchain/langgraph-checkpoint`, `@ag-ui/core`, `fake-indexeddb`) with the full suite green. Tried and reverted 2026-11-06: `jsdom` 31 passes the whole suite on Node 24 but declares `node ^22.22.2 || ^24.15.0 || >=26`, and `@opentelemetry/*` 3.x and the OTLP exporter 0.301 declare `node >=22.15.0`, while this repository supports `>=22.13.0` and CI runs 22.13.0. They are blocked by the supported Node floor, which is the owner's decision to raise (a floor of 22.22 would unblock both, and drops the 22.13.0 CI cell). Also tried and reverted 2026-11-06: `@opentelemetry/api` 1.10.0 alone (it has no Node floor) broke the three tracing tests of the generated app, because the SDK packages and the exporter still resolve 1.9.0 and two API copies do not share a tracer provider; it has to move together with the SDK group. Also open: `@types/node` 22 to 26 (keep it matched to the supported range) and TypeScript 5.9 to 7 (blocked by typescript-eslint's `<6.1.0` peer range). Fix: decide the floor, then update each group in its own commit with the collector, browser and agent tests green, and record API changes in the CHANGELOG.
+- [x] P4-42 Take the major dependency updates once the Node floor allows
+  - Found while fixing P4-27. Done 2026-11-07 after the owner chose to raise the supported Node floor from 22.13.0 to 22.22.2 (engines, README, CONTRIBUTING, CI matrix, kind workflow, Docker base images; the 22.22.2 image builds the Data Plane at 338 MB): `jsdom` 26 to 31, and the OpenTelemetry group together (`@opentelemetry/api` 1.10.0 with `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0 and the OTLP exporter 0.301.0; the API must be one copy, so `npm dedupe` was needed). Verified with the full suite (919 tests), lint, the production audit, the three generated-app browser smokes, the real-browser tests, the Docker data-plane build and the real OpenTelemetry Collector tests (both pass; the browser variant needed the test's module server to resolve the packages' `#platform` imports). Earlier in-range updates: `@langchain/langgraph` 1.7.1 and the rest. Still open by design: `@types/node` 22 to 26 (keep it matched to the supported range) and TypeScript 5.9 to 7 (blocked by typescript-eslint's `<6.1.0` peer range).
 - [x] P4-28 Index every document from the README and retire the orphans
   - Found: the README links 14 of 36 files in `docs/` (missing agent runs, memory, approvals, schedules, event ingress, extensions, offline queue, JWT auth, Kubernetes, observability, runbooks, acceptance checklists, …); `docs/roadmap.md` (an M0 roadmap), `docs/requirements.md` and `docs/architecture.md` are linked from nowhere and duplicate `docs/specs/*`; the README still says offline sync and Kubernetes packaging remain future work. Fixed 2026-11-06: `npm run docs` generates `docs/README.md` from the file headings (a test fails when it is stale), the README links it and its status paragraph is refreshed, the three orphans (`roadmap.md`, `requirements.md`, `architecture.md`, M0-era stubs that duplicated `docs/specs/*` and `TODO.md`) were deleted, and a test checks every `docs/**/*.md` is reachable from the README.
 - [x] P4-29 Compute the progress table instead of maintaining it by hand
