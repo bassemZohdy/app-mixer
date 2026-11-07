@@ -1,4 +1,4 @@
-// Failover drill for the shared token revocation store, the release-floor registry, the extension approval store and the capability audit log (P2-02, P3-01, P3-04). A PostgreSQL primary streams to a synchronous standby
+// Failover drill for the shared token revocation store, the release-floor registry, the extension approval store and the capability and authentication-failure audit logs (P2-02, P3-01, P3-04). A PostgreSQL primary streams to a synchronous standby
 // (synchronous_commit=remote_apply). A TCP proxy stands in for the virtual address or service a platform repoints at a new
 // primary. The drill revokes a token, kills the primary, checks that revocation lookups deny rather than allow while the
 // database is down, promotes the standby, repoints the proxy and checks that the acknowledged revocation survived, that other
@@ -11,7 +11,7 @@ import {createServer,connect} from 'node:net';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import pg from 'pg';
-import {PostgresJwtRevocations,PostgresPublicationReleaseRegistry,PostgresExtensionApprovals,PostgresCapabilityAudit} from '../dist/index.js';
+import {PostgresJwtRevocations,PostgresPublicationReleaseRegistry,PostgresExtensionApprovals,PostgresCapabilityAudit,PostgresAuthenticationFailureAudit} from '../dist/index.js';
 
 const run=promisify(execFile),enabled=process.env.APP_MIXER_TEST_POSTGRES_FAILOVER==='docker',image='pgvector/pgvector:0.8.7-pg16',password='failover-test-only';
 const docker=(...args)=>run('docker',args,{maxBuffer:10**7}).then(result=>result.stdout.trim());
@@ -32,7 +32,7 @@ async function proxy(){
 async function waitFor(description,check,attempts=120){for(let i=0;i<attempts;i++){try{const value=await check();if(value)return value;}catch{}await delay(500);}throw Error(`Timed out waiting for ${description}`);}
 const published=async name=>Number((await docker('port',name,'5432/tcp')).split('\n')[0].split(':').pop());
 
-test('acknowledged revocations, release floors, extension approvals and audit events survive a primary failover and lookups deny while the database is down',{skip:!enabled&&'set APP_MIXER_TEST_POSTGRES_FAILOVER=docker to run',timeout:300000},async t=>{
+test('acknowledged revocations, release floors, extension approvals and audit logs survive a primary failover and lookups deny while the database is down',{skip:!enabled&&'set APP_MIXER_TEST_POSTGRES_FAILOVER=docker to run',timeout:300000},async t=>{
  const id=randomUUID().slice(0,8),network='am-failover-'+id,primary='am-primary-'+id,standby='am-standby-'+id,front=await proxy();let pool;
  try{
   await docker('network','create',network);
@@ -52,6 +52,9 @@ test('acknowledged revocations, release floors, extension approvals and audit ev
   const auditEvent=n=>({invocationId:'invocation-'+n,operationId:'write',tenantId:'tenant',principalId:'user',outcome:'attempt'});
   for(const n of [1,2,3])await audit.record(auditEvent(n));
   assert.deepEqual((await audit.list('tenant')).map(row=>row.sequence),[1,2,3]);
+  const failures=new PostgresAuthenticationFailureAudit({clock:()=>now,query:(sql,args)=>pool.query(sql,args)});await failures.initialize();
+  for(const n of [1,2])await failures.record({reason:'unauthenticated',remoteAddress:'192.0.2.'+n});
+  assert.deepEqual((await failures.list()).map(row=>row.sequence),[1,2]);
   const kept=operationOf('kept'),withdrawn=operationOf('withdrawn');
   await approvals.decide(admin,approvalScope,reference,kept,{allowed:true,expiresAt:now+3600000,expectedRevision:0});
   await approvals.decide(admin,approvalScope,reference,withdrawn,{allowed:true,expiresAt:now+3600000,expectedRevision:0});await approvals.decide(admin,approvalScope,reference,withdrawn,{allowed:false,expiresAt:0,expectedRevision:1});
@@ -68,6 +71,7 @@ test('acknowledged revocations, release floors, extension approvals and audit ev
   assert.ok(outage.error,'the outage surfaces as a database error, which the authenticator turns into a denial');
   await assert.rejects(store.revoke('during-outage',now+3600000));
   await assert.rejects(releases.isAllowed(release,3,digestOf(3)),'a release check during the outage must fail, not allow');
+  await assert.rejects(failures.record({reason:'unauthenticated',remoteAddress:'192.0.2.99'}),'an authentication-failure audit write during the outage must fail');
   await assert.rejects(audit.record(auditEvent(99)),'an audit write during the outage must fail so that the audited operation does not run');
   const approvalOutage=await approvals.isAllowed(admin,approvalScope,reference,kept).then(value=>({value}),error=>({error}));assert.ok(approvalOutage.error||approvalOutage.value===false,'an approval check during the outage must not allow');
 
@@ -83,6 +87,7 @@ test('acknowledged revocations, release floors, extension approvals and audit ev
   assert.equal(await releases.isAllowed(release,2,digestOf(2)),false,'the release floor is not lowered by the failover');
   assert.equal(await releases.isAllowed(release,3,digestOf(3)),true);
   assert.deepEqual((await audit.list('tenant')).map(row=>row.invocationId),['invocation-1','invocation-2','invocation-3'],'acknowledged audit events survive the failover');
+  assert.deepEqual((await failures.list()).map(row=>row.sequence),[1,2],'acknowledged authentication failures survive the failover');await failures.record({reason:'unauthenticated',remoteAddress:'192.0.2.3'});assert.deepEqual((await failures.list()).map(row=>row.sequence),[1,2,3]);
   await audit.record(auditEvent(4));assert.deepEqual((await audit.list('tenant')).map(row=>row.sequence),[1,2,3,4],'sequence numbers continue without a gap or a duplicate');
   assert.equal(await approvals.isAllowed(admin,approvalScope,reference,kept),true,'an approval granted before the failover still holds');
   assert.equal(await approvals.isAllowed(admin,approvalScope,reference,withdrawn),false,'a revoked approval is not resurrected by the failover');
