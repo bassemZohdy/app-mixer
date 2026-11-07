@@ -97,6 +97,6 @@ test('acknowledged revocations, release floors, extension approvals and audit lo
   await releases.register(release,4,digestOf(4));assert.equal(await releases.advanceFloor(release,4),4);assert.equal(await releases.isAllowed(release,3,digestOf(3)),false);
  }finally{
   await pool?.end().catch(()=>{});front.close();
-  await docker('rm','-f',primary,standby).catch(()=>{});await docker('network','rm',network).catch(()=>{});
+  await docker('rm','-fv',primary,standby).catch(()=>{});await docker('network','rm',network).catch(()=>{});
  }
 });

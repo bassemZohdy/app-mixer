@@ -173,7 +173,7 @@ async function scenario(driveBrowser,browserLanguage){
   if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}
   for(const server of servers)await close(server);for(const provider of providers)await provider.shutdown().catch(()=>{});
   context.disable();propagation.disable();manager.disable();
-  if(started)await run('docker',['rm','-f',name]).catch(()=>{});
+  if(started)await run('docker',['rm','-fv',name]).catch(()=>{});
   await rm(dir,{recursive:true,force:true});
  }
 }

@@ -36,16 +36,14 @@ export class SqliteAgentRunMetrics {
  }
  close():void{this.db.close();}
  async snapshot(actor:AgentRunMetricsActor):Promise<AgentRunMetricsSnapshot>{
-  if(!actor||actor.tenantId!==this.scope.tenantId||!valid(actor.principalId))throw new AgentError('denied','Invalid agent metrics actor');const who={tenantId:actor.tenantId,principalId:actor.principalId},scope={...this.scope};
-  const permitted=async()=>{try{return await this.authorize({...who},{...scope})===true;}catch{return false;}};
-  if(!await permitted())throw new AgentError('denied','Agent metrics access denied');
+  const permitted=await this.permittedFor(actor),scope={...this.scope};
   const rows=this.db.prepare('SELECT status,archived,COUNT(*) AS count FROM agent_runs WHERE tenant_id=? AND agent_id=? GROUP BY status,archived').all(scope.tenantId,scope.agentId),counts=new Map<string,number>();
   for(const row of rows){if(typeof row.status!=='string'||!statuses.includes(row.status as AgentRunMetricStatus)||(row.archived!==0&&row.archived!==1)||!Number.isSafeInteger(row.count)||Number(row.count)<0)throw Error('Invalid agent metrics data');counts.set(`${row.status}:${row.archived}`,Number(row.count));}
   if(!await permitted())throw new AgentError('denied','Agent metrics access denied');return statuses.flatMap(status=>[false,true].map(archived=>({status,archived,count:counts.get(`${status}:${Number(archived)}`)??0})));
  }
  /** Current overdue backlog and expired leases, with a bounded fixed set of labels. */
  async operational(actor:AgentRunMetricsActor):Promise<AgentRunOperationalMetric[]>{
-  if(!actor||actor.tenantId!==this.scope.tenantId||!valid(actor.principalId))throw new AgentError('denied','Invalid agent metrics actor');const who={tenantId:actor.tenantId,principalId:actor.principalId},scope={...this.scope},permitted=async()=>{try{return await this.authorize({...who},{...scope})===true;}catch{return false;}};if(!await permitted())throw new AgentError('denied','Agent metrics access denied');const now=this.clock();if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid agent metrics clock');
+  const permitted=await this.permittedFor(actor),scope={...this.scope},now=this.clock();if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid agent metrics clock');
   const rows=this.db.prepare("SELECT CASE WHEN status IN ('queued','paused') THEN status ELSE 'lease' END AS kind, COUNT(*) AS count, MIN(CASE WHEN status IN ('queued','paused') THEN deadline ELSE lease_until END) AS earliest, SUM(CASE WHEN status IN ('running','pause_requested','cancel_requested') AND lease_until IS NULL THEN 1 ELSE 0 END) AS invalid FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND ((status IN ('queued','paused') AND deadline<=?) OR (status IN ('running','pause_requested','cancel_requested') AND (lease_until<=? OR lease_until IS NULL))) GROUP BY kind").all(scope.tenantId,scope.agentId,now,now),metrics:AgentRunOperationalMetric[]=[{kind:'queued',count:0,oldestOverdueSeconds:0},{kind:'paused',count:0,oldestOverdueSeconds:0},{kind:'lease',count:0,oldestOverdueSeconds:0}];
   for(const row of rows){const metric=metrics.find(item=>item.kind===row.kind);if(!metric||row.invalid!==0||!Number.isSafeInteger(row.count)||Number(row.count)<0||!Number.isSafeInteger(row.earliest)||Number(row.earliest)<0||Number(row.earliest)>now)throw Error('Invalid agent metrics data');metric.count=Number(row.count);metric.oldestOverdueSeconds=(now-Number(row.earliest))/1000;}
   if(!await permitted())throw new AgentError('denied','Agent metrics access denied');return metrics;

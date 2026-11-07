@@ -93,6 +93,6 @@ test('restoring an older backup silently undoes revocations, release floors, app
   const lowered=spawnSync(process.execPath,[adminTool,auditAnchorDirectory,'set',auditFile,'4','--allow-lower','--reason','Restored from backup; events 4 and 5 were lost and are noted in the incident record'],{encoding:'utf8'});assert.equal(lowered.status,0,lowered.stderr);
   await anchoredAudit.record(event(7));assert.deepEqual((await audit.list('tenant')).map(row=>row.sequence),[1,2,3,4,5],'recording resumes after the deliberate reset');
  }finally{
-  await pool?.end().catch(()=>{});await docker('rm','-f',name).catch(()=>{});if(auditAnchorDirectory)rmSync(auditAnchorDirectory,{recursive:true,force:true});
+  await pool?.end().catch(()=>{});await docker('rm','-fv',name).catch(()=>{});if(auditAnchorDirectory)rmSync(auditAnchorDirectory,{recursive:true,force:true});
  }
 });

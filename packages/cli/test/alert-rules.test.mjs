@@ -124,7 +124,7 @@ test('a failure drill fires, routes and resolves alerts through real Prometheus 
   await wait(()=>deliveries('page','AppMixerAgentScheduleBacklog','resolved').length>0&&deliveries('ticket','AppMixerAgentActionsUncertain','resolved').length>0,'Alertmanager to send the resolved notices');
   if(process.env.APP_MIXER_TEST_ALERT_EXPORT)await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT.replace(/(\.json)?$/,'-deliveries.json'),JSON.stringify(delivered,null,2));
  }finally{
-  for(const container of containers)await run('docker',['rm','-f',container]).catch(()=>{});
+  for(const container of containers)await run('docker',['rm','-fv',container]).catch(()=>{});
   for(const server of servers){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
   metrics?.close();store?.close();await rm(dir,{recursive:true,force:true}).catch(()=>{});
  }

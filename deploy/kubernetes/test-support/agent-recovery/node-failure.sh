@@ -14,7 +14,9 @@ runs=60
 k() { kubectl -n "$ns" "$@"; }
 kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
 
-# Keep the stateful pods off the node that will fail: with the victim cordoned they can only land on the survivor.
+# Keep the stateful pods off the node that will fail: with the victim cordoned they can only land on the survivor. The trap uncordons the
+# victim again if the script stops early, so a failed run does not leave the cluster without a schedulable second worker.
+trap 'kubectl uncordon "$victim" >/dev/null 2>&1 || true' EXIT
 kubectl cordon "$victim"
 k apply -f "$dir/postgres.yaml" -f "$dir/run-supervisor.yaml"
 k wait --for=condition=Ready pod/agent-memory-postgres pod/agent-run-effects --timeout=180s
@@ -30,15 +32,22 @@ for i in $(seq 1 60); do
 done
 [ "$ready" = true ]
 
-# Evict from an unreachable or not-ready node after 5 seconds instead of the default 300, and prefer one worker per node.
+# Evict from an unreachable or not-ready node after 5 seconds instead of the default 300.
 k patch deployment/agent-run-workers --type merge -p '{"spec":{"template":{"spec":{
   "tolerations":[
     {"key":"node.kubernetes.io/unreachable","operator":"Exists","effect":"NoExecute","tolerationSeconds":5},
-    {"key":"node.kubernetes.io/not-ready","operator":"Exists","effect":"NoExecute","tolerationSeconds":5}],
-  "affinity":{"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[
-    {"weight":100,"podAffinityTerm":{"topologyKey":"kubernetes.io/hostname","labelSelector":{"matchLabels":{"app":"agent-run-workers"}}}}]}}}}}}'
+    {"key":"node.kubernetes.io/not-ready","operator":"Exists","effect":"NoExecute","tolerationSeconds":5}]}}}}'
+# Place one worker on each node deterministically: cordon the survivor so the first pod lands on the victim, then cordon the victim so the
+# second lands on the survivor. Pods that are already running are not moved by a cordon.
+kubectl cordon "$survivor"
+kubectl uncordon "$victim"
+k scale deployment/agent-run-workers --replicas=1
+k rollout status deployment/agent-run-workers --timeout=180s
+kubectl uncordon "$survivor"
+kubectl cordon "$victim"
 k scale deployment/agent-run-workers --replicas=2
 k rollout status deployment/agent-run-workers --timeout=180s
+kubectl uncordon "$victim"
 
 pod=
 for candidate in $(k get pods -l app=agent-run-workers -o jsonpath='{.items[*].metadata.name}'); do
@@ -75,5 +84,6 @@ for i in $(seq 1 300); do
 done
 [ "$finished" = true ]
 echo "every run finished $(( $(date +%s) - started )) seconds after the node was killed"
-# At least two worker pods did work: the lost one and the survivor that took over its runs. The replacement may start after they finish.
+# At least two worker pods did work: the one on the lost node and the one on the survivor, which took over the lost pod's runs after their leases
+# expired. The replacement for the lost pod may or may not have started before the runs finished, so it is not required.
 k exec agent-run-effects -- node "$script" verify "$runs" 2

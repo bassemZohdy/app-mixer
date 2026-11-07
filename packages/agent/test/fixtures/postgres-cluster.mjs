@@ -8,7 +8,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 
 const run=promisify(execFile),image='pgvector/pgvector:0.8.7-pg16',password='failover-test-only';
 const docker=(...args)=>run('docker',args,{maxBuffer:10**7}).then(result=>result.stdout.trim());
-export async function waitFor(description,check,attempts=120){for(let i=0;i<attempts;i++){try{const value=await check();if(value)return value;}catch{}await delay(500);}throw Error(`Timed out waiting for ${description}`);}
+export async function waitFor(description,check,attempts=120){let last;for(let i=0;i<attempts;i++){try{const value=await check();if(value)return value;}catch(error){last=error;}await delay(500);}throw Error(`Timed out waiting for ${description}`+(last?`: ${String(last.stderr||last.message).trim().slice(0,400)}`:''));}
 
 /** Forwards TCP connections to a target that can be changed or removed. */
 async function proxy(){
@@ -19,13 +19,13 @@ async function proxy(){
   for(const [a,b] of [[client,upstream],[upstream,client]]){a.pipe(b);a.on('error',()=>b.destroy());a.on('close',()=>{b.destroy();sockets.delete(a);});}
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- return {port:server.address().port,point:next=>{target=next;for(const socket of sockets)socket.destroy();sockets.clear();},close:()=>{for(const socket of sockets)socket.destroy();server.close();}};
+ return {port:server.address().port,point:next=>{target=next;for(const socket of sockets)socket.destroy();sockets.clear();},close:()=>{for(const socket of sockets)socket.destroy();return new Promise(resolve=>server.close(()=>resolve()));}};
 }
 
 export async function startCluster(){
  const id=randomUUID().slice(0,8),network='am-cluster-'+id,primary='am-cprimary-'+id,standby='am-cstandby-'+id,front=await proxy();
- const published=async name=>Number((await docker('port',name,'5432/tcp')).split('\n')[0].split(':').pop());
- const cleanup=async()=>{front.close();await docker('rm','-f',primary,standby).catch(()=>{});await docker('network','rm',network).catch(()=>{});};
+ const published=async name=>{const port=Number((await docker('port',name,'5432/tcp')).split(String.fromCharCode(10))[0].split(':').pop());if(!Number.isInteger(port)||port<1||port>65535)throw Error(`Could not read the published port of ${name}`);return port;};
+ const cleanup=async()=>{await front.close();await docker('rm','-fv',primary,standby).catch(()=>{});await docker('network','rm',network).catch(()=>{});};
  try{
   await docker('network','create',network);
   await docker('run','-d','--name',primary,'--network',network,'-e','POSTGRES_PASSWORD='+password,'-p','127.0.0.1::5432',image,'postgres','-c','wal_level=replica','-c','max_wal_senders=5','-c','synchronous_standby_names=*','-c','synchronous_commit=remote_apply','-c','max_connections=200');

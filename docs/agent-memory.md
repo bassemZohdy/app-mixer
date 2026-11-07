@@ -108,16 +108,16 @@ To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-me
 
 `node scripts/bench-memory-isolation.mjs [tenants] [memoriesPerTenant] [queriesPerTenant]` (needs `APP_MIXER_TEST_POSTGRES_URL` and `npm run build`) loads the same synthetic corpus into PostgreSQL with pgvector under each strategy and, for every query, compares the approximate index's top 5 with exact search. Every tenant draws from one shared vocabulary, so a query's nearest neighbours belong to many tenants. The deterministic reference embedder is used, so the figures show index behaviour, not the quality of an embedding model. Measured on one developer machine (pgvector 0.8.7, PostgreSQL 16, candidate limit 40):
 
-| Tenants x memories | Strategy | Recall against exact search | Queries below full recall | Median and 99th percentile per query |
-| --- | --- | --- | --- | --- |
-| 20 x 500 | one shared index | 0.899 | 157 of 400 | 77 ms, 117 ms |
-| 20 x 500 | one index per tenant | 0.998 | 3 of 400 | 80 ms, 113 ms |
-| 50 x 300 | one shared index | 0.914 | 176 of 500 | 63 ms, 89 ms |
-| 50 x 300 | one index per tenant | 0.998 | 6 of 500 | 60 ms, 86 ms |
-| 100 x 200 | one shared index | 0.907 | 192 of 500 | 58 ms, 82 ms |
-| 100 x 200 | one index per tenant | 0.998 | 4 of 500 | 54 ms, 79 ms |
+| Tenants x memories | Strategy | Recall against exact search | Queries below full recall | Search time (median, 99th percentile) | Time to load the corpus |
+| --- | --- | --- | --- | --- | --- |
+| 20 x 500 | one shared index | 0.902 | 154 of 400 | 68 ms, 99 ms | 87 s |
+| 20 x 500 | one index per tenant | 0.999 | 2 of 400 | 67 ms, 92 ms | 98 s |
+| 50 x 300 | one shared index | 0.916 | 178 of 500 | 57 ms, 83 ms | 115 s |
+| 50 x 300 | one index per tenant | 0.999 | 3 of 500 | 54 ms, 78 ms | 169 s |
+| 100 x 200 | one shared index | 0.909 | 189 of 500 | 56 ms, 93 ms | 179 s |
+| 100 x 200 | one index per tenant | 0.999 | 2 of 500 | 54 ms, 73 ms | 338 s |
 
-The likely cause (not isolated by a separate experiment) is that the tenant filter is applied to the nearest candidates of the whole index, so a query can see a candidate list that belongs mostly to other tenants. A scoped index holds only one scope's memories and keeps recall near exact search at the same latency. The per-query time includes the exact comparison query, so it is not an index-only latency. The cost of scoped indexes is one index per tenant, agent, owner and kind to create, store and maintain, and a store object per scope. The cost showed up in loading: at 100 tenants of 200 memories (20,000 memories) writing the corpus took 329 s with per-tenant indexes and 165 s with one shared index. Creating the indexes is not the cost: setting up 100 scoped indexes on empty tables took 0.5 s. The loading ratio (per-tenant time over shared time) grew with the number of scopes in the three runs, about 1.1 times at 20 tenants (95 s against 85 s), 1.35 times at 50 (196 s against 145 s) and 2.0 times at 100, which fits each write paying for every scope's index on the same table. That reading is an inference from three points and was not tested separately, and the shared table holds one partial index per scope, so a deployment with thousands of tenants should expect write cost to keep growing and should measure it (or split scopes across tables or databases) before relying on one index per tenant. The choice (and the index-count limit that is acceptable for the deployment) still belongs to the owner. Production sizes, a production embedder and concurrent writes are not measured here.
+The likely cause of the recall gap (not isolated by a separate experiment) is that the tenant filter is applied to the nearest candidates of the whole index, so a query can see a candidate list that belongs mostly to other tenants. A scoped index holds only one scope's memories and keeps recall near exact search at the same query time. The search time is the indexed query alone; recall comes from a second call that also runs the exact scan. The cost of scoped indexes is one index per tenant, agent, owner and kind to create, store and maintain, and a store object per scope. It showed up in loading, not in queries. Creating the indexes is not the cost: setting up 100 scoped indexes on empty tables took 0.5 s. The loading ratio (per-tenant time over shared time) grew with the number of scopes in the three runs, about 1.1 times at 20 tenants, 1.5 times at 50 and 1.9 times at 100, which fits each write paying for every scope's index on the same table. That reading is an inference from three points and was not tested separately, and the shared table holds one partial index per scope, so a deployment with thousands of tenants should expect write cost to keep growing and should measure it (or split scopes across tables or databases) before relying on one index per tenant. Production sizes, a production embedder and concurrent writes are not measured here.
 
 ### Decision: per-tenant indexes
 

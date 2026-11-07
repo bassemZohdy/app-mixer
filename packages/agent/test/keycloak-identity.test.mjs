@@ -31,5 +31,5 @@ test('a real OIDC provider authenticates delegation, approval and notice deliver
   for(const [key,value] of Object.entries(summary))t.diagnostic(`${key}: ${JSON.stringify(value)}`);
   assert.equal(summary.normal.type,'RUN_FINISHED');assert.equal(summary.expiry.type,'RUN_ERROR');assert.equal(summary.revocation.type,'RUN_ERROR');assert.equal(summary.identityProviderRevocation.type,'RUN_ERROR');assert.equal(summary.effects,5);
   assert.deepEqual(summary.approvalAudit.map(e=>e.event),['requested','approved']);assert.ok(summary.introspections.inactive>=3);
- }finally{try{docker('rm','-f',name);}catch{}}
+ }finally{try{docker('rm','-fv',name);}catch{}}
 });
