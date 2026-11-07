@@ -37,6 +37,10 @@
       "targets": [{"refId": "A", "expr": "sum by (status) (app_mixer_agent_approvals)", "legendFormat": "{{status}}"}]},
     {"id": 14, "type": "stat", "title": "Notice deliveries by status (uncertain and sending need an operator)", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 16, "y": 22},
       "targets": [{"refId": "A", "expr": "sum by (status) (app_mixer_agent_notice_deliveries)", "legendFormat": "{{status}}"}]},
+    {"id": 15, "type": "stat", "title": "Model calls with a token reservation (reserved ones are unsettled)", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 0, "y": 26},
+      "targets": [{"refId": "A", "expr": "sum by (state) (app_mixer_agent_token_calls)", "legendFormat": "{{state}}"}]},
+    {"id": 16, "type": "stat", "title": "Tokens reserved and committed", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 8, "y": 26},
+      "targets": [{"refId": "A", "expr": "sum by (state) (app_mixer_agent_tokens)", "legendFormat": "{{state}}"}]},
     {"id": 12, "type": "stat", "title": "Overdue runs and due schedules", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 0, "y": 22},
       "targets": [
         {"refId": "A", "expr": "sum(app_mixer_agent_overdue_runs)", "legendFormat": "overdue runs"},
