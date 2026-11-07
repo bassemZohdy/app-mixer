@@ -43,6 +43,8 @@
       "targets": [{"refId": "A", "expr": "sum by (state) (app_mixer_agent_tokens)", "legendFormat": "{{state}}"}]},
     {"id": 17, "type": "stat", "title": "Stored memories (expired ones are past retention, not yet purged)", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 16, "y": 26},
       "targets": [{"refId": "A", "expr": "sum by (state) (app_mixer_agent_memories)", "legendFormat": "{{state}}"}]},
+    {"id": 18, "type": "stat", "title": "Cost reserved and committed (millionths of each currency)", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 0, "y": 30},
+      "targets": [{"refId": "A", "expr": "sum by (currency, state) (app_mixer_agent_cost_micros)", "legendFormat": "{{currency}} {{state}}"}]},
     {"id": 12, "type": "stat", "title": "Overdue runs and due schedules", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 0, "y": 22},
       "targets": [
         {"refId": "A", "expr": "sum(app_mixer_agent_overdue_runs)", "legendFormat": "overdue runs"},

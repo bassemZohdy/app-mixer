@@ -156,7 +156,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] Provider-specific enforcement of limits on each model provider used.
   - [x] Production-wide cost controls across nodes. `PostgresAgentCostBudget` caps an agent's daily spend across every run and node sharing one PostgreSQL primary. Four processes with 16 concurrent callers admit exactly the budget in every one of 31 rounds, and a provider overrun stops all nodes ([durable-agent-runs.md](durable-agent-runs.md#shared-cost-budget-across-nodes)).
   - [ ] Production trace propagation and retention.
-  - [ ] Broader metrics and production coordination. Human approvals by state are now an opt-in gauge (`includeApprovals`, shown on the dashboard), and notice deliveries by state are too (`includeNoticeDeliveries`); token reservations and commitments are as well (`includeTokens`); stored memories by state too (`includeMemories`); currency cost metrics remain, and production coordination is unproven.
+  - [ ] Broader metrics and production coordination. Human approvals by state are now an opt-in gauge (`includeApprovals`, shown on the dashboard), and notice deliveries by state are too (`includeNoticeDeliveries`); token reservations and commitments are as well (`includeTokens`); stored memories by state (`includeMemories`) and cost by currency (`includeCosts`) too; what remains is production coordination of the metrics, and production coordination is unproven.
 - **Evidence:** a provider overrun test showing the provider-side cap holds and a multi-node cost test showing the budget is not exceeded.
 
 ### P3-08 Durable-store portability and crash acceptance
