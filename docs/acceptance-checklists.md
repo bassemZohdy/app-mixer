@@ -158,6 +158,8 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Provider-specific enforcement of limits on each model provider used.
   - [ ] Production-wide cost controls across nodes.
+  - [ ] Provider-specific enforcement of limits on each model provider used. For OpenAI-compatible providers, `createOpenAILimitedToolModel` sends an output cap, refuses oversize prompts before dispatch, disables retries and uses the provider's reported usage; a real model server stopped at the cap and its reported usage added up ([durable-agent-runs.md](durable-agent-runs.md#optional-local-model-token-budget)). Still to do: the provider(s) the product will use in production, and any non-OpenAI-compatible provider.
+  - [x] Production-wide cost controls across nodes. `PostgresAgentCostBudget` caps an agent's daily spend across every run and node sharing one PostgreSQL primary. Four processes with 16 concurrent callers admit exactly the budget in every one of 31 rounds, and a provider overrun stops all nodes ([durable-agent-runs.md](durable-agent-runs.md#shared-cost-budget-across-nodes)).
   - [ ] Production trace propagation and retention.
   - [ ] Broader metrics and production coordination.
 - **Evidence:** a provider overrun test showing the provider-side cap holds and a multi-node cost test showing the budget is not exceeded.
