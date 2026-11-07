@@ -93,3 +93,21 @@ test('the record editor preview shares its schema parser with the template throu
  assert.match(synced(changed,preview),/function normalizeFields\(\/\* edited \*\//,'an edit to the template reaches the preview');
  const escaped=synced(template.replace("function normalizeFields(","function normalizeFields(a=`x${1}`,"),preview);assert.ok(escaped.includes('a='+String.fromCharCode(92)+'`x'+String.fromCharCode(92)+'${1}'+String.fromCharCode(92)+'`'),'backticks and interpolation are escaped for the template literal');
 });
+
+test('the Grafana dashboard only queries metrics and labels the code exports and its layout is valid',()=>{
+ const dashboard=JSON.parse(read('deploy/observability/grafana-dashboard.json')),sources=['packages/core/src/data-plane-metrics.ts','packages/agent/src/agent-run-metrics.ts','packages/agent/src/agent-metrics-server.ts'].map(read).join('\n');
+ const exported=new Set([...sources.matchAll(/app_mixer_[a-z_]+/g)].map(match=>match[0]));
+ const panels=dashboard.panels,ids=panels.map(panel=>panel.id);assert.equal(new Set(ids).size,ids.length,'panel IDs are unique');assert.ok(panels.filter(panel=>panel.type!=='row').length>=10);
+ for(const panel of panels){const {x,y,w,h}=panel.gridPos;assert.ok(x>=0&&w>=1&&x+w<=24&&y>=0&&h>=1,`panel ${panel.id} fits the 24-column grid`);}
+ const labelsOf={app_mixer_data_plane_requests_total:['route','outcome','status_class'],app_mixer_data_plane_request_duration_seconds_bucket:['route','outcome','le'],app_mixer_agent_runs:['status','archived'],app_mixer_agent_actions:['status'],app_mixer_agent_oldest_overdue_seconds:['kind'],app_mixer_agent_overdue_runs:['kind']};
+ let queries=0;
+ for(const panel of panels.filter(item=>item.type!=='row'))for(const target of panel.targets){
+  queries++;const expression=target.expr;
+  for(const metric of expression.match(/app_mixer_[a-z_]+/g))assert.ok(exported.has(metric),`${metric} in "${expression}" is exported`);
+  for(const match of expression.matchAll(/(app_mixer_[a-z_]+)\{([^}]*)\}/g)){const [,metric,body]=match;
+   for(const label of body.split(',').map(part=>part.split(/=~?|!=/)[0].trim()).filter(Boolean))assert.ok(label==='job'||(labelsOf[metric]??[]).includes(label),`${label} is a label of ${metric}`);
+  }
+  assert.equal([...expression].filter(c=>c==='(').length,[...expression].filter(c=>c===')').length,'balanced parentheses in '+expression);
+ }
+ assert.ok(queries>=12);assert.equal(dashboard.templating.list[0].name,'job');
+});
