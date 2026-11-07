@@ -43,6 +43,7 @@ denyAnchor('anchor variable without its mount and volume',(o,c)=>{c.volumeMounts
 denyAnchor('read-only anchor mount',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').readOnly=true;});
 denyAnchor('anchor mount at another path',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').mountPath='/tmp';});
 denyAnchor('anchor volume that is not the approved claim',(o)=>{o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor').persistentVolumeClaim.claimName='other';});
+denyAnchor('anchor claim mounted read-only',(o)=>{o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor').persistentVolumeClaim.readOnly=true;});
 denyAnchor('anchor volume from the node filesystem',(o)=>{const volume=o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor');delete volume.persistentVolumeClaim;volume.hostPath={path:'/tmp'};});
 denyAnchor('anchor volume backed by an emptyDir',(o)=>{const volume=o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor');delete volume.persistentVolumeClaim;volume.emptyDir={};});
 {const object=structuredClone(plain);object.spec.template.spec.containers[0].volumeMounts.push({name:'floor-anchor',mountPath:'/floor-anchor'});object.spec.template.spec.volumes.push({name:'floor-anchor',persistentVolumeClaim:{claimName:'app-mixer-floor-anchor'}});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('An anchor volume without its variable was not denied: '+result.stderr);}

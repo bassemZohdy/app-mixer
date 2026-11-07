@@ -69,7 +69,7 @@ spec:
         variables.c.volumeMounts.exists(m, m.name == 'revocation-ca' && m.mountPath == '/revocation-ca' && has(m.readOnly) && m.readOnly && !has(m.subPath) && !has(m.subPathExpr)) &&
         (variables.anchor == 0 || variables.c.volumeMounts.exists(m, m.name == 'floor-anchor' && m.mountPath == '/floor-anchor' && !(has(m.readOnly) && m.readOnly) && !has(m.subPath) && !has(m.subPathExpr))) &&
         has(object.spec.template.spec.volumes) && object.spec.template.spec.volumes.size() == 6 + variables.anchor &&
-        (variables.anchor == 0 || object.spec.template.spec.volumes.exists(v, v.name == 'floor-anchor' && has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'app-mixer-floor-anchor')) &&
+        (variables.anchor == 0 || object.spec.template.spec.volumes.exists(v, v.name == 'floor-anchor' && has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'app-mixer-floor-anchor' && !(has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly))) &&
         object.spec.template.spec.volumes.exists(v, v.name == 'publication' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name.startsWith('app-mixer-publication-')) &&
         object.spec.template.spec.volumes.exists(v, v.name == 'release-trust' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name == 'app-mixer-release-keys') &&
         object.spec.template.spec.volumes.exists(v, v.name == 'jwt-trust' && has(v.configMap) && !has(v.configMap.items) && v.configMap.name == 'app-mixer-jwt-keys') &&

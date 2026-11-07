@@ -49,7 +49,8 @@ if(command==='effects'){
  try{
   const all=async()=>(await pool.query('SELECT run_id,status,attempts,lease_owner FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 ORDER BY run_id',[scope.tenantId,scope.agentId])).rows;
   if(command==='setup'){await runs.initialize();// Idempotent: a retry after a partial first attempt skips the runs that already exist instead of failing on them.
-   for(let i=1;i<=Number(process.argv[3]);i++)try{await runs.create(scope,'run-'+String(i).padStart(3,'0'),{definitionVersion:1,maxAttempts:3,deadline:Date.now()+3600000});}catch(error){if(!/already exists/.test(String(error?.message)))throw error;}}
+   for(let i=1;i<=Number(process.argv[3]);i++)try{await runs.create(scope,'run-'+String(i).padStart(3,'0'),{definitionVersion:1,maxAttempts:3,deadline:Date.now()+3600000});}catch(error){if(!(await runs.get(scope,'run-'+String(i).padStart(3,'0')).catch(()=>undefined)))throw error;}
+   const starting=await all();if(starting.length!==Number(process.argv[3])||starting.some(row=>row.status!=='queued'))throw Error('Setup found runs that are not freshly queued');}
   else if(command==='holding'){const owner=process.argv[3];if(!(await all()).some(run=>run.status==='running'&&run.lease_owner===owner))process.exit(1);}
   else if(command==='done'){const rows=await all(),counts={};for(const row of rows)counts[row.status]=(counts[row.status]??0)+1;console.log(JSON.stringify(counts));if(rows.some(row=>row.status!=='succeeded'))process.exit(1);}
   else if(command==='verify'){

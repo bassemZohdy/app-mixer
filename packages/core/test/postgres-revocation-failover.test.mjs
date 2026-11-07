@@ -27,7 +27,7 @@ async function proxy(){
   for(const [a,b] of [[client,upstream],[upstream,client]]){a.pipe(b);a.on('error',()=>b.destroy());a.on('close',()=>{b.destroy();sockets.delete(a);});}
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- return {port:server.address().port,point:next=>{target=next;for(const socket of sockets)socket.destroy();sockets.clear();},close:()=>{for(const socket of sockets)socket.destroy();server.close();}};
+ return {port:server.address().port,point:next=>{target=next;for(const socket of sockets)socket.destroy();sockets.clear();},close:()=>{for(const socket of sockets)socket.destroy();return new Promise(resolve=>server.close(()=>resolve()));}};
 }
 async function waitFor(description,check,attempts=120){for(let i=0;i<attempts;i++){try{const value=await check();if(value)return value;}catch{}await delay(500);}throw Error(`Timed out waiting for ${description}`);}
 const published=async name=>Number((await docker('port',name,'5432/tcp')).split('\n')[0].split(':').pop());
@@ -96,7 +96,7 @@ test('acknowledged revocations, release floors, extension approvals and audit lo
   await approvals.decide(admin,approvalScope,reference,kept,{allowed:false,expiresAt:0,expectedRevision:1});assert.equal(await approvals.isAllowed(admin,approvalScope,reference,kept),false);
   await releases.register(release,4,digestOf(4));assert.equal(await releases.advanceFloor(release,4),4);assert.equal(await releases.isAllowed(release,3,digestOf(3)),false);
  }finally{
-  await pool?.end().catch(()=>{});front.close();
+  await pool?.end().catch(()=>{});await front.close();
   await docker('rm','-fv',primary,standby).catch(()=>{});await docker('network','rm',network).catch(()=>{});
  }
 });

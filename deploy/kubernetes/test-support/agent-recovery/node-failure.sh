@@ -1,7 +1,7 @@
 #!/bin/sh
 # Takes a whole Kubernetes node down while a scheduled run worker on it holds a run, and verifies that the Deployment replaces the
 # lost pod on a surviving node and every run still finishes with each external effect applied exactly once. Needs a kind cluster with
-# two worker nodes (see .github/workflows/agent-node-failure.yml); the PostgreSQL and effects pods are kept on the first worker.
+# two worker nodes (see .github/workflows/agent-pod-recovery.yml, job node-failure); the PostgreSQL and effects pods are kept on the first worker.
 #   sh deploy/kubernetes/test-support/agent-recovery/node-failure.sh [namespace] [cluster]
 set -eu
 ns=${1:-agent-node-failure}
@@ -15,8 +15,9 @@ k() { kubectl -n "$ns" "$@"; }
 kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
 
 # Keep the stateful pods off the node that will fail: with the victim cordoned they can only land on the survivor. The trap uncordons the
-# victim again if the script stops early, so a failed run does not leave the cluster without a schedulable second worker.
-trap 'kubectl uncordon "$victim" >/dev/null 2>&1 || true' EXIT
+# victim and the survivor again if the script stops early (the placement below cordons each in turn), so a failed run does not leave the
+# cluster without schedulable workers.
+trap 'kubectl uncordon "$victim" "$survivor" >/dev/null 2>&1 || true' EXIT
 kubectl cordon "$victim"
 k apply -f "$dir/postgres.yaml" -f "$dir/run-supervisor.yaml"
 k wait --for=condition=Ready pod/agent-memory-postgres pod/agent-run-effects --timeout=180s
@@ -55,6 +56,14 @@ for candidate in $(k get pods -l app=agent-run-workers -o jsonpath='{.items[*].m
 done
 if [ -z "$pod" ]; then
   echo "no worker was scheduled on $victim"; k get pods -o wide; exit 1
+fi
+# One worker must be on each node before the node is killed, or the scenario would not test a node with a worker on it.
+on_survivor=0
+for candidate in $(k get pods -l app=agent-run-workers -o jsonpath='{.items[*].metadata.name}'); do
+  [ "$(k get pod "$candidate" -o jsonpath='{.spec.nodeName}')" = "$survivor" ] && on_survivor=$((on_survivor + 1))
+done
+if [ "$on_survivor" -ne 1 ]; then
+  echo "expected exactly one worker on $survivor, found $on_survivor"; k get pods -o wide; exit 1
 fi
 holding=false
 for i in $(seq 1 120); do
