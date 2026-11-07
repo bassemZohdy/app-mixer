@@ -164,10 +164,11 @@ jobs:
           psql() { kubectl exec -n "$ns" deployment/app-mixer-revocations -- psql -U postgres -d postgres -Atc "$1"; }
           floor=$(psql "SELECT minimum_version FROM app_mixer_release_floors WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'")
           echo "database floor: $floor"
-          # The first checks copy the database floor to the anchor volume.
+          # The first checks copy the database floor to the anchor volume. Anchor files are named by a hash of the scope (tenant, application, environment).
+          floor_file=/floor-anchor/release-floor-$(node -e 'const c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(["demo-tenant","demo","production"].join(String.fromCharCode(0))).digest("hex"))').floor
           anchored=
           for i in $(seq 1 60); do
-            anchored=$(kubectl exec -n "$ns" deployment/app-mixer-data-plane -- node -e 'try{process.stdout.write(require("node:fs").readFileSync("/floor-anchor/demo-tenant__demo__production.floor","utf8").trim())}catch{}') || true
+            anchored=$(kubectl exec -n "$ns" deployment/app-mixer-data-plane -- node -e 'try{process.stdout.write(require("node:fs").readFileSync(process.argv[1],"utf8").trim())}catch{}' "$floor_file") || true
             [ "$anchored" = "$floor" ] && break || sleep 1
           done
           [ "$anchored" = "$floor" ]
