@@ -4,7 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
-- `SqliteAgentRunMetrics` takes `includeApprovals` and exposes `app_mixer_agent_approvals{status}`, the number of human approvals by state, shown on the Grafana dashboard.
+- `SqliteAgentRunMetrics` takes `includeApprovals` and exposes `app_mixer_agent_approvals{status}`, the number of human approvals by state, shown on the Grafana dashboard; `includeNoticeDeliveries` adds `app_mixer_agent_notice_deliveries{status}` the same way.
 - Webhook adapter tests that replay the signing examples published by Standard Webhooks and Slack (`vendor-vectors.test.mjs`).
 - `deploy/observability/grafana-dashboard.json`: a Grafana dashboard for the Data Plane and agent metrics, with a test that its queries use only emitted metrics and labels.
 ### Changed
