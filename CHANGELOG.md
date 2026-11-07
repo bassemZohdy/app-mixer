@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- Webhook adapter tests that replay the signing examples published by Standard Webhooks and Slack (`vendor-vectors.test.mjs`).
 - `deploy/observability/grafana-dashboard.json`: a Grafana dashboard for the Data Plane and agent metrics, with a test that its queries use only emitted metrics and labels.
 ### Changed
 - The supported Node floor is now 22.22.2 (was 22.13.0): `engines`, README and CONTRIBUTING, the CI matrix, the kind workflow and the Docker base images. This unblocked `jsdom` 31 and the OpenTelemetry 3.x group (`@opentelemetry/api` 1.10.0, `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0, OTLP exporter 0.301.0), taken in this release; the exporter is also a root dev dependency so the collector tests resolve it, and the browser collector test's module server resolves packages' `#imports`.
