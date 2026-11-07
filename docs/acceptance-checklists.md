@@ -104,7 +104,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P3-01 Identity, authorization, audit and isolation
 - **Verified locally:** RS256 and ES256 (P-256) JWT authentication, key rotation, JWKS refresh with staleness limits, revocation, capability audit, TLS credential reload.
 - **Still to prove:**
-  - [ ] Deployment-grade availability of revocation and audit stores. The revocation store survives a primary failover in a local drill: an acknowledged revocation is still in force on the promoted synchronous standby and lookups deny while no primary exists ([kubernetes-data-plane.md](kubernetes-data-plane.md#failover-drill)). The release-floor registry survives the same drill. The audit stores, automatic failover and a production cluster are not exercised.
+  - [ ] Deployment-grade availability of revocation and audit stores. The revocation store survives a primary failover in a local drill: an acknowledged revocation is still in force on the promoted synchronous standby and lookups deny while no primary exists ([kubernetes-data-plane.md](kubernetes-data-plane.md#failover-drill)). The release-floor registry, the extension approvals and the capability audit log survive the same drill, and an audit write fails while no primary exists. The authentication-failure and promotion-signing audit stores, automatic failover and a production cluster are not exercised.
   - [ ] Certificate issuance and trust rotation in the target environment.
   - [ ] Identity provisioning and deprovisioning through the real identity provider.
 - **Evidence:** an outage drill (store down, requests fail closed), a certificate rotation transcript, and a deprovisioning test showing access ends within the stated bound.
