@@ -31,18 +31,20 @@ test('restoring an older backup silently undoes revocations, release floors, app
   const revocations=new PostgresJwtRevocations({issuer,clock:()=>now,query}),releases=new PostgresPublicationReleaseRegistry({query}),approvals=new PostgresExtensionApprovals({query,clock:()=>now,authorize:()=>true}),audit=new PostgresCapabilityAudit({clock:()=>now,query});
   // A floor held outside the database (here a map; in production platform secure storage or a separate service).
   const held=new Map(),anchored=new PostgresPublicationReleaseRegistry({query,floorAnchor:{read:scope=>held.get(scope.tenantId)??0,advance:(scope,floor)=>{held.set(scope.tenantId,Math.max(held.get(scope.tenantId)??0,floor));}}});
-  const marks=new Map(),anchoredAudit=new PostgresCapabilityAudit({clock:()=>now,query,sequenceAnchor:{read:key=>marks.get(key)??0,advance:(key,value)=>{marks.set(key,Math.max(marks.get(key)??0,value));}}});
+  const marks=new Map(),mapAnchor={read:key=>marks.get(key)??0,advance:(key,value)=>{marks.set(key,Math.max(marks.get(key)??0,value));}};
+  const anchoredRevocations=new PostgresJwtRevocations({issuer,clock:()=>now,query,epochAnchor:mapAnchor}),anchoredApprovals=new PostgresExtensionApprovals({query,clock:()=>now,authorize:()=>true,epochAnchor:mapAnchor});
+  const anchoredAudit=new PostgresCapabilityAudit({clock:()=>now,query,sequenceAnchor:mapAnchor});
   const event=n=>({invocationId:'invocation-'+n,operationId:'write',tenantId:'tenant',principalId:'user',outcome:'attempt'});
   await Promise.all([revocations.initialize(),releases.initialize(),approvals.initialize(),audit.initialize()]);
   // State A: what the backup captures.
-  await revocations.revoke('revoked-in-backup',now+3600000);
+  await anchoredRevocations.revoke('revoked-in-backup',now+3600000);
   for(const version of [1,2,3,4])await releases.register(release,version,digestOf(version));await releases.advanceFloor(release,3);
-  await approvals.decide(admin,approvalScope,reference,operation,{allowed:true,expiresAt:now+3600000,expectedRevision:0});
+  await anchoredApprovals.decide(admin,approvalScope,reference,operation,{allowed:true,expiresAt:now+3600000,expectedRevision:0});
   for(const n of [1,2,3])await audit.record(event(n));
   await docker('exec','-u','postgres',name,'sh','-c','pg_dump -U postgres -Fc app > /tmp/backup.dump');
   // State B: acknowledged after the backup.
-  await revocations.revoke('revoked-after-backup',now+3600000);await anchored.advanceFloor(release,4);
-  await approvals.decide(admin,approvalScope,reference,operation,{allowed:false,expiresAt:0,expectedRevision:1});
+  await anchoredRevocations.revoke('revoked-after-backup',now+3600000);await anchored.advanceFloor(release,4);
+  await anchoredApprovals.decide(admin,approvalScope,reference,operation,{allowed:false,expiresAt:0,expectedRevision:1});
   for(const n of [4,5])await anchoredAudit.record(event(n));
   assert.equal(await revocations.isTokenActive(claims('revoked-after-backup')),false);assert.equal(await releases.isAllowed(release,3,digestOf(3)),false);
   assert.equal(await approvals.isAllowed(admin,approvalScope,reference,operation),false);assert.deepEqual((await audit.list('tenant')).map(row=>row.sequence),[1,2,3,4,5]);
@@ -59,6 +61,9 @@ test('restoring an older backup silently undoes revocations, release floors, app
   };
   // With the floor anchored outside the database, the restore is detected and the check fails closed instead of allowing the release.
   await assert.rejects(anchored.isAllowed(release,3,digestOf(3)),/Release floor was rolled back/);
+  // Revocations and approvals with an outside epoch refuse to answer instead of re-activating the token or re-granting the approval.
+  await assert.rejects(anchoredRevocations.isTokenActive(claims('revoked-after-backup')),/Revocations were rolled back/);
+  await assert.rejects(anchoredApprovals.isAllowed(admin,approvalScope,reference,operation),/Extension approvals were rolled back/);
   // The audit sink with an outside high-water mark also refuses: recording would have reused sequence 4.
   await assert.rejects(anchoredAudit.record(event(6)),/Audit log was rolled back/);
   t.diagnostic(JSON.stringify(outcome));
