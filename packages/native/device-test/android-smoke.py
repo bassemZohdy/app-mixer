@@ -114,4 +114,15 @@ heights = {text: (lambda m: int(m.group(4))-int(m.group(2)))(re.fullmatch(r'\[(\
 if not heights['Account'] > heights['Profile'] > heights['Contact details'] > heights['Body copy'] > heights['Small print']:
     raise AssertionError('Text heights do not follow the reference sizes: ' + repr(heights))
 print('React Native Android reference parity passed: ' + repr(heights))
+# Row `justify` places a label at the start, the centre and the end of the screen width.
+tap(wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Show layout' and n.get('clickable')=='true'), None), 'layout button'))
+def bounds_of(node):
+    return tuple(map(int, re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.get('bounds')).groups()))
+placed = wait_for(lambda nodes: (lambda found: found if all(node is not None for node in found.values()) else None)({text: next((n for n in nodes if n.get('text')==text), None) for text in ['Row start', 'Row center', 'Row end']}), 'justified row labels')
+width = max(bounds_of(node)[2] for node in tree().iter('node'))
+start, center, end = (bounds_of(placed[text]) for text in ['Row start', 'Row center', 'Row end'])
+middle = (center[0] + center[2]) / 2
+if not (start[0] < center[0] < end[0] and start[0] <= width * 0.1 and end[2] >= width * 0.9 and abs(middle - width / 2) <= width * 0.1):
+    raise AssertionError('Row justify did not place the labels at the start, centre and end: ' + repr((start, center, end, width)))
+print('React Native Android row justify passed: ' + repr((start, center, end, width)))
 print('React Native Android device interaction passed')

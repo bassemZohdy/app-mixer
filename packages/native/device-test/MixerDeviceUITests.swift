@@ -62,5 +62,17 @@ final class MixerDeviceUITests: XCTestCase {
     let heights = ["Account", "Profile", "Contact details", "Body copy", "Small print"].map { app.staticTexts[$0].firstMatch.frame.height }
     XCTAssertEqual(heights, heights.sorted(by: >), "Text heights follow the reference sizes")
     XCTAssertEqual(Set(heights).count, heights.count, "Each size is distinct")
+
+    // Row `justify` places a label at the start, the centre and the end of the screen width.
+    app.buttons["Show layout"].tap()
+    let start = app.staticTexts["Row start"], center = app.staticTexts["Row center"], end = app.staticTexts["Row end"]
+    XCTAssertTrue(start.waitForExistence(timeout: 10))
+    XCTAssertTrue(center.exists && end.exists)
+    let width = app.windows.firstMatch.frame.width
+    XCTAssertLessThan(start.frame.minX, center.frame.minX)
+    XCTAssertLessThan(center.frame.minX, end.frame.minX)
+    XCTAssertLessThanOrEqual(start.frame.minX, width * 0.1, "start label sits at the leading edge")
+    XCTAssertGreaterThanOrEqual(end.frame.maxX, width * 0.9, "end label sits at the trailing edge")
+    XCTAssertEqual(center.frame.midX, width / 2, accuracy: width * 0.1, "centre label sits in the middle")
   }
 }
