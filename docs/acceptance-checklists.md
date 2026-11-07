@@ -131,6 +131,8 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] Production scheduling of the poller.
   - [ ] Comprehensive rollback protection across all stores.
   - [ ] Disconnected replication.
+  - [ ] Comprehensive rollback protection across all stores. The connector's promotion floor can now be anchored outside the target database; other stores still rely on their own database's history. A restore test now measures the gap: restoring an older backup re-activates revoked tokens, lowers the release floor, re-grants revoked approvals and rewinds the audit log without detection ([kubernetes-data-plane.md](kubernetes-data-plane.md#restoring-an-older-backup)). Closing it needs an anchor outside each database, which is not built.
+  - [x] Disconnected replication. Signed, version-bound promotion documents carried as files apply on a target with no network in order exactly once. Replayed, older, altered, relabelled, foreign or untrusted documents are refused, and a target restored behind its host-held floor is refused ([remote-control-connector.md](remote-control-connector.md#disconnected-replication)).
   - [ ] Production identity for source and target.
 - **Evidence:** a source outage and recovery transcript, and a replay attempt rejected on the production target.
 
@@ -141,6 +143,9 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] High availability of the revocation and release-floor stores.
   - [ ] Independent rollback protection.
   - [ ] Broader admission enforcement beyond the example policy.
+  - [ ] High availability of the revocation and release-floor stores. Both stores have a local failover drill on a synchronous standby (see P3-01): the revocation and the release floor survive promotion. Automatic failover and a production cluster do not.
+  - [ ] Independent rollback protection. Measured, not solved: see P3-03 and the restore test.
+  - [x] Broader admission enforcement beyond the example policy. Namespace-wide policies stop bare, relabelled or debugged Data Plane pods. They also block other workload kinds carrying the Data Plane template, rogue or exposed Services selecting it, and unpinned, privileged or host-access pods. A real API server passes 35 checks ([kubernetes-data-plane.md](kubernetes-data-plane.md)).
   - [ ] Control Plane, workers and durable stores deployed to the target cluster, validated there.
   - [ ] High availability of the revocation and release-floor stores. Both stores have a local failover drill on a synchronous standby (see P3-01): the revocation and the release floor survive promotion. Automatic failover and a production cluster do not.
   - [ ] Independent rollback protection. Measured, and solved only for the release floor as a library option (see P3-03 and the restore test).
