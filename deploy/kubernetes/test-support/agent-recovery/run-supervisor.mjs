@@ -57,7 +57,7 @@ if(command==='effects'){
    assert.equal(applications.length,total*3,'no duplicated external effect');
    assert.equal(new Set(applications.map(effect=>effect.runId+'/'+effect.actionId)).size,total*3);assert.equal(new Set(applications.map(effect=>effect.key)).size,total*3);
    const recovered=rows.filter(row=>row.attempts>1).map(row=>row.run_id);assert.ok(recovered.length>=1,'the crashed worker left a run that was recovered');
-   const workers=[...new Set(applications.map(effect=>effect.by))];assert.ok(workers.length>=3,'effects came from the original and replacement pods: '+workers.join(','));
+   const workers=[...new Set(applications.map(effect=>effect.by))];const minimum=Number(process.argv[4]??3);assert.ok(workers.length>=minimum,`effects came from at least ${minimum} worker pods: `+workers.join(','));
    console.log(`Scheduled workers finished ${total} runs with ${applications.length} external effects, each once, across ${workers.length} worker pods; recovered after the crash: ${recovered.join(', ')}.`);
   }else throw Error('Unknown run supervisor command');
  }finally{await pool.end();}
