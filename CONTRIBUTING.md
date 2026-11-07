@@ -28,6 +28,7 @@ Tests that need an external service are skipped unless their variable is set. CI
 | `APP_MIXER_TEST_S3=docker` | Docker (S3-compatible object store) | `node --test packages/core/test/staged-s3-provider.test.mjs packages/agent/test/action-s3-provider-crash.test.mjs` |
 | `APP_MIXER_TEST_OTEL_COLLECTOR=docker` | Docker (OpenTelemetry Collector) | `node --test packages/cli/test/otel-collector-trace.test.mjs` |
 | `APP_MIXER_TEST_PROMETHEUS=docker` | Docker (Prometheus) | `node --test packages/cli/test/alert-rules.test.mjs` |
+| `APP_MIXER_TEST_OLLAMA_CHAT_MODEL` (with `APP_MIXER_TEST_OLLAMA_URL`) | An Ollama server with that chat model pulled | `node --test packages/agent/test/openai-limited-model-provider.test.mjs` |
 | `APP_MIXER_TEST_OLLAMA_URL` (and `APP_MIXER_TEST_OLLAMA_MODEL`, default `all-minilm`) | An Ollama server with that embedding model pulled, plus PostgreSQL with pgvector | `node --test packages/agent/test/memory-evaluation-set.test.mjs` |
 | `APP_MIXER_TEST_POSTGRES_RESTORE=docker` | Docker (one PostgreSQL container) | `node --test packages/core/test/postgres-restore-rollback.test.mjs` |
 | `APP_MIXER_TEST_POSTGRES_FAILOVER=docker` | Docker (PostgreSQL primary and synchronous standby) | `node --test packages/core/test/postgres-revocation-failover.test.mjs packages/agent/test/postgres-run-failover.test.mjs` |

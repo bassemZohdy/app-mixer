@@ -4,8 +4,10 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {tmpdir} from 'node:os';
-import {AIMessage} from '@langchain/core/messages';
-import {SqliteAgentRuns,SqliteAgentDefinitions,SqliteAgentTokenBudget,SqliteAgentApprovals,SqliteAgentDelegations,SqliteAgentActionJournal,createConfiguredAgentRun} from '../dist/index.js';
+import {AIMessage,HumanMessage} from '@langchain/core/messages';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {SqliteAgentRuns,SqliteAgentDefinitions,SqliteAgentTokenBudget,SqliteAgentApprovals,SqliteAgentDelegations,SqliteAgentActionJournal,createConfiguredAgentRun,createOpenAILimitedToolModel,hadNoEffect} from '../dist/index.js';
 const scope={tenantId:'t',agentId:'agent'},manifest={manifestVersion:1,tenantId:'t',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:10000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
 function setup(){const dir=mkdtempSync(join(tmpdir(),'agent-budget-')),path=join(dir,'db'),runs=new SqliteAgentRuns(path),definitions=new SqliteAgentDefinitions(':memory:');let now=10;definitions.save('t',manifest,0);let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,now);const budget=new SqliteAgentTokenBudget(path,{scope,runId:'run',leaseToken:run.leaseToken,maxTokens:100,clock:()=>now});return {dir,path,runs,definitions,budget,get run(){return run},set run(value){run=value},set now(value){now=value}};}
 function close(s){s.budget.close();s.runs.close();s.definitions.close();rmSync(s.dir,{recursive:true,force:true})}
@@ -45,3 +47,77 @@ test('unresolved token reservations force uncertain outcomes and prevent prematu
 test('token reservation recovery gates are scoped to the run and survive registry reopening',()=>{const s=setup();let reopened;try{s.budget.reserve('first',30);s.run=s.runs.settle(scope,'run',s.run.revision,s.run.leaseToken,'failed',12);const otherScope={tenantId:'other',agentId:'agent'};let other=s.runs.create(otherScope,'run',{definitionVersion:1,maxAttempts:2,deadline:1000},0);other=s.runs.claim(otherScope,'run',other.revision,'worker',100,10);other=s.runs.settle(otherScope,'run',other.revision,other.leaseToken,'succeeded',12);assert.equal(other.status,'succeeded');reopened=new SqliteAgentRuns(s.path);assert.throws(()=>reopened.reconcile(scope,'run',s.run.revision,'failed',13),/Token usage requires reconciliation/);s.budget.reconcile('first',18);assert.equal(reopened.reconcile(scope,'run',s.run.revision,'failed',13).status,'failed');}finally{reopened?.close();close(s)}});
 
 test('approval and delegation waits reject unresolved token usage',async()=>{const s=setup();let journal,approvals,delegations;try{journal=new SqliteAgentActionJournal(s.path,{scope,runId:'run',leaseToken:s.run.leaseToken,clock:()=>10});approvals=new SqliteAgentApprovals(s.path,{scope,runId:'run',clock:()=>10,authorize:()=>true});delegations=new SqliteAgentDelegations(s.path,{scope,runId:'run',clock:()=>10,authorize:()=>true});await approvals.request({tenantId:'t',principalId:'service'},s.run.leaseToken,'action','pay',{},90);const grant=(await delegations.issue({tenantId:'t',principalId:'admin'},{...scope,runId:'run',grantId:'grant',principalId:'user',permissionVersion:'v1',expiresAt:20})).grant;s.budget.reserve('call',30);assert.throws(()=>s.runs.pauseForApproval(scope,'run',s.run.revision,s.run.leaseToken,'action',10),/Token usage requires reconciliation/);assert.throws(()=>s.runs.pauseForDelegation(scope,'run',s.run.revision,s.run.leaseToken,'grant',grant.revision,20),/Token usage requires reconciliation/);assert.equal(s.runs.get(scope,'run').status,'running');s.budget.settle('call',10);assert.equal(s.runs.pauseForApproval(scope,'run',s.run.revision,s.run.leaseToken,'action',20).status,'paused');}finally{delegations?.close();approvals?.close();journal?.close();close(s)}});
+
+// A stand-in for an OpenAI-compatible provider. It records each request and answers with the usage it is told to report.
+async function provider(answer){
+  const requests=[],server=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);requests.push(body);
+    const reply=await answer(body,requests.length);
+    if(reply.status){res.writeHead(reply.status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'provider failed'}}));return;}
+    res.writeHead(200,{'content-type':'application/json'});
+    res.end(JSON.stringify({id:'c',object:'chat.completion',created:1,model:'m',choices:[{index:0,message:{role:'assistant',content:reply.content??'Done'},finish_reason:'stop'}],...(reply.usage?{usage:reply.usage}:{})}));
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  return {requests,baseURL:`http://127.0.0.1:${server.address().port}/v1`,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
+}
+const config=baseURL=>({model:'m',apiKey:'key',baseURL});
+
+test('the OpenAI-compatible limited model caps the provider output, reports provider usage and does not retry',async()=>{
+  const ok=await provider(()=>({usage:{prompt_tokens:12,completion_tokens:8,total_tokens:20}})),failing=await provider(()=>({status:500}));
+  try{
+    const model=createOpenAILimitedToolModel(config(ok.baseURL),[],{promptOverheadTokens:0});
+    const result=await model.invokeLimited([new HumanMessage('Hello')],{maxTotalTokens:60,callId:'call'});
+    assert.equal(result.usedTokens,20);assert.equal(result.message.content,'Done');
+    assert.equal(ok.requests.length,1);
+    // 60 tokens minus the bound for the prompt: 16 for the message, 5 bytes of text and 5 for its type.
+    assert.equal(ok.requests[0].max_tokens,60-16-5-5);
+    const broken=createOpenAILimitedToolModel(config(failing.baseURL),[],{promptOverheadTokens:0});
+    await assert.rejects(broken.invokeLimited([new HumanMessage('Hello')],{maxTotalTokens:60,callId:'call'}));
+    assert.equal(failing.requests.length,1,'a failed call is not retried');
+  }finally{await ok.close();await failing.close();}
+});
+
+test('a prompt that cannot fit is refused before anything is sent, and a response without usage is an error',async()=>{
+  const noUsage=await provider(()=>({})),quiet=await provider(()=>({usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}}));
+  try{
+    const model=createOpenAILimitedToolModel(config(quiet.baseURL),[]);
+    const refusal=await model.invokeLimited([new HumanMessage('x'.repeat(100))],{maxTotalTokens:50,callId:'call'}).catch(error=>error);
+    assert.match(refusal.message,/does not fit/);assert.equal(hadNoEffect(refusal),true);assert.equal(quiet.requests.length,0);
+    await assert.rejects(model.invokeLimited([new HumanMessage('Hi')],{maxTotalTokens:0,callId:'call'}),/Invalid token limit/);
+    const silent=createOpenAILimitedToolModel(config(noUsage.baseURL),[],{promptOverheadTokens:0});
+    const missing=await silent.invokeLimited([new HumanMessage('Hello')],{maxTotalTokens:200,callId:'call'}).catch(error=>error);
+    assert.match(missing.message,/did not report token usage/);assert.equal(hadNoEffect(missing),false,'the request was sent, so the reservation must be reconciled');
+    assert.equal(noUsage.requests.length,1);
+  }finally{await noUsage.close();await quiet.close()}
+});
+
+test('the OpenAI-compatible limited model bounds cost before dispatch and prices the reported usage',async()=>{
+  const server=await provider(()=>({usage:{prompt_tokens:100,completion_tokens:50,total_tokens:150}}));
+  try{
+    // One micro per input token and two per output token.
+    const pricing={currency:'USD',inputMicrosPerMillionTokens:1000000,outputMicrosPerMillionTokens:2000000};
+    const model=createOpenAILimitedToolModel(config(server.baseURL),[],{pricing,promptOverheadTokens:0});
+    const result=await model.invokeLimitedCost([new HumanMessage('Hello')],{maxTotalTokens:1000,maxCostMicros:100,currency:'USD',callId:'call'});
+    assert.equal(result.usedTokens,150);assert.equal(result.usedCostMicros,100*1+50*2);
+    // The prompt bound is 26 tokens, which costs 26; the remaining 74 micros buy 37 output tokens, fewer than the token limit allows.
+    assert.equal(server.requests[0].max_tokens,37);
+    await assert.rejects(model.invokeLimitedCost([new HumanMessage('Hello')],{maxTotalTokens:1000,maxCostMicros:20,currency:'USD',callId:'call'}),/does not fit the cost limit/);
+    await assert.rejects(model.invokeLimitedCost([new HumanMessage('Hello')],{maxTotalTokens:1000,maxCostMicros:100,currency:'EUR',callId:'call'}),/Currency does not match/);
+    assert.equal(server.requests.length,1);
+    assert.equal(typeof createOpenAILimitedToolModel(config(server.baseURL),[]).invokeLimitedCost,'undefined');
+    assert.throws(()=>createOpenAILimitedToolModel(config(server.baseURL),[],{pricing:{...pricing,outputMicrosPerMillionTokens:0}}),/Invalid pricing/);
+  }finally{await server.close()}
+});
+
+test('a runtime with a token budget settles a provider call and releases a reservation the model refused to send',async()=>{
+  const s=setup(),server=await provider(()=>({usage:{prompt_tokens:12,completion_tokens:8,total_tokens:20}}));
+  try{
+    const model=createOpenAILimitedToolModel(config(server.baseURL),[],{promptOverheadTokens:0});
+    assert.equal((await modelRun(s,model)).type,'RUN_FINISHED');
+    assert.deepEqual(s.budget.summary(),{limit:100,committed:20,reserved:0});assert.equal(server.requests[0].max_tokens,60-26);
+    // A prompt larger than the per-call limit is refused before dispatch: the reservation is released, not left uncertain.
+    const refused=createOpenAILimitedToolModel(config(server.baseURL),[],{promptOverheadTokens:100});
+    assert.equal((await modelRun(s,refused)).type,'RUN_ERROR');
+    assert.deepEqual(s.budget.summary(),{limit:100,committed:20,reserved:0});assert.equal(server.requests.length,1);
+    assert.equal(s.budget.list().at(-1).status,'settled');
+  }finally{await server.close();close(s)}
+});
