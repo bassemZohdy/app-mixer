@@ -5,6 +5,7 @@ import pg from 'pg';
 import {PostgresAgentRuns,PostgresRunSupervisor} from '../../dist/index.js';
 const [url,schema,nodeId,effects,concurrency='4']=process.argv.slice(2),scope={tenantId:'tenant',agentId:'agent'};
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`,max:4});
+pool.on('error',()=>{});// an idle connection lost to a database failover must not crash the node
 const transaction=async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}};
 const runs=new PostgresAgentRuns({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction});
 const supervisor=new PostgresRunSupervisor({
