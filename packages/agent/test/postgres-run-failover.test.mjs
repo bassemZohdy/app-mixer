@@ -15,7 +15,7 @@ import {startCluster} from './fixtures/postgres-cluster.mjs';
 
 const enabled=process.env.APP_MIXER_TEST_POSTGRES_FAILOVER==='docker',nodePath=fileURLToPath(new URL('./fixtures/run-node.mjs',import.meta.url));
 const scope={tenantId:'tenant',agentId:'agent'};
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}};
+const transaction=pool=>async operation=>{const client=await pool.connect(),swallow=()=>{};client.on('error',swallow);/* a connection lost between statements emits 'error' on the checked-out client; without a listener it would end the process */try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.off('error',swallow);client.release();}};
 
 test('run workers finish every run with each effect applied once across a PostgreSQL primary failover',{skip:!enabled&&'set APP_MIXER_TEST_POSTGRES_FAILOVER=docker to run',timeout:420000},async t=>{
  const cluster=await startCluster(),schema='run_failover_'+randomUUID().replaceAll('-',''),nodes=new Map(),events=[],applications=[],effects=new Map();let pools=[];
