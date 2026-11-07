@@ -3,12 +3,13 @@ import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
 import {AgentError} from './errors.js';
 import {isIdentifier} from './validation.js';
+import {hadNoEffect} from './action-journal.js';
 
 type Actor={tenantId:string;principalId:string};
 type Status='pending'|'sending'|'uncertain'|'delivered';
 export type AgentNoticeDelivery={id:number;noticeId:number;destinationId:string;idempotencyKey:string;status:Status;attempts:number;revision:number};
 export type AgentNoticeMessage={noticeId:number;tenantId:string;agentId:string;runId:string;kind:'approval_requested'|'delegation_renewal_required';subjectId:string;subjectRevision:number};
-export type AgentNoticeDeliveryEvent={id:number;deliveryId:number;revision:number;action:'queued'|'sending'|'delivered'|'uncertain'|'recovered'|'reconciled_delivered'|'reconciled_not_delivered';principalId:string;observedAt:number};
+export type AgentNoticeDeliveryEvent={id:number;deliveryId:number;revision:number;action:'queued'|'sending'|'delivered'|'uncertain'|'not_sent'|'recovered'|'reconciled_delivered'|'reconciled_not_delivered';principalId:string;observedAt:number};
 type Access='queue'|'read'|'dispatch'|'recover'|'reconcile';
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:Access,delivery:AgentNoticeDelivery,message:AgentNoticeMessage)=>boolean|Promise<boolean>;authorizeList?:(actor:Actor,scope:AgentRunScope)=>boolean|Promise<boolean>;clock?:()=>number};
 const valid=isIdentifier;
@@ -60,7 +61,11 @@ export class SqliteAgentNoticeDelivery {
   const who=this.who(actor);if(!positive(id)||typeof send!=='function')throw Error('Invalid notice delivery');const before=this.row(id);if(!before)throw Error('Notice delivery not found');await this.permit(who,'dispatch',before);
   const message=this.transaction(()=>{const current=this.row(id),notice=current&&this.message(current.noticeId);if(!current||current.revision!==before.revision||current.status!=='pending')throw Error('Notice delivery changed');if(current.attempts>=100)throw Error('Notice delivery attempt limit');if(!notice||!this.actionable(notice))throw Error('Notice is not actionable');this.db.prepare("UPDATE agent_notice_deliveries SET status='sending',attempts=attempts+1,revision=revision+1 WHERE id=?").run(id);this.recordEvent(this.row(id)!,'sending',who);return notice;});this.active.add(id);
   try{await send({...message},before.destinationId,before.idempotencyKey);return this.transaction(()=>{const row=this.row(id);if(!row||row.status!=='sending'||row.revision!==before.revision+1)throw Error('Notice delivery changed');this.db.prepare("UPDATE agent_notice_deliveries SET status='delivered',revision=revision+1 WHERE id=?").run(id);const updated=this.row(id)!;this.recordEvent(updated,'delivered',who);return updated;});}
-  catch(error){try{this.transaction(()=>{const row=this.row(id);if(row?.status==='sending'&&row.revision===before.revision+1){this.db.prepare("UPDATE agent_notice_deliveries SET status='uncertain',revision=revision+1 WHERE id=?").run(id);this.recordEvent(this.row(id)!,'uncertain',who);}});}catch{}throw Error('Notice delivery outcome uncertain',{cause:error});}finally{this.active.delete(id);}
+  catch(error){
+  // A failure marked as happening before anything was sent (a bad destination, an unavailable credential, a stopped worker) returns the delivery to pending so it can be retried without a reconciliation; any other failure leaves the outcome uncertain.
+  const notSent=hadNoEffect(error);
+  try{this.transaction(()=>{const row=this.row(id);if(row?.status==='sending'&&row.revision===before.revision+1){this.db.prepare(`UPDATE agent_notice_deliveries SET status='${notSent?'pending':'uncertain'}',revision=revision+1 WHERE id=?`).run(id);this.recordEvent(this.row(id)!,notSent?'not_sent':'uncertain',who);}});}catch{}
+  throw Error(notSent?'Notice delivery not sent':'Notice delivery outcome uncertain',{cause:error});}finally{this.active.delete(id);}
  }
  async recover(actor:Actor,id:number):Promise<AgentNoticeDelivery>{const who=this.who(actor);if(!positive(id)||this.active.has(id))throw Error('Invalid notice recovery');const before=this.row(id);if(!before||before.status!=='sending')throw Error('Invalid notice delivery state');await this.permit(who,'recover',before);return this.transaction(()=>{const row=this.row(id);if(this.active.has(id)||!row||row.status!=='sending'||row.revision!==before.revision)throw Error('Notice delivery changed');this.db.prepare("UPDATE agent_notice_deliveries SET status='uncertain',revision=revision+1 WHERE id=?").run(id);const updated=this.row(id)!;this.recordEvent(updated,'recovered',who);return updated;});}
  async reconcile(actor:Actor,id:number,outcome:'delivered'|'not_delivered'):Promise<AgentNoticeDelivery>{const who=this.who(actor);if(!positive(id)||!['delivered','not_delivered'].includes(outcome))throw Error('Invalid notice reconciliation');const before=this.row(id);if(!before||before.status!=='uncertain')throw Error('Invalid notice delivery state');await this.permit(who,'reconcile',before);return this.transaction(()=>{const row=this.row(id);if(!row||row.status!=='uncertain'||row.revision!==before.revision)throw Error('Notice delivery changed');this.db.prepare('UPDATE agent_notice_deliveries SET status=?,revision=revision+1 WHERE id=?').run(outcome==='delivered'?'delivered':'pending',id);const updated=this.row(id)!;this.recordEvent(updated,outcome==='delivered'?'reconciled_delivered':'reconciled_not_delivered',who);return updated;});}

@@ -1,6 +1,7 @@
 import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
 import {isIdentifier} from './validation.js';
+import {markNoEffect} from './action-journal.js';
 
 type Destination={id:string;url:string}&({bearerToken:string;getBearerToken?:never}|{bearerToken?:never;getBearerToken:()=>string|Promise<string>});
 type Options={scope:AgentRunScope;destinations:Destination[];timeoutMs?:number|undefined};
@@ -25,9 +26,11 @@ function createClient(options:Options,verify:boolean):(message:AgentNoticeMessag
  const scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};
  return async(message,destinationId,idempotencyKey)=>{
   const target=destinations.get(destinationId);
-  if(!target||!message||message.tenantId!==scope.tenantId||message.agentId!==scope.agentId||!positive(message.noticeId)||!id(message.runId)||!['approval_requested','delegation_renewal_required'].includes(message.kind)||!id(message.subjectId)||!Number.isSafeInteger(message.subjectRevision)||message.subjectRevision<0||typeof idempotencyKey!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(idempotencyKey))throw Error('Invalid notice transport request');
+  if(!target||!message||message.tenantId!==scope.tenantId||message.agentId!==scope.agentId||!positive(message.noticeId)||!id(message.runId)||!['approval_requested','delegation_renewal_required'].includes(message.kind)||!id(message.subjectId)||!Number.isSafeInteger(message.subjectRevision)||message.subjectRevision<0||typeof idempotencyKey!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(idempotencyKey))throw markNoEffect(Error('Invalid notice transport request'));
   const payload={version:1,noticeId:message.noticeId,tenantId:scope.tenantId,agentId:scope.agentId,runId:message.runId,kind:message.kind,subjectId:message.subjectId,subjectRevision:message.subjectRevision};
-  try{const signal=AbortSignal.timeout(timeout),bearerToken=await credential(target.getBearerToken,signal),response=await fetch(verify?target.url.replace(/\/$/,'')+'/status':target.url,{method:'POST',redirect:'error',signal,headers:{authorization:`Bearer ${bearerToken}`,'content-type':'application/json','idempotency-key':idempotencyKey},body:JSON.stringify(payload)});void response.body?.cancel().catch(()=>{});if(verify){if(response.status===204)return true;if(response.status===404)return false;throw Error();}if(!response.ok)throw Error();return true;}catch(error){throw Error(verify?'Notice verification failed':'Notice transport failed',{cause:error});}
+  // Nothing has been sent until the credential is in hand, so a failure here is marked as having had no effect and the delivery can be retried.
+  let signal:AbortSignal,bearerToken:string;try{signal=AbortSignal.timeout(timeout);bearerToken=await credential(target.getBearerToken,signal);}catch(error){throw markNoEffect(Error(verify?'Notice verification failed':'Notice transport failed',{cause:error}));}
+  try{const response=await fetch(verify?target.url.replace(/\/$/,'')+'/status':target.url,{method:'POST',redirect:'error',signal,headers:{authorization:`Bearer ${bearerToken}`,'content-type':'application/json','idempotency-key':idempotencyKey},body:JSON.stringify(payload)});void response.body?.cancel().catch(()=>{});if(verify){if(response.status===204)return true;if(response.status===404)return false;throw Error();}if(!response.ok)throw Error();return true;}catch(error){throw Error(verify?'Notice verification failed':'Notice transport failed',{cause:error});}
  };
 }
 /** Host-selected HTTPS endpoints receive metadata only. The receiver must enforce idempotency. */

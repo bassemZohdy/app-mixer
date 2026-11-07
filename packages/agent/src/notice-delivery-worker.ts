@@ -1,5 +1,6 @@
 import {SqliteAgentNoticeDelivery,type AgentNoticeDeliveryActor,type AgentNoticeMessage} from './agent-notice-delivery.js';
 import {isIdentifier} from './validation.js';
+import {markNoEffect} from './action-journal.js';
 
 type Options={outbox:SqliteAgentNoticeDelivery;actor:AgentNoticeDeliveryActor;send:(message:AgentNoticeMessage,destinationId:string,idempotencyKey:string)=>Promise<void>;maxPerPass:number;pollMs:number;onError:(error:unknown,deliveryId?:number)=>void};
 const id=isIdentifier;
@@ -17,7 +18,7 @@ export class AgentNoticeDeliveryWorker {
   for(const delivery of page.items){
    if(!keepGoing())return delivered;
    if(delivery.status!=='pending')continue;
-   try{await this.outbox.dispatch({...this.actor},delivery.id,async(message,destination,key)=>{if(!keepGoing())throw Error('Notice delivery worker stopped');await this.send(message,destination,key);});delivered++;}catch(error){this.report(error,delivery.id);}
+   try{await this.outbox.dispatch({...this.actor},delivery.id,async(message,destination,key)=>{if(!keepGoing())throw markNoEffect(Error('Notice delivery worker stopped'));await this.send(message,destination,key);});delivered++;}catch(error){this.report(error,delivery.id);}
   }
   if(keepGoing())this.cursor=page.nextAfter;return delivered;
  }
