@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- The Kubernetes Data Plane anchors the revocation epoch in the same `APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR`: token checks are denied while the revocation database's epoch is below the anchored epoch. The kind workflow provisions the epoch table and checks the copy to the anchor volume, the denial after the epoch is lowered, and recovery after it is restored.
 - `PostgresJwtRevocations` and `PostgresExtensionApprovals` take an optional `epochAnchor`: a restored database whose revocation epoch (a new `app_mixer_jwt_revocation_epoch` table, created by `initialize()`) or approval epoch (the sum of approval revisions, no new table) is below the anchored epoch makes the check throw instead of re-activating a revoked token or re-granting a revoked approval. The restore test now shows all four anchored stores refusing.
 - The Android device check asserts that the reference headings are exposed with a role different from body text (the platform tree has no heading level).
 - `PostgresCapabilityAudit` and `PostgresAuthenticationFailureAudit` take an optional `sequenceAnchor` (with `createFileSequenceAnchor` as a durable file-based implementation): a restored audit database whose sequence went back makes recording fail with "Audit log was rolled back" instead of reusing sequence numbers. The restore test shows both behaviours. The release floor and sequence anchors share one atomic file helper.

@@ -57,6 +57,7 @@ jobs:
           provision_db() {
             kubectl rollout status -n app-mixer-test deployment/app-mixer-revocations --timeout=120s
             kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c 'CREATE TABLE app_mixer_jwt_revocations (issuer TEXT NOT NULL, token_hash TEXT NOT NULL, retain_until BIGINT NOT NULL, PRIMARY KEY (issuer,token_hash))'
+            kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c 'CREATE TABLE app_mixer_jwt_revocation_epoch (issuer TEXT PRIMARY KEY, epoch BIGINT NOT NULL)'
             HASH=$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update("revoked-token").digest("hex"))')
             kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c "INSERT INTO app_mixer_jwt_revocations VALUES ('https://issuer.example/','$HASH',4102444800000)"
             kubectl exec -n app-mixer-test deployment/app-mixer-revocations -- psql -U postgres -d postgres -c 'CREATE TABLE app_mixer_release_authorizations (tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, version BIGINT NOT NULL, definition_digest TEXT NOT NULL, PRIMARY KEY (tenant_id,application_id,environment,version)); CREATE TABLE app_mixer_release_floors (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,minimum_version BIGINT NOT NULL,PRIMARY KEY (tenant_id,application_id,environment))'
@@ -182,6 +183,26 @@ jobs:
           psql "UPDATE app_mixer_release_floors SET minimum_version=$floor WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'"
           for i in $(seq 1 45); do [ "$(ready)" = 200 ] && break || sleep 1; done
           [ "$(ready)" = 200 ]
+          # The revocation epoch is anchored too: operator revocations advance it (seeded here by SQL), the first token check copies it to the
+          # anchor volume, and a restored database whose epoch went back denies tokens instead of treating a revoked token as active.
+          issuer=https://issuer.example/
+          epoch_file=/floor-anchor/jwt-revocations-$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex"))' "$issuer").sequence
+          token_status() { curl --cacert "$ca" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13004/application || true; }
+          psql "INSERT INTO app_mixer_jwt_revocation_epoch VALUES ('$issuer',3) ON CONFLICT (issuer) DO UPDATE SET epoch=3"
+          for i in $(seq 1 45); do [ "$(token_status)" = 200 ] && break || sleep 1; done
+          [ "$(token_status)" = 200 ]
+          copied=
+          for i in $(seq 1 30); do
+            copied=$(kubectl exec -n "$ns" deployment/app-mixer-data-plane -- node -e 'try{process.stdout.write(require("node:fs").readFileSync(process.argv[1],"utf8").trim())}catch{}' "$epoch_file") || true
+            [ "$copied" = 3 ] && break || sleep 1
+          done
+          [ "$copied" = 3 ]
+          psql "UPDATE app_mixer_jwt_revocation_epoch SET epoch=1 WHERE issuer='$issuer'"
+          for i in $(seq 1 30); do [ "$(token_status)" != 200 ] && break || sleep 1; done
+          [ "$(token_status)" != 200 ]
+          psql "UPDATE app_mixer_jwt_revocation_epoch SET epoch=3 WHERE issuer='$issuer'"
+          for i in $(seq 1 45); do [ "$(token_status)" = 200 ] && break || sleep 1; done
+          [ "$(token_status)" = 200 ]
           kill "$FORWARD_PID" 2>/dev/null || true
           # Wait until both replicas report ready again so later steps see a settled Deployment.
           for i in $(seq 1 90); do [ "$(kubectl get deployment -n "$ns" app-mixer-data-plane -o jsonpath='{.status.readyReplicas}')" = 2 ] && break || sleep 1; done
