@@ -22,7 +22,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   | Row | layout, variants (every `justify` and `align` value) | yes | yes | yes | yes (CI smoke) |
   | Card | layout | yes | yes | yes | yes (CI smoke) |
   | TextField | text-field (render, input, variant, removal); variants (both variants and the default); rejections | yes | yes | yes | yes (CI smoke) |
-  | Button | actions; variants (every variant accepted and kept; no adapter draws them differently); rejections | yes | yes | yes | yes (CI smoke) |
+  | Button | actions; variants (every variant accepted and kept; the web exposes `data-variant`, React Native a host `variantStyles` prop and Flutter draws `primary` as the filled button); rejections | yes | yes | yes | yes (CI smoke) |
 
   The React and Angular bridges replay the layout, variants, text-field, bindings, actions and rejections fixtures in their CI smoke tests (`.github/scripts/react-smoke.mjs` and `angular-smoke.mjs`, with real React 19.2 and Angular 19.2 in jsdom), comparing the DOM with the same expected trees through `.github/scripts/fixture-tree.mjs`. `native-web-smoke.mjs` replays the same six fixtures through the React Native components rendered by react-native-web 0.21, reading layout from their inline styles and text variants from their text styles. The React Native column covers the shared store and the components on react-native-web, not React Native on a device.
 
