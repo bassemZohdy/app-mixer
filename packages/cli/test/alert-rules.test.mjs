@@ -18,6 +18,8 @@ import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentActi
 const run=promisify(execFile);
 const ALERTMANAGER_IMAGE='prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a';
 const routingPath=new URL('../../../deploy/observability/alertmanager-example.yml',import.meta.url);
+const GRAFANA_IMAGE='grafana/grafana-oss:11.6.1@sha256:52c3e20686b860c6dc1f623811565773cf51eefa378817a4896dfc863c3c82c8';
+const dashboardPath=new URL('../../../deploy/observability/grafana-dashboard.json',import.meta.url);
 const PROMETHEUS_IMAGE='prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2';
 const rulesPath=new URL('../../../deploy/observability/prometheus-alerts.yml',import.meta.url),runbooksPath=new URL('../../../docs/runbooks.md',import.meta.url);
 const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'scraper'};
@@ -62,7 +64,7 @@ const enabled=process.env.APP_MIXER_TEST_PROMETHEUS==='docker';
 const freePort=async()=>{const {createServer}=await import('node:net'),probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const {port}=probe.address();await new Promise(resolve=>probe.close(resolve));return port;};
 const wait=async(predicate,label,limit=60000)=>{const end=Date.now()+limit;let last;while(Date.now()<end){try{if((last=await predicate())===true)return;}catch(error){last=error;}await new Promise(resolve=>setTimeout(resolve,500));}throw Error('Timed out waiting for '+label+(last&&last!==false?': '+(last.message??last):''));};
 
-test('a failure drill fires, routes and resolves alerts through real Prometheus and Alertmanager',{skip:enabled?false:'set APP_MIXER_TEST_PROMETHEUS=docker to run against a Prometheus container',timeout:240000},async()=>{
+test('a failure drill fires, routes and resolves alerts through real Prometheus and Alertmanager',{skip:enabled?false:'set APP_MIXER_TEST_PROMETHEUS=docker to run against a Prometheus container',timeout:420000},async()=>{
  const dir=mkdtempSync(join(tmpdir(),'alert-drill-')),config=join(dir,'config'),path=join(dir,'runs.sqlite'),name='app-mixer-prom-'+process.pid+'-'+Date.now(),amName=name.replace('-prom-','-am-'),token='scrape-token-local-test-only';
  await mkdir(config);const linux=process.platform==='linux';const containers=[],servers=[],delivered=[];let metrics,store;
  try{
@@ -102,6 +104,41 @@ test('a failure drill fires, routes and resolves alerts through real Prometheus 
   // Healthy: both targets scrape and nothing fires.
   await wait(async()=>(await up('app-mixer-data-plane'))==='1'&&(await up('app-mixer-agent'))==='1','both targets to be scraped');
   await new Promise(resolve=>setTimeout(resolve,4000));assert.deepEqual([...await firing()],[],'nothing fires while healthy');
+
+  // The shipped dashboard imports into a real Grafana, and every panel's query runs against this Prometheus.
+  const grafanaName=name.replace('-prom-','-grafana-'),grafanaPassword='grafana-local-test-only',grafanaPort=linux?await freePort():3000;
+  const promHostPort=api.split(':').pop(),promUrl=linux?api:`http://host.docker.internal:${promHostPort}`;
+  await mkdir(join(config,'grafana-datasources'));
+  await writeFile(join(config,'grafana-datasources','prometheus.yml'),`apiVersion: 1\ndatasources:\n  - name: Prometheus\n    uid: drill-prometheus\n    type: prometheus\n    access: proxy\n    url: ${promUrl}\n    isDefault: true\n`);
+  await run('docker',['run','-d','--rm','--name',grafanaName,...user,...(linux?['--network','host']:['-p','127.0.0.1::3000']),'-e','GF_SECURITY_ADMIN_PASSWORD='+grafanaPassword,'-e','GF_SERVER_HTTP_PORT='+grafanaPort,'-e','GF_ANALYTICS_REPORTING_ENABLED=false','-e','GF_ANALYTICS_CHECK_FOR_UPDATES=false','-e','GF_PATHS_DATA=/tmp','-e','GF_PATHS_LOGS=/tmp','-e','GF_PATHS_PLUGINS=/tmp/plugins','-e','GF_PLUGINS_PREINSTALL_DISABLED=true','-v',join(config,'grafana-datasources')+':/etc/grafana/provisioning/datasources:ro',GRAFANA_IMAGE]);containers.push(grafanaName);
+  const grafana=linux?'http://127.0.0.1:'+grafanaPort:'http://127.0.0.1:'+(await run('docker',['port',grafanaName,'3000/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
+  const auth='Basic '+Buffer.from('admin:'+grafanaPassword).toString('base64');
+  const call=async(route,body)=>{const response=await fetch(grafana+route,{method:body===undefined?'GET':'POST',headers:{authorization:auth,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});const text=await response.text();let json;try{json=JSON.parse(text);}catch{}return {status:response.status,json,text};};
+  await wait(async()=>(await fetch(grafana+'/api/health')).status===200,'Grafana to start',120000);
+  await wait(async()=>(await call('/api/datasources/uid/drill-prometheus')).status===200,'the Prometheus data source to be provisioned');
+  const dashboard=JSON.parse(await readFile(dashboardPath,'utf8'));
+  const imported=await call('/api/dashboards/import',{dashboard,overwrite:true,folderUid:'',inputs:[{name:'DS_PROMETHEUS',type:'datasource',pluginId:'prometheus',value:'drill-prometheus'}]});
+  assert.equal(imported.status,200,imported.text);
+  const stored=(await call('/api/dashboards/uid/'+dashboard.uid)).json.dashboard;
+  assert.equal(stored.title,dashboard.title);assert.ok(!JSON.stringify(stored).includes('DS_PROMETHEUS'),'the data source input was resolved on import');
+  // The job variable lists both scraped jobs.
+  const jobs=(await call('/api/datasources/uid/drill-prometheus/resources/api/v1/label/job/values')).json.data;
+  assert.ok(jobs.includes('app-mixer-data-plane')&&jobs.includes('app-mixer-agent'),'the job variable offers the scraped jobs: '+jobs);
+  // Every panel query, with the job variable set to all, runs through Grafana without error.
+  const panels=stored.panels.filter(panel=>panel.type!=='row'),answered={};
+  assert.ok(panels.length>=15,'the dashboard has its panels');
+  for(const panel of panels){
+    for(const [index,target] of panel.targets.entries()){
+      const expr=target.expr.replaceAll('$job','.*').replaceAll('$__rate_interval','1m');
+      const result=await call('/api/ds/query',{from:'now-5m',to:'now',queries:[{refId:'A',datasource:{type:'prometheus',uid:'drill-prometheus'},expr,range:true,instant:false,intervalMs:1000,maxDataPoints:50}]});
+      assert.equal(result.status,200,`${panel.title}: ${result.text.slice(0,300)}`);
+      const outcome=result.json.results.A;assert.ok(!outcome.error,`${panel.title}: ${outcome.error}`);
+      answered[`${panel.title}#${index}`]=outcome.frames.length;
+    }
+  }
+  // Panels fed by the metrics this drill enables have data; the opt-in gauges (tokens, costs, memories, approvals) do not.
+  for(const title of ['Served publication version','Draining','Uptime','Durable runs by status','Journaled actions by status (uncertain and dispatching need an operator)','Oldest overdue and due schedule age'])assert.ok(answered[title+'#0']>0,`${title} shows data`);
+  assert.equal(Object.keys(answered).length,panels.reduce((sum,panel)=>sum+panel.targets.length,0));
 
   // Failure: no schedule worker for ten minutes, an action with an unknown outcome, a pod stuck draining.
   now+=10*60000;insertAction(path,'charge','uncertain');plane.setDraining(true);
