@@ -88,7 +88,9 @@ export class SqliteStagedOperations {
     } catch(error) {
       // An error the registry marked as thrown before execution (refused, invalid, unknown) had no effect: the intent can be submitted again with the same key.
       // Any other error can follow an external effect or a failed outcome audit; never retry automatically.
-      this.transition(snapshotScope,id,'submitting',hadNoEffect(error)?'staged':'uncertain');throw error;
+      // If the state has already moved on (an operator recovered the submission as uncertain meanwhile), that change stands and the capability's own error is still the one reported.
+      try{this.transition(snapshotScope,id,'submitting',hadNoEffect(error)?'staged':'uncertain');}catch{}
+      throw error;
     }
   }
   /** Call only after confirming that the process which submitted the operation is no longer running. */

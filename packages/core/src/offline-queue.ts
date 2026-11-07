@@ -47,7 +47,12 @@ export class SqliteOfflineQueue {
       const id=randomUUID(),idempotencyKey=sharedKey??randomUUID();
       this.db.prepare('INSERT INTO offline_operations VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,operationId,requestKey,idempotencyKey,serialized,'pending',0,0);
       this.db.exec('COMMIT');return {id,operationId,requestKey,idempotencyKey,payload:dataCopy(normalized),status:'pending',attempts:0,nextAttemptAt:0};
-    }catch(error){this.db.exec('ROLLBACK');throw error;}
+    }catch(error){
+      this.db.exec('ROLLBACK');
+      // A host-issued shared key that another request already holds (in this tenant or any other) is a conflict; do not surface the database's constraint text or say where the key is held.
+      if(error instanceof Error&&/UNIQUE constraint failed: offline_operations\.idempotency_key/.test(error.message))throw Error('Offline request conflict',{cause:error});
+      throw error;
+    }
   }
   get(scope:DataScope,principalId:string,id:string):OfflineOperation|undefined {
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
@@ -95,10 +100,16 @@ export class SqliteOfflineQueue {
     }catch(error){this.db.exec('ROLLBACK');throw error;}
     if(!id)return undefined;
     const operation=this.get(scope,context.principalId,id)!;
+    let invoked=false;
     try{
       await registry.invoke(operation.operationId,{idempotencyKey:operation.idempotencyKey,payload:operation.payload},context);
+      invoked=true;
       this.transition(scope,context.principalId,id,'running','succeeded',0);
     }catch(error){
+      // The capability ran. A failure while recording that (a busy or locked database, a concurrent recovery) says nothing about the operation, so it is never
+      // handed to the host classifier, which could answer 'retry' and run a completed operation again. The operation is marked uncertain, for reconciliation, if
+      // that write works; if it does not, the row stays running and `recoverAbandoned` handles it. The original error is reported either way.
+      if(invoked){try{this.transition(scope,context.principalId,id,'running','uncertain',0);}catch{}throw error;}
       // A refusal the registry marked as thrown before execution had no effect, so it is a retry (bounded by the attempt limit) whatever the classifier says.
       let classification:OfflineFailure=hadNoEffect(error)?'retry':'uncertain';
       try{if(!hadNoEffect(error)){const candidate=classify(error);if(candidate==='retry'||candidate==='conflict')classification=candidate;}}catch{}

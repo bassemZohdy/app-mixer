@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
+import {DatabaseSync} from 'node:sqlite';
 import {join} from 'node:path';
 import {CapabilityRegistry,SqliteOfflineQueue,SqliteStagedOperations} from '../dist/index.js';
 const scope={tenantId:'t',applicationId:'a'},actor={tenantId:'t',principalId:'p',origin:'service'},policy={enabled:true,maxAttempts:2,retryDelayMs:100};
@@ -158,4 +159,43 @@ test('a queue keeps accepting work after 1,000 settled operations and retention 
   assert.deepEqual(queue.list(scope,'p').map(item=>item.id).sort(),[fresh.id,live.id].sort(),'live work is untouched');
   assert.equal(queue.purge(scope,'other',{statuses:['succeeded'],limit:10}),0,'another principal is untouched');
  }finally{queue.close();}
+});
+
+test('a failure while recording success is never handed to the classifier and leaves the operation uncertain, not pending',async()=>{
+ // The capability ran. If the database then refuses to record it (here a trigger stands in for a busy or locked database), treating that as a failed
+ // attempt would let a host classifier answer 'retry' and run a completed operation again; the outcome of the attempt is known, so it is uncertain.
+ const dir=mkdtempSync(join(tmpdir(),'app-mixer-offline-success-')),path=join(dir,'db.sqlite');let queue,db;
+ try{
+  queue=new SqliteOfflineQueue(path,policy);let effects=0;const registry=new CapabilityRegistry(()=>{});registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{effects++;return 'ok';}});
+  const item=queue.enqueue(scope,'p','update','req',{value:1});
+  db=new DatabaseSync(path);db.exec("CREATE TRIGGER block_success BEFORE UPDATE ON offline_operations WHEN NEW.status='succeeded' BEGIN SELECT RAISE(ABORT,'database is busy'); END");
+  let classified=0;await assert.rejects(queue.processOne(scope,actor,registry,()=>{classified++;return 'retry';},1000),/database is busy/,'the bookkeeping error is reported as it was');
+  assert.equal(classified,0,'the classifier was not asked about a database error');assert.equal(effects,1);
+  assert.equal(queue.get(scope,'p',item.id).status,'uncertain','the completed operation waits for reconciliation instead of running again');
+  db.exec('DROP TRIGGER block_success');
+  assert.equal(await queue.processOne(scope,actor,registry,()=> 'retry',2000),undefined,'nothing is pending, so the operation is not executed a second time');assert.equal(effects,1);
+ }finally{db?.close();queue?.close?.();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('a submission whose state moved on while it ran reports the real error, not a state error',async()=>{
+ // recoverAbandoned (run by an operator who believed the submitter had died) moves the operation to uncertain while the capability is still running;
+ // when the capability then fails, the failed state change in the error path must not replace the capability's own error.
+ const staged=new SqliteStagedOperations(':memory:');
+ try{
+  const registry=new CapabilityRegistry(()=>{});let id;registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{staged.recoverAbandoned(scope,id);throw Error('provider rejected the request');}});
+  const item=staged.stage(scope,'update',{v:1});id=item.id;
+  await assert.rejects(staged.submit(scope,item.id,registry,actor),/provider rejected the request/,'the capability error is what the caller sees');
+  assert.equal(staged.get(scope,item.id).status,'uncertain','the operation stays uncertain for reconciliation');
+ }finally{staged.close?.();}
+});
+
+test('a shared idempotency key already used by another request is a conflict, not a raw constraint error',()=>{
+ const queue=new SqliteOfflineQueue(':memory:',policy);
+ try{
+  queue.enqueue(scope,'p','update','first',{value:1},{idempotencyKey:'shared-key'});
+  for(const [other,principal,request] of [[scope,'p','second'],[{tenantId:'other',applicationId:'a'},'p','first'],[scope,'q','first']]){
+   assert.throws(()=>queue.enqueue(other,principal,'update',request,{value:1},{idempotencyKey:'shared-key'}),error=>/Offline request conflict/.test(error.message)&&!/UNIQUE|constraint|offline_operations/i.test(error.message),JSON.stringify([other.tenantId,principal,request]));
+  }
+  assert.equal(queue.enqueue(scope,'p','update','first',{value:1},{idempotencyKey:'shared-key'}).requestKey,'first','the same request still deduplicates');
+ }finally{queue.close?.();}
 });

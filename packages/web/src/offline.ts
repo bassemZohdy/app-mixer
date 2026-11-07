@@ -217,7 +217,7 @@ export class EncryptedBrowserQueue {
   }
   /** Compare-and-swap transitions prevent two tabs from claiming the same entry. */
   /**
-   * Host-authorized retention: delete at most `limit` (1 to 1,000) settled items (`succeeded`, `discarded` or `exhausted`), oldest id first, and return the count.
+   * Host-authorized retention: delete at most `limit` (1 to 1,000) settled items (`succeeded`, `discarded` or `exhausted`), lowest id first, and return the count. Ids are hashes of the request key, so "lowest id" is an arbitrary subset, not the oldest items: purge with a limit large enough to cover the history you mean to drop.
    * The queue cap counts every stored item and a status is only visible after decryption, so a full queue ("Offline queue full") is freed by purging settled items.
    * Deletion advances the authenticated counter and state digest like any other write, so the rollback anchor and tamper checks stay valid. A purged item's request
    * key is forgotten: purge only history the client can no longer resubmit.
