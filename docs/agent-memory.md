@@ -99,6 +99,23 @@ The proposed floors are recall 0.75 and MRR 0.7 for semantic and indexed search,
 - With this embedder, hybrid fusion is worse than plain semantic search on paraphrases, because word overlap promotes distractors.
 - Lexical search returns nothing for natural-language questions, because every token must match. Use it only for identifiers and exact terms.
 
+### With real embedding models
+
+Setting `APP_MIXER_TEST_OLLAMA_URL` (and `APP_MIXER_TEST_OLLAMA_MODEL`, default `all-minilm`) runs the same test with a model served by Ollama instead of the reference embedder; the floors still apply. Measured on 2026-11-08 with the 40 memories, 24 cases and 900 synthetic distractors, `limit` 5 (all-MiniLM-L6 384 dimensions, nomic-embed-text 768 dimensions; both pulled from the Ollama registry):
+
+| Mode | Reference embedder (recall / MRR) | all-minilm | nomic-embed-text |
+| --- | --- | --- | --- |
+| semantic | 0.792 / 0.743 | 0.979 / 1.000 | 0.979 / 1.000 |
+| hybrid | 0.729 / 0.729 | 0.813 / 0.813 | 0.813 / 0.813 |
+| indexed (HNSW) | 0.792 / 0.743 | 0.938 / 0.958 | 0.938 / 0.958 |
+| HNSW recall against exact search | 0.992 | 0.983 | 0.992 |
+
+Findings:
+- Paraphrase recall in semantic search rose from the reference embedder's weakest category to 1.00 with either model; the one incomplete category is the multi-answer cases (0.88).
+- Hybrid fusion is still worse than semantic search on paraphrases (0.63) with a real model, because the lexical side promotes word overlap. Prefer `semantic` or `indexed` for natural-language questions until a different fusion weight is measured.
+- The HNSW index stays above the 0.95 exact-search floor with both models; indexed recall (0.938) is below semantic recall (0.979) because the index returns at most `maxCandidates` (40).
+- The two models score the same on this set, so it cannot rank them. The distractors are random words from the corpus vocabulary, which a real model separates easily, so these numbers are an upper bound for harder, realistic distractors. Replacing them with real, similar tickets is part of the owner's review.
+
 Before a deployment, an owner should review the labels, replace the reference embedder with the production model, and agree the thresholds for each mode from the report this test prints.
 
 

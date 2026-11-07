@@ -10,7 +10,11 @@ import pg from 'pg';
 import {PostgresAgentMemory,AgentSemanticMemory,evaluateAgentMemoryRetrieval} from '../dist/index.js';
 
 const url=process.env.APP_MIXER_TEST_POSTGRES_URL,set=JSON.parse(readFileSync(new URL('./fixtures/memory-evaluation-set.json',import.meta.url),'utf8'));
-const DIMENSIONS=256,STOP=new Set('a an and are as at be by do does for from has have how i in is it its of on or our should the their them then to us was we what when which who why will with would after all can get must per some that this there these those up use'.split(' '));
+// Optional: embed with a real model served by Ollama (APP_MIXER_TEST_OLLAMA_URL, for example http://127.0.0.1:11434, and
+// APP_MIXER_TEST_OLLAMA_MODEL, default all-minilm) instead of the reference embedder. The floors still apply.
+const ollamaUrl=process.env.APP_MIXER_TEST_OLLAMA_URL,ollamaModel=process.env.APP_MIXER_TEST_OLLAMA_MODEL||'all-minilm';
+const ollamaEmbed=async text=>{const response=await fetch(new URL('/api/embed',ollamaUrl),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:ollamaModel,input:text})});if(!response.ok)throw Error('Embedding request failed: '+response.status);return (await response.json()).embeddings[0];};
+const MODEL=ollamaUrl?`ollama-${ollamaModel}`:'reference-v1',DIMENSIONS=ollamaUrl&&url?(await ollamaEmbed('dimension probe')).length:256,STOP=new Set('a an and are as at be by do does for from has have how i in is it its of on or our should the their them then to us was we what when which who why will with would after all can get must per some that this there these those up use'.split(' '));
 const hash=text=>{let h=2166136261;for(const c of text){h^=c.codePointAt(0);h=Math.imul(h,16777619)>>>0;}return h;};
 const stem=word=>word.replace(/(ings?|ed|es|s)$/,'')||word;
 /** Reference embedder: L2-normalised counts of hashed words and character trigrams. Deterministic and local. */
@@ -35,9 +39,9 @@ test('the draft memory evaluation set runs in every mode and the HNSW index matc
  try{
   await admin.query('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public');await admin.query(`CREATE SCHEMA "${schema}"`);
   const scope={tenantId:'tenant',agentId:'support',owner:{kind:'organization',id:'org'},kind:'semantic'},actor={tenantId:'tenant',principalId:'agent'};
-  const store=new PostgresAgentMemory({enabled:true,textIndex:true,vectorIndex:{modelId:'reference-v1',dimensions:DIMENSIONS},maxEntries:1000,maxTtlMs:10**9,clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction});
+  const store=new PostgresAgentMemory({enabled:true,textIndex:true,vectorIndex:{modelId:MODEL,dimensions:DIMENSIONS},maxEntries:1000,maxTtlMs:10**9,clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction});
   await store.initialize();
-  const memory=new AgentSemanticMemory(store,{modelId:'reference-v1',dimensions:DIMENSIONS,embed:async text=>embed(text)}),options={expectedRevision:null,expiresAt:10**8,provenance:{kind:'run',id:'evaluation'}};
+  const memory=new AgentSemanticMemory(store,{modelId:MODEL,dimensions:DIMENSIONS,embed:async text=>ollamaUrl?ollamaEmbed(text):embed(text)}),options={expectedRevision:null,expiresAt:10**8,provenance:{kind:'run',id:'evaluation'}};
   for(const [id,text] of Object.entries(set.entries))await memory.put(actor,scope,id,text,options);
   for(let n=1;n<=900;n++)await memory.put(actor,scope,'distractor-'+n,distractor(n),options);
   const cases=set.cases.map(({id,query,relevantIds})=>({id,query,relevantIds})),keywords=set.cases.filter(item=>item.lexicalQuery).map(({id,lexicalQuery,relevantIds})=>({id,query:lexicalQuery,relevantIds}));
@@ -46,7 +50,7 @@ test('the draft memory evaluation set runs in every mode and the HNSW index matc
    reports[name]=await evaluateAgentMemoryRetrieval({memory,actor,scope,mode,limit:5,cases:selected,...extra});
    const r=reports[name],byCategory={};
    for(const result of r.cases){const category=set.cases.find(item=>item.id===result.id).category;(byCategory[category]??=[]).push(result.recall);}
-   t.diagnostic(`${name}: recall ${r.meanRecall.toFixed(3)}, precision@5 ${r.meanPrecision.toFixed(3)}, MRR ${r.meanReciprocalRank.toFixed(3)}, nDCG ${r.meanNdcg.toFixed(3)}${r.meanExactRecall===undefined?'':`, recall against exact search ${r.meanExactRecall.toFixed(3)}`}; recall by category ${Object.entries(byCategory).map(([k,v])=>`${k} ${(v.reduce((a,b)=>a+b,0)/v.length).toFixed(2)}`).join(', ')}`);
+   t.diagnostic(`[${MODEL}] ${name}: recall ${r.meanRecall.toFixed(3)}, precision@5 ${r.meanPrecision.toFixed(3)}, MRR ${r.meanReciprocalRank.toFixed(3)}, nDCG ${r.meanNdcg.toFixed(3)}${r.meanExactRecall===undefined?'':`, recall against exact search ${r.meanExactRecall.toFixed(3)}`}; recall by category ${Object.entries(byCategory).map(([k,v])=>`${k} ${(v.reduce((a,b)=>a+b,0)/v.length).toFixed(2)}`).join(', ')}`);
    const missed=r.cases.filter(result=>result.recall<1).map(result=>result.id);if(missed.length)t.diagnostic(`${name} incomplete: ${missed.join(', ')}`);
    for(const [metric,floor] of Object.entries(floors[name]))assert.ok(r[metric]>=floor,`${name} ${metric} ${r[metric]} is below the proposed floor ${floor}`);
   }
