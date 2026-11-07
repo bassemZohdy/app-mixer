@@ -177,3 +177,45 @@ test('queued runs start in creation order across two nodes and a registry create
   await db.pool.query("UPDATE app_mixer_schema SET version=3 WHERE component='agent_runs'");await assert.rejects(new PostgresAgentRuns(db.options).initialize(),/newer than this release supports \(2\)/);
  }finally{await db.close();}
 });
+
+test('a frozen node that resumes after its run was taken over cannot dispatch again or complete it',{skip:skip||(process.platform==='win32'&&'SIGSTOP is not available on Windows'),timeout:120000},async t=>{
+ // A process stopped with SIGSTOP stands in for a pause or partition that outlasts the lease: it keeps its in-memory state, its
+ // pending request and its belief that it still holds the run.
+ const db=await database('run_frozen_'),nodes=new Map(),events=[],applications=[],effects=new Map();let held;
+ const server=createServer(async(request,response)=>{
+  const key=decodeURIComponent(request.url.slice('/effects/'.length));
+  if(request.method==='GET'){const effect=effects.get(key);response.writeHead(effect?200:404,{'content-type':'application/json'}).end(JSON.stringify(effect??{}));return;}
+  let body='';for await(const chunk of request)body+=chunk;const input=JSON.parse(body),node=request.headers['x-node'];
+  const effect={applied:true,runId:input.runId,actionId:input.actionId};applications.push({key,node,...input});effects.set(key,effect);
+  // node-a's first request is applied but its reply is held until the node has been frozen, taken over and resumed.
+  if(node==='node-a'&&!held){held={input,reply:()=>{if(!response.destroyed)response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(effect));}};request.socket.on('error',()=>{});return;}
+  response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(effect));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');const effectsUrl=`http://127.0.0.1:${server.address().port}`;
+ const start=(nodeId,concurrency)=>{const child=fork(nodePath,[url,db.schema,nodeId,effectsUrl,concurrency],{stdio:['ignore','inherit','inherit','ipc']});nodes.set(nodeId,child);child.on('message',message=>events.push({nodeId,...message}));return new Promise((resolve,reject)=>{child.on('message',message=>{if(message.type==='ready')resolve();});child.once('exit',code=>reject(Error(nodeId+' exited '+code)));});};
+ try{
+  const runs=new PostgresAgentRuns(db.options);await runs.initialize();
+  const ids=['run-1','run-2','run-3','run-4'];for(const runId of ids)await runs.create(scope,runId,{definitionVersion:1,maxAttempts:3,deadline:Date.now()+600000});
+  await start('node-a','1');
+  for(const deadline=Date.now()+20000;!held;await sleep(20))assert.ok(Date.now()<deadline,'node-a reached its first dispatch');
+  const frozenRun=held.input.runId;nodes.get('node-a').kill('SIGSTOP');
+  await start('node-b','4');
+  for(const deadline=Date.now()+40000;;await sleep(100)){
+   const all=await Promise.all(ids.map(runId=>runs.get(scope,runId)));if(all.every(run=>run.status==='succeeded'))break;
+   assert.ok(Date.now()<deadline,'node-b finished every run while node-a was frozen: '+all.map(run=>run.runId+'='+run.status).join(' '));
+  }
+  const before=applications.length;
+  // Resume the frozen node and let it receive the reply it was waiting for; it must find that it no longer holds the run.
+  nodes.get('node-a').kill('SIGCONT');held.reply();await sleep(3000);
+  assert.equal(applications.length,before,'the resumed node dispatched nothing');
+  assert.equal(applications.length,ids.length*3,'no duplicated external effect');
+  assert.equal(new Set(applications.map(effect=>effect.runId+'/'+effect.actionId)).size,ids.length*3);
+  assert.equal(new Set(applications.map(effect=>effect.key)).size,ids.length*3);
+  const completed=events.filter(event=>event.type==='completed');assert.deepEqual(completed.map(event=>event.runId).sort(),[...ids].sort(),'each run completed once');
+  assert.ok(completed.every(event=>event.nodeId==='node-b'),'only the node that took over completed runs');
+  const run=await runs.get(scope,frozenRun);assert.equal(run.status,'succeeded');assert.equal(run.attempts,2,'the frozen run was retried once, by the other node');
+  assert.deepEqual(events.filter(event=>event.type==='recovered').map(event=>[event.nodeId,event.runId]),[['node-b',frozenRun]],'the frozen node\'s run was recovered exactly once, by node-b');
+  t.diagnostic(`node-a was frozen holding ${frozenRun}; node-b recovered it; after the resume node-a dispatched nothing and ${applications.length} effects were applied once each`);
+  for(const nodeId of ['node-a','node-b']){const child=nodes.get(nodeId),gone=once(child,'exit');child.send('stop');await gone;}
+ }finally{for(const child of nodes.values()){if(child.exitCode===null&&child.signalCode===null){child.kill('SIGCONT');child.kill('SIGKILL');}}server.closeAllConnections();server.close();await db.close();}
+});
