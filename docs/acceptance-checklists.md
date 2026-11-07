@@ -104,7 +104,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P3-01 Identity, authorization, audit and isolation
 - **Verified locally:** RS256 and ES256 (P-256) JWT authentication, key rotation, JWKS refresh with staleness limits, revocation, capability audit, TLS credential reload.
 - **Still to prove:**
-  - [ ] Deployment-grade availability of revocation and audit stores.
+  - [ ] Deployment-grade availability of revocation and audit stores. The revocation store survives a primary failover in a local drill: an acknowledged revocation is still in force on the promoted synchronous standby and lookups deny while no primary exists ([kubernetes-data-plane.md](kubernetes-data-plane.md#failover-drill)). The audit stores, the release-floor store, automatic failover and a production cluster are not exercised.
   - [ ] Certificate issuance and trust rotation in the target environment.
   - [ ] Identity provisioning and deprovisioning through the real identity provider.
 - **Evidence:** an outage drill (store down, requests fail closed), a certificate rotation transcript, and a deprovisioning test showing access ends within the stated bound.
@@ -130,7 +130,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** replicated Data Plane package, signed releases with a release floor, JWT and TLS variants, probes, draining, admission guard, kind rollout and recovery check, manifest hardening policy test.
 - **Still to prove:**
   - [ ] Production identity provisioning and certificate operations.
-  - [ ] High availability of the revocation and release-floor stores.
+  - [ ] High availability of the revocation and release-floor stores. The revocation half has a local failover drill (see P3-01); the release-floor store and a production cluster do not.
   - [ ] Independent rollback protection.
   - [x] Broader admission enforcement beyond the example policy. Namespace-wide policies stop bare, relabelled or debugged Data Plane pods. They also block other workload kinds carrying the Data Plane template, rogue or exposed Services selecting it, and unpinned, privileged or host-access pods. A real API server passes 35 checks ([kubernetes-data-plane.md](kubernetes-data-plane.md)).
   - [ ] Control Plane, workers and durable stores deployed to the target cluster, validated there.
