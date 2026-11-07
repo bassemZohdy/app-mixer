@@ -39,7 +39,7 @@ denyAnchor('anchor directory outside the approved path',(_,c)=>env(c,anchorEnv).
 denyAnchor('anchor directory with a traversal',(_,c)=>env(c,anchorEnv).value='/floor-anchor/../tmp');
 denyAnchor('duplicate anchor variable',(_,c)=>c.env.push({name:anchorEnv,value:'/floor-anchor'}));
 denyAnchor('anchor variable without its mount',(o,c)=>{c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');});
-denyAnchor('anchor variable without its volume',(o)=>{o.spec.template.spec.volumes=o.spec.template.spec.volumes.filter(v=>v.name!=='floor-anchor');});
+denyAnchor('anchor variable without its mount and volume',(o,c)=>{c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');o.spec.template.spec.volumes=o.spec.template.spec.volumes.filter(v=>v.name!=='floor-anchor');});
 denyAnchor('read-only anchor mount',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').readOnly=true;});
 denyAnchor('anchor mount at another path',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').mountPath='/tmp';});
 denyAnchor('anchor volume that is not the approved claim',(o)=>{o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor').persistentVolumeClaim.claimName='other';});
