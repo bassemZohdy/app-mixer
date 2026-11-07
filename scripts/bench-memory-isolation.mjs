@@ -34,7 +34,9 @@ async function run(strategy){
   const storeFor=tenant=>new PostgresAgentMemory({enabled:true,vectorIndex:strategy==='scoped'?{modelId:'reference-v1',dimensions:DIMENSIONS,scope:scopeOf(tenant)}:{modelId:'reference-v1',dimensions:DIMENSIONS},maxEntries:1000,maxTtlMs:10**9,clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction});
   const stores=Array.from({length:tenants},(_,tenant)=>storeFor(tenant));
   // A scoped store creates its own index; the shared strategy needs only the one.
+  const initializing=performance.now();
   for(const store of strategy==='scoped'?stores:stores.slice(0,1))await store.initialize();
+  const initialized=(performance.now()-initializing)/1000;
   const options={expectedRevision:null,expiresAt:10**8,provenance:{kind:'run',id:'bench'}};
   const semantic=stores.map(store=>new AgentSemanticMemory(store,{modelId:'reference-v1',dimensions:DIMENSIONS,embed:async text=>embed(text)}));
   const loading=performance.now();
@@ -52,7 +54,7 @@ async function run(strategy){
    }
   }
   const mean=recalls.reduce((a,b)=>a+b,0)/recalls.length;
-  return {strategy,tenants,memories:tenants*perTenant,queries:recalls.length,recallAgainstExact:Number(mean.toFixed(3)),queriesBelowFullRecall:recalls.filter(value=>value<1).length,p50Ms:Number(percentile(latencies,0.5).toFixed(1)),p99Ms:Number(percentile(latencies,0.99).toFixed(1)),loadSeconds:Number(loaded.toFixed(1))};
+  return {strategy,tenants,memories:tenants*perTenant,queries:recalls.length,recallAgainstExact:Number(mean.toFixed(3)),queriesBelowFullRecall:recalls.filter(value=>value<1).length,p50Ms:Number(percentile(latencies,0.5).toFixed(1)),p99Ms:Number(percentile(latencies,0.99).toFixed(1)),initializeSeconds:Number(initialized.toFixed(1)),loadSeconds:Number(loaded.toFixed(1))};
  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(()=>{});await admin.end();}
 }
 for(const strategy of ['shared','scoped'])console.log(JSON.stringify(await run(strategy)));
