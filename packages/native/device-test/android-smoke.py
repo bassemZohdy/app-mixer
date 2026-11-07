@@ -100,6 +100,11 @@ wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' a
 tap(wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Show reference' and n.get('clickable')=='true'), None), 'reference button'))
 for text in ['Account', 'Profile', 'Contact details', 'Preferences', 'Advanced', 'Body copy', 'Small print', 'Inside a card']:
     wait_for(lambda nodes, text=text: find(nodes, text=text), 'reference text ' + text)
+for text in ['3', '2.5', '4', 'true', 'false']:
+    wait_for(lambda nodes, text=text: find(nodes, text=text), 'reference bound scalar ' + text)
+# Component IDs are exposed as testID, which Android reports as the resource id.
+for component in ['h1', 'h2', 'body', 'name', 'notes', 'save', 'stat-count']:
+    wait_for(lambda nodes, component=component: next((n for n in nodes if n.get('resource-id', '').split('/')[-1] == component), None), 'testID hook ' + component)
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Ada'}), 'reference single-line field')
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Notes', 'text':'Line one'}), 'reference multiline field')
 wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' and n.get('clickable')=='true' and n.get('enabled')=='true'), None), 'reference enabled button')

@@ -49,6 +49,13 @@ final class MixerDeviceUITests: XCTestCase {
     for text in ["Profile", "Contact details", "Preferences", "Advanced", "Body copy", "Small print", "Inside a card"] {
       XCTAssertTrue(app.staticTexts[text].exists, text)
     }
+    for text in ["3", "2.5", "4", "true", "false"] {
+      XCTAssertTrue(app.staticTexts[text].firstMatch.exists, "bound scalar " + text)
+    }
+    // Component IDs are exposed as testID, which iOS reports as the accessibility identifier.
+    for component in ["h1", "h2", "body", "name", "notes", "save", "stat-count"] {
+      XCTAssertTrue(app.descendants(matching: .any)[component].firstMatch.exists, "testID hook " + component)
+    }
     XCTAssertEqual(app.textFields["Name"].value as? String, "Ada")
     XCTAssertEqual(app.textViews["Notes"].value as? String, "Line one")
     XCTAssertTrue(app.buttons["Save"].isEnabled)
