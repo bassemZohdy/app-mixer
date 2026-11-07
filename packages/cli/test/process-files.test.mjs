@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,readdirSync,statSync} from 'node:fs';
 import {join,sep} from 'node:path';
+import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),read=path=>readFileSync(join(root,path),'utf8');
 function files(directory){return readdirSync(directory).flatMap(name=>{if(['node_modules','dist','.git'].includes(name))return[];const path=join(directory,name);return statSync(path).isDirectory()?files(path):[path];});}
@@ -110,4 +111,13 @@ test('the Grafana dashboard only queries metrics and labels the code exports and
   assert.equal([...expression].filter(c=>c==='(').length,[...expression].filter(c=>c===')').length,'balanced parentheses in '+expression);
  }
  assert.ok(queries>=12);assert.equal(dashboard.templating.list[0].name,'job');
+});
+
+test('tracked text files are valid UTF-8 and contain no NUL bytes',()=>{
+ // A Windows-1252 dash in a document and a NUL byte in a source file were both committed once; both break tools that assume UTF-8 text.
+ const tracked=execFileSync('git',['ls-files','-z'],{cwd:root,encoding:'utf8'}).split(String.fromCharCode(0)).filter(file=>/\.(md|ts|mjs|cjs|js|json|ya?ml|sh|py|swift|dart|kts|gradle|xml|toml|txt)$/.test(file)&&existsSync(join(root,file)));
+ assert.ok(tracked.length>200,'the tracked text files were found: '+tracked.length);
+ const decoder=new TextDecoder('utf-8',{fatal:true}),bad=[];
+ for(const file of tracked){const bytes=readFileSync(join(root,file));try{decoder.decode(bytes);}catch{bad.push(file+' is not valid UTF-8');}if(bytes.includes(0))bad.push(file+' contains a NUL byte');}
+ assert.deepEqual(bad,[]);
 });

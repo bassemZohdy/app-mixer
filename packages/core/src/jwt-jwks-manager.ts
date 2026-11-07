@@ -6,14 +6,29 @@ import {isNonNegativeInteger} from './validation.js';
 type Authenticator=ReturnType<typeof createJwtCapabilityAuthenticator>;
 export type JwtJwksManagerOptions={authenticator:Authenticator;jwksUrl:string;pollMs:number;maxStaleMs:number;timeoutMs:number;onError:(error:unknown)=>void;allowLoopbackHttp?:boolean|undefined;clock?:(()=>number)|undefined};
 const integer=isNonNegativeInteger;
+/**
+ * A well-formed key the authenticator does not support: no kid, a kid already taken, an RSA exponent other than 65537, a modulus of 1024 to 2040
+ * bits, or key operations beyond verification. The authenticator refuses a whole key set that contains one, so the manager leaves such keys out
+ * (an issuer may publish legacy keys beside current ones) instead of letting one of them block every rotation. Anything malformed, such as a
+ * garbage modulus, private key material or a key_ops that is not a list, is not skipped and still fails the refresh, keeping the previous keys.
+ */
+function unsupported(key:JSONWebKeySet['keys'][number],seen:Set<string>):boolean{
+ if(typeof key.kid!=='string'||!key.kid||key.kid.length>128||seen.has(key.kid))return true;
+ if(Array.isArray(key.key_ops)&&key.key_ops.length>1)return true;
+ if(key.kty==='RSA'){
+  if(key.e!==undefined&&key.e!=='AQAB')return true;
+  if(typeof key.n==='string'&&/^[A-Za-z0-9_-]+$/.test(key.n)){const bytes=Buffer.from(key.n,'base64url').length;if(bytes>=128&&bytes<256)return true;}
+ }
+ return false;
+}
 /** Select only supported public signing keys from a heterogeneous issuer key set. */
 function compatibleKeys(value:unknown):JSONWebKeySet{
  if(!value||typeof value!=='object'||Array.isArray(value)||!Array.isArray((value as JSONWebKeySet).keys)||(value as JSONWebKeySet).keys.length<1||(value as JSONWebKeySet).keys.length>100)throw Error('Invalid JWKS');
- const selected:JSONWebKeySet['keys']=[];
+ const selected:JSONWebKeySet['keys']=[],seen=new Set<string>();
  for(const key of (value as JSONWebKeySet).keys){
   if(!key||typeof key!=='object'||Array.isArray(key)||typeof key.kty!=='string'||!key.kty||['d','p','q','dp','dq','qi','oth','k'].some(name=>Object.hasOwn(key,name))||(key.use!==undefined&&!['sig','enc'].includes(key.use))||(key.alg!==undefined&&(typeof key.alg!=='string'||!key.alg||key.alg.length>128))||(key.key_ops!==undefined&&(!Array.isArray(key.key_ops)||key.key_ops.length>16||key.key_ops.some(item=>typeof item!=='string')||new Set(key.key_ops).size!==key.key_ops.length)))throw Error('Invalid JWKS');
-  if(key.kty==='RSA'&&(key.use===undefined||key.use==='sig')&&(key.alg===undefined||key.alg==='RS256')&&(key.key_ops===undefined||key.key_ops.includes('verify')))selected.push(key);
-  else if(key.kty==='EC'&&key.crv==='P-256'&&(key.use===undefined||key.use==='sig')&&(key.alg===undefined||key.alg==='ES256')&&(key.key_ops===undefined||key.key_ops.includes('verify')))selected.push(key);
+  if(key.kty==='RSA'&&(key.use===undefined||key.use==='sig')&&(key.alg===undefined||key.alg==='RS256')&&(key.key_ops===undefined||key.key_ops.includes('verify'))){if(!unsupported(key,seen)){selected.push(key);seen.add(key.kid as string);}}
+  else if(key.kty==='EC'&&key.crv==='P-256'&&(key.use===undefined||key.use==='sig')&&(key.alg===undefined||key.alg==='ES256')&&(key.key_ops===undefined||key.key_ops.includes('verify'))){if(!unsupported(key,seen)){selected.push(key);seen.add(key.kid as string);}}
  }
  if(!selected.length)throw Error('No compatible JWKS keys');return {keys:selected};
 }

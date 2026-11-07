@@ -46,3 +46,18 @@ test('explicit polling picks up a rotated key and stops cleanly',async()=>{
 test('heterogeneous public JWKS selects only compatible RS256 and ES256 signing keys',async()=>{
  const ec=generateKeyPairSync('ec',{namedCurve:'P-256'}).publicKey.export({format:'jwk'}),otherRsa={...bKey,kid:'encrypted',use:'enc',alg:'RSA-OAEP-256',key_ops:['encrypt']};let document=JSON.stringify({keys:[{...ec,kid:'ec',use:'sig',alg:'ES256'},otherRsa,aKey]}),now=time;const endpoint=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(document);}),url=await listen(endpoint),m=manager(makeAuth(),url,{clock:()=>now}),valid=await token(a,'a');try{await m.refresh();assert.deepEqual(await m.authenticate(req(valid)),{tenantId:'tenant',principalId:'user'});const p384=generateKeyPairSync('ec',{namedCurve:'P-384'}).publicKey.export({format:'jwk'});for(const bad of [{keys:[{...p384,kid:'p384',alg:'ES384'}]},{keys:[aKey,{...ec,kid:'ec',d:'private'}]},{keys:[aKey,{...otherRsa,d:'private'}]},{keys:[aKey,{...aKey,kid:'candidate',n:'bad'}]},{keys:[aKey,{...ec,key_ops:'verify'}]},{keys:[aKey,{kty:'oct',k:'secret'}]}]){document=JSON.stringify(bad);await assert.rejects(m.refresh(),/JWKS refresh failed/);assert.deepEqual(await m.authenticate(req(valid)),{tenantId:'tenant',principalId:'user'});}now+=1000;assert.equal(await m.authenticate(req(valid)),undefined);}finally{await m.close();endpoint.closeAllConnections();await new Promise(resolve=>endpoint.close(resolve));}
 });
+
+test('keys the authenticator would reject are skipped instead of failing the whole refresh',async()=>{
+ // One odd key published beside good ones must not stop every rotation: the manager keeps only keys the authenticator accepts.
+ const small=generateKeyPairSync('rsa',{modulusLength:1024}).publicKey.export({format:'jwk'}),ecNoKid=generateKeyPairSync('ec',{namedCurve:'P-256'}).publicKey.export({format:'jwk'});
+ const odd=[{...bKey,kid:undefined},{...small,kid:'small',use:'sig',alg:'RS256'},{...bKey,kid:'ops',key_ops:['verify','sign']},{...ecNoKid,use:'sig',alg:'ES256'},{...bKey,kid:'exponent',e:'Aw'}];
+ let document=JSON.stringify({keys:[...odd,aKey,{...bKey,kid:aKey.kid}]}),now=time;const endpoint=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(document);}),url=await listen(endpoint),errors=[],m=manager(makeAuth(),url,{clock:()=>now,onError:error=>errors.push(error)}),valid=await token(a,'a');
+ try{
+  await m.refresh();
+  assert.deepEqual(await m.authenticate(req(valid)),{tenantId:'tenant',principalId:'user'},'the good key is installed and works');
+  assert.deepEqual(errors,[]);
+  // A document with only unacceptable keys is still refused, so a bad rotation keeps the previous keys.
+  document=JSON.stringify({keys:odd});await assert.rejects(m.refresh(),/JWKS refresh failed/);
+  assert.deepEqual(await m.authenticate(req(valid)),{tenantId:'tenant',principalId:'user'},'the previous key set is kept');
+ }finally{await m.close();endpoint.close();}
+});
