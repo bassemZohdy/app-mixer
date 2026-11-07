@@ -117,6 +117,10 @@ To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-me
 
 The likely cause (not isolated by a separate experiment) is that the tenant filter is applied to the nearest candidates of the whole index, so a query can see a candidate list that belongs mostly to other tenants. A scoped index holds only one scope's memories and keeps recall near exact search at the same latency. The per-query time includes the exact comparison query, so it is not an index-only latency. The cost of scoped indexes is one index per tenant, agent, owner and kind to create, store and maintain, and a store object per scope. The choice (and the index-count limit that is acceptable for the deployment) still belongs to the owner. Production sizes, a production embedder and concurrent writes are not measured here.
 
+### Decision: per-tenant indexes
+
+On 2026-11-07 the product owner chose scoped indexes (`vectorIndex.scope`, one HNSW index per tenant, agent, owner and kind) for deployments that need recall close to exact search. The deployment owns the index count: create indexes when a scope is first used, monitor storage and write cost as scopes grow, and repeat the benchmark above at production sizes with the production embedder before relying on the figures.
+
 ## Erasing a scope
 
 `SqliteAgentMemory.eraseScope(actor, scope)` tombstones every live or expired memory in one tenant, agent, owner and kind scope, for example when an owner asks for their data to be erased. It needs the host `authorize` callback to allow a separate `erase` action, so a cleanup worker that may only `purge` expired entries cannot erase live data. It returns the number erased, is idempotent, and with auditing enabled records one value-free `erase` event with the count. Revisions keep increasing, so a later write cannot reuse an old revision. The PostgreSQL adapter offers the same operation, taking the scope lock and writing the audit record in one transaction.
