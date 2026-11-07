@@ -91,7 +91,11 @@ jobs:
           POD_IP=$(kubectl get pod -n app-mixer-test -l app.kubernetes.io/component=data-plane -o jsonpath='{.items[0].status.podIP}')
           METRICS_TOKEN=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.env.RUNNER_TEMP+"/metrics-input.json","utf8")).metrics')
           scrape() { kubectl run "$1" -n app-mixer-test --rm -i --restart=Never --image-pull-policy=Never --image=app-mixer-data-plane:test --labels="$2" --env="T=$3" --env="U=http://$POD_IP:39092/metrics" --command -- node -e 'fetch(process.env.U,{headers:process.env.T?{authorization:"Bearer "+process.env.T}:{},signal:AbortSignal.timeout(8000)}).then(r=>{console.log("status "+r.status);process.exit(r.status===200?0:3)},()=>{console.log("unreachable");process.exit(2)})'; }
-          scrape scraper-ok "app-mixer-metrics-scraper=true" "$METRICS_TOKEN" | tee "$RUNNER_TEMP/scrape-ok.log"
+          # The NetworkPolicy was created a moment ago; a CNI can take a few seconds to program it, so the permitted scrape is retried.
+          for attempt in 1 2 3 4; do
+            if scrape scraper-ok "app-mixer-metrics-scraper=true" "$METRICS_TOKEN" | tee "$RUNNER_TEMP/scrape-ok.log" && grep -q 'status 200' "$RUNNER_TEMP/scrape-ok.log"; then break; fi
+            sleep 5
+          done
           grep -q 'status 200' "$RUNNER_TEMP/scrape-ok.log"
           scrape scraper-no-token "app-mixer-metrics-scraper=true" "" | tee "$RUNNER_TEMP/scrape-no-token.log" || true
           grep -q 'status 401' "$RUNNER_TEMP/scrape-no-token.log"
