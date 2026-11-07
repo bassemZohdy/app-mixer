@@ -180,6 +180,12 @@ It makes no network request. The returned publication can seed `EncryptedPublica
 - `packages/web/test/offline-provisioning.test.mjs`: with `fetch` disabled, a device opens a grant, seeds the encrypted cache and queue, enqueues work, and keeps both across a restart. Later the server accepts the same grant and each queued operation is delivered once. The device rejects altered, foreign, expired, over-long, untrusted-key and tampered-release grants. Skipping either signature check makes the test fail.
 - `packages/web/test/browser-offline-provisioning.test.mjs` (opt-in, run in CI with headless Chrome): a real browser verifies the grant with its own WebCrypto and rejects a tampered copy. After a browser restart without the grant, it still has its publication and queued work, and it made no requests.
 
+- `packages/web/device-test/android-browser-storage.mjs` (workflow `web-android.yml`, weekly and on main): the same scenario in a browser on an Android emulator, driven with adb.
+  - Chromium 159 verified the grant, kept the encrypted cache and queue after the browser was killed, and made no requests. After `pm clear` (Android clearing the browser's data) the app reported that its provisioned state was gone and served no queue, and it recovered when provisioned again.
+  - The emulator's own Chrome (113) has no WebCrypto Ed25519, so `openOfflineProvisioning` throws "Offline provisioning requires WebCrypto Ed25519, which this browser does not support" and stores nothing. Provisioning needs a browser with Ed25519 (Chrome 137, Firefox 129 or Safari 17 and later, at the time of writing).
+  - Chrome commits `localStorage` a few seconds after a write. A kill within about two seconds of the first start lost the page's own provisioned-scope marker (the queue and cache were not checked in that case), so keep the scope in a store the host controls, or write it before the first enqueue and let it settle, if abrupt termination right after provisioning matters.
+  - Not covered: iOS, eviction under storage pressure, and backup and restore (Android excludes Chrome's data from backup).
+
 `PostgresOfflineExecutions.execute` applies the same rule: a dispatch error marked as thrown before any effect returns the key to `ready` for another attempt and is rethrown as is, while every other error marks the execution `uncertain`.
 
 ## Operator listings

@@ -3,7 +3,9 @@
 // Chrome is killed and started again. Then Android clears the browser's data (what a user or the system's storage
 // management does) and the app must report that its state is gone, and recover when re-provisioned.
 // Backup and restore are not covered: Chrome's data is excluded from Android backup.
-// Needs a Chrome build (com.android.chrome, a google_apis system image), adb on the PATH and the built web package.
+// Needs adb on the PATH, the built web package and a Chromium-based browser on the device: Chrome from a google_apis system
+// image by default, or ANDROID_BROWSER_PACKAGE (with ANDROID_BROWSER_APK to install it). Offline provisioning needs
+// WebCrypto Ed25519; with ALLOW_UNSUPPORTED=1 a browser without it passes by reporting that clearly.
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
@@ -11,13 +13,13 @@ import assert from 'node:assert/strict';
 import {createGrant,startProvisioningServer} from '../test/support/provisioning-fixture.mjs';
 
 const run=promisify(execFile),adb=async(...args)=>(await run('adb',args,{timeout:60000,maxBuffer:8*1024*1024})).stdout;
-const chrome='com.android.chrome',dist=fileURLToPath(new URL('../dist/',import.meta.url));
+const chrome=process.env.ANDROID_BROWSER_PACKAGE||'com.android.chrome',apk=process.env.ANDROID_BROWSER_APK,allowUnsupported=process.env.ALLOW_UNSUPPORTED==='1',dist=fileURLToPath(new URL('../dist/',import.meta.url));
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 const {keys,carried}=createGrant(),fixture=await startProvisioningServer({dist,keys,carried}),url=`http://127.0.0.1:${fixture.port}/app.html`;
 const visit=async(label,seconds=120)=>{
  fixture.report=undefined;
- await adb('shell','am','start','-a','android.intent.action.VIEW','-d',url,'-n',`${chrome}/com.google.android.apps.chrome.Main`);
+ await adb('shell','am','start','-a','android.intent.action.VIEW','-d',url,'-p',chrome);
  const deadline=Date.now()+seconds*1000;
  while(fixture.report===undefined&&Date.now()<deadline)await pause(500);
  if(fixture.report===undefined){
@@ -31,16 +33,27 @@ const visit=async(label,seconds=120)=>{
 try{
  await adb('wait-for-device');
  await adb('reverse',`tcp:${fixture.port}`,`tcp:${fixture.port}`);
+ if(apk)await adb('install','-r','-g',apk);
+ console.log('browser',chrome,((await adb('shell','dumpsys','package',chrome)).match(/versionName=\S+/)??['unknown version'])[0]);
  // Skip the first-run screens so the page loads straight away (the emulator image is a debuggable build).
  await adb('shell','pm','clear',chrome);
  await adb('shell',"echo 'chrome --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line");
  await adb('shell','am','set-debug-app','--persistent',chrome);
 
  let report=await visit('first start with the grant');
+ if(allowUnsupported&&/requires WebCrypto Ed25519/.test(report.fatal??'')){
+  console.log('This browser has no WebCrypto Ed25519 and says so; nothing was stored.');
+  report=undefined;
+ }
+ else{
  assert.equal(report.fatal,undefined,report.fatal);
  assert.equal(report.tampered,'Invalid offline provisioning','the device rejects an altered grant');
  assert.deepEqual([report.principal,report.version,report.queued,report.requests],['field-worker',5,['site-1','site-2'],0],JSON.stringify(report));
 
+ // Chrome commits localStorage a few seconds after a write, so a kill right after the first start can lose the page's
+ // own marker (seen on the emulator: the app then reports no provisioned state). Let the writes settle, as they do
+ // in any session that lasts more than a moment.
+ await pause(10000);
  await adb('shell','am','force-stop',chrome);
  fixture.withGrant=false;
  report=await visit('after Chrome was killed, without the grant');
@@ -59,6 +72,7 @@ try{
  assert.equal(report.fatal,undefined,report.fatal);
  assert.deepEqual([report.principal,report.version,report.queued],['field-worker',5,['site-1','site-2']],JSON.stringify(report));
  console.log('Chrome on Android kept the encrypted queue and publication across a kill, reported cleared storage and recovered when re-provisioned; modules served: '+[...new Set(fixture.modules)].join(', '));
+}
 }finally{
  fixture.server.close();
  await adb('shell','am','force-stop',chrome).catch(()=>{});

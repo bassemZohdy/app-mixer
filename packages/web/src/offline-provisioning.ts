@@ -23,7 +23,7 @@ function decode(value:string,length:number):Uint8Array<ArrayBuffer>{
 async function keyring(crypto:Crypto,keys:OfflineProvisioningKey[],valid:(value:unknown)=>boolean):Promise<Map<string,CryptoKey>>{
  if(!Array.isArray(keys)||keys.length<1||keys.length>20)throw Error('Invalid offline provisioning configuration');
  const ring=new Map<string,CryptoKey>();
- for(const entry of keys){if(!entry||!valid(entry.keyId)||typeof entry.publicKey!=='string'||ring.has(entry.keyId))throw Error('Invalid offline provisioning configuration');ring.set(entry.keyId,await crypto.subtle.importKey('raw',decode(entry.publicKey,32),{name:'Ed25519'},false,['verify']));}
+ for(const entry of keys){if(!entry||!valid(entry.keyId)||typeof entry.publicKey!=='string'||ring.has(entry.keyId))throw Error('Invalid offline provisioning configuration');const raw=decode(entry.publicKey,32);try{ring.set(entry.keyId,await crypto.subtle.importKey('raw',raw,{name:'Ed25519'},false,['verify']));}catch(error){throw (error as {name?:string})?.name==='NotSupportedError'?Error('Offline provisioning requires WebCrypto Ed25519, which this browser does not support'):error;}}
  return ring;
 }
 async function verified(crypto:Crypto,ring:Map<string,CryptoKey>,keyId:unknown,signature:unknown,message:unknown[]):Promise<boolean>{
