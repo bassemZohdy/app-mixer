@@ -102,3 +102,13 @@ test('a polling pass is bounded by maxFires and maxScans, reports the backlog an
   const idle=await first.fireDue(scope,policy,{nodeId:'n'});assert.deepEqual({fired:idle.fired.length,backlog:idle.backlog},{fired:0,backlog:false});
  }finally{await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(()=>{});await pool.end();await admin.end();}
 });
+
+test('the PostgreSQL schedule history is immutable, as the SQLite one is',{skip:!url&&'set APP_MIXER_TEST_POSTGRES_URL to run against PostgreSQL',timeout:60000},async()=>{
+ const schema='schedules_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+ try{
+  await admin.query(`CREATE SCHEMA "${schema}"`);
+  const schedules=new PostgresAgentSchedules({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await schedules.initialize();await schedules.initialize();
+  // Statement-level triggers fire even when no row matches, so no schedule needs to exist for the statements to be refused.
+  for(const statement of ["UPDATE app_mixer_agent_schedule_events SET kind='x'","DELETE FROM app_mixer_agent_schedule_events","TRUNCATE app_mixer_agent_schedule_events"])await assert.rejects(pool.query(statement),/immutable/,statement);
+ }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+});
