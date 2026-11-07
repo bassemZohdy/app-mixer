@@ -217,7 +217,7 @@ export {signOfflineProvisioning,verifyOfflineProvisioning,MAX_OFFLINE_PROVISIONI
 export type {OfflineProvisioningGrant,SignedOfflineProvisioning} from './offline-provisioning.js';
 
 export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
-export type {PublicationReleaseScope,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
+export type {PublicationReleaseScope,PublicationReleaseFloorAnchor,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
 
 export {PostgresExtensionApprovals} from './postgres-extension-approvals.js';
 export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionApprovalEvent,ExtensionApprovalState} from './postgres-extension-approvals.js';
