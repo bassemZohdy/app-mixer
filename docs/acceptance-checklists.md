@@ -95,7 +95,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-10 Memory adapters, isolation, retention and provenance
 - **Verified locally:** SQLite and PostgreSQL adapters, scope isolation, retention, deletion, erase, audit, hybrid and indexed search, evaluation helper (recall, precision, reciprocal rank, nDCG).
 - **Still to prove:**
-  - [ ] Production deployment and the chosen isolation strategy (shared index versus scoped indexes).
+  - [ ] Production deployment and the chosen isolation strategy (shared index versus scoped indexes). The trade-off is now measured locally ([agent-memory.md](agent-memory.md#measured-shared-versus-scoped-vector-indexes)): with 20 to 50 tenants a shared index finds 0.90 to 0.91 of exact search results and per-tenant indexes 0.998, at the same latency. The owner must choose, accounting for the per-scope index count, and test in production.
   - [ ] A representative, reviewed evaluation set and the quality thresholds that must hold, with exact-search comparison for the approximate index. A draft labelled set (40 memories, 24 keyword, paraphrase, multi-answer and distractor cases) now runs every mode on PostgreSQL with pgvector among 900 distractors, against proposed floors. The HNSW index finds 0.992 of the exact results, and the gate fails when the index degrades. Still pending: owner review of the labels, the production embedder, and agreed thresholds ([agent-memory.md](agent-memory.md#draft-evaluation-set)).
 - **Evidence:** the labelled dataset (reviewed), the evaluation report for each mode, and the agreed thresholds.
 

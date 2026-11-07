@@ -104,6 +104,19 @@ Before a deployment, an owner should review the labels, replace the reference em
 
 To isolate the HNSW candidate graph for one tenant, agent, owner and semantic-memory kind, configure `vectorIndex: {modelId, dimensions, scope}` with that exact scope. The scoped index contains only records in that scope, and indexed searches through that adapter reject other scopes before sending query text to the embedder. The scoped query uses a distinct indexed expression so an existing global vector index cannot supply its candidates. Host authorization and per-record checks remain mandatory. Expired or unauthorized records within that scope can still affect recall and timing, and shared database resources can still create cross-tenant timing effects. Manage index count, database privileges and separate deployment boundaries according to the isolation required. A scoped index is not a replacement for database tenant isolation or a representative retrieval evaluation.
 
+### Measured: shared versus scoped vector indexes
+
+`node scripts/bench-memory-isolation.mjs [tenants] [memoriesPerTenant] [queriesPerTenant]` (needs `APP_MIXER_TEST_POSTGRES_URL` and `npm run build`) loads the same synthetic corpus into PostgreSQL with pgvector under each strategy and, for every query, compares the approximate index's top 5 with exact search. Every tenant draws from one shared vocabulary, so a query's nearest neighbours belong to many tenants. The deterministic reference embedder is used, so the figures show index behaviour, not the quality of an embedding model. Measured on one developer machine (pgvector 0.8.7, PostgreSQL 16, candidate limit 40):
+
+| Tenants x memories | Strategy | Recall against exact search | Queries below full recall | Median and 99th percentile per query |
+| --- | --- | --- | --- | --- |
+| 20 x 500 | one shared index | 0.899 | 157 of 400 | 77 ms, 117 ms |
+| 20 x 500 | one index per tenant | 0.998 | 3 of 400 | 80 ms, 113 ms |
+| 50 x 300 | one shared index | 0.914 | 176 of 500 | 63 ms, 89 ms |
+| 50 x 300 | one index per tenant | 0.998 | 6 of 500 | 60 ms, 86 ms |
+
+The likely cause (not isolated by a separate experiment) is that the tenant filter is applied to the nearest candidates of the whole index, so a query can see a candidate list that belongs mostly to other tenants. A scoped index holds only one scope's memories and keeps recall near exact search at the same latency. The per-query time includes the exact comparison query, so it is not an index-only latency. The cost of scoped indexes is one index per tenant, agent, owner and kind to create, store and maintain, and a store object per scope. The choice (and the index-count limit that is acceptable for the deployment) still belongs to the owner. Production sizes, a production embedder and concurrent writes are not measured here.
+
 ## Erasing a scope
 
 `SqliteAgentMemory.eraseScope(actor, scope)` tombstones every live or expired memory in one tenant, agent, owner and kind scope, for example when an owner asks for their data to be erased. It needs the host `authorize` callback to allow a separate `erase` action, so a cleanup worker that may only `purge` expired entries cannot erase live data. It returns the number erased, is idempotent, and with auditing enabled records one value-free `erase` event with the count. Revisions keep increasing, so a later write cannot reuse an old revision. The PostgreSQL adapter offers the same operation, taking the scope lock and writing the audit record in one transaction.

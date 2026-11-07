@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- `scripts/bench-memory-isolation.mjs` compares shared and per-tenant HNSW indexes on pgvector (recall against exact search and latency); the measured result is in `docs/agent-memory.md`.
 - `SqliteAgentRunMetrics` takes `includeApprovals` and exposes `app_mixer_agent_approvals{status}`, the number of human approvals by state, shown on the Grafana dashboard; `includeNoticeDeliveries` adds `app_mixer_agent_notice_deliveries{status}` the same way, and `includeTokens` adds `app_mixer_agent_token_calls{state}` and `app_mixer_agent_tokens{state}` for model-call token reservations; `includeCosts` adds `app_mixer_agent_cost_micros{currency,state}`; `includeMemories` adds `app_mixer_agent_memories{state}` (live, expired not yet purged, deleted).
 - Webhook adapter tests that replay the signing examples published by Standard Webhooks and Slack (`vendor-vectors.test.mjs`).
 - `deploy/observability/grafana-dashboard.json`: a Grafana dashboard for the Data Plane and agent metrics, with a test that its queries use only emitted metrics and labels.
