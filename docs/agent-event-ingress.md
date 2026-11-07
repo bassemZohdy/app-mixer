@@ -57,6 +57,9 @@ A positive, safely represented `update_id` becomes `telegram.<id>` and the event
 
 The secret header is a bearer credential, not a signature over the body and not a timestamp; anyone with it can forge updates. Terminate TLS at a trusted proxy, protect the secret and logs, limit access and request rates, and retain deduplication records for the desired replay horizon. The adapter does not verify Telegram user identity independently, send bot replies, download files, or establish ordering. Telegram documents that unsuccessful deliveries may be retried and updates are retained for no longer than 24 hours.
 On 2026-11-07 the product owner committed to supporting every adapter that exists today: GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle, Standard Webhooks, Discord and SendGrid (thirteen adapters). A provider outside this list is not supported until the owner adds it here. Signature construction is checked against vendor-published examples where a vendor publishes one (see [Vendor-published signature examples](#vendor-published-signature-examples)). Only GitHub has delivered live events to its adapter so far (see [Live GitHub delivery](#live-github-delivery)); the other twelve are tracked in the acceptance checklist.
+## Supported providers
+
+On 2026-11-07 the product owner committed to supporting every adapter that exists today: GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle, Standard Webhooks, Discord and SendGrid (thirteen adapters). A provider outside this list is not supported until the owner adds it here. Signature construction is checked against vendor-published examples where a vendor publishes one (see [Vendor-published signature examples](#vendor-published-signature-examples)). No provider has yet delivered a live or sandbox event to its adapter; that is tracked separately in the acceptance checklist.
 
 ## Twilio incoming messages
 
