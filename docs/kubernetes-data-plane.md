@@ -69,6 +69,19 @@ The overlay adds egress only to same-namespace pods labeled `app-mixer-revocatio
 
 The drill proves nothing about asynchronous replication, where an acknowledged revocation can be lost if the primary fails before the standby receives it. Run the revocation database with synchronous replication to at least one standby, as the drill does. Automatic failover, detection time, split-brain protection, connection draining and the platform's address switch belong to the managed database or operator and have not been exercised in a production cluster.
 
+### Restoring an older backup
+
+`packages/core/test/postgres-restore-rollback.test.mjs` (opt-in with `APP_MIXER_TEST_POSTGRES_RESTORE=docker`, run in CI) records what happens when an older backup is restored over a live database. After the restore, none of these stores notices that it went back in time:
+
+| Store | State acknowledged after the backup | After restoring the backup |
+| --- | --- | --- |
+| Token revocations | A token revoked after the backup | Active again |
+| Release floor | A raised floor | Back at the old value, so a release below the new floor is allowed again |
+| Extension approvals | An approval revoked after the backup | Granted again |
+| Capability audit log | Two events | Gone, and the next event reuses sequence 4 with no sign of the gap |
+
+Treat a restore as a security event, not only a data event. These steps are guidance and are not tested here: before accepting traffic again, raise the release floor to the last value in the release journal, re-apply the revocations and approval revocations recorded since the backup (from the identity provider, the change record or the log of the stopped primary), force re-issuance of tokens issued before the restore, and record the restore and its time window in your audit trail. Prefer point-in-time recovery to the latest consistent point over restoring an old snapshot, and prefer failover to a synchronous standby (see the failover drill) over restoring a backup at all. Only the remote connector's promotion floor can be anchored outside the target database today; the stores above have no independent anchor, which is why the P3-03 and P3-04 rollback-protection items stay open.
+
 ## Admission guard for the Data Plane
 
 The optional `admission-example` uses the Kubernetes `admissionregistration.k8s.io/v1` ValidatingAdmissionPolicy API. A security administrator can bind it only to namespaces labeled `app-mixer.dev/enforce-data-plane=true`, with a separately managed `app-mixer-security-policy` ConfigMap in each namespace. Its data keys are `image`, `releaseEnvironment`, `applicationId`, `issuer`, `audience` and `tenantId`. `image` must be the exact approved image reference pinned by SHA-256 digest. Install the policy and binding with cluster-admin authority, create and protect the parameters, then label a test namespace and use server-side dry runs before enforcement in production. Kubernetes must support and enable ValidatingAdmissionPolicy; see the [Kubernetes documentation](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/). A missing parameter fails closed. Deployment writers may need permission to read the referenced parameter resource.

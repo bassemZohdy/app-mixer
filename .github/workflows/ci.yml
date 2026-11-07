@@ -122,6 +122,11 @@ jobs:
         env:
           APP_MIXER_TEST_POSTGRES_FAILOVER: docker
         run: node --test packages/core/test/postgres-revocation-failover.test.mjs
+      - name: Backup restore rollback characterization
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_POSTGRES_RESTORE: docker
+        run: node --test packages/core/test/postgres-restore-rollback.test.mjs
       - name: Delegation, approval and notices with a real OIDC provider
         if: matrix.node == '22'
         env:
