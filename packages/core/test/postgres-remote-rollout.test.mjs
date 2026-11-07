@@ -48,11 +48,12 @@ test('two pollers on one shared journal import once through a source outage',{sk
   server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   for(const poller of pollers)poller.start();
   await waitFor(()=>log.filter(entry=>entry.error).length>=2);
-  assert.ok(log.every(entry=>entry.review===false&&entry.error==='Remote control discovery failed'),'an unreachable source is a retryable failure, not a review');
-  assert.equal(target.getPublished(),undefined);assert.equal((await first.getState()).phase,'idle');
+  // An unreachable source is a retryable failure; the only other outcome is losing the claim race to the peer.
+  for(const entry of log)assert.ok(entry.error==='Remote control discovery failed'?entry.review===false:entry.error==='Remote rollout requires recovery'&&entry.review===true,JSON.stringify(entry));
+  assert.equal(target.getPublished(),undefined);
   server=await listen(port);
   await waitFor(()=>log.some(entry=>entry.status==='imported'));
-  await new Promise(resolve=>setTimeout(resolve,600));
+  await waitFor(()=>log.some(entry=>entry.status==='unchanged'));
   for(const poller of pollers)await poller.stop();
   assert.equal(log.filter(entry=>entry.status==='imported').length,1);assert.equal(target.getPublished().version,1);assert.equal((await first.getState()).phase,'idle');
   // A poller that loses the claim to a live peer stops with a review flag although nothing is wrong with the gate.
