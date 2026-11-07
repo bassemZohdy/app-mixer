@@ -105,6 +105,12 @@ for text in ['3', '2.5', '4', 'true', 'false']:
 # Component IDs are exposed as testID, which Android reports as the resource id.
 for component in ['h1', 'h2', 'body', 'name', 'notes', 'save', 'stat-count']:
     wait_for(lambda nodes, component=component: next((n for n in nodes if n.get('resource-id', '').split('/')[-1] == component), None), 'testID hook ' + component)
+# Headings are exposed with the header role, which Android reports as a different class from body text. The platform tree has no heading level.
+nodes = list(tree().iter('node'))
+classes = {component: next(n.get('class') for n in nodes if n.get('resource-id', '').split('/')[-1] == component) for component in ['h1', 'h2', 'body']}
+if classes['h1'] == classes['body'] or classes['h2'] == classes['body']:
+    raise AssertionError('Headings are not exposed with a role different from body text: ' + repr(classes))
+print('React Native Android heading roles: ' + repr(classes))
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Name', 'text':'Ada'}), 'reference single-line field')
 wait_for(lambda nodes: find(nodes, **{'class':'android.widget.EditText', 'content-desc':'Notes', 'text':'Line one'}), 'reference multiline field')
 wait_for(lambda nodes: next((n for n in nodes if n.get('content-desc')=='Save' and n.get('clickable')=='true' and n.get('enabled')=='true'), None), 'reference enabled button')
