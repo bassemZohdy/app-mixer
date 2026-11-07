@@ -1,7 +1,7 @@
 import {readFile,stat} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
 import pg from 'pg';
-import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,createFileReleaseFloorAnchor,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
 
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
@@ -44,10 +44,12 @@ if(accessMode==='jwt'){
  const authenticator=scope=>createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),...(isTokenActive?{isTokenActive}:{}),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(scope)?{tenantId:tenant,principalId:claims.sub}:undefined});
  authenticate=authenticator(requiredScope);if(metricsPort!==undefined)authenticateMetrics=authenticator('app-mixer:metrics.read');
 }else if(accessMode!=='public')throw Error('Invalid publication access configuration');
-const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled';let releaseAllowed;
+const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled',floorAnchorDir=process.env.APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR;let releaseAllowed;
+// An optional floor held in a directory outside the revocation database (a separate durable volume), so a restored database whose floor went back is refused.
+if(floorAnchorDir!==undefined&&(floorMode!=='postgres'||!/^\/[A-Za-z0-9._\/-]{1,200}$/.test(floorAnchorDir)||floorAnchorDir.split('/').includes('..')))throw Error('Invalid publication release floor configuration');
 if(floorMode==='postgres'){
  if(!revocationPool||!authenticate||!releaseEnvironment||!releaseTenant||! /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(releaseTenant))throw Error('Invalid publication release floor configuration');
- const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args)}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
+ const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args),...(floorAnchorDir!==undefined?{floorAnchor:createFileReleaseFloorAnchor(floorAnchorDir)}:{})}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
  releaseAllowed=()=>registry.isAllowed(releaseScope,snapshot.version,digest);
 }else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
 const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();

@@ -28,6 +28,24 @@ for(const value of ['10.0.0.5','localhost','::','']){const result=apply(withBind
 {const object=structuredClone(metrics);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value:'0.0.0.0'});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('A metrics bind without a metrics port was not denied: '+result.stderr);}
 {const object=withBind('0.0.0.0');object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value:'127.0.0.1'});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('A duplicate metrics bind was not denied: '+result.stderr);}
 changed('duplicate metrics port',(_,c)=>c.env.push({name:'APP_MIXER_METRICS_PORT',value:'39093'}));
+// The optional release floor anchor: a fixed directory on a claimed volume, present together with its mount and volume or not at all.
+const anchorEnv='APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR',anchored=original.spec.template.spec.containers[0].env.some(e=>e.name===anchorEnv);
+const withoutAnchor=object=>{const c=object.spec.template.spec.containers[0];c.env=c.env.filter(e=>e.name!==anchorEnv);c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');object.spec.template.spec.volumes=object.spec.template.spec.volumes.filter(v=>v.name!=='floor-anchor');return object;};
+const withAnchor=object=>{const c=object.spec.template.spec.containers[0];c.env.push({name:anchorEnv,value:'/floor-anchor'});c.volumeMounts.push({name:'floor-anchor',mountPath:'/floor-anchor'});object.spec.template.spec.volumes.push({name:'floor-anchor',persistentVolumeClaim:{claimName:'app-mixer-floor-anchor'}});return object;};
+const plain=withoutAnchor(structuredClone(original)),accepted_plain=apply(plain);if(accepted_plain.status!==0)throw Error('Expected a deployment without the floor anchor to pass: '+accepted_plain.stderr);
+const anchoredObject=anchored?structuredClone(original):withAnchor(structuredClone(plain)),accepted_anchor=apply(anchoredObject);if(accepted_anchor.status!==0)throw Error('Expected a deployment with the floor anchor to pass: '+accepted_anchor.stderr);
+const denyAnchor=(name,mutate)=>{const object=structuredClone(anchoredObject);mutate(object,object.spec.template.spec.containers[0]);const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error(`${name} was not denied: ${result.stderr}`);};
+denyAnchor('anchor directory outside the approved path',(_,c)=>env(c,anchorEnv).value='/tmp/anchor');
+denyAnchor('anchor directory with a traversal',(_,c)=>env(c,anchorEnv).value='/floor-anchor/../tmp');
+denyAnchor('duplicate anchor variable',(_,c)=>c.env.push({name:anchorEnv,value:'/floor-anchor'}));
+denyAnchor('anchor variable without its mount',(o,c)=>{c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');});
+denyAnchor('anchor variable without its volume',(o)=>{o.spec.template.spec.volumes=o.spec.template.spec.volumes.filter(v=>v.name!=='floor-anchor');});
+denyAnchor('read-only anchor mount',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').readOnly=true;});
+denyAnchor('anchor mount at another path',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').mountPath='/tmp';});
+denyAnchor('anchor volume that is not the approved claim',(o)=>{o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor').persistentVolumeClaim.claimName='other';});
+denyAnchor('anchor volume from the node filesystem',(o)=>{const volume=o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor');delete volume.persistentVolumeClaim;volume.hostPath={path:'/tmp'};});
+denyAnchor('anchor volume backed by an emptyDir',(o)=>{const volume=o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor');delete volume.persistentVolumeClaim;volume.emptyDir={};});
+{const object=structuredClone(plain);object.spec.template.spec.containers[0].volumeMounts.push({name:'floor-anchor',mountPath:'/floor-anchor'});object.spec.template.spec.volumes.push({name:'floor-anchor',persistentVolumeClaim:{claimName:'app-mixer-floor-anchor'}});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('An anchor volume without its variable was not denied: '+result.stderr);}
 changed('unapproved extra variable',(_,c)=>c.env.push({name:'APP_MIXER_DEBUG',value:'1'}));
 changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value='unsigned');
 changed('public access',(_,c)=>env(c,'APP_MIXER_ACCESS_MODE').value='public');

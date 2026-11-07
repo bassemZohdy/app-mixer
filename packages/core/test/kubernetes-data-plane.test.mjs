@@ -91,3 +91,15 @@ test('PostgreSQL revocation unavailability denies tokens and readiness',async()=
  try{assert.equal((await awaitReady(base+'/health/live',child)).status,200);assert.equal((await fetch(base+'/health/ready')).status,503);assert.equal((await fetch(base+'/application',{headers:{authorization:`Bearer ${token}`}})).status,403);}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}}
  try{await writeFile(dsn,'postgresql://user:password@localhost/db?sslmode=disable');const invalid=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});assert.notEqual(invalid.status,0);assert.doesNotMatch(invalid.stderr,/user:password/);}finally{await rm(dir,{recursive:true,force:true});}
 });
+test('a release floor anchor needs the PostgreSQL floor mode and an absolute directory',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-anchor-')),path=join(dir,'publication.json');
+ try{
+  await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));
+  for(const [mode,anchor] of [['disabled','/floor-anchor'],[undefined,'/floor-anchor'],['postgres','relative/path'],['postgres','/floor-anchor/../tmp'],['postgres','/bad path'],['postgres','']]){
+   const env={...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:String(await port()),APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR:anchor};
+   if(mode===undefined)delete env.APP_MIXER_RELEASE_FLOOR_MODE;else env.APP_MIXER_RELEASE_FLOOR_MODE=mode;
+   const child=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});
+   assert.notEqual(child.status,0,`${mode}/${anchor} must not start`);assert.match(child.stderr,/Invalid publication release floor configuration/,`${mode}/${anchor}: ${child.stderr.slice(0,200)}`);
+  }
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

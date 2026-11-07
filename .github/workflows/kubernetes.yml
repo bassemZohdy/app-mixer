@@ -139,6 +139,41 @@ jobs:
           for i in $(seq 1 60); do [ "$(kubectl get deployment -n app-mixer-test app-mixer-data-plane -o jsonpath='{.status.readyReplicas}')" = 2 ] && break || sleep 1; done
           [ "$(kubectl get deployment -n app-mixer-test app-mixer-data-plane -o jsonpath='{.status.readyReplicas}')" = 2 ]
           kubectl get -n app-mixer-test deployment,service,pdb,networkpolicy
+      - name: Release floor anchor refuses a restored revocation database
+        run: |
+          set -eu
+          ns=app-mixer-test
+          ca=packages/core/test/fixtures/capability-tls/ca-cert.pem
+          kubectl apply -n "$ns" -k deploy/kubernetes/signed-jwt-tls-revocation-fresh-anchor-example
+          kubectl rollout status -n "$ns" deployment/app-mixer-data-plane --timeout=240s
+          kubectl port-forward -n "$ns" service/app-mixer-data-plane 13004:3002 >"$RUNNER_TEMP/forward3.log" 2>&1 &
+          FORWARD_PID=$!
+          trap 'kill "$FORWARD_PID" 2>/dev/null || true' EXIT
+          ready() { curl --cacert "$ca" -s -o /dev/null -w '%{http_code}' https://127.0.0.1:13004/health/ready || true; }
+          for i in $(seq 1 45); do [ "$(ready)" = 200 ] && break || sleep 1; done
+          [ "$(ready)" = 200 ]
+          psql() { kubectl exec -n "$ns" deployment/app-mixer-revocations -- psql -U postgres -d postgres -Atc "$1"; }
+          floor=$(psql "SELECT minimum_version FROM app_mixer_release_floors WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'")
+          echo "database floor: $floor"
+          # The first checks copy the database floor to the anchor volume.
+          anchored=
+          for i in $(seq 1 60); do
+            anchored=$(kubectl exec -n "$ns" deployment/app-mixer-data-plane -- node -e 'try{process.stdout.write(require("node:fs").readFileSync("/floor-anchor/demo-tenant__demo__production.floor","utf8").trim())}catch{}') || true
+            [ "$anchored" = "$floor" ] && break || sleep 1
+          done
+          [ "$anchored" = "$floor" ]
+          # Restoring an older database lowers its floor; the Data Plane must refuse rather than allow the release.
+          psql "UPDATE app_mixer_release_floors SET minimum_version=1 WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'"
+          for i in $(seq 1 45); do [ "$(ready)" = 503 ] && break || sleep 1; done
+          [ "$(ready)" = 503 ]
+          status=$(curl --cacert "$ca" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$RUNNER_TEMP/token")" https://127.0.0.1:13004/application || true)
+          [ "$status" != 200 ]
+          kubectl logs -n "$ns" -l app.kubernetes.io/component=data-plane --all-containers --prefix --max-log-requests=10 | grep -q 'Release floor was rolled back' || echo 'note: the rollback refusal is not logged'
+          # Putting the floor back (as re-applying the journal's floor after a restore would) restores service.
+          psql "UPDATE app_mixer_release_floors SET minimum_version=$floor WHERE tenant_id='demo-tenant' AND application_id='demo' AND environment='production'"
+          for i in $(seq 1 45); do [ "$(ready)" = 200 ] && break || sleep 1; done
+          [ "$(ready)" = 200 ]
+          kill "$FORWARD_PID" 2>/dev/null || true
       - name: Verify admission policy against the Kubernetes API
         run: |
           IMAGE="registry.example/app-mixer@sha256:$(printf 'a%.0s' {1..64})"
