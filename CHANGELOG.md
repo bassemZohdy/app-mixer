@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- `scripts/bench-data-plane.mjs`, a Data Plane load benchmark (requests per second, latency, CPU per request and memory), and a capacity section in `docs/kubernetes-data-plane.md` with the first figures.
 - A weekly CodeQL workflow (`codeql.yml`: JavaScript/TypeScript and the workflow files, `security-extended` queries, test code excluded). Its first run found 26 alerts; the ones that matter are fixed below, two `user-controlled-bypass` alerts on URL routing in `notice-https-receiver.ts` and `planes.ts` are false positives (the route only selects between two operations after the caller is authenticated), and the rest are in tests and CI scripts.
 - A weekly `operating-systems.yml` workflow runs the unit tests on Windows and macOS (Linux arm64 has its own).
 - A documented, unverified OpenShift section: an attempt on OpenShift Local could not deploy the manifests because the node was out of memory at 11 GB; the expected `restricted-v2` problem with the fixed `runAsUser: 1000` is described, not tested.
@@ -39,6 +40,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 - Webhook adapter tests that replay the signing examples published by Standard Webhooks and Slack (`vendor-vectors.test.mjs`).
 - `deploy/observability/grafana-dashboard.json`: a Grafana dashboard for the Data Plane and agent metrics, with a test that its queries use only emitted metrics and labels.
 ### Changed
+- The Data Plane serializes a publication once per request instead of twice (the ETag is the digest of the body it sends), and the new `immutablePublications` option lets a host keep the serialized body and ETag; the Kubernetes start-up script now uses it with a frozen snapshot instead of copying the publication on every request. Measured: a 1 MB publication went from 280 to 1,100 requests per second, 100 KB from 3,100 to 8,100 and a JWT-protected small one from 11,000 to 17,500, with a lower peak memory.
 - The supported Node floor is now 22.22.2 (was 22.13.0): `engines`, README and CONTRIBUTING, the CI matrix, the kind workflow and the Docker base images. This unblocked `jsdom` 31 and the OpenTelemetry 3.x group (`@opentelemetry/api` 1.10.0, `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0, OTLP exporter 0.301.0), taken in this release; the exporter is also a root dev dependency so the collector tests resolve it, and the browser collector test's module server resolves packages' `#imports`.
 ### Fixed
 - The Data Plane start-up script and the release signer read each mounted file through one handle and check its size limit on that handle, instead of a `stat` followed by a separate read (a race CodeQL flagged); the TLS reload path is bounded the same way. An oversized file still stops start-up with the same message.

@@ -224,10 +224,10 @@ export type DataPlaneHttpsServer=HttpsServer & {beginDrain:()=>void};
 export type DataPlaneTlsOptions={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
 export type DataPlanePublicationAuthorization=(request:IncomingMessage,version:number|undefined)=>boolean|Promise<boolean>;
 export type ControlPlaneTracingOptions=DataPlaneTracingOptions;
-export type DataPlaneOptions={health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization};
+export type DataPlaneOptions={health?:DataPlaneHealthOptions;observe?:(event:DataPlaneRequestObservation)=>void;tracing?:DataPlaneTracingOptions;authorizePublication?:DataPlanePublicationAuthorization;/** The host promises that a publication object returned by the repository never changes, so its serialized body and ETag are kept and reused for as long as that object is returned. */immutablePublications?:boolean};
 export type DataPlanePublicationRepository={getPublished:(version?:number)=>{version:number;definition:ApplicationDefinition}|undefined|Promise<{version:number;definition:ApplicationDefinition}|undefined>};
 function createDataPlaneInternal(repository:DataPlanePublicationRepository,options?:DataPlaneOptions,tls?:HttpsOptions):DataPlaneServer|DataPlaneHttpsServer {
-  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');const authorizePublication=options?.authorizePublication;if(authorizePublication!==undefined&&typeof authorizePublication!=='function')throw Error('Invalid publication authorization');
+  const health=options?.health,observe=options?.observe;if(health!==undefined&&(!health||!Number.isSafeInteger(health.timeoutMs)||health.timeoutMs<100||health.timeoutMs>30000||(health.check!==undefined&&typeof health.check!=='function')))throw Error('Invalid data plane health configuration');if(observe!==undefined&&typeof observe!=='function')throw Error('Invalid data plane observer');const authorizePublication=options?.authorizePublication;if(authorizePublication!==undefined&&typeof authorizePublication!=='function')throw Error('Invalid publication authorization');const immutable=options?.immutablePublications;if(immutable!==undefined&&typeof immutable!=='boolean')throw Error('Invalid data plane configuration');const serialized=new WeakMap<object,{body:string;tag:string}>();
   const tracing=options?.tracing;if(tracing!==undefined&&(!tracing||!tracing.tracer||typeof tracing.tracer.startSpan!=='function'||(tracing.trustRemoteParent!==undefined&&typeof tracing.trustRemoteParent!=='boolean')))throw Error('Invalid data plane tracing configuration');
   const check=health?.check,timeout=health?.timeoutMs;let pending:Promise<boolean>|undefined,controller:AbortController|undefined,checkTimer:ReturnType<typeof setTimeout>|undefined,draining=false,finishDrain:()=>void;
   const drainSignal=new Promise<boolean>(resolve=>{finishDrain=()=>resolve(false);});
@@ -262,11 +262,15 @@ function createDataPlaneInternal(repository:DataPlanePublicationRepository,optio
     if(authorizePublication){let allowed:boolean;try{allowed=await authorizePublication(req,version)===true;}catch{respond(res,503,{error:'Authorization unavailable'});return;}if(!allowed){respond(res,403,{error:'Forbidden'});return;}}
     const published = await repository.getPublished(version);
     if (!published) { respond(res, 404, {error:'Publication not found'}); return; }
-    const tag='"'+createHash('sha256').update(JSON.stringify(published)).digest('hex')+'"';
+    // One serialization gives both the body and the ETag (the digest of that body); an immutable publication keeps them.
+    let entry=immutable===true?serialized.get(published):undefined;
+    if(!entry){const body=JSON.stringify(published);entry={body,tag:'"'+createHash('sha256').update(body).digest('hex')+'"'};if(immutable===true)serialized.set(published,entry);}
+    const tag=entry.tag;
     const tags=(req.headers['if-none-match']??'').split(',').map(value=>value.trim().replace(/^W\//,''));
     if(tags.includes(tag)||tags.includes('*')){res.writeHead(304,{'etag':tag,'cache-control':'no-store'});res.end();return;}
     res.setHeader('etag',tag);
-    respond(res, 200, published);
+    res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
+    res.end(entry.body);
   },tracing?traceHttp({tracer:tracing.tracer,trustRemoteParent:tracing.trustRemoteParent},req=>{const method=req.method==='GET'?'GET':'_OTHER',path=method!=='GET'?undefined:req.url==='/application'?'/application':/^\/application\/versions\/[1-9]\d*$/.test(req.url??'')?'/application/versions/{version}':health&&req.url==='/health/live'?'/health/live':health&&req.url==='/health/ready'?'/health/ready':undefined;return {method,path};}):undefined);
   instance.on('close',beginDrain);return Object.assign(instance,{beginDrain});
 }

@@ -66,6 +66,25 @@ The `cert-manager-tls-example` overlay serves the unsigned, public-access Data P
 
 Kubelet propagates a changed Secret to the pod within about a minute, plus up to `APP_MIXER_TLS_RELOAD_MS`; the test waits up to five minutes. A certificate without a subject, which is what cert-manager issues unless you set `commonName`, used to make the reload log line fail silently (the reload itself worked); the information now carries `subject` (empty) and `altNames`.
 
+## Capacity
+
+`node scripts/bench-data-plane.mjs [seconds] [connections]` starts the container's start-up script with a mounted publication, drives it with a keep-alive load generator on the same machine and reports requests per second, latency percentiles, the server's CPU time per request and its memory. Measured on 2026-11-08 on a Windows x64 workstation (Node 24, 32 connections, 6 s per scenario, plain HTTP, the generator sharing the CPU):
+
+| Scenario | Before: req/s, p99 | After: req/s, p99 | After: server CPU per request | Memory (RSS, peak) |
+| --- | ---: | ---: | ---: | ---: |
+| 2 KB publication | 21,200, 3.8 ms | 22,400, 3.4 ms | 0.04 ms | 83 MB |
+| 100 KB publication | 3,100, 17 ms | 8,100, 10 ms | 0.11 ms | 83 MB |
+| 1 MB publication | 280, 131 ms | 1,100, 52 ms | 0.80 ms | 85 MB (was 180) |
+| 2 KB, conditional request (304) | 26,800, 3.2 ms | 26,200, 3.3 ms | 0.03 ms | 83 MB |
+| 2 KB with a JWT (RS256, no revocation store) | 11,000, 7.0 ms | 17,500, 5.1 ms | 0.09 ms | 113 MB |
+
+"Before" copied the publication and serialized it twice (once for the ETag, once for the body) on every request. Now the body is serialized once per request, and the start-up script, which holds one frozen publication, passes `immutablePublications: true` so the body and ETag are kept and reused. A host that builds the server itself can set the same option when its repository returns an object that never changes; with the option off, behaviour is unchanged except for the single serialization.
+
+What the figures mean for sizing:
+- One core serves tens of thousands of small responses a second; a JWT check adds about 0.05 ms of CPU. A 1 MB publication is limited by moving the bytes, about a thousand responses a second per core. Keep publications small and let clients send `If-None-Match`, which costs a tenth of the CPU and no body.
+- The Deployment requests 50m CPU and 96Mi and limits memory to 256Mi. Memory was 83 to 113 MB under sustained load for these sizes, so the limit has room for publications up to the 1 MB the script accepts; revisit it if publications grow. CPU is the resource that scales with traffic, so set the request from your own request rate (about 0.04 to 0.09 ms of CPU per request here) and let the HorizontalPodAutoscaler, if you use one, follow CPU.
+- These are single-machine figures over loopback. They exclude TLS, the PostgreSQL revocation check, the network and the readiness probes; measure with your own mix before fixing limits.
+
 ## OpenShift (not verified)
 
 The manifests have only been run on kind. A run on OpenShift Local (CRC 4.22.1, Kubernetes 1.35) on 2026-11-08 did not get as far as deploying them: with 11 GB for the virtual machine, the node's memory requests (11.2 GiB, mostly operators that were already installed) exceeded what it could allocate (10.25 GiB), so `openshift-controller-manager` stayed `Pending`, no service accounts were created in a new project, and the in-cluster image build failed. Running it needs a VM with roughly 15 GB or more.
