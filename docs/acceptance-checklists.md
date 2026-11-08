@@ -133,7 +133,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] High availability of the revocation and release-floor stores. Both stores have a local failover drill on a synchronous standby (see P3-01): the revocation and the release floor survive promotion. Automatic failover and a production cluster do not.
   - [ ] Independent rollback protection. Measured, and solved only for the release floor as a library option (see P3-03 and the restore test).
   - [x] Broader admission enforcement beyond the example policy. Namespace-wide policies stop bare, relabelled or debugged Data Plane pods. They also block other workload kinds carrying the Data Plane template, rogue or exposed Services selecting it, and unpinned, privileged or host-access pods. A real API server passes 35 checks ([kubernetes-data-plane.md](kubernetes-data-plane.md)).
-  - [ ] Control Plane, workers and durable stores deployed to the target cluster, validated there.
+  - [ ] Control Plane, workers and durable stores deployed to the target cluster, validated there. An attempt on OpenShift Local did not get as far as deploying: the node was out of memory at 11 GB ([kubernetes-data-plane.md](kubernetes-data-plane.md#openshift-not-verified)).
 - **Evidence:** a target-cluster validation run (rollout, node drain, pod loss, store failover) with versions recorded.
 
 ### P3-05 Service principals and delegated user identity

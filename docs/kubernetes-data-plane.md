@@ -66,6 +66,15 @@ The `cert-manager-tls-example` overlay serves the unsigned, public-access Data P
 
 Kubelet propagates a changed Secret to the pod within about a minute, plus up to `APP_MIXER_TLS_RELOAD_MS`; the test waits up to five minutes. A certificate without a subject, which is what cert-manager issues unless you set `commonName`, used to make the reload log line fail silently (the reload itself worked); the information now carries `subject` (empty) and `altNames`.
 
+## OpenShift (not verified)
+
+The manifests have only been run on kind. A run on OpenShift Local (CRC 4.22.1, Kubernetes 1.35) on 2026-11-08 did not get as far as deploying them: with 11 GB for the virtual machine, the node's memory requests (11.2 GiB, mostly operators that were already installed) exceeded what it could allocate (10.25 GiB), so `openshift-controller-manager` stayed `Pending`, no service accounts were created in a new project, and the in-cluster image build failed. Running it needs a VM with roughly 15 GB or more.
+
+What to expect there, from the manifests and OpenShift's documented rules rather than from a run:
+- The default `restricted-v2` security constraint assigns each project a user ID range and rejects a pod that asks for a fixed `runAsUser` outside it. The base Deployment sets `runAsUser: 1000` and `runAsGroup: 1000`, so admission is expected to refuse it. An OpenShift overlay would remove those two fields and keep `runAsNonRoot: true`, `readOnlyRootFilesystem`, dropped capabilities and the `RuntimeDefault` seccomp profile.
+- The process must then work as an arbitrary non-root user. The Data Plane writes only to the volumes you mount (the release-floor anchor claim and temporary files under `/tmp`), so that should hold, but it is untested.
+- Use a Route with TLS re-encryption (or passthrough) instead of an Ingress, and keep the NetworkPolicies, which OpenShift supports.
+
 ## Shared token revocation
 
 The `signed-jwt-tls-revocation-example` overlay combines signed releases, JWT access, direct TLS and PostgreSQL token revocation. JWT mode defaults to `postgres` revocation when `APP_MIXER_REVOCATION_MODE` is absent; the local base explicitly sets `disabled`. Provision the table and expiry index using the trusted migration connection described in [JWT capability authentication](jwt-capability-auth.md), before starting the Data Plane. This runtime only reads the revocation table and should use a dedicated role with the minimum required `SELECT` privilege. Create the `app-mixer-revocation-connection` Secret containing a `dsn` file and the `app-mixer-revocation-ca` ConfigMap containing `ca.pem`. The DSN must be a PostgreSQL URL with host, database, username and password and no query parameters. The server requires TLS with CA and hostname verification, bounded connection and query timeouts, and a small connection pool. Do not place database credentials in an image, ConfigMap, logs or source control.
