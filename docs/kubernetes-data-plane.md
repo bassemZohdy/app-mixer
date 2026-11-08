@@ -85,6 +85,25 @@ What the figures mean for sizing:
 - The Deployment requests 50m CPU and 96Mi and limits memory to 256Mi. Memory was 83 to 113 MB under sustained load for these sizes, so the limit has room for publications up to the 1 MB the script accepts; revisit it if publications grow. CPU is the resource that scales with traffic, so set the request from your own request rate (about 0.04 to 0.09 ms of CPU per request here) and let the HorizontalPodAutoscaler, if you use one, follow CPU.
 - These are single-machine figures over loopback. They exclude TLS, the PostgreSQL revocation check, the network and the readiness probes; measure with your own mix before fixing limits.
 
+### PostgreSQL stores on the request path
+
+`APP_MIXER_TEST_POSTGRES_URL=... node scripts/bench-postgres.mjs [seconds]` measures the revocation lookup (every JWT-protected Data Plane request makes one) and the capability audit append (every capability invocation makes one). Measured on 2026-11-08 against PostgreSQL 16 in Docker on the same Windows workstation (loopback, `synchronous_commit` on, 5 s per row, a pool of 64 connections):
+
+| Operation | Concurrency | ops/s | p50 ms | p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| revocation lookup | 1 | 1,460 | 0.65 | 1.4 |
+| revocation lookup | 16 | 12,000 | 1.3 | 3.2 |
+| revocation lookup | 64 | 10,900 | 5.7 | 8.6 |
+| audit append, one tenant | 1 | 330 | 2.9 | 5.1 |
+| audit append, one tenant | 16 | 410 | 14 | 190 |
+| audit append, one tenant | 64 | 430 | 94 | 840 |
+| audit append, 16 tenants | 16 | 4,800 | 3.2 | 6.2 |
+| audit append, 16 tenants | 64 | 6,400 | 8.3 | 33 |
+
+- **The revocation lookup is cheap.** One indexed read, about 12,000 a second across a pool, so the revocation store is not the limit before the Data Plane itself is (about 17,000 JWT requests a second per core). Its cost in latency is a database round trip (0.65 ms here), which the network will add to.
+- **Audit appends serialize per tenant.** Each tenant's sequence number comes from one counter row, so appends for one tenant run one after another, each holding the row until its commit is durable. Throughput for one tenant is therefore about one over the commit latency (here about 3 ms, so 330 to 430 a second) however many pods or connections there are, and under more concurrency the extra callers only queue: p99 grew from 5 ms to 840 ms. Different tenants do not interfere (4,800 to 6,400 a second across 16 tenants). A managed database with a slower durable commit lowers the per-tenant figure in proportion.
+- **What to do with that.** The audit append is awaited on the invocation path, so a tenant that invokes capabilities faster than its commit rate sees every call slow down, and the sequence guarantees (gap-free, ordered, anchorable) are what cost this. Plan for roughly the reciprocal of your database's commit latency per tenant, rate-limit a tenant that can burst past it, and measure with `bench-postgres.mjs` against your own database before relying on a figure. A different sequence design (for example blocks of numbers per node) would raise the limit but give up gap-free ordering; that is a decision for the owner and has not been made.
+
 ## OpenShift (not verified)
 
 The manifests have only been run on kind. A run on OpenShift Local (CRC 4.22.1, Kubernetes 1.35) on 2026-11-08 did not get as far as deploying them: with 11 GB for the virtual machine, the node's memory requests (11.2 GiB, mostly operators that were already installed) exceeded what it could allocate (10.25 GiB), so `openshift-controller-manager` stayed `Pending`, no service accounts were created in a new project, and the in-cluster image build failed. Running it needs a VM with roughly 15 GB or more.
