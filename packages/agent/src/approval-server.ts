@@ -4,6 +4,7 @@ import {PostgresAgentNoticesFoundation} from './postgres-agent-notices-foundatio
 import {SqliteAgentApprovals,type AgentApprovalActor} from './agent-approvals.js';
 import {PostgresAgentApprovalsFoundation} from './postgres-agent-approvals-foundation.js';
 import {type AgentRunScope} from './durable-runs.js';
+import {inlineHashes} from './csp.js';
 
 type ApprovalStore=SqliteAgentApprovals|PostgresAgentApprovalsFoundation;
 type NoticeStore=SqliteAgentNotices|PostgresAgentNoticesFoundation;
@@ -18,6 +19,8 @@ async function load(){items.replaceChildren();message.textContent='Loading…';c
 async function loadNotices(){const output=byId('notices'),status=byId('noticeMessage'),agent=byId('agent').value,base='/api/agents/'+encodeURIComponent(agent)+'/notices';output.replaceChildren();status.textContent='Loading...';try{let after,count=0;do{const page=await call(base+(after?'?after='+after:''));for(const notice of page.items){count++;const card=document.createElement('article');field(card,'Request',notice.kind==='approval_requested'?'Approval requested':'Delegation renewal requested');field(card,'Run',notice.runId);field(card,notice.kind==='approval_requested'?'Action':'Grant',notice.subjectId);field(card,'Status',notice.actionable?'Actionable':'No longer actionable');field(card,'Acknowledged',notice.acknowledgedAt===null?'No':'Yes');if(notice.kind==='approval_requested'){const review=document.createElement('button');review.type='button';review.textContent='Review approvals';review.onclick=()=>{byId('agent').value=agent;byId('run').value=notice.runId;load()};card.appendChild(review)}if(notice.acknowledgedAt===null){const ack=document.createElement('button');ack.type='button';ack.textContent='Acknowledge';ack.onclick=async()=>{ack.disabled=true;try{await call(base+'/'+notice.id+'/ack',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});await loadNotices()}catch(error){status.textContent=error.message;ack.disabled=false}};card.appendChild(ack)}output.appendChild(card)}after=page.nextAfter}while(after);status.textContent=count?count+' notice(s)':'No notices found.'}catch(error){status.textContent=error.message}}
 byId('load').onclick=load;byId('loadNotices').onclick=loadNotices;
 </script></html>`;
+// The page's inline script and style are allowed by hash, so the policy needs no 'unsafe-inline'.
+const CSP=["script-src "+inlineHashes(html,'script').join(' '),'style-src '+(inlineHashes(html,'style').join(' ')||"'none'"),"connect-src 'self'","form-action 'none'","base-uri 'none'","frame-ancestors 'none'"].join('; ');
 function reply(res:ServerResponse,status:number,body:unknown):void{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));}
 async function decision(req:IncomingMessage):Promise<'approved'|'rejected'|'cancelled'>{if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??''))throw Error('content');let size=0;const parts:Buffer[]=[];for await(const chunk of req){const part=Buffer.from(chunk);size+=part.length;if(size>1024)throw Error('size');parts.push(part)}let value:unknown;try{value=JSON.parse(Buffer.concat(parts).toString('utf8'))}catch{throw Error('invalid')}if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==1||!['approved','rejected','cancelled'].includes(String((value as {decision?:unknown}).decision)))throw Error('invalid');return (value as {decision:'approved'|'rejected'|'cancelled'}).decision;}
 class ReviewHostUnavailable extends Error{}
@@ -43,7 +46,7 @@ export function createAgentApprovalServer(options:Options):Server{
  return createServer(async(req,res)=>{
   const host=req.headers.host,port=req.socket.localPort;if(host!==`127.0.0.1:${port}`&&host!==`localhost:${port}`){reply(res,400,{error:'Invalid host'});return}
   let url:URL;try{url=new URL(req.url??'',`http://${host}`)}catch{reply(res,400,{error:'Invalid request'});return}
-  if(req.method==='GET'&&url.pathname==='/review'&&!url.search){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",'referrer-policy':'no-referrer'});res.end(html);return}
+  if(req.method==='GET'&&url.pathname==='/review'&&!url.search){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; "+CSP,'referrer-policy':'no-referrer'});res.end(html);return}
   const noticeMatch=/^\/api\/agents\/([^/]+)\/notices(?:\/([0-9]+)\/ack)?$/.exec(url.pathname);
   if(noticeMatch){
    let agentId:string;try{agentId=decodeURIComponent(noticeMatch[1])}catch{reply(res,400,{error:'Invalid request'});return}const noticeId=noticeMatch[2]===undefined?undefined:Number(noticeMatch[2]);

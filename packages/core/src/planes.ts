@@ -8,6 +8,9 @@ import {createPromotionPackage,validEnvironment,type PromotionPackage} from './p
 import type {PromotionSignatureEvidence,VerifiedPromotion,SignedPromotionPackage} from './signed-promotion.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
+import { inlineHashes } from './csp.js';
+// The page's inline script and style are allowed by hash, so the policy needs no 'unsafe-inline'.
+const DEVELOPMENT_UI_CSP = ["script-src 'self' "+inlineHashes(DEVELOPMENT_UI,'script').join(' '),'style-src '+(inlineHashes(DEVELOPMENT_UI,'style').join(' ')||"'none'"),"connect-src 'self'","form-action 'none'","base-uri 'none'","frame-ancestors 'none'"].join('; ');
 import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
 import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
@@ -129,7 +132,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (req.url === '/development/extensions.mjs') {
         res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}); res.end(extensionModule); return;
       }
-      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"});
+      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; "+DEVELOPMENT_UI_CSP,'referrer-policy':'no-referrer'});
       res.end(DEVELOPMENT_UI); return;
     }
     if (!authorized(req, token)) { respond(res, 401, {error:'Unauthorized'}); return; }

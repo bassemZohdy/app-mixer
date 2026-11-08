@@ -54,6 +54,7 @@ try {
 </script><script type="module" src="/chat.mjs"></script></html>`;
  const server=String.raw`import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {once} from 'node:events';
 import {createPublicationTracing} from './publication-tracing.mjs';
 const flag=name=>{const value=process.env[name]??'false';if(value!=='true'&&value!=='false')throw Error('Invalid '+name);return value==='true';};
@@ -90,6 +91,10 @@ try {
   const candidate=new URL(process.env.AGENT_URL || '');
   if(candidate.protocol==='http:' && ['127.0.0.1','localhost'].includes(candidate.hostname) && candidate.pathname==='/agent' && !candidate.search && !candidate.hash && !candidate.username && !candidate.password && (process.env.AGENT_TOKEN||'').length>=32) agentURL=candidate;
 } catch {}
+// The page's inline script and style are allowed by hash, so the policy needs no 'unsafe-inline'; only index.html is HTML.
+const indexHtml=await readFile(new URL('index.html',import.meta.url),'utf8');
+const inlineHashes=tag=>[...indexHtml.matchAll(new RegExp('<'+tag+'( [^>]*)?>([^]*?)</'+tag+'>','g'))].filter(match=>!/\ssrc=/.test(match[1]||'')).map(match=>"'sha256-"+createHash('sha256').update(match[2]).digest('base64')+"'");
+const indexPolicy=["default-src 'none'","script-src 'self' "+inlineHashes('script').join(' '),'style-src '+(inlineHashes('style').join(' ')||"'none'"),"connect-src 'self'","img-src 'self' data:","worker-src 'self'","base-uri 'none'","form-action 'none'","frame-ancestors 'none'"].join('; ');
 const json=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));};
 const readCapabilityBody=(req,maxBytes,timeoutMs)=>new Promise((resolve,reject)=>{
   const parts=[];let size=0,finished=false;
@@ -162,7 +167,7 @@ createServer(async(req,res)=>{
   const shellWorkerRequest=req.method==='GET'&&/^\/offline-shell-sw\.js\?revision=[a-zA-Z0-9._-]{1,64}$/.test(req.url||'');
   const path=shellWorkerRequest?'offline-shell-sw.js':req.method==='GET'&&req.url==='/api/application'?'application.json':req.method==='GET'&&req.url==='/'?'index.html':req.method==='GET'&&req.url==='/renderer.mjs'?'renderer.mjs':req.method==='GET'&&req.url==='/workspace.mjs'?'workspace.mjs':req.method==='GET'&&req.url==='/extensions.mjs'?'extensions.mjs':req.method==='GET'&&req.url==='/chat.mjs'?'chat.mjs':req.method==='GET'&&req.url==='/capabilities.mjs'?'capabilities.mjs':req.method==='GET'&&req.url==='/data-editor.mjs'?'data-editor.mjs':req.method==='GET'&&req.url==='/staged-editor.mjs'?'staged-editor.mjs':req.method==='GET'&&['/offline.js','/offline-worker.js','/offline-ui.js','/offline-runtime.mjs','/offline-shell.mjs','/offline-shell-sw.js','/offline-publications.js','/offline-publication-runtime.mjs','/offline-publication-host.mjs'].includes(req.url)?req.url.slice(1):null;
   if(!path){res.writeHead(404);res.end();return;}
-  try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':(path.endsWith('.mjs')||path.endsWith('.js'))?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data)}catch{res.writeHead(500);res.end()}
+  try{const data=await readFile(new URL(path,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.json')?'application/json; charset=utf-8':(path.endsWith('.mjs')||path.endsWith('.js'))?'text/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...(path==='index.html'?{'Content-Security-Policy':indexPolicy,'Referrer-Policy':'no-referrer'}:{})});res.end(data)}catch{res.writeHead(500);res.end()}
 }).listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
 `;
  const capabilities=String.raw`// Trusted application code invokes only host-registered capabilities.

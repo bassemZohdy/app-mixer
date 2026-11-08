@@ -108,6 +108,11 @@ jobs:
         env:
           APP_MIXER_TEST_HYDRA: docker
         run: node --test packages/core/test/hydra-identity.test.mjs
+      - name: Review pages run under their strict content security policy
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_BROWSER: '1'
+        run: node --test packages/cli/test/csp.test.mjs
       - name: Backup restore rollback characterization
         if: matrix.node == '22'
         env:
