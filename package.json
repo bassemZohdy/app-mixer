@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "@opentelemetry/exporter-trace-otlp-http": "0.301.0",
+    "axe-core": "4.14.0",
     "eslint": "^10.14.0",
     "typescript-eslint": "^8.72.1"
   }
