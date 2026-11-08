@@ -51,3 +51,17 @@ Use a trusted schema and restricted `search_path`, secure database credentials a
 ## ES256 (P-256) keys
 
 Besides RSA keys, the authenticator accepts public EC keys with `crv: "P-256"`, 32-byte base64url `x` and `y` coordinates, optional `alg: "ES256"`, `use: "sig"` and `key_ops: ["verify"]`. Configuration fails closed on other curves, malformed or noncanonical coordinates, points that are not on the curve, private or RSA members (`d`, `n`, `e`, ...), duplicate or missing `kid` values and conflicting `alg`, `use` or `key_ops`. Each key is bound to its algorithm: an RS256 token is never verified with an EC key or the reverse, and the token header `kid` must still name a configured key. `JwtJwksManager` selects P-256 signing keys from heterogeneous issuer key sets alongside RSA keys and ignores other curves such as P-384 and Ed25519. ES384, ES512 and EdDSA remain unsupported.
+
+## Identity provider requirements
+
+The authenticator accepts an access token only when all of these hold; a provider that cannot satisfy them is not supported without a change to the authenticator:
+- the issuer is an `https` URL and the token's `iss` equals it exactly;
+- the header is `alg` RS256 or ES256 with a `kid` found in the configured keys, and `typ` is `at+jwt` ([RFC 9068](https://www.rfc-editor.org/rfc/rfc9068));
+- the claims include `exp`, `iat`, `sub`, `jti` and `client_id`, and `aud` includes the configured audience.
+
+Checked against real providers (opt-in tests with Docker):
+- **Keycloak 26.6.4** meets all of them. The end-to-end identity test passes with it, including introspection, logout and client revocation ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)).
+- **Ory Hydra v2.3.0** (`packages/core/test/hydra-identity.test.mjs`, `APP_MIXER_TEST_HYDRA=docker`) issues RS256 JWT access tokens with every required claim, a `kid`, working introspection, revocation and key rotation, but marks them `typ: JWT`. The authenticator therefore refuses every Hydra token. Removing the `typ` check in a scratch build made the whole scenario pass (audience, tampered claims and signature, introspection, provider-side revocation, key rotation), so the header is the only incompatibility.
+
+The `typ` requirement is deliberate: it keeps a JWT issued for another purpose, such as an ID token, from being accepted as an access token. Accepting `typ: JWT` for such a provider would have to be an explicit, default-off option that leans on the audience and `client_id` claims instead; that is a security decision for the owner and has not been made.
+

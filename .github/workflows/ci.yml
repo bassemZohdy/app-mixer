@@ -132,6 +132,11 @@ jobs:
         env:
           APP_MIXER_TEST_KEYCLOAK: docker
         run: node --test packages/agent/test/keycloak-identity.test.mjs
+      - name: A second real OIDC provider (Ory Hydra)
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_HYDRA: docker
+        run: node --test packages/core/test/hydra-identity.test.mjs
       - name: Browser smoke test
         run: |
           node .github/scripts/browser-smoke.mjs
