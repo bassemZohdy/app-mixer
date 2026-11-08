@@ -77,3 +77,21 @@ The kind acceptance workflow also runs the HTTPS sender and receiver in separate
 ## Notice retention
 
 Notices, receipts and delivery history grow until you prune them. `SqliteAgentNotices.prune(actor, {before, limit})` (the new `prune` access) deletes up to `limit` (1 to 1,000) notices created before `before`, oldest first, together with their receipts and delivery history, and returns the count; a notice that still has a pending, sending or uncertain delivery is kept. `SqliteAgentNoticeReceiver.prune` does the same for received notices that have been acknowledged (unacknowledged ones are never removed); because the receiver deduplicates by delivery key, a sender that replays a pruned notice later is accepted again, so choose a horizon beyond every sender's retry window. These tables are immutable by trigger; a prune drops the delete triggers and recreates them inside the same transaction (no other connection sees the gap, and a failure rolls back), and the notice prune writes an immutable record (actor, horizon, count) to `agent_notice_prunes`. Choose a horizon beyond the time a notice can still be actionable. Hosts whose `authorize` callbacks allow every action must now deny `prune` unless it is intended.
+
+## How well the tests pin the approval and delegation rules
+
+A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time in a compiled module and lists the changes no test noticed) found that the tests missed 39% of the changes to the approval store and 31% of those to the delegation store. The gaps were the rules that decide who may act and until when: the exact moment a lease, an approval or a grant expires, the 24-hour and per-run limits (a thousand approvals or grants), re-requesting an action with different content, the list limits, the validation of each argument, and the permission a decision needs. `approval-delegation-boundaries.test.mjs` covers them, including:
+- a lease ends at its last millisecond, an approval cannot be decided from the moment it expires, and `expire` is refused one millisecond early;
+- an approval's expiry must be in the future, by the run's deadline and within a day, and a grant likewise;
+- cancelling needs the `cancel` permission and approving or rejecting needs `decide`, so a user who can only cancel cannot approve and the reverse;
+- a pending or approved approval reads as `expired` once its time has passed, a rejected or cancelled one keeps its status;
+- a request needs a running run with the current lease, and a delegation cannot be issued, renewed or verified once its run has ended, while revoking it still works;
+- re-requesting the same action with another operation or other input is refused, and verification needs the principal, permission version, expiry and revision to match.
+
+| Store | Caught before | Caught after |
+| --- | ---: | ---: |
+| Human approvals (`agent-approvals`) | 61.2% | 94.0% |
+| Delegations (`agent-delegations`) | 69.2% | 90.7% |
+
+The 17 survivors left are equivalent changes: the input is compared twice (as a hash and as JSON), a missing scope throws either way, and the run-state, deadline and revision checks overlap with later ones.
+
