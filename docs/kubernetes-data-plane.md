@@ -68,6 +68,53 @@ The `cert-manager-tls-example` overlay serves the unsigned, public-access Data P
 
 Kubelet propagates a changed Secret to the pod within about a minute, plus up to `APP_MIXER_TLS_RELOAD_MS`; the test waits up to five minutes. A certificate without a subject, which is what cert-manager issues unless you set `commonName`, used to make the reload log line fail silently (the reload itself worked); the information now carries `subject` (empty) and `altNames`.
 
+## Capacity
+
+`node scripts/bench-data-plane.mjs [seconds] [connections]` starts the container's start-up script with a mounted publication, drives it with a keep-alive load generator on the same machine and reports requests per second, latency percentiles, the server's CPU time per request and its memory. Measured on 2026-11-08 on a Windows x64 workstation (Node 24, 32 connections, 6 s per scenario, plain HTTP, the generator sharing the CPU):
+
+| Scenario | Before: req/s, p99 | After: req/s, p99 | After: server CPU per request | Memory (RSS, peak) |
+| --- | ---: | ---: | ---: | ---: |
+| 2 KB publication | 21,200, 3.8 ms | 22,400, 3.4 ms | 0.04 ms | 83 MB |
+| 100 KB publication | 3,100, 17 ms | 8,100, 10 ms | 0.11 ms | 83 MB |
+| 1 MB publication | 280, 131 ms | 1,100, 52 ms | 0.80 ms | 85 MB (was 180) |
+| 2 KB, conditional request (304) | 26,800, 3.2 ms | 26,200, 3.3 ms | 0.03 ms | 83 MB |
+| 2 KB with a JWT (RS256, no revocation store) | 11,000, 7.0 ms | 17,500, 5.1 ms | 0.09 ms | 113 MB |
+
+"Before" copied the publication and serialized it twice (once for the ETag, once for the body) on every request. Now the body is serialized once per request, and the start-up script, which holds one frozen publication, passes `immutablePublications: true` so the body and ETag are kept and reused. A host that builds the server itself can set the same option when its repository returns an object that never changes; with the option off, behaviour is unchanged except for the single serialization.
+
+What the figures mean for sizing:
+- One core serves tens of thousands of small responses a second; a JWT check adds about 0.05 ms of CPU. A 1 MB publication is limited by moving the bytes, about a thousand responses a second per core. Keep publications small and let clients send `If-None-Match`, which costs a tenth of the CPU and no body.
+- The Deployment requests 50m CPU and 96Mi and limits memory to 256Mi. Memory was 83 to 113 MB under sustained load for these sizes, so the limit has room for publications up to the 1 MB the script accepts; revisit it if publications grow. CPU is the resource that scales with traffic, so set the request from your own request rate (about 0.04 to 0.09 ms of CPU per request here) and let the HorizontalPodAutoscaler, if you use one, follow CPU.
+- These are single-machine figures over loopback. They exclude TLS, the PostgreSQL revocation check, the network and the readiness probes; measure with your own mix before fixing limits.
+
+### PostgreSQL stores on the request path
+
+`APP_MIXER_TEST_POSTGRES_URL=... node scripts/bench-postgres.mjs [seconds]` measures the revocation lookup (every JWT-protected Data Plane request makes one) and the capability audit append (every capability invocation makes one). Measured on 2026-11-08 against PostgreSQL 16 in Docker on the same Windows workstation (loopback, `synchronous_commit` on, 5 s per row, a pool of 64 connections):
+
+| Operation | Concurrency | ops/s | p50 ms | p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| revocation lookup | 1 | 1,460 | 0.65 | 1.4 |
+| revocation lookup | 16 | 12,000 | 1.3 | 3.2 |
+| revocation lookup | 64 | 10,900 | 5.7 | 8.6 |
+| audit append, one tenant | 1 | 330 | 2.9 | 5.1 |
+| audit append, one tenant | 16 | 410 | 14 | 190 |
+| audit append, one tenant | 64 | 430 | 94 | 840 |
+| audit append, 16 tenants | 16 | 4,800 | 3.2 | 6.2 |
+| audit append, 16 tenants | 64 | 6,400 | 8.3 | 33 |
+
+- **The revocation lookup is cheap.** One indexed read, about 12,000 a second across a pool, so the revocation store is not the limit before the Data Plane itself is (about 17,000 JWT requests a second per core). Its cost in latency is a database round trip (0.65 ms here), which the network will add to.
+- **Audit appends serialize per tenant.** Each tenant's sequence number comes from one counter row, so appends for one tenant run one after another, each holding the row until its commit is durable. Throughput for one tenant is therefore about one over the commit latency (here about 3 ms, so 330 to 430 a second) however many pods or connections there are, and under more concurrency the extra callers only queue: p99 grew from 5 ms to 840 ms. Different tenants do not interfere (4,800 to 6,400 a second across 16 tenants). A managed database with a slower durable commit lowers the per-tenant figure in proportion.
+- **What to do with that.** The audit append is awaited on the invocation path, so a tenant that invokes capabilities faster than its commit rate sees every call slow down, and the sequence guarantees (gap-free, ordered, anchorable) are what cost this. Plan for roughly the reciprocal of your database's commit latency per tenant, rate-limit a tenant that can burst past it, and measure with `bench-postgres.mjs` against your own database before relying on a figure. A different sequence design (for example blocks of numbers per node) would raise the limit but give up gap-free ordering; that is a decision for the owner and has not been made.
+
+## OpenShift (not verified)
+
+The manifests have only been run on kind. A run on OpenShift Local (CRC 4.22.1, Kubernetes 1.35) on 2026-11-08 did not get as far as deploying them: with 11 GB for the virtual machine, the node's memory requests (11.2 GiB, mostly operators that were already installed) exceeded what it could allocate (10.25 GiB), so `openshift-controller-manager` stayed `Pending`, no service accounts were created in a new project, and the in-cluster image build failed. Running it needs a VM with roughly 15 GB or more.
+
+What to expect there, from the manifests and OpenShift's documented rules rather than from a run:
+- The default `restricted-v2` security constraint assigns each project a user ID range and rejects a pod that asks for a fixed `runAsUser` outside it. The base Deployment sets `runAsUser: 1000` and `runAsGroup: 1000`, so admission is expected to refuse it. An OpenShift overlay would remove those two fields and keep `runAsNonRoot: true`, `readOnlyRootFilesystem`, dropped capabilities and the `RuntimeDefault` seccomp profile.
+- The process must then work as an arbitrary non-root user. The Data Plane writes only to the volumes you mount (the release-floor anchor claim and temporary files under `/tmp`), so that should hold, but it is untested.
+- Use a Route with TLS re-encryption (or passthrough) instead of an Ingress, and keep the NetworkPolicies, which OpenShift supports.
+
 ## Shared token revocation
 
 The `signed-jwt-tls-revocation-example` overlay combines signed releases, JWT access, direct TLS and PostgreSQL token revocation. JWT mode defaults to `postgres` revocation when `APP_MIXER_REVOCATION_MODE` is absent; the local base explicitly sets `disabled`. Provision the table and expiry index using the trusted migration connection described in [JWT capability authentication](jwt-capability-auth.md), before starting the Data Plane. This runtime only reads the revocation table and should use a dedicated role with the minimum required `SELECT` privilege. Create the `app-mixer-revocation-connection` Secret containing a `dsn` file and the `app-mixer-revocation-ca` ConfigMap containing `ca.pem`. The DSN must be a PostgreSQL URL with host, database, username and password and no query parameters. The server requires TLS with CA and hostname verification, bounded connection and query timeouts, and a small connection pool. Do not place database credentials in an image, ConfigMap, logs or source control.
