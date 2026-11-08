@@ -56,7 +56,7 @@ try{
   if(req.url==='/cut'&&req.method==='POST'){offline=true;res.writeHead(204);res.end();return;}
   if(offline){res.writeHead(503);res.end('offline');return;}
   if(req.url==='/'){res.writeHead(200,{'content-type':'text/html'});res.end(fixture);return;}
-  try{const upstream=await fetch(new URL(req.url,appURL));res.writeHead(upstream.status,{'content-type':upstream.headers.get('content-type')||'text/plain'});res.end(Buffer.from(await upstream.arrayBuffer()));}
+  try{const target=new URL(req.url,appURL);if(target.origin!==new URL(appURL).origin){res.writeHead(400);res.end();return;}const upstream=await fetch(target);res.writeHead(upstream.status,{'content-type':upstream.headers.get('content-type')||'text/plain'});res.end(Buffer.from(await upstream.arrayBuffer()));}
   catch{res.writeHead(502);res.end();}
  });
  server.listen(0,'127.0.0.1');await once(server,'listening');

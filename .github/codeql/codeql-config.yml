@@ -1,0 +1,5 @@
+# Test code and test fixtures read TLS fixtures, use deliberately weak keys and talk to local servers on purpose, so
+# analysing them only produces noise. Shipped code, deploy scripts, CI scripts and workflows are analysed.
+paths-ignore:
+  - '**/test/**'
+  - '**/fixtures/**'

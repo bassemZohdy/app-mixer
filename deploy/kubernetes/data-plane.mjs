@@ -6,12 +6,11 @@ import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJ
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
 if(!path)throw Error('APP_MIXER_PUBLICATION_PATH is required');
-if((await stat(path)).size>1024*1024+4096)throw Error('Publication too large');
-const input=JSON.parse(await readFile(path,'utf8')),mode=process.env.APP_MIXER_PUBLICATION_MODE??'signed';let publication,releaseEnvironment;
+const input=JSON.parse(await readBounded(path,1024*1024+4096,'Publication too large','utf8')),mode=process.env.APP_MIXER_PUBLICATION_MODE??'signed';let publication,releaseEnvironment;
 if(mode==='signed'){
  const keyPath=process.env.APP_MIXER_RELEASE_KEYS_PATH,environment=process.env.APP_MIXER_RELEASE_ENV,applicationId=process.env.APP_MIXER_APPLICATION_ID;
- if(!keyPath||!environment||!applicationId||(await stat(keyPath)).size>32768)throw Error('Invalid release verification configuration');
- const raw=JSON.parse(await readFile(keyPath,'utf8'));if(!Array.isArray(raw)||raw.length<1||raw.length>20)throw Error('Invalid release verification configuration');
+ if(!keyPath||!environment||!applicationId)throw Error('Invalid release verification configuration');
+ const raw=JSON.parse(await readBounded(keyPath,32768,'Invalid release verification configuration','utf8'));if(!Array.isArray(raw)||raw.length<1||raw.length>20)throw Error('Invalid release verification configuration');
  const keys=raw.map(entry=>{if(!entry||typeof entry!=='object'||Array.isArray(entry)||Object.keys(entry).sort().join(',')!=='keyId,publicKey'||typeof entry.publicKey!=='string'||entry.publicKey.length>4096||!/^-----BEGIN PUBLIC KEY-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END PUBLIC KEY-----\s*$/.test(entry.publicKey))throw Error('Invalid release verification configuration');return {keyId:entry.keyId,publicKey:createPublicKey(entry.publicKey)};});
  publication=verifyPublicationRelease(input,environment,applicationId,keys);releaseEnvironment=environment;
 }else if(mode==='unsigned'){
@@ -33,8 +32,8 @@ if(accessMode==='jwt'){
  releaseTenant=tenant;let keyDocument=await readJwks();const jwks=JSON.parse(keyDocument),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
  if(revocationMode==='postgres'){
   const dsnPath=process.env.APP_MIXER_REVOCATION_DSN_PATH,caPath=process.env.APP_MIXER_REVOCATION_CA_PATH;
-  if(!dsnPath||!caPath||(await stat(dsnPath)).size>8192||(await stat(caPath)).size>65536)throw Error('Invalid revocation configuration');
-  const dsn=(await readFile(dsnPath,'utf8')).trim(),ca=await readFile(caPath,'utf8');let url;try{url=new URL(dsn);}catch{throw Error('Invalid revocation configuration');}
+  if(!dsnPath||!caPath)throw Error('Invalid revocation configuration');
+  const dsn=(await readBounded(dsnPath,8192,'Invalid revocation configuration','utf8')).trim(),ca=await readBounded(caPath,65536,'Invalid revocation configuration','utf8');let url;try{url=new URL(dsn);}catch{throw Error('Invalid revocation configuration');}
   if(!['postgres:','postgresql:'].includes(url.protocol)||!url.hostname||!url.username||!url.password||!/^\/[^/]+$/.test(url.pathname)||url.search||url.hash||!ca.trim())throw Error('Invalid revocation configuration');
   revocationPool=new pg.Pool({connectionString:dsn,ssl:{ca,rejectUnauthorized:true},max:5,connectionTimeoutMillis:2000,idleTimeoutMillis:10000,query_timeout:2000,statement_timeout:1500,application_name:'app-mixer-data-plane'});
   revocationPool.on('error',()=>{});
@@ -65,9 +64,9 @@ const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{tim
 let tlsReloader;
 if(transport==='tls'){
  const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
- if(!certPath||!keyPath||(caPath!==undefined&&!caPath)||(await stat(certPath)).size>65536||(await stat(keyPath)).size>65536||(caPath&&(await stat(caPath)).size>65536))throw Error('Invalid data plane transport configuration');
+ if(!certPath||!keyPath||(caPath!==undefined&&!caPath))throw Error('Invalid data plane transport configuration');
  const reloadText=process.env.APP_MIXER_TLS_RELOAD_MS;if(reloadText!==undefined&&(!/^[1-9][0-9]{3,7}$/.test(reloadText)||Number(reloadText)>86400000))throw Error('Invalid data plane transport configuration');
- const loadTls=async()=>({cert:await readFile(certPath),key:await readFile(keyPath),...(caPath?{clientCa:await readFile(caPath)}:{})});
+ const tlsLimit='Invalid data plane transport configuration',loadTls=async()=>({cert:await readBounded(certPath,65536,tlsLimit),key:await readBounded(keyPath,65536,tlsLimit),...(caPath?{clientCa:await readBounded(caPath,65536,tlsLimit)}:{})});
  server=createDataPlaneHttps(repository,await loadTls(),planeOptions);
  // Optional: pick up renewed Secret files (for example from cert-manager) without a restart; invalid files keep the current credentials.
  if(reloadText!==undefined){tlsReloader=createTlsCredentialReloader(server,{load:loadTls,intervalMs:Number(reloadText),clientCa:!!caPath,onReload:info=>console.log(`TLS credentials active: ${info.subject.replaceAll('\n',', ')} until ${new Date(info.validTo).toISOString()}`),onError:error=>console.error(`TLS reload rejected: ${error.message}`)});}
