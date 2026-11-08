@@ -19,7 +19,9 @@ if(mode==='signed'){
 }else if(mode==='unsigned'){
  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='definition,version'||!Number.isSafeInteger(input.version)||input.version<1)throw Error('Invalid publication');validate(input.definition);publication=input;
 }else throw Error('Invalid publication mode');
-const snapshot=structuredClone(publication),repository={getPublished(version){return version===undefined||version===snapshot.version?structuredClone(snapshot):undefined;}};
+// The mounted publication never changes: freeze it deeply and hand out the same object, so a request neither copies it nor serializes it again.
+const deepFreeze=value=>{if(value!==null&&typeof value==='object'&&!Object.isFrozen(value)){Object.freeze(value);for(const item of Object.values(value))deepFreeze(item);}return value;};
+const snapshot=deepFreeze(structuredClone(publication)),repository={getPublished(version){return version===undefined||version===snapshot.version?snapshot:undefined;}};
 const portText=process.env.DATA_PORT??'3002',delayText=process.env.DATA_DRAIN_DELAY_MS??'5000';
 if(!/^[1-9][0-9]{0,4}$/.test(portText)||Number(portText)>65535||!/^(0|[1-9][0-9]{0,4})$/.test(delayText)||Number(delayText)>30000)throw Error('Invalid Data Plane configuration');
 const metricsPort=process.env.APP_MIXER_METRICS_PORT;
@@ -63,7 +65,7 @@ const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
 metrics?.setPublicationVersion(snapshot.version);
 const authTimeout=process.env.APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS??'5000',authPending=process.env.APP_MIXER_PUBLICATION_AUTH_MAX_PENDING??'100';
 if(!/^[1-9][0-9]*$/.test(authTimeout)||Number(authTimeout)<100||Number(authTimeout)>30000||!/^[1-9][0-9]*$/.test(authPending)||Number(authPending)>100)throw Error('Invalid publication authorization limits');
-const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={health:{timeoutMs:2500,...(revocationPool||jwksReloadText!==undefined?{check:async()=>{try{if(!keyHealth())return false;if(revocationPool)await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');if(releaseAllowed&&!await releaseAllowed())return false;return keyHealth();}catch{return false;}}}:{})},...(authenticate?{publicationAuthorizationLimits:{timeoutMs:Number(authTimeout),maxPending:Number(authPending)},authorizePublication:async(req,_version,signal)=>{const actor=await authenticate(req);if(signal.aborted||!actor)return false;return !releaseAllowed||await releaseAllowed();}}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
+const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={immutablePublications:true,health:{timeoutMs:2500,...(revocationPool||jwksReloadText!==undefined?{check:async()=>{try{if(!keyHealth())return false;if(revocationPool)await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');if(releaseAllowed&&!await releaseAllowed())return false;return keyHealth();}catch{return false;}}}:{})},...(authenticate?{publicationAuthorizationLimits:{timeoutMs:Number(authTimeout),maxPending:Number(authPending)},authorizePublication:async(req,_version,signal)=>{const actor=await authenticate(req);if(signal.aborted||!actor)return false;return !releaseAllowed||await releaseAllowed();}}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
 let tlsReloader;
 if(transport==='tls'){
  const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
