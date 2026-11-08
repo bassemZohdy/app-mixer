@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- `scripts/live-github-delivery.mjs`: a live check that GitHub itself delivers signed events to the GitHub webhook adapter (a `ping`, the `push` test event twice, and a wrong signature refused through a temporary tunnel), cleaning up its webhook and tunnel. It passed on 2026-11-08; the documentation now says GitHub signs with the secret string's UTF-8 bytes.
 - The alert failure drill now also starts a Grafana container, imports the shipped dashboard through the import API and runs every panel query against the drill's Prometheus: no panel errors, the `job` variable lists both jobs, and the panels fed by the drill's metrics show data.
 - `createOpenAILimitedToolModel`: an OpenAI-compatible model that implements the token (and cost) limit contract for agents with a `tokenBudget`. It sends the provider an output cap derived from a conservative prompt bound, refuses a prompt that cannot fit before dispatch, turns SDK retries off and uses the provider's reported usage. A real model server (Ollama, qwen2.5:0.5b) stopped at the cap and its usage added up.
 - The memory evaluation test can embed with a real model served by Ollama (`APP_MIXER_TEST_OLLAMA_URL`, `APP_MIXER_TEST_OLLAMA_MODEL`). With all-MiniLM and nomic-embed-text, semantic recall on the draft set rose from 0.79 to 0.98, and the HNSW index stayed at 0.98 to 0.99 of exact search; hybrid fusion remains worse than semantic search on paraphrases.

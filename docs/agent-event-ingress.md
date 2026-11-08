@@ -22,7 +22,7 @@ Send the exact UTF-8 JSON bytes with `Content-Type: application/json`, `X-App-Mi
 
 ## Supported providers
 
-On 2026-11-07 the product owner committed to supporting every adapter that exists today: GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle, Standard Webhooks, Discord and SendGrid (thirteen adapters). A provider outside this list is not supported until the owner adds it here. Signature construction is checked against vendor-published examples where a vendor publishes one (see [Vendor-published signature examples](#vendor-published-signature-examples)). No provider has yet delivered a live or sandbox event to its adapter; that is tracked separately in the acceptance checklist.
+On 2026-11-07 the product owner committed to supporting every adapter that exists today: GitHub, Shopify, GitLab, Stripe, Slack, Twilio, Linear, PagerDuty, Sentry, Paddle, Standard Webhooks, Discord and SendGrid (thirteen adapters). A provider outside this list is not supported until the owner adds it here. Signature construction is checked against vendor-published examples where a vendor publishes one (see [Vendor-published signature examples](#vendor-published-signature-examples)). Only GitHub has delivered live events to its adapter so far (see [Live GitHub delivery](#live-github-delivery)); the other twelve are tracked in the acceptance checklist.
 
 ## Twilio incoming messages
 
@@ -32,7 +32,7 @@ Only authenticated incoming messages with the configured account SID and a valid
 
 ## GitHub webhooks
 
-`createGithubWebhookAdapter({identity, agentId, eventType, secret, previousSecrets?})` returns `authenticateRaw` and `mapAuthenticatedBody` for `createAgentEventIngress`. Configure one host-selected source identity, target agent, and event type per endpoint. Configure the GitHub webhook to send JSON and use a high-entropy secret of 32 to 1024 bytes. Up to two previous keys can overlap during rotation; replace running instances to retire a key. The adapter follows [GitHub's HMAC-SHA256 body-signature protocol](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries), rejecting missing, malformed, duplicate or incorrect signature headers before decoding the body. The host must authorize the source and validate the signed payload's repository, action and other relevant fields in the ingress `authorize` callback.
+`createGithubWebhookAdapter({identity, agentId, eventType, secret, previousSecrets?})` returns `authenticateRaw` and `mapAuthenticatedBody` for `createAgentEventIngress`. Configure one host-selected source identity, target agent, and event type per endpoint. Configure the GitHub webhook to send JSON and use a high-entropy secret of 32 to 1024 bytes. GitHub signs with the UTF-8 bytes of the secret *string* you give it, so pass the adapter `Buffer.from(secretText, 'utf8')`, not bytes you decoded from it (a hex secret decoded to raw bytes is a different key, and every delivery is refused with 401). Up to two previous keys can overlap during rotation; replace running instances to retire a key. The adapter follows [GitHub's HMAC-SHA256 body-signature protocol](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries), rejecting missing, malformed, duplicate or incorrect signature headers before decoding the body. The host must authorize the source and validate the signed payload's repository, action and other relevant fields in the ingress `authorize` callback.
 
 GitHub signs the body, not `X-GitHub-Delivery` or `X-GitHub-Event`. The adapter ignores both headers, uses the configured event type, and derives an event ID from the raw body hash. A captured signed body therefore deduplicates even if its unsigned headers are changed. Identical bodies from distinct legitimate events also deduplicate, and GitHub's signature contains no timestamp; retained deduplication records are needed for replay protection for as long as the secret and captured signatures may remain valid. Key reuse across endpoints can permit cross-endpoint replay, so use a unique secret per webhook. The host must secure transport, limit requests, and plan deduplication retention. A trusted `mapAuthenticatedBody` callback is available for other raw-authenticated integrations; it runs only after authentication and must derive authorization-relevant fields from authenticated data or trusted configuration.
 
@@ -109,6 +109,21 @@ The host must configure HTTPS, validate event schemas and permissions in `author
 Run claims enforce a per-tenant, per-agent concurrency limit within the same SQLite transaction. The host-driven worker uses the current manifest's `maxConcurrentRuns`; direct registry callers must supply their trusted limit (the default is 1). Running, pause-requested and cancel-requested attempts count until settled or explicitly recovered, including expired leases. This is local SQLite coordination; hosts must not bypass it with old binaries or direct writes and must reconcile an expired worker before retrying. Daily/token quotas and distributed coordination remain open.
 
 The Twilio signature (HMAC-SHA1 over the URL and the sorted form fields, compared in constant time against the configured URL with and without its default port and in its URL-normalized forms) is implemented in `twilio-signature.ts`; the adapter does not depend on the Twilio SDK. Reference signatures produced by the SDK are fixtures in `packages/agent/test/twilio-signature.test.mjs`.
+
+### Live GitHub delivery
+
+`scripts/live-github-delivery.mjs <owner/repo>` checks the GitHub adapter against GitHub itself. It builds a receiver from the real adapter and event ingress, opens a temporary Cloudflare quick tunnel to it, creates a temporary webhook on the repository, has GitHub send a `ping` and the `push` test event twice, refuses a wrong signature through the tunnel, and then deletes the webhook and stops the tunnel even when a step fails. The report keeps delivery metadata only (no payloads, no secret). It needs `gh` signed in with admin rights on the repository and `cloudflared`.
+
+Run on 2026-11-08 against this repository:
+
+| Delivery (as GitHub recorded it) | Answer | Receiver outcome |
+| --- | --- | --- |
+| `ping` | 202 | accepted, one run |
+| `push` test event | 202 | accepted, one run |
+| the same `push` again, new delivery ID | 200 | duplicate: the event ID (a digest of the body) matched, no new run |
+| request with a wrong signature, through the tunnel | 401 | refused |
+
+Two runs were created in all. The first attempt failed with 401 on every delivery, because the harness gave GitHub a hex secret and the adapter the decoded bytes; see the note under the GitHub adapter. GitHub's own redelivery API needs the `admin:repo_hook` token scope, which the run did not have, so the second test event stood in for a retry. This covers GitHub only; the other twelve adapters have not received a live or sandbox delivery.
 
 ## Vendor-published signature examples
 
