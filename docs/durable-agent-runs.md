@@ -185,3 +185,17 @@ The host still configures limits, reconciles open reservations, and enforces pro
 ## Dispatch order
 
 Queued runs start in creation order. `SqliteAgentRuns` numbers every run with a monotonic `created_seq` (added to existing databases on open and backfilled from their row order) and `queuedPage` returns the oldest queued runs first; its `next` cursor is still the last run ID and is resolved to its sequence. `PostgresAgentRuns` numbers runs with an identity column `sequence` (added by `initialize()`, which numbers existing rows in their physical order) and `queued` orders by it. Run IDs no longer influence dispatch order, so random UUIDs from schedules, triggers and event ingress start in the order they were created. `list` still pages by run ID.
+
+## How well the tests pin the run and action rules
+
+A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time in a compiled module and lists the changes no test noticed) found that the tests missed 36% of the changes to the action journal and 60% of those to the run registry. These modules decide whether an outbound action may be repeated and when a run may move between states, so the gaps were the rules that matter most:
+- **Action journal** (`action-journal-boundaries.test.mjs`): the limits on action data (10,000 nodes, 40 levels, one megabyte, no cycles, no sparse arrays, no `__proto__`); every argument of `invoke`; re-invoking an action with another operation, other input, another attempt limit or another authority is refused; an approval has to match the action's operation and input and be unexpired (it stops working at the millisecond it expires); a refusal marked as thrown before any effect returns the action to ready with the same idempotency key, and uses up an attempt; any other failure leaves it uncertain; reconciliation needs an uncertain run and action, and a verifier's decision is refused if the action was decided meanwhile.
+- **Run registry** (`durable-runs-boundaries.test.mjs`, `run-waits-boundaries.test.mjs`): every argument; a lease ends at its last millisecond and a run's deadline stops claims from that moment; the per-agent concurrency and daily limits (a retry of the same run is not a new start); each pause, resume, cancel, settle, recover and reconcile is legal only from the right states; pausing a run to wait for an approval or for a delegation renewal needs the lease, a running run and a grant or approval in the right state, and resuming needs the approval to be approved and unexpired or the grant to be renewed and valid; a run past its deadline fails with recorded evidence; a run cannot settle cleanly, or be retried, while an outbound action or a token reservation is unresolved.
+
+| Module | Caught before | Caught after |
+| --- | ---: | ---: |
+| Action journal | 63.7% | 89.8% |
+| Run registry | 40.1% | 95.7% |
+
+The 25 journal survivors and 13 registry survivors left are repeated checks (the input is compared as a hash and as JSON, a lease is checked again after the status, a deadline is checked twice) and comparisons against the largest safe integer.
+
