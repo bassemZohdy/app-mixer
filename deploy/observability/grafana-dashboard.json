@@ -28,14 +28,14 @@
     {"id": 9, "type": "timeseries", "title": "Durable runs by status", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 8, "w": 8, "x": 0, "y": 14},
       "targets": [{"refId": "A", "expr": "sum by (status) (app_mixer_agent_runs{archived=\"false\"})", "legendFormat": "{{status}}"}]},
     {"id": 10, "type": "timeseries", "title": "Journaled actions by status (uncertain and dispatching need an operator)", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 8, "w": 8, "x": 8, "y": 14},
-      "targets": [{"refId": "A", "expr": "sum by (status) (app_mixer_agent_actions)", "legendFormat": "{{status}}"}]},
+      "targets": [{"refId": "A", "expr": "sum by (action_status) (app_mixer_agent_action_backlog)", "legendFormat": "{{action_status}}"}]},
     {"id": 11, "type": "timeseries", "title": "Oldest overdue and due schedule age", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 8, "w": 8, "x": 16, "y": 14}, "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
       "targets": [
         {"refId": "A", "expr": "max by (kind) (app_mixer_agent_oldest_overdue_seconds)", "legendFormat": "overdue {{kind}}"},
-        {"refId": "B", "expr": "max(app_mixer_agent_oldest_due_schedule_seconds)", "legendFormat": "due schedule"}]},
+        {"refId": "B", "expr": "max(app_mixer_agent_oldest_schedule_due_seconds)", "legendFormat": "due schedule"}]},
     {"id": 12, "type": "stat", "title": "Overdue runs and due schedules", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "gridPos": {"h": 4, "w": 8, "x": 0, "y": 22},
       "targets": [
         {"refId": "A", "expr": "sum(app_mixer_agent_overdue_runs)", "legendFormat": "overdue runs"},
-        {"refId": "B", "expr": "sum(app_mixer_agent_due_schedules)", "legendFormat": "due schedules"}]}
+        {"refId": "B", "expr": "sum(app_mixer_agent_schedules{state=\"due\"})", "legendFormat": "due schedules"}]}
   ]
 }

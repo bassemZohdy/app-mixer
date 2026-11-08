@@ -13,7 +13,7 @@ import {join} from 'node:path';
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {DataPlaneRequestMetrics,createMetricsServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentActionJournal,SqliteAgentRunMetrics,createAgentMetricsServer} from '../../agent/dist/index.js';
+import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentActionJournal,SqliteAgentRunMetrics,SqliteAgentScheduleMetrics,createAgentMetricsServer} from '../../agent/dist/index.js';
 
 const run=promisify(execFile);
 const ALERTMANAGER_IMAGE='prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a';
@@ -32,6 +32,13 @@ function parseRules(text){const alerts=[];let current;for(const line of text.spl
  return alerts;}
 // Every series the product can emit, with the label values each one takes.
 function exposition(...texts){const series=new Map();for(const text of texts)for(const line of text.split('\n')){if(!line||line.startsWith('#'))continue;const match=/^([a-z_]+)(?:\{([^}]*)\})? /.exec(line);assert.ok(match,line);const labels=series.get(match[1])??new Map();series.set(match[1],labels);for(const pair of (match[2]??'').split(',').filter(Boolean)){const [key,value]=pair.split('=');if(!labels.has(key))labels.set(key,new Set());labels.get(key).add(JSON.parse(value));}}return series;}
+
+// Run metrics and schedule metrics are two readers; the drill scrapes them as one endpoint.
+function combinedMetrics(path,clock){
+ const options={scope,authorize:()=>true,clock};
+ const runs=new SqliteAgentRunMetrics(path,{...options,includeOperational:true,includeActionBacklog:true}),schedules=new SqliteAgentScheduleMetrics(path,options);
+ return {render:async actor=>(await runs.render(actor))+(await schedules.render(actor)),renderWithSignal:async(actor,signal)=>(await runs.renderWithSignal(actor,signal))+(await schedules.renderWithSignal(actor,signal)),close(){schedules.close();runs.close();}};
+}
 function seed(path){
  const runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),schedules=new SqliteAgentSchedules(path);
  runs.create(scope,'run',{definitionVersion:1,maxAttempts:2,deadline:100000},0);const claimed=runs.claim(scope,'run',runs.get(scope,'run').revision,'worker',60000,0);
@@ -46,7 +53,7 @@ test('alert rules use only emitted metrics and label values and each has a runbo
  const dir=mkdtempSync(join(tmpdir(),'alert-rules-')),path=join(dir,'runs.sqlite');let metrics,store;
  try{
   const plane=new DataPlaneRequestMetrics(()=>0);plane.setPublicationVersion(1);for(const route of routes){for(const statusClass of statuses)plane.observe({route,outcome:'completed',statusClass,durationMs:1});plane.observe({route,outcome:'aborted',statusClass:'none',durationMs:1});}
-  store=seed(path);metrics=new SqliteAgentRunMetrics(path,{scope,authorize:()=>true,includeOperational:true,includeSchedules:true,includeActions:true,clock:()=>0});
+  store=seed(path);metrics=combinedMetrics(path,()=>0);
   const series=exposition(plane.render(),await metrics.render(actor)),alerts=parseRules(await readFile(rulesPath,'utf8'));
   assert.ok(alerts.length>=10);assert.equal(new Set(alerts.map(a=>a.name)).size,alerts.length);
   const headings=[...(await readFile(runbooksPath,'utf8')).matchAll(/^## (\S+)\s*$/gm)].map(m=>m[1]);assert.deepEqual([...headings].sort(),alerts.map(a=>a.name).sort(),'one runbook section per alert');
@@ -86,7 +93,7 @@ test('a failure drill fires, routes and resolves alerts through real Prometheus 
   const deliveries=(route,alertname,status)=>delivered.filter(d=>d.path==='/'+route&&d.alerts.some(a=>a.labels.alertname===alertname&&a.status===status));
 
   let now=30000;const plane=new DataPlaneRequestMetrics(()=>0);plane.setPublicationVersion(4);plane.observe({route:'application',outcome:'completed',statusClass:'2xx',durationMs:3});
-  store=seed(path);metrics=new SqliteAgentRunMetrics(path,{scope,authorize:()=>true,includeOperational:true,includeSchedules:true,includeActions:true,clock:()=>now});
+  store=seed(path);metrics=combinedMetrics(path,()=>now);
   const bearer=req=>req.headers.authorization===`Bearer ${token}`;
   const planeServer=createMetricsServer({metrics:plane,authorize:bearer,timeoutMs:2000,maxPending:10}),agentServer=createAgentMetricsServer({metrics,authenticate:req=>bearer(req)?actor:undefined,timeoutMs:2000,maxPending:10});
   for(const server of [planeServer,agentServer]){server.listen(0,'127.0.0.1');await once(server,'listening');servers.push(server);}

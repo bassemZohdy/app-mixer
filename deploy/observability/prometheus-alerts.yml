@@ -55,7 +55,7 @@ groups:
   - name: app-mixer-agent
     rules:
       - alert: AppMixerAgentScheduleBacklog
-        expr: app_mixer_agent_oldest_due_schedule_seconds > 300
+        expr: app_mixer_agent_oldest_schedule_due_seconds > 300
         for: 5m
         labels:
           severity: page
@@ -79,7 +79,7 @@ groups:
           summary: Agent runs are waiting for a decision on whether their effects happened.
           runbook: docs/runbooks.md#appmixeragentrunsuncertain
       - alert: AppMixerAgentActionsUncertain
-        expr: app_mixer_agent_actions{status="uncertain"} > 0
+        expr: sum(app_mixer_agent_action_backlog{action_status="uncertain"}) > 0
         for: 15m
         labels:
           severity: ticket
@@ -87,7 +87,7 @@ groups:
           summary: Journaled agent actions have an unknown outcome and need reconciliation.
           runbook: docs/runbooks.md#appmixeragentactionsuncertain
       - alert: AppMixerAgentActionsDispatchingStuck
-        expr: app_mixer_agent_actions{status="dispatching"} > 0
+        expr: sum(app_mixer_agent_action_backlog{action_status="dispatching"}) > 0
         for: 30m
         labels:
           severity: ticket
