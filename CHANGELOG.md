@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- A weekly CodeQL workflow (`codeql.yml`: JavaScript/TypeScript and the workflow files, `security-extended` queries, test code excluded). Its first run found 26 alerts; the ones that matter are fixed below, two `user-controlled-bypass` alerts on URL routing in `notice-https-receiver.ts` and `planes.ts` are false positives (the route only selects between two operations after the caller is authenticated), and the rest are in tests and CI scripts.
 - A weekly `operating-systems.yml` workflow runs the unit tests on Windows and macOS (Linux arm64 has its own).
 - A documented, unverified OpenShift section: an attempt on OpenShift Local could not deploy the manifests because the node was out of memory at 11 GB; the expected `restricted-v2` problem with the fixed `runAsUser: 1000` is described, not tested.
 - A weekly `arm64.yml` workflow runs the unit tests and the PostgreSQL integration suites on native Linux arm64 runners (Graviton and Ampere nodes are common in Kubernetes); both passed on the first run.
@@ -40,6 +41,9 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 ### Changed
 - The supported Node floor is now 22.22.2 (was 22.13.0): `engines`, README and CONTRIBUTING, the CI matrix, the kind workflow and the Docker base images. This unblocked `jsdom` 31 and the OpenTelemetry 3.x group (`@opentelemetry/api` 1.10.0, `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0, OTLP exporter 0.301.0), taken in this release; the exporter is also a root dev dependency so the collector tests resolve it, and the browser collector test's module server resolves packages' `#imports`.
 ### Fixed
+- The Data Plane start-up script and the release signer read each mounted file through one handle and check its size limit on that handle, instead of a `stat` followed by a separate read (a race CodeQL flagged); the TLS reload path is bounded the same way. An oversized file still stops start-up with the same message.
+- The browser shell smoke test's proxy refuses a request that would leave the app's origin (a protocol-relative URL could have reached another host).
+- The Android emulator action is pinned to a commit (v2.38.0) in the three workflows that use it.
 - Several processes opening the same new SQLite file at once could fail with `database is locked`: switching a new file to WAL mode can fail immediately without waiting for the busy timeout. Every store now opens through `openDatabase`, which retries only that switch for about as long as the busy timeout. Found by running the tests on Windows and macOS in CI (a flaky macOS test, then a clear Windows failure); reproduced on Windows with four processes and fixed with a test that failed first.
 - `SqliteRemoteRollout.runOnce` no longer replaces the error that ended a pass with "Remote rollout state changed" when its own cleanup write fails; the PostgreSQL coordinator already behaved this way.
 - A model that refuses a call before sending anything (an error marked with `markNoEffect`) now has its token reservation released by the runtime; before, the reservation stayed held and the run ended uncertain.

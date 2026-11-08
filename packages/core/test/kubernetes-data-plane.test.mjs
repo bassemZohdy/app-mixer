@@ -103,3 +103,21 @@ test('a release floor anchor needs the PostgreSQL floor mode and an absolute dir
   }
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('oversized mounted files stop startup with a clear error',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-large-'));
+ try{
+  const base={...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:'3002'};
+  const publication=join(dir,'publication.json');await writeFile(publication,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[],padding:'x'.repeat(1024*1024+8192)}}));
+  let child=spawnSync(process.execPath,[service],{env:{...base,APP_MIXER_PUBLICATION_PATH:publication},encoding:'utf8',timeout:10000});
+  assert.notEqual(child.status,0);assert.match(child.stderr,/Publication too large/);
+  // A TLS certificate file over the limit is refused too, and so is a key set for release verification.
+  const small=join(dir,'small.json');await writeFile(small,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));
+  const cert=join(dir,'cert.pem');await writeFile(cert,'x'.repeat(70000));
+  child=spawnSync(process.execPath,[service],{env:{...base,APP_MIXER_TRANSPORT:'tls',APP_MIXER_PUBLICATION_PATH:small,APP_MIXER_TLS_CERT_PATH:cert,APP_MIXER_TLS_KEY_PATH:cert},encoding:'utf8',timeout:10000});
+  assert.notEqual(child.status,0);assert.match(child.stderr,/Invalid data plane transport configuration/);
+  const keys=join(dir,'keys.json');await writeFile(keys,'['+'1,'.repeat(20000)+'1]');
+  child=spawnSync(process.execPath,[service],{env:{...base,APP_MIXER_PUBLICATION_MODE:'signed',APP_MIXER_PUBLICATION_PATH:small,APP_MIXER_RELEASE_ENV:'production',APP_MIXER_APPLICATION_ID:'demo',APP_MIXER_RELEASE_KEYS_PATH:keys},encoding:'utf8',timeout:10000});
+  assert.notEqual(child.status,0);assert.match(child.stderr,/Invalid release verification configuration/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
