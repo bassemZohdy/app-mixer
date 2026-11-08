@@ -74,3 +74,15 @@ The host must read the bytes it actually loads, from storage it controls, and su
 The test then cuts one node's connection with a TCP proxy for 1.5 seconds. Of about 3,500 checks on that node during the outage, every one was rejected or denied, and none was allowed. A decision sent through the lost connection fails without writing anything. A revocation made through another node during the outage applied to the first check that succeeded after the database returned, 17 ms later.
 
 The test fails if a node caches approvals for half a second, or if a database error counts as allowed. These figures come from one machine. Production latency depends on the primary, network and pool sizing, so the host should repeat the measurement in its target environment and alert on approval-check errors.
+
+## How well the tests pin the shared approval store
+
+A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time in a compiled module and lists the changes no test noticed) found that the PostgreSQL tests missed 37% of the changes to `PostgresExtensionApprovals`. The gaps were the rules that decide whether an extension operation may run: single bad arguments and decisions, the exact edges of an expiry, and the checks on the rows read back, which are what make a tampered or damaged table fail closed. `extension-approvals-boundaries.test.mjs` covers them with a scripted query function, so it needs no database:
+- every argument (actor, scope, reference, operation, and an actor from another tenant than the scope) is refused before anything is read or authorized;
+- a decision is refused for each malformed part, an approval must expire in the future and within a year (exactly 365 days is allowed), and revoking takes an expiry of 0;
+- `isAllowed` denies an approval expiring exactly now, allows one expiring a millisecond later, denies when the revision changes between its two reads, and throws on a row with a revision below 1, a non-boolean `allowed`, a negative or fractional expiry, or more than one row;
+- authorization is asked before and between the reads, and only `true` authorizes;
+- `inspect` and `history` reject the same damaged rows, paginate with the one-extra-row convention and refuse bad `after` and `limit` values; the clock must be a non-negative whole number.
+
+With all the tests (the database-backed ones included), 149 of 155 changes are now caught, up from 97 (62.6% to 96.1%). The six survivors left are equivalent changes: duplicate "the rows are a list and not too long" guards that behave the same for a non-list.
+
