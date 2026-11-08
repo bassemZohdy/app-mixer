@@ -26,7 +26,10 @@ export class SqliteRemoteRollout {
    if(result.sourceVersion===floor){this.release(token);return {status:'unchanged',sourceVersion:floor,targetVersion:target};}
    const marked=this.db.prepare("UPDATE remote_rollouts SET phase='importing',source_version=?,expected_version=? WHERE id=? AND phase='running' AND token=?").run(result.sourceVersion,target,this.key,token);if(Number(marked.changes)!==1)throw Error('Remote rollout state changed');importing=true;
    const publication=await this.connector.importPublication({actor:{...this.actor},sourceVersion:result.sourceVersion,expectedVersion:target});this.release(token);return {status:'imported',sourceVersion:result.sourceVersion,targetVersion:publication.version};
-  }catch(error){if(importing)this.db.prepare("UPDATE remote_rollouts SET phase='uncertain' WHERE id=? AND phase='importing' AND token=?").run(this.key,token);else this.release(token);throw error;}finally{this.active=false;}
+  }catch(error){
+   // Bookkeeping must not replace the error that ended the pass: a failed write here leaves the gate for an operator.
+   try{if(importing)this.db.prepare("UPDATE remote_rollouts SET phase='uncertain' WHERE id=? AND phase='importing' AND token=?").run(this.key,token);else this.release(token);}catch{}
+   throw error;}finally{this.active=false;}
  }
  private release(token:string):void{const result=this.db.prepare("UPDATE remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=? AND token=? AND phase IN ('running','importing')").run(this.key,token);if(Number(result.changes)!==1)throw Error('Remote rollout state changed');}
  async recover(authorize:(state:State)=>boolean|Promise<boolean>):Promise<void>{

@@ -51,3 +51,20 @@ test('the promotion floor anchor catches up after a failed advance and fails clo
   assert.equal((await connector.importPublication({actor,sourceVersion:3,expectedVersion:1})).version,2);assert.equal(anchor.value,3);
  }finally{target.close();await close(remote);rmSync(dir,{recursive:true,force:true});}
 });
+
+test('a failing promotion floor anchor is reported to the host instead of being swallowed',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'remote-floor-anchor-')),path=join(dir,'target.sqlite'),source=new ApplicationStore(definition);for(let i=0;i<3;i++)source.publish(0);
+ const remote=createControlPlane(source,token),url=await listen(remote),target=new SqliteApplicationStore(path,definition);
+ const anchor={value:0,fail:false,read:async()=>anchor.value,advance:async n=>{if(anchor.fail)throw Error('anchor down');anchor.value=Math.max(anchor.value,n);}};
+ const base={sourceOrigin:url,sourceToken:token,sourceEnvironment:'development',targetEnvironment:'production',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},requireAdvancingSource:true,promotionFloorAnchor:anchor};
+ try{
+  assert.throws(()=>createRemoteControlConnector({...base,onAnchorError:'log'}),/Invalid remote control configuration/);
+  const reported=[];const connector=createRemoteControlConnector({...base,onAnchorError:error=>{reported.push(error.message);throw Error('a failing callback must not matter');}});
+  anchor.fail=true;assert.equal((await connector.importPublication({actor,sourceVersion:1,expectedVersion:0})).version,1);
+  assert.deepEqual(reported,['anchor down'],'the failed advance after a committed import is reported');
+  // The next import finds the retained floor ahead of the anchor, fails to advance it again and reports that too.
+  await assert.rejects(connector.importPublication({actor,sourceVersion:1,expectedVersion:1}),/not newer than the promotion floor/);
+  assert.deepEqual(reported,['anchor down','anchor down']);
+  anchor.fail=false;assert.equal((await connector.importPublication({actor,sourceVersion:2,expectedVersion:1})).version,2);assert.equal(anchor.value,2);assert.equal(reported.length,2);
+ }finally{target.close();await close(remote);rmSync(dir,{recursive:true,force:true});}
+});

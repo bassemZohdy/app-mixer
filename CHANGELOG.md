@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- `createRemoteControlConnector` takes an optional `onAnchorError(error)`: a failing promotion-floor anchor was swallowed silently after a committed import and during the catch-up before the next one, which left rollback protection stale with no signal. A throwing callback is ignored.
 - `scripts/live-github-delivery.mjs`: a live check that GitHub itself delivers signed events to the GitHub webhook adapter (a `ping`, the `push` test event twice, and a wrong signature refused through a temporary tunnel), cleaning up its webhook and tunnel. It passed on 2026-11-08; the documentation now says GitHub signs with the secret string's UTF-8 bytes.
 - The alert failure drill now also starts a Grafana container, imports the shipped dashboard through the import API and runs every panel query against the drill's Prometheus: no panel errors, the `job` variable lists both jobs, and the panels fed by the drill's metrics show data.
 - `createOpenAILimitedToolModel`: an OpenAI-compatible model that implements the token (and cost) limit contract for agents with a `tokenBudget`. It sends the provider an output cap derived from a conservative prompt bound, refuses a prompt that cannot fit before dispatch, turns SDK retries off and uses the provider's reported usage. A real model server (Ollama, qwen2.5:0.5b) stopped at the cap and its usage added up.
@@ -34,6 +35,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 ### Changed
 - The supported Node floor is now 22.22.2 (was 22.13.0): `engines`, README and CONTRIBUTING, the CI matrix, the kind workflow and the Docker base images. This unblocked `jsdom` 31 and the OpenTelemetry 3.x group (`@opentelemetry/api` 1.10.0, `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0, OTLP exporter 0.301.0), taken in this release; the exporter is also a root dev dependency so the collector tests resolve it, and the browser collector test's module server resolves packages' `#imports`.
 ### Fixed
+- `SqliteRemoteRollout.runOnce` no longer replaces the error that ended a pass with "Remote rollout state changed" when its own cleanup write fails; the PostgreSQL coordinator already behaved this way.
 - A model that refuses a call before sending anything (an error marked with `markNoEffect`) now has its token reservation released by the runtime; before, the reservation stayed held and the run ended uncertain.
 - The Data Plane's `TLS credentials active` log line (and `TlsCredentialInfo.subject`) failed for a certificate without a subject, which is what cert-manager issues by default: the reload worked but nothing was logged. `subject` is now an empty string and `altNames` lists the names.
 - `openOfflineProvisioning` now says "Offline provisioning requires WebCrypto Ed25519, which this browser does not support" when the browser lacks Ed25519, instead of failing with a raw `importKey` error. The Android emulator's Chrome 113 is such a browser.

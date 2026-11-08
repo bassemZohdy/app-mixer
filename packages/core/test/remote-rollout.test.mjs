@@ -59,3 +59,14 @@ test('rollout requires signed advancing imports and refuses a source behind reta
  const f=await fixture();let rollout;
  try{assert.throws(()=>new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,requireAdvancingSource:false}),actor),/configuration/);f.source.publish(0);const direct=createRemoteControlConnector(f.config);await direct.importPublication({actor,sourceVersion:2,expectedVersion:0});const stale=new ApplicationStore(definition);stale.publish(0);const staleServer=createControlPlane(stale,token);staleServer.listen(0,'127.0.0.1');await once(staleServer,'listening');try{rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,sourceOrigin:`http://127.0.0.1:${staleServer.address().port}`}),actor);await assert.rejects(rollout.runOnce(),/behind local history/);assert.equal(rollout.getState().phase,'idle');assert.equal(f.target.getPublished().version,1);}finally{staleServer.closeAllConnections();await new Promise(resolve=>staleServer.close(resolve));}}finally{rollout?.close();await cleanup(f);}
 });
+
+test('a failed cleanup does not hide the error that ended the pass',async()=>{
+ const f=await fixture();let rollout;
+ try{
+  // The pass fails at discovery; meanwhile another writer takes the claim, so releasing it also fails.
+  const connector=createRemoteControlConnector({...f.config,discovery:{authorize:async()=>{const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(f.path);try{db.prepare("UPDATE remote_rollouts SET token='someone-else'").run();}finally{db.close();}return false;},audit:()=>{}}});
+  rollout=new SqliteRemoteRollout(f.path,connector,actor);
+  await assert.rejects(rollout.runOnce(),/discovery denied/,'the cause is reported, not "state changed"');
+  assert.equal(rollout.getState().phase,'running','the claim of the other writer is left alone');
+ }finally{rollout?.close();await cleanup(f);}
+});
