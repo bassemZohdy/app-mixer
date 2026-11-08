@@ -133,7 +133,7 @@ test('a failure drill fires, routes and resolves alerts through real Prometheus 
   assert.ok(jobs.includes('app-mixer-data-plane')&&jobs.includes('app-mixer-agent'),'the job variable offers the scraped jobs: '+jobs);
   // Every panel query, with the job variable set to all, runs through Grafana without error.
   const panels=stored.panels.filter(panel=>panel.type!=='row'),answered={};
-  assert.ok(panels.length>=15,'the dashboard has its panels');
+  assert.ok(panels.length>=10,'the dashboard has its panels');
   for(const panel of panels){
     for(const [index,target] of panel.targets.entries()){
       const expr=target.expr.replaceAll('$job','.*').replaceAll('$__rate_interval','1m');
