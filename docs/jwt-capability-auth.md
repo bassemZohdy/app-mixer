@@ -51,3 +51,27 @@ Use a trusted schema and restricted `search_path`, secure database credentials a
 ## ES256 (P-256) keys
 
 Besides RSA keys, the authenticator accepts public EC keys with `crv: "P-256"`, 32-byte base64url `x` and `y` coordinates, optional `alg: "ES256"`, `use: "sig"` and `key_ops: ["verify"]`. Configuration fails closed on other curves, malformed or noncanonical coordinates, points that are not on the curve, private or RSA members (`d`, `n`, `e`, ...), duplicate or missing `kid` values and conflicting `alg`, `use` or `key_ops`. Each key is bound to its algorithm: an RS256 token is never verified with an EC key or the reverse, and the token header `kid` must still name a configured key. `JwtJwksManager` selects P-256 signing keys from heterogeneous issuer key sets alongside RSA keys and ignores other curves such as P-384 and Ed25519. ES384, ES512 and EdDSA remain unsupported.
+
+## Identity provider requirements
+
+The authenticator accepts an access token only when all of these hold; a provider that cannot satisfy them is not supported without a change to the authenticator:
+- the issuer is an `https` URL and the token's `iss` equals it exactly;
+- the header is `alg` RS256 or ES256 with a `kid` found in the configured keys, and `typ` is `at+jwt` ([RFC 9068](https://www.rfc-editor.org/rfc/rfc9068));
+- the claims include `exp`, `iat`, `sub`, `jti` and `client_id`, and `aud` includes the configured audience.
+
+Checked against real providers (opt-in tests with Docker):
+- **Keycloak 26.6.4** meets all of them. The end-to-end identity test passes with it, including introspection, logout and client revocation ([agent-approvals.md](agent-approvals.md#end-to-end-with-an-openid-connect-provider)).
+- **Ory Hydra v2.3.0** (`packages/core/test/hydra-identity.test.mjs`, `APP_MIXER_TEST_HYDRA=docker`) issues RS256 JWT access tokens with every required claim, a `kid`, working introspection, revocation and key rotation, but marks them `typ: JWT`. The authenticator therefore refuses every Hydra token. Removing the `typ` check in a scratch build made the whole scenario pass (audience, tampered claims and signature, introspection, provider-side revocation, key rotation), so the header is the only incompatibility.
+
+The `typ` requirement is deliberate: it keeps a JWT issued for another purpose, such as an ID token, from being accepted as an access token. Accepting `typ: JWT` for such a provider would have to be an explicit, default-off option that leans on the audience and `client_id` claims instead; that is a security decision for the owner and has not been made.
+
+## How well the tests pin the behaviour
+
+`node scripts/mutate.mjs <compiled file> <test file>...` changes one operator at a time in a compiled module (flipping `===`, `&&`, `||`, comparisons, `true` and `false`, or removing a `!`), runs the tests that cover it and lists the changes no test noticed. Run against `packages/core/dist/jwt-capability-auth.js` with the four JWT test files, it caught 111 of 177 changes (62.7%). The 66 survivors were mostly single bad options, keys and headers that no test refused on its own, plus the time limits, the 8192-character header limit, `isIssuer` and the check on the actor the host policy returns. `jwt-authenticator-boundaries.test.mjs` adds those cases, and the score is now 152 of 177 (85.9%).
+
+The 25 survivors left are not missing tests:
+- Checks repeated on purpose: the key-set size and shape are validated twice, after the verified claims the module checks again what `jose` already enforced (required claims, `iat`, `exp`, the token's age), and the closed or replaced check is repeated after each `await`, so the later one catches what the earlier one would.
+- Overlapping size checks on an RSA modulus (a byte count and the encoded length bound each other).
+
+A run takes about ten minutes because a change that makes the code loop waits for its timeout (`--timeout`); `--lines=57,63` limits it to some lines. Treat a survivor as a question, not a defect: it is either a condition to test or one that cannot matter.
+
