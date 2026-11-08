@@ -101,10 +101,22 @@ What the figures mean for sizing:
 | audit append, one tenant | 64 | 430 | 94 | 840 |
 | audit append, 16 tenants | 16 | 4,800 | 3.2 | 6.2 |
 | audit append, 16 tenants | 64 | 6,400 | 8.3 | 33 |
+| run lifecycle (create, claim, settle), one agent | 1 | 42 | 23 | 40 |
+| run lifecycle, one agent | 8 | 190 | 41 | 99 |
+| run lifecycle, one agent | 32 | 184 | 177 | 258 |
+| run lifecycle, 8 agents | 8 | 397 | 20 | 27 |
+| run lifecycle, 8 agents | 32 | 637 | 50 | 68 |
+| run lifecycle, one agent with 200,000 finished runs | 8 | 210 | 39 | 47 |
 
 - **The revocation lookup is cheap.** One indexed read, about 12,000 a second across a pool, so the revocation store is not the limit before the Data Plane itself is (about 17,000 JWT requests a second per core). Its cost in latency is a database round trip (0.65 ms here), which the network will add to.
 - **Audit appends serialize per tenant.** Each tenant's sequence number comes from one counter row, so appends for one tenant run one after another, each holding the row until its commit is durable. Throughput for one tenant is therefore about one over the commit latency (here about 3 ms, so 330 to 430 a second) however many pods or connections there are, and under more concurrency the extra callers only queue: p99 grew from 5 ms to 840 ms. Different tenants do not interfere (4,800 to 6,400 a second across 16 tenants). A managed database with a slower durable commit lowers the per-tenant figure in proportion.
 - **What to do with that.** The audit append is awaited on the invocation path, so a tenant that invokes capabilities faster than its commit rate sees every call slow down, and the sequence guarantees (gap-free, ordered, anchorable) are what cost this. Plan for roughly the reciprocal of your database's commit latency per tenant, rate-limit a tenant that can burst past it, and measure with `bench-postgres.mjs` against your own database before relying on a figure. A different sequence design (for example blocks of numbers per node) would raise the limit but give up gap-free ordering; that is a decision for the owner and has not been made.
+
+The run rows are a whole durable run through `PostgresAgentRuns` (create, claim with a lease and settle, three transactions) by competing workers, with the per-agent concurrency limit raised so it does not refuse them:
+- **One worker does about 40 runs a second** (23 ms for the three steps, which is a few durable commits). That is the cost of the registry's bookkeeping, not of running an agent, so runs that last seconds or longer make it negligible.
+- **Claims for one agent serialize.** Each claim locks the agent's scope row and counts its active runs, so one agent is limited to about 190 lifecycles a second whatever the number of workers, and more workers only queue (p99 258 ms at 32). Several agents run in parallel (about 400 to 640 a second for eight agents).
+- **History does not slow it down.** With 200,000 finished runs the same agent still did 210 a second: the active-run count and the queue use indexes, so an agent's backlog of finished runs costs nothing at claim time. (A first measurement right after bulk-loading history looked twice as slow; that was autovacuum and checkpoint work from the load, and vanished after `VACUUM ANALYZE`.)
+- **Plan worker counts by the agent's own concurrency limit.** A single agent's `maxConcurrentRuns` already caps how many of its runs are active; workers beyond that wait. The supervisor reports a `limited` event when that happens.
 
 ## OpenShift (not verified)
 
