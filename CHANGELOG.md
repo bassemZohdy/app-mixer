@@ -4,7 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
-- A weekly `postgres-versions.yml` workflow runs the PostgreSQL integration suites on PostgreSQL 14, 15 and 17 as well as the main job's 16 (all 64 tests passed on each when first run), using the file list in `ci.yml`.
+- A weekly `postgres-versions.yml` workflow runs the PostgreSQL integration suites on PostgreSQL 14, 15 and 17 as well as the main job's 16 (all 65 tests passed on each in CI when first run), using the file list in `ci.yml`.
 - An opt-in test against Ory Hydra (`APP_MIXER_TEST_HYDRA=docker`) and a documented list of identity provider requirements. Hydra's access tokens carry `typ: JWT`, which the authenticator refuses by design (it requires RFC 9068 `at+jwt`); everything else passed in a scratch build without that check.
 - `createRemoteControlConnector` takes an optional `onAnchorError(error)`: a failing promotion-floor anchor was swallowed silently after a committed import and during the catch-up before the next one, which left rollback protection stale with no signal. A throwing callback is ignored.
 - `scripts/live-github-delivery.mjs`: a live check that GitHub itself delivers signed events to the GitHub webhook adapter (a `ping`, the `push` test event twice, and a wrong signature refused through a temporary tunnel), cleaning up its webhook and tunnel. It passed on 2026-11-08; the documentation now says GitHub signs with the secret string's UTF-8 bytes.
