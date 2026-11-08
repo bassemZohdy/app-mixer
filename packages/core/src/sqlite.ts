@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {checkPromotionPackage, createPromotionPackage,validEnvironment} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
 import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
+import {openDatabase} from './sqlite-open.js';
 
 type Published = { version: number; definition: ApplicationDefinition };
 
@@ -14,7 +15,7 @@ export class SqliteApplicationStore {
     validate(initial);
     if (publicationGuard !== undefined && typeof publicationGuard !== 'function') throw Error('Invalid publication guard');
     this.id = initial.id;
-    this.db = new DatabaseSync(path);
+    this.db = openDatabase(path);
     try {
       this.db.exec(`
         PRAGMA busy_timeout = 5000;

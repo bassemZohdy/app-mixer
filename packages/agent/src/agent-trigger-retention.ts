@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {ensureAgentRunTerminalSchema} from './agent-run-terminal.js';
 import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {openDatabase} from './sqlite-open.js';
 
 type Actor={tenantId:string;principalId:string};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'redact'|'read',runId:string,signal?:AbortSignal)=>boolean|Promise<boolean>;authorizeDiscovery?:(actor:Actor,scope:AgentRunScope,signal?:AbortSignal)=>boolean|Promise<boolean>};
@@ -13,7 +14,7 @@ export class SqliteAgentTriggerRetention {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly authorizeDiscovery:Options['authorizeDiscovery'];
  constructor(path:string,options:Options){
   if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function'||(options.authorizeDiscovery!==undefined&&typeof options.authorizeDiscovery!=='function'))throw Error('Invalid trigger retention');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.authorizeDiscovery=options.authorizeDiscovery;this.db=new DatabaseSync(path);
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.authorizeDiscovery=options.authorizeDiscovery;this.db=openDatabase(path);
   try{this.db.exec('PRAGMA busy_timeout=5000');for(const name of ['agent_runs','agent_trigger_inbox','agent_trigger_redactions'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Trigger inbox unavailable');ensureTriggerReceiptSchema(this.db);ensureAgentRunTerminalSchema(this.db);}catch(error){this.db.close();throw error;}
  }
  close():void{this.db.close();}

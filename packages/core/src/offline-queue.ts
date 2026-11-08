@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {CapabilityRegistry,CapabilityOutcomeUncertainError, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
+import {openDatabase} from './sqlite-open.js';
 
 export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
 export type OfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:OfflineStatus;attempts:number;nextAttemptAt:number;completedAt?:number};
@@ -23,7 +24,7 @@ export class SqliteOfflineQueue {
   private readonly retryDelayMs:number;
   constructor(path:string,options:OfflineQueueOptions){
     if(!options||options.enabled!==true||!Number.isSafeInteger(options.maxAttempts)||options.maxAttempts<1||options.maxAttempts>20||!Number.isSafeInteger(options.retryDelayMs)||options.retryDelayMs<0||options.retryDelayMs>86400000)throw Error('Invalid offline queue policy');
-    this.maxAttempts=options.maxAttempts;this.retryDelayMs=options.retryDelayMs;this.db=new DatabaseSync(path);
+    this.maxAttempts=options.maxAttempts;this.retryDelayMs=options.retryDelayMs;this.db=openDatabase(path);
     try{this.db.exec(`PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS offline_operations (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, principal_id TEXT NOT NULL,

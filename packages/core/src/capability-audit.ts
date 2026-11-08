@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {CapabilityAuditEvent} from './capabilities.js';
+import {openDatabase} from './sqlite-open.js';
 
 export type StoredCapabilityAuditEvent=CapabilityAuditEvent & {sequence:number;recordedAt:number};
 const text=(value:unknown):value is string=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value);
@@ -11,7 +12,7 @@ export class SqliteCapabilityAudit {
  private readonly db:DatabaseSync;private readonly clock:()=>number;
  constructor(path:string,options:{clock?:()=>number}={}){
   if(typeof path!=='string'||!path||!options||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid capability audit configuration');
-  this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
+  this.clock=options.clock??Date.now;this.db=openDatabase(path);
   try{this.db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, invocation_id TEXT NOT NULL, operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,sequence);');}catch(error){this.db.close();throw error;}
  }
  /** Compatible with CapabilityRegistry's required audit sink. */

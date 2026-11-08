@@ -1,6 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
+import {openDatabase} from './sqlite-open.js';
 
 export type DataScope = {tenantId:string; applicationId:string};
 export type DataRecord = {id:string; revision:number; value:Record<string,unknown>};
@@ -75,7 +76,7 @@ export class SqliteDataProvider implements DataProvider {
   constructor(path:string,options:SqliteDataProviderOptions={}){
     const limits=options?.migrationLimits;if(!options||typeof options!=='object'||Array.isArray(options)||(limits!==undefined&&(!limits||typeof limits!=='object'||Array.isArray(limits)))||(limits?.maxRecords!==undefined&&(!Number.isSafeInteger(limits.maxRecords)||limits.maxRecords<1||limits.maxRecords>10000))||(limits?.maxBytes!==undefined&&(!Number.isSafeInteger(limits.maxBytes)||limits.maxBytes<1||limits.maxBytes>128*1024*1024)))throw Error('Invalid migration limits');
     this.migrationMaxRecords=limits?.maxRecords??1000;this.migrationMaxBytes=limits?.maxBytes??16*1024*1024;
-    this.db=new DatabaseSync(path);
+    this.db=openDatabase(path);
     try {this.db.exec(`PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS business_records (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, collection_id TEXT NOT NULL,

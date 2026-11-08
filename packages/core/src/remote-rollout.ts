@@ -2,6 +2,7 @@ import {RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailabl
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import type {createRemoteControlConnector} from './remote-control-connector.js';
+import {openDatabase} from './sqlite-open.js';
 
 type Actor={tenantId:string;principalId:string};
 export type RemoteRolloutScope={tenantId:string;applicationId:string;sourceEnvironment:string;targetEnvironment:string};
@@ -16,7 +17,7 @@ export class SqliteRemoteRollout {
  private readonly db:DatabaseSync;private readonly key:string;private readonly actor:Actor;private readonly connector:Connector;private active=false;
  constructor(path:string,connector:Connector,actor:Actor){
   if(!validText(path)||!connector?.rolloutConfig?.safe||!connector.rolloutRepository||typeof connector.rolloutRepository.getPublished!=='function'||typeof (connector.rolloutRepository as {getPromotionFloor?:unknown}).getPromotionFloor!=='function'||!actor||!validText(actor.tenantId)||!validText(actor.principalId))throw Error('Invalid remote rollout configuration');
-  this.connector=connector;this.actor={tenantId:actor.tenantId,principalId:actor.principalId};const c=connector.rolloutConfig;this.key=JSON.stringify([this.actor.tenantId,c.applicationId,c.sourceEnvironment,c.targetEnvironment]);this.db=new DatabaseSync(path);
+  this.connector=connector;this.actor={tenantId:actor.tenantId,principalId:actor.principalId};const c=connector.rolloutConfig;this.key=JSON.stringify([this.actor.tenantId,c.applicationId,c.sourceEnvironment,c.targetEnvironment]);this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS remote_rollouts (id TEXT PRIMARY KEY, phase TEXT NOT NULL CHECK(phase IN ('idle','running','importing','uncertain')), token TEXT, source_version INTEGER, expected_version INTEGER);
    CREATE TABLE IF NOT EXISTS remote_rollout_recovery_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT NULL,source_version INTEGER,expected_version INTEGER,observed_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS remote_rollout_recovery_scope ON remote_rollout_recovery_events(rollout_id,event_id);

@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash,type KeyObject} from 'node:crypto';
 import {signPromotionPackage,type SignedPromotionPackage,type PromotionSignatureEvidence} from './signed-promotion.js';
 import {validEnvironment,type PromotionPackage} from './promotion.js';
+import {openDatabase} from './sqlite-open.js';
 
 export type PromotionSigningAuditEntry={sequence:number;previousHash:string;recordedAt:number;tenantId:string;principalId:string;applicationId:string;sourceEnvironment:string;sourceVersion:number;packageDigest:string;targetEnvironment:string;keyId:string;expectedVersion:number|null;signerPrincipal:string|null;signature:string;hash:string};
 export type PromotionSigningAuditHead={sequence:number;hash:string};
@@ -22,7 +23,7 @@ export class SqlitePromotionSigningAudit {
  private readonly db:DatabaseSync;private readonly clock:()=>number;
  constructor(path:string,options:{clock?:()=>number}={}){
   if(typeof path!=='string'||!path||!options||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid promotion signing audit configuration');
-  this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
+  this.clock=options.clock??Date.now;this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000;
    CREATE TABLE IF NOT EXISTS promotion_signing_audit (sequence INTEGER PRIMARY KEY, previous_hash TEXT NOT NULL, recorded_at INTEGER NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, application_id TEXT NOT NULL, source_environment TEXT NOT NULL, source_version INTEGER NOT NULL, package_digest TEXT NOT NULL, target_environment TEXT NOT NULL, key_id TEXT NOT NULL, expected_version INTEGER, signer_principal TEXT, signature TEXT NOT NULL, hash TEXT NOT NULL UNIQUE);
    CREATE INDEX IF NOT EXISTS promotion_signing_audit_signature ON promotion_signing_audit(signature);

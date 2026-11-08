@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {CapabilityRegistry, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
+import {openDatabase} from './sqlite-open.js';
 
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
@@ -20,7 +21,7 @@ export type StagedOutcomeVerifier=(scope:DataScope,operation:StagedOperation)=>S
 export class SqliteStagedOperations {
   private readonly db:DatabaseSync;
   constructor(path:string){
-    this.db=new DatabaseSync(path);
+    this.db=openDatabase(path);
     try {
       this.db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
       try {

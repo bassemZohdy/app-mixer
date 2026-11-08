@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import {type AgentRunScope} from './durable-runs.js';
+import {openDatabase} from './sqlite-open.js';
 
 type Actor={tenantId:string;principalId:string};
 type Kind='approval_requested'|'delegation_renewal_required';
@@ -21,7 +22,7 @@ export function insertAgentNotice(db:DatabaseSync,scope:AgentRunScope,runId:stri
 /** Authorized local inbox; acknowledgements are per principal and do not decide a request. */
 export class SqliteAgentNotices {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly clock:()=>number;private readonly timeoutMs:number|undefined;private readonly maxPending:number|undefined;private inFlight=0;
- constructor(path:string,options:Options){if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid notice configuration');if((options.timeoutMs===undefined)!==(options.maxPending===undefined)||(options.timeoutMs!==undefined&&(!Number.isInteger(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000))||(options.maxPending!==undefined&&(!Number.isInteger(options.maxPending)||options.maxPending<1||options.maxPending>100)))throw Error('Invalid notice configuration');this.timeoutMs=options.timeoutMs;this.maxPending=options.maxPending;this.scope={...options.scope};this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);try{this.db.exec('PRAGMA busy_timeout=5000');ensureAgentNoticeSchema(this.db)}catch(error){this.db.close();throw error;}}
+ constructor(path:string,options:Options){if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid notice configuration');if((options.timeoutMs===undefined)!==(options.maxPending===undefined)||(options.timeoutMs!==undefined&&(!Number.isInteger(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000))||(options.maxPending!==undefined&&(!Number.isInteger(options.maxPending)||options.maxPending<1||options.maxPending>100)))throw Error('Invalid notice configuration');this.timeoutMs=options.timeoutMs;this.maxPending=options.maxPending;this.scope={...options.scope};this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=openDatabase(path);try{this.db.exec('PRAGMA busy_timeout=5000');ensureAgentNoticeSchema(this.db)}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  isBoundTo(scope:AgentRunScope):boolean{return !!scope&&scope.tenantId===this.scope.tenantId&&scope.agentId===this.scope.agentId;}
  private actor(actor:Actor):Actor{if(!actor||actor.tenantId!==this.scope.tenantId||!valid(actor.principalId))throw Error('Invalid notice actor');return {tenantId:actor.tenantId,principalId:actor.principalId};}

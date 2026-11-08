@@ -1,6 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {type AgentDelegation} from './configured-runtime.js';
 import {type AgentRunScope} from './durable-runs.js';
+import {openDatabase} from './sqlite-open.js';
 
 type Actor={tenantId:string;principalId:string};
 type Access='issue'|'read'|'renew'|'revoke'|'verify'|'history';
@@ -13,7 +14,7 @@ export class SqliteAgentDelegations {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly runId:string;private readonly authorize:Options['authorize'];private readonly clock:()=>number;private readonly timeoutMs?:number;private readonly maxPending?:number;private inFlight=0;
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.timeoutMs===undefined)!==(options.maxPending===undefined)||(options.timeoutMs!==undefined&&(!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000))||(options.maxPending!==undefined&&(!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>100)))throw Error('Invalid delegation configuration');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.timeoutMs=options.timeoutMs;this.maxPending=options.maxPending;this.db=new DatabaseSync(path);
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.timeoutMs=options.timeoutMs;this.maxPending=options.maxPending;this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000;
    CREATE TABLE IF NOT EXISTS agent_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,revoked INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id));
    CREATE TABLE IF NOT EXISTS agent_delegation_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision INTEGER NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,event_at INTEGER NOT NULL);

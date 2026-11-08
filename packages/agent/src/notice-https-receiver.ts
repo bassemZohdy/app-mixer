@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
 import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {openDatabase} from './sqlite-open.js';
 
 type Actor={tenantId:string;principalId:string};
 type Access='receive'|'verify'|'list'|'read'|'acknowledge';
@@ -21,7 +22,7 @@ export class SqliteAgentNoticeReceiver {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly maxPending:number;private readonly authorize:Options['authorize'];private readonly clock:()=>number;
  constructor(path:string,options:Options){
   if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||!integer(options.maxPending)||options.maxPending<1||options.maxPending>10000||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid notice receiver configuration');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.maxPending=options.maxPending;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.maxPending=options.maxPending;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000;
    CREATE TABLE IF NOT EXISTS received_agent_notices (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_key TEXT NOT NULL,sender_id TEXT NOT NULL,message TEXT NOT NULL,received_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,delivery_key));
    CREATE INDEX IF NOT EXISTS received_agent_notices_scope ON received_agent_notices(tenant_id,agent_id,id);
