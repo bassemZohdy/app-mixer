@@ -214,3 +214,21 @@ test('only a finished run can be archived, and an archived run is frozen',()=>{
   void created;
  }finally{close();}
 });
+
+test('limits are inclusive at their exact edge',()=>{
+ const {runs,close}=open();
+ try{
+  for(const id of ['a','b','c'])make(runs,id,{deadline:100});
+  // A page that is exactly full has no next page; a limit of 1 is valid.
+  assert.equal(runs.expiredPage(scope,100,{limit:3}).next,undefined,'exactly a full page');assert.equal(runs.expiredPage(scope,100,{limit:2}).items.length,2);assert.equal(runs.expiredPage(scope,100,{limit:1}).items.length,1);assert.ok(runs.expiredPage(scope,100,{limit:1}).next);
+  assert.equal(runs.queuedPage(scope,{limit:1}).runIds.length,1);assert.equal(runs.list(scope,{limit:1}).length,1);assert.equal(runs.expiredPage(scope,0).items.length,0,'time zero is valid');
+  assert.equal(runs.pruneStarts(1,0),0,'time zero is valid');assert.equal(runs.pruneStarts(3660,0),0);
+  // Leases of 1 ms and exactly an hour, renewed as well as claimed; a daily limit of 1.
+  const wide=make(runs,'wide',{deadline:10*DAY}),claimed=runs.claim(scope,'wide',wide.revision,'w',1,10,100,1);assert.equal(claimed.leaseUntil,11);
+  const renewed=runs.renew(scope,'wide',claimed.revision,claimed.leaseToken,3600000,10);assert.equal(renewed.leaseUntil,3600010,'a renewal of exactly an hour');
+  const again=runs.renew(scope,'wide',renewed.revision,claimed.leaseToken,1,10);assert.equal(again.leaseUntil,11,'a renewal of 1 ms');
+  assert.throws(()=>runs.renew(scope,'wide',again.revision,claimed.leaseToken,3600001,10),/Invalid lease/);
+  assert.throws(()=>runs.renew(scope,'wide',again.revision,claimed.leaseToken,0,10),/Invalid lease/);
+  const second=make(runs,'second',{deadline:10*DAY});assert.throws(()=>runs.claim(scope,'second',second.revision,'w',10,12,100,1),/daily run limit/,'one start a day');
+ }finally{close();}
+});
