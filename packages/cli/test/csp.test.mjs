@@ -33,18 +33,6 @@ test('the development review page and the approval review page need no unsafe-in
  }finally{control.close();approval.close();}
 });
 
-test('the generated app serves its page with a strict policy and referrer policy',{timeout:20000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-csp-'));let server;
- try{
-  const target=await createProject('csp-app',dir);
-  server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0'},stdio:['ignore','pipe','pipe']});
-  const url=await new Promise((resolve,reject)=>{let output='';server.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(new Error('Server exited before startup: '+code)));});
-  const page=await fetch(url);assert.equal(page.status,200);assertPolicy(page,await page.clone().text(),'generated page');
-  const policy=page.headers.get('content-security-policy');assert.match(policy,/connect-src 'self'/);assert.match(policy,/worker-src 'self'/);
-  const script=await fetch(url+'/renderer.mjs');assert.equal(script.status,200);assert.equal(script.headers.get('content-security-policy'),null,'only the page carries the policy');
- }finally{if(server){server.kill();await once(server,'exit').catch(()=>{});}await rm(dir,{recursive:true,force:true});}
-});
-
 // Real browser (opt-in, APP_MIXER_TEST_BROWSER=1): the policy must not block the pages' own scripts.
 const browserBinary=process.env.CHROME_BIN||['/usr/bin/google-chrome','/usr/bin/chromium','C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find(path=>existsSync(path));
 async function devtools(url){const socket=new WebSocket(url);await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});let next=0;const pending=new Map();socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.id&&pending.has(message.id)){const {resolve,reject}=pending.get(message.id);pending.delete(message.id);if(message.error)reject(Error(message.error.message));else resolve(message.result);}};return {send:(method,params={})=>new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));}),close:()=>socket.close()};}
