@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- A test runs axe-core 4.14.0 in a real browser against the generated app's page and expects no violations (`APP_MIXER_TEST_BROWSER=1`; CI runs it). The generated page's header is now a level-one heading, which axe's page-structure rules require.
 - `scripts/bench-data-plane.mjs`, a Data Plane load benchmark (requests per second, latency, CPU per request and memory), and a capacity section in `docs/kubernetes-data-plane.md`.
 - The Data Plane serializes a publication once per request instead of twice (the ETag is the digest of the body it sends), and the new `immutablePublications` option lets a host keep the serialized body and ETag for a repository that returns an object that never changes. The container's start-up script freezes its mounted publication and sets the option.
 - The development review page and the approval review page allow their inline script and style by SHA-256 hash instead of `'unsafe-inline'` (`csp.ts` in core and agent), and gain `base-uri 'none'`, `frame-ancestors 'none'` and `Referrer-Policy: no-referrer`. A test hashes the served blocks independently and, in a real browser, checks that the page scripts still run under the policy.
