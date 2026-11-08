@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- A weekly `operating-systems.yml` workflow runs the unit tests on Windows and macOS (Linux arm64 has its own).
 - A documented, unverified OpenShift section: an attempt on OpenShift Local could not deploy the manifests because the node was out of memory at 11 GB; the expected `restricted-v2` problem with the fixed `runAsUser: 1000` is described, not tested.
 - A weekly `arm64.yml` workflow runs the unit tests and the PostgreSQL integration suites on native Linux arm64 runners (Graviton and Ampere nodes are common in Kubernetes); both passed on the first run.
 - A weekly `postgres-versions.yml` workflow runs the PostgreSQL integration suites on PostgreSQL 14, 15 and 17 as well as the main job's 16 (all 65 tests passed on each in CI when first run), using the file list in `ci.yml`.
@@ -39,6 +40,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 ### Changed
 - The supported Node floor is now 22.22.2 (was 22.13.0): `engines`, README and CONTRIBUTING, the CI matrix, the kind workflow and the Docker base images. This unblocked `jsdom` 31 and the OpenTelemetry 3.x group (`@opentelemetry/api` 1.10.0, `core`, `sdk-trace`, `context-async-hooks`, `resources` 3.1.0, OTLP exporter 0.301.0), taken in this release; the exporter is also a root dev dependency so the collector tests resolve it, and the browser collector test's module server resolves packages' `#imports`.
 ### Fixed
+- Several processes opening the same new SQLite file at once could fail with `database is locked`: switching a new file to WAL mode can fail immediately without waiting for the busy timeout. Every store now opens through `openDatabase`, which retries only that switch for about as long as the busy timeout. Found by running the tests on Windows and macOS in CI (a flaky macOS test, then a clear Windows failure); reproduced on Windows with four processes and fixed with a test that failed first.
 - `SqliteRemoteRollout.runOnce` no longer replaces the error that ended a pass with "Remote rollout state changed" when its own cleanup write fails; the PostgreSQL coordinator already behaved this way.
 - A model that refuses a call before sending anything (an error marked with `markNoEffect`) now has its token reservation released by the runtime; before, the reservation stayed held and the run ended uncertain.
 - The Data Plane's `TLS credentials active` log line (and `TlsCredentialInfo.subject`) failed for a certificate without a subject, which is what cert-manager issues by default: the reload worked but nothing was logged. `subject` is now an empty string and `altNames` lists the names.

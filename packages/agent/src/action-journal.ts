@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {AgentError} from './errors.js';
@@ -35,7 +36,7 @@ export class SqliteAgentActionJournal {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly runId:string;private readonly token:string;private readonly clock:()=>number;
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||!valid(options.leaseToken)||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid action journal configuration');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.token=options.leaseToken;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.token=options.leaseToken;this.clock=options.clock??Date.now;this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_action_journal (
     tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,

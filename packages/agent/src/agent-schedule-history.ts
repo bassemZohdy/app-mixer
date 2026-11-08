@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentScheduleConfig} from './agent-schedules.js';
 import {isIdentifier,isNonNegativeInteger} from './validation.js';
@@ -12,7 +13,7 @@ const integer=isNonNegativeInteger;
 /** Host-authorized read access to immutable schedule configuration and activation history. */
 export class SqliteAgentScheduleHistory {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];
- constructor(path:string,options:Options){if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function')throw Error('Invalid schedule history');this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.db=new DatabaseSync(path);try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL');if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_schedule_events'").get())throw Error('Schedule history unavailable');}catch(error){this.db.close();throw error;}}
+ constructor(path:string,options:Options){if(!options||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||typeof options.authorize!=='function')throw Error('Invalid schedule history');this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.db=openDatabase(path);try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL');if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_schedule_events'").get())throw Error('Schedule history unavailable');}catch(error){this.db.close();throw error;}}
  close():void{this.db.close();}
  async list(actor:Actor,options:{after?:number|undefined;limit?:number|undefined;scheduleId?:string|undefined}={}):Promise<{items:AgentScheduleEvent[];nextAfter?:number}>{
   if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId))throw Error('Invalid schedule history actor');const who={tenantId:actor.tenantId,principalId:actor.principalId},after=options?.after??0,limit=options?.limit??50,scheduleId=options?.scheduleId;if(!options||!integer(after)||!integer(limit)||limit<1||limit>100||(scheduleId!==undefined&&!id(scheduleId)))throw Error('Invalid schedule history listing');if(await this.authorize({...who},'list',null)!==true)throw Error('Schedule history access denied');

@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {createHash} from 'node:crypto';
 import { AppMixerError } from './errors.js';
 
@@ -55,7 +56,7 @@ export class SqliteDataProvider implements DataProvider {
   readonly supportsSchemaRead=true;
   private readonly db:DatabaseSync;
   constructor(path:string){
-    this.db=new DatabaseSync(path);
+    this.db=openDatabase(path);
     try {this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS business_records (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, collection_id TEXT NOT NULL,

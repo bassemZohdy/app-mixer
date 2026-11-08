@@ -11,7 +11,7 @@ test('every SQLite store opens its database in WAL mode',()=>{
  const packages=fileURLToPath(new URL('../../',import.meta.url));let stores=0;
  for(const name of readdirSync(packages)){
   let sources;try{sources=readdirSync(join(packages,name,'src')).filter(file=>file.endsWith('.ts'));}catch{continue;}
-  for(const file of sources){const text=readFileSync(join(packages,name,'src',file),'utf8');if(!text.includes('new DatabaseSync('))continue;stores++;assert.match(text,/journal_mode\s*=\s*WAL/,`${name}/src/${file} opens SQLite without WAL; add PRAGMA journal_mode=WAL beside busy_timeout`);}
+  for(const file of sources){const text=readFileSync(join(packages,name,'src',file),'utf8');if(!text.includes('new DatabaseSync(')&&!text.includes('openDatabase('))continue;stores++;if(text.includes('openDatabase('))continue;/* openDatabase switches to WAL, retrying when processes open a new file together */assert.match(text,/journal_mode\s*=\s*WAL/,`${name}/src/${file} opens SQLite without WAL; use openDatabase(path) or add PRAGMA journal_mode=WAL beside busy_timeout`);}
  }
  assert.ok(stores>=26,'found '+stores+' stores');
 });

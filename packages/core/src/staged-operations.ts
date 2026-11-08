@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {CapabilityRegistry, hadNoEffect, type InvocationContext} from './capabilities.js';
@@ -17,7 +18,7 @@ export type StagedOutcomeVerifier=(scope:DataScope,operation:StagedOperation)=>S
 export class SqliteStagedOperations {
   private readonly db:DatabaseSync;
   constructor(path:string){
-    this.db=new DatabaseSync(path);
+    this.db=openDatabase(path);
     try {
       this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; BEGIN IMMEDIATE');
       try {

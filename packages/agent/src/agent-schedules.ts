@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
@@ -75,7 +76,7 @@ export function next(rule:ScheduleRule,after:number):number{
 /** SQLite-backed schedules and atomic occurrence enqueue. Host supplies authorization and time. */
 export class SqliteAgentSchedules {
  private readonly db:DatabaseSync;
- constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+ constructor(path:string){this.db=openDatabase(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
   CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));
   CREATE INDEX IF NOT EXISTS agent_schedules_due ON agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id);
   CREATE TABLE IF NOT EXISTS agent_schedule_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at INTEGER,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,schedule_id,revision));

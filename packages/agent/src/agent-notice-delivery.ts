@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
 import {AgentError} from './errors.js';
@@ -20,7 +21,7 @@ export class SqliteAgentNoticeDelivery {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly authorizeList:Options['authorizeList'];private readonly clock:()=>number;private readonly active=new Set<number>();
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||typeof options.authorize!=='function'||(options.authorizeList!==undefined&&typeof options.authorizeList!=='function')||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid notice delivery configuration');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.authorizeList=options.authorizeList;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.authorize=options.authorize;this.authorizeList=options.authorizeList;this.clock=options.clock??Date.now;this.db=openDatabase(path);
   try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL');if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_notices'").get())throw Error('Notice inbox unavailable');this.db.exec(`
    CREATE TABLE IF NOT EXISTS agent_notice_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,notice_id INTEGER NOT NULL,destination_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','sending','uncertain','delivered')),attempts INTEGER NOT NULL,revision INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,notice_id,destination_id));
    CREATE TABLE IF NOT EXISTS agent_notice_delivery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_id INTEGER NOT NULL,revision INTEGER NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,delivery_id,revision));

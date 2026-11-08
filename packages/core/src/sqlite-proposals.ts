@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import { randomUUID } from 'node:crypto';
 import { ApplicationStore, type Patch } from './index.js';
 import { isValidPatch, type DefinitionRepository } from './planes.js';
@@ -18,7 +19,7 @@ export class SqliteDevelopmentProposals implements ProposalStore {
   private readonly db: DatabaseSync;
   constructor(path: string, private readonly repository: DefinitionRepository, private readonly limit = 100, private readonly settledLimit = 100) {
     if (typeof path !== 'string' || !path || !Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(settledLimit) || settledLimit < 0) throw Error('Invalid proposal limit');
-    this.db = new DatabaseSync(path);
+    this.db = openDatabase(path);
     try {
       this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS development_proposals (

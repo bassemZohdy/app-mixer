@@ -1,5 +1,6 @@
 import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {createHash} from 'node:crypto';
 import {actionJSON} from './action-journal.js';
 import {type AgentRunScope} from './durable-runs.js';
@@ -17,7 +18,7 @@ export class SqliteAgentApprovals {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly runId:string;private readonly authorize:Options['authorize'];private readonly clock:()=>number;
  constructor(path:string,options:Options){
   if(!options||!options.scope||!valid(options.scope.tenantId)||!valid(options.scope.agentId)||!valid(options.runId)||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid approval configuration');
-  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=new DatabaseSync(path);
+  this.scope={tenantId:options.scope.tenantId,agentId:options.scope.agentId};this.runId=options.runId;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_approvals (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,definition_version INTEGER NOT NULL,status TEXT NOT NULL,expires_at INTEGER NOT NULL,requested_by TEXT NOT NULL,decided_by TEXT,decided_at INTEGER,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
    CREATE TABLE IF NOT EXISTS agent_approval_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));

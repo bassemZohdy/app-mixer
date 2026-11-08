@@ -2,6 +2,7 @@ import {ensureAgentRunHistory} from './agent-run-history.js';
 import {ensureAgentTraceSchema,insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {ensureAgentNoticeSchema,insertAgentNotice} from './agent-notices.js';
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {randomUUID} from 'node:crypto';
 import {AgentError} from './errors.js';
 import {assertSchemaSupported,recordSchemaVersion} from './schema-version.js';
@@ -18,7 +19,7 @@ function scopeKey(scope:RunScope,runId:string):void{if(!scope||!id(scope.tenantI
 /** Local lifecycle registry. Host must authenticate, authorize, and reconcile external effects. */
 export class SqliteAgentRuns {
  private readonly db:DatabaseSync;
- constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+ constructor(path:string){this.db=openDatabase(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
   CREATE TABLE IF NOT EXISTS agent_runs (
    tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,
    revision INTEGER NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline INTEGER NOT NULL,

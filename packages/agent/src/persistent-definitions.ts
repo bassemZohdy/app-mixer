@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 
 const identifier=z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/);
 const unique=(items:string[])=>new Set(items).size===items.length;
@@ -38,7 +39,7 @@ function key(value:unknown):asserts value is string {if(!identifier.safeParse(va
 export class SqliteAgentDefinitions {
  private readonly db:DatabaseSync;
  constructor(path:string){
-  this.db=new DatabaseSync(path);
+  this.db=openDatabase(path);
   try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
    CREATE TABLE IF NOT EXISTS agent_definitions (
     tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,version INTEGER NOT NULL,manifest TEXT NOT NULL,

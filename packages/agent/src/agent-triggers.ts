@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from './sqlite-open.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
@@ -24,7 +25,7 @@ function canonical(value:unknown):string {
 /** Local trigger inbox; caller must authenticate and authorize the source and scope. */
 export class SqliteAgentTriggers {
  private readonly db:DatabaseSync;
- constructor(path:string){this.db=new DatabaseSync(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+ constructor(path:string){this.db=openDatabase(path);try{this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
   CREATE TABLE IF NOT EXISTS agent_trigger_inbox (
    tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT NULL,
    event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,
