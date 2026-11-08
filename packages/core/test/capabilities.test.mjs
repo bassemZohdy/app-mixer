@@ -74,6 +74,8 @@ test('uncloneable invocation inputs retain fail-closed audit and authorization b
  const events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));let calls=0;
  registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:context=>context.principalId==='allowed',validate:()=>true,execute:()=>calls++});
  await assert.rejects(registry.invoke('write',{f:()=>{}},{tenantId:'t',principalId:'denied',origin:'ui'}),/forbidden/);await assert.rejects(registry.invoke('write',{f:()=>{}},{tenantId:'t',principalId:'allowed',origin:'ui'}));assert.deepEqual(events,['attempt','denied','attempt','failed']);assert.equal(calls,0);
+});
+
 test('refusals before execution are marked as having no effect; execution failures are not',async()=>{
  const registry=new CapabilityRegistry(event=>{if(event.operationId==='unaudited')throw Error('audit unavailable');});
  registry.register({operationId:'op',method:'POST',path:'/op'},{authorize:ctx=>ctx.principalId==='allowed',validate:input=>input!=='bad',authorizeInput:(_ctx,input)=>input!=='restricted',execute:input=>{if(input==='boom')throw Error('provider failed');return input;}});
