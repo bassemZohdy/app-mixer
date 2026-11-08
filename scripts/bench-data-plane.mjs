@@ -2,6 +2,7 @@
 // Capacity figures for the Kubernetes Data Plane: throughput, latency, CPU per request and memory under sustained load.
 //
 // Usage: node scripts/bench-data-plane.mjs [seconds=8] [connections=32]
+// BENCH_ONLY=text runs only the scenarios whose name contains the text (for example JWT).
 //
 // It starts deploy/kubernetes/data-plane.mjs (the process the container runs) as a child with a mounted publication,
 // drives it with a keep-alive load generator in this process, and reports for each scenario the requests per second,
@@ -53,14 +54,19 @@ function load(port,path,headers,duration,concurrency){
 
 const rows=[];
 async function scenario(name,{env,path='/application',headers={}}){
+  if(process.env.BENCH_ONLY&&!name.includes(process.env.BENCH_ONLY))return;
   const plane=await start(env);
   try{
     await load(plane.port,path,headers,1,Math.min(8,connections)); // warm up
     const cpu0=plane.state.cpu,cpuBefore=cpu0.user+cpu0.system;await pause(300);
     const before=plane.state.cpu,startCpu=before.user+before.system;
-    const result=await load(plane.port,path,headers,seconds,connections);await pause(300);
+    // Memory over the run: a leak shows as a climb that does not level off, a heap that is merely sized by load as a plateau.
+    const samples=[];const sampler=setInterval(()=>samples.push(plane.state.rss/1048576),Math.max(250,seconds*1000/16));
+    const result=await load(plane.port,path,headers,seconds,connections);clearInterval(sampler);await pause(300);
+    const quarter=Math.max(1,Math.floor(samples.length/4)),mean=part=>part.length?part.reduce((a,b)=>a+b,0)/part.length:0;
+    const trend=[0,1,2,3].map(i=>mean(samples.slice(i*quarter,i===3?samples.length:(i+1)*quarter)).toFixed(0)).join(' > ');
     const after=plane.state.cpu,usedCpuMs=(after.user+after.system-startCpu)/1000;
-    rows.push({name,...result,cpuMsPerRequest:usedCpuMs/result.requests,serverCpuCores:usedCpuMs/1000/seconds,rssMb:plane.state.rss/1048576,peakMb:plane.state.peak/1048576});
+    rows.push({name,...result,cpuMsPerRequest:usedCpuMs/result.requests,serverCpuCores:usedCpuMs/1000/seconds,rssMb:plane.state.rss/1048576,peakMb:plane.state.peak/1048576,trend});
     void cpuBefore;
   }finally{await plane.stop();}
 }
@@ -83,9 +89,9 @@ try{
 
   const pad=(value,width)=>String(value).padStart(width);
   console.log(`\nData Plane load: ${connections} connections for ${seconds} s per scenario, Node ${process.version}, ${process.platform} ${process.arch}\n`);
-  console.log('| Scenario | req/s | p50 ms | p95 ms | p99 ms | max ms | errors | server CPU ms/req | server cores | RSS MB (peak) |');
-  console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
-  for(const r of rows)console.log(`| ${r.name} | ${Math.round(r.rps)} | ${r.p50.toFixed(1)} | ${r.p95.toFixed(1)} | ${r.p99.toFixed(1)} | ${r.max.toFixed(0)} | ${r.errors} | ${r.cpuMsPerRequest.toFixed(3)} | ${r.serverCpuCores.toFixed(2)} | ${r.rssMb.toFixed(0)} (${r.peakMb.toFixed(0)}) |`);
+  console.log('| Scenario | req/s | p50 ms | p95 ms | p99 ms | max ms | errors | server CPU ms/req | server cores | RSS MB (peak) | RSS by quarter, MB |');
+  console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  for(const r of rows)console.log(`| ${r.name} | ${Math.round(r.rps)} | ${r.p50.toFixed(1)} | ${r.p95.toFixed(1)} | ${r.p99.toFixed(1)} | ${r.max.toFixed(0)} | ${r.errors} | ${r.cpuMsPerRequest.toFixed(3)} | ${r.serverCpuCores.toFixed(2)} | ${r.rssMb.toFixed(0)} (${r.peakMb.toFixed(0)}) | ${r.trend} |`);
   console.log('\nStatus codes: '+rows.map(r=>`${r.name}: ${JSON.stringify(r.statuses)}`).join('; '));
   void pad;
 }finally{rmSync(dir,{recursive:true,force:true});}
