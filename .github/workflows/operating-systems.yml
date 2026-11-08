@@ -1,0 +1,32 @@
+name: Operating systems
+# The main CI job runs on Linux. The CLI, the local development server and the file-based anchors also run on developers'
+# machines, and Windows and macOS differ in file locking, path handling and signals, so this runs the unit tests there,
+# weekly and on main. (Linux arm64 is in arm64.yml.)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/operating-systems.yml'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  unit-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node -p "process.platform + ' ' + process.arch + ' ' + process.version"
+      - run: npm test

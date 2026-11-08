@@ -3,14 +3,15 @@ test('scaffolds runnable app',async()=>{const dir=await mkdtemp(join(tmpdir(),'a
 test('rejects path traversal',async()=>{await assert.rejects(createProject('../bad'),/Invalid/)});
 
 // The command entry is detected by comparing paths, so it also works where argv[1] uses backslashes (Windows).
-import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {fileURLToPath} from 'node:url';import {stat} from 'node:fs/promises';import {relative} from 'node:path';
+import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {fileURLToPath} from 'node:url';import {stat,realpath} from 'node:fs/promises';import {relative} from 'node:path';
 const run=promisify(execFile),entry=fileURLToPath(new URL('../dist/index.js',import.meta.url));
 test('the command entry creates a project from the command line',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-cli-'));
  try{
   const created=await run(process.execPath,[entry,'create','cli-app'],{cwd:dir});
   assert.match(created.stdout,/^Created .*cli-app/);assert.ok((await stat(join(dir,'cli-app','server.mjs'))).isFile());
-  const viaRelativePath=await run(process.execPath,[relative(dir,entry),'create','second-app'],{cwd:dir});
+  // The relative path starts from the directory the process really runs in: on macOS the temporary directory is under a symlink (/var is /private/var).
+  const viaRelativePath=await run(process.execPath,[relative(await realpath(dir),entry),'create','second-app'],{cwd:dir});
   assert.match(viaRelativePath.stdout,/^Created .*second-app/);
   const usage=await run(process.execPath,[entry],{cwd:dir}).catch(error=>error);
   assert.equal(usage.code,1,'missing arguments print the usage and fail');assert.match(String(usage.stderr),/Usage: app-mixer create <name>/);
