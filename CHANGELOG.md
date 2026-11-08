@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- A draft labelled memory evaluation set (`packages/agent/test/fixtures/memory-evaluation-set.json`) is run through every retrieval mode on PostgreSQL with pgvector, among 900 synthetic distractor memories, comparing the approximate (HNSW) index with exact search. The embedder is a deterministic local reference, so the figures are a regression baseline for the harness, not a measure of a production embedding model.
 - A test runs axe-core 4.14.0 in a real browser against the generated app's page and expects no violations (`APP_MIXER_TEST_BROWSER=1`; CI runs it). The generated page's header is now a level-one heading, which axe's page-structure rules require.
 - `scripts/bench-data-plane.mjs`, a Data Plane load benchmark (requests per second, latency, CPU per request and memory), and a capacity section in `docs/kubernetes-data-plane.md`.
 - The Data Plane serializes a publication once per request instead of twice (the ETag is the digest of the body it sends), and the new `immutablePublications` option lets a host keep the serialized body and ETag for a repository that returns an object that never changes. The container's start-up script freezes its mounted publication and sets the option.
