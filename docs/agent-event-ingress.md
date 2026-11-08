@@ -137,6 +137,21 @@ Run claims enforce a per-tenant, per-agent concurrency limit within the same SQL
 
 
 ## Event enqueue crash recovery
+### How well the tests pin the signature checks
+
+A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time in a compiled module and lists the changes no test noticed) over the generic signed-webhook authenticator and the GitHub, Stripe, Slack and Standard Webhooks adapters showed that the tests missed 22% to 40% of the changes: the exact edge of the replay window, single malformed headers, single bad options, the strict decoding of the body and several limits. `webhook-adapter-boundaries.test.mjs` adds those cases for all five adapters (valid and tampered requests; the window at its limit and one second beyond on both sides, with custom tolerances; a non-integer or negative clock; every header missing, repeated or malformed in turn; each constructor option at and beyond its limit; invalid UTF-8 inside an otherwise valid event; the Slack challenge; the Stripe header limits of 16 signatures, 32 parts and 4096 characters; and the Standard Webhooks signature list).
+
+| Adapter | Caught before | Caught after |
+| --- | ---: | ---: |
+| Generic signed webhook | 59.6% | 94.7% |
+| GitHub | 77.8% | 100% |
+| Stripe | 67.1% | 97.3% |
+| Slack | 69.5% | 97.6% |
+| Standard Webhooks | 62.2% | 96.0% |
+
+The ten survivors left are equivalent changes: a later check refuses the same input (for example a missing header is still refused when the source lookup fails, and an array body is refused when the event fields are checked).
+
+### Live GitHub delivery
 
 Process-termination tests stop a SQLite enqueue before its trace-context, inbox and receipt inserts, and after commit. Reopening verifies that run, trace, inbox and receipt records either all rolled back or all persisted. Retrying the same event creates one run or returns the committed run, retains the first trace context, rejects changed payloads and leaves another tenant's event intact. Additional HTTP tests terminate the authenticated ingress before receipt insertion and after commit but before acknowledgement, then restart it and verify the sender can retry without duplicating the run. They exercise bearer-authenticated events, signed Paddle notifications (including a retry with a different notification ID), Telegram updates authenticated by their configured webhook secret, and Linear updates retried with a changed signed timestamp. These tests exercise one local SQLite database and do not establish remote provider delivery, production node-failure behavior or distributed-store durability.
 
