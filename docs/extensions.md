@@ -113,3 +113,16 @@ For a multi-package preflight, use `app-mixer extension-check-set <set.json> <ho
 Optionally add `allowedExtensions` to the set, mapping each trusted key ID to a nonempty list of exact `{ "id", "version", "scope" }` references. Every artifact must be allowed for its signing key, every configured key must have a list, and the same public key cannot appear under multiple IDs when allowlists are enabled. The core signature verifier enforces this policy before compatibility checks. Omitting `allowedExtensions` trusts every configured key for any host-approved extension. Treat the set, host configuration, keys, paths and requirements as trusted operator input. It is a point-in-time check: registration, policy rechecks and implementation provenance remain the host's responsibility.
 
 The [status badge example](../examples/extensions/status-badge/README.md) demonstrates a versioned web component, publisher signing, a pinned approval, guarded publication, an authorized and audited tool, and generated-workspace rendering in one executable test.
+The test fails if a node caches approvals for half a second, or if a database error counts as allowed. These figures come from one machine. Production latency depends on the primary, network and pool sizing, so the host should repeat the measurement in its target environment and alert on approval-check errors.
+
+## How well the tests pin the shared approval store
+
+A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time in a compiled module and lists the changes no test noticed) found that the PostgreSQL tests missed 37% of the changes to `PostgresExtensionApprovals`. The gaps were the rules that decide whether an extension operation may run: single bad arguments and decisions, the exact edges of an expiry, and the checks on the rows read back, which are what make a tampered or damaged table fail closed. `extension-approvals-boundaries.test.mjs` covers them with a scripted query function, so it needs no database:
+- every argument (actor, scope, reference, operation, and an actor from another tenant than the scope) is refused before anything is read or authorized;
+- a decision is refused for each malformed part, an approval must expire in the future and within a year (exactly 365 days is allowed), and revoking takes an expiry of 0;
+- `isAllowed` denies an approval expiring exactly now, allows one expiring a millisecond later, denies when the revision changes between its two reads, and throws on a row with a revision below 1, a non-boolean `allowed`, a negative or fractional expiry, or more than one row;
+- authorization is asked before and between the reads, and only `true` authorizes;
+- `inspect` and `history` reject the same damaged rows, paginate with the one-extra-row convention and refuse bad `after` and `limit` values; the clock must be a non-negative whole number.
+
+With all the tests (the database-backed ones included), 149 of 155 changes are now caught, up from 97 (62.6% to 96.1%). The six survivors left are equivalent changes: duplicate "the rows are a list and not too long" guards that behave the same for a non-list.
+
