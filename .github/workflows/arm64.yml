@@ -1,0 +1,60 @@
+name: Linux arm64
+# Kubernetes worker nodes are often arm64 (Graviton, Ampere). The main CI job runs on x86-64 only, so this runs the unit
+# tests and the PostgreSQL integration suites on native arm64 runners, weekly and on main.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/arm64.yml'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '53 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  unit-tests:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node -p "process.arch + ' ' + process.version"
+      - run: npm test
+  postgres-suites:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg16
+        env:
+          POSTGRES_USER: appmixer
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: appmixer_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: The PostgreSQL integration suites of the main CI job, on arm64
+        env:
+          APP_MIXER_TEST_POSTGRES_URL: postgresql://appmixer:test-only-password@127.0.0.1:5432/appmixer_test
+        run: |
+          # Take the file list from ci.yml so the two cannot drift apart.
+          files=$(grep -m1 -e '--test-concurrency=3 packages/core/test/postgres-jwt-revocations' .github/workflows/ci.yml | sed 's/.*--test-concurrency=3 //')
+          test -n "$files"
+          node -p "process.arch"
+          node --test --test-concurrency=3 $files
