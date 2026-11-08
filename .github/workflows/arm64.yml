@@ -54,7 +54,7 @@ jobs:
           APP_MIXER_TEST_POSTGRES_URL: postgresql://appmixer:test-only-password@127.0.0.1:5432/appmixer_test
         run: |
           # Take the file list from ci.yml so the two cannot drift apart.
-          files=$(grep -m1 -e '--test-concurrency=3 packages/core/test/postgres-jwt-revocations' .github/workflows/ci.yml | sed 's/.*--test-concurrency=3 //')
+          files=$(grep -m1 -e 'node --test packages/core/test/postgres-jwt-revocations' .github/workflows/ci.yml | sed 's/.*node --test //')
           test -n "$files"
           node -p "process.arch"
           node --test --test-concurrency=3 $files
