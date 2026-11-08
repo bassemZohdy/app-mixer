@@ -110,6 +110,20 @@ Run claims enforce a per-tenant, per-agent concurrency limit within the same SQL
 
 The Twilio signature (HMAC-SHA1 over the URL and the sorted form fields, compared in constant time against the configured URL with and without its default port and in its URL-normalized forms) is implemented in `twilio-signature.ts`; the adapter does not depend on the Twilio SDK. Reference signatures produced by the SDK are fixtures in `packages/agent/test/twilio-signature.test.mjs`.
 
+### How well the tests pin the signature checks
+
+A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time in a compiled module and lists the changes no test noticed) over the generic signed-webhook authenticator and the GitHub, Stripe, Slack and Standard Webhooks adapters showed that the tests missed 22% to 40% of the changes: the exact edge of the replay window, single malformed headers, single bad options, the strict decoding of the body and several limits. `webhook-adapter-boundaries.test.mjs` adds those cases for all five adapters (valid and tampered requests; the window at its limit and one second beyond on both sides, with custom tolerances; a non-integer or negative clock; every header missing, repeated or malformed in turn; each constructor option at and beyond its limit; invalid UTF-8 inside an otherwise valid event; the Slack challenge; the Stripe header limits of 16 signatures, 32 parts and 4096 characters; and the Standard Webhooks signature list).
+
+| Adapter | Caught before | Caught after |
+| --- | ---: | ---: |
+| Generic signed webhook | 59.6% | 94.7% |
+| GitHub | 77.8% | 100% |
+| Stripe | 67.1% | 97.3% |
+| Slack | 69.5% | 97.6% |
+| Standard Webhooks | 62.2% | 96.0% |
+
+The ten survivors left are equivalent changes: a later check refuses the same input (for example a missing header is still refused when the source lookup fails, and an array body is refused when the event fields are checked).
+
 ### Live GitHub delivery
 
 `scripts/live-github-delivery.mjs <owner/repo>` checks the GitHub adapter against GitHub itself. It builds a receiver from the real adapter and event ingress, opens a temporary Cloudflare quick tunnel to it, creates a temporary webhook on the repository, has GitHub send a `ping` and the `push` test event twice, refuses a wrong signature through the tunnel, and then deletes the webhook and stops the tunnel even when a step fails. The report keeps delivery metadata only (no payloads, no secret). It needs `gh` signed in with admin rights on the repository and `cloudflared`.
