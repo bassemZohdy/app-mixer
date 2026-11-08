@@ -26,18 +26,14 @@ Tests that need an external service are skipped unless their variable is set. CI
 
 | Variable | Needs | Command CI runs (see `.github/workflows/ci.yml`) |
 | --- | --- | --- |
-| `APP_MIXER_TEST_POSTGRES_URL=postgresql://user:password@host:5432/db` | PostgreSQL 16 with `pgvector` (CI uses `pgvector/pgvector:0.8.7-pg16`) | The `postgres-revocations` job runs an explicit file list with `node --test --test-concurrency=3`; locally `node --test --test-concurrency=3 packages/core/test/postgres-*.test.mjs packages/agent/test/postgres-*.test.mjs packages/agent/test/memory-evaluation-set.test.mjs` covers the same tests |
-| `APP_MIXER_TEST_BROWSER=1` | Chrome or Edge (headless, DevTools protocol) | `node --test packages/cli/test/browser-rollback-anchor.test.mjs packages/web/test/browser-offline-provisioning.test.mjs packages/web/test/browser-accessibility-parity.test.mjs packages/cli/test/csp.test.mjs` |
+| `APP_MIXER_TEST_POSTGRES_URL=postgresql://user:password@host:5432/db` | PostgreSQL 16 with `pgvector` (CI uses `pgvector/pgvector:0.8.7-pg16`) | The PostgreSQL steps of `.github/workflows/ci.yml` run the `postgres-*` test files |
+| `APP_MIXER_TEST_BROWSER=1` | Chrome or Edge (headless, DevTools protocol) | The browser steps of `.github/workflows/ci.yml` |
 | `APP_MIXER_TEST_HYDRA=docker` | Docker (pulls the Ory Hydra image) | `node --test packages/core/test/hydra-identity.test.mjs` |
-| `APP_MIXER_TEST_BROWSER=1` | Chrome or Edge (headless, DevTools protocol) | `node --test packages/cli/test/browser-rollback-anchor.test.mjs packages/web/test/browser-offline-provisioning.test.mjs packages/web/test/browser-accessibility-parity.test.mjs` |
-| `APP_MIXER_TEST_KEYCLOAK=docker` | Docker (pulls the Keycloak image) | `node --test packages/agent/test/keycloak-identity.test.mjs` |
-| `APP_MIXER_TEST_S3=docker` | Docker (S3-compatible object store) | `node --test packages/core/test/staged-s3-provider.test.mjs packages/agent/test/action-s3-provider-crash.test.mjs` |
-| `APP_MIXER_TEST_OTEL_COLLECTOR=docker` | Docker (OpenTelemetry Collector) | `node --test packages/cli/test/otel-collector-trace.test.mjs` |
 | `APP_MIXER_TEST_PROMETHEUS=docker` | Docker (Prometheus) | `node --test packages/cli/test/alert-rules.test.mjs` |
 | `APP_MIXER_TEST_OLLAMA_CHAT_MODEL` (with `APP_MIXER_TEST_OLLAMA_URL`) | An Ollama server with that chat model pulled | `node --test packages/agent/test/openai-limited-model-provider.test.mjs` |
-| `APP_MIXER_TEST_OLLAMA_URL` (and `APP_MIXER_TEST_OLLAMA_MODEL`, default `all-minilm`) | An Ollama server with that embedding model pulled, plus PostgreSQL with pgvector | `node --test packages/agent/test/memory-evaluation-set.test.mjs` |
-| `APP_MIXER_TEST_POSTGRES_RESTORE=docker` | Docker (one PostgreSQL container) | `node --test packages/core/test/postgres-restore-rollback.test.mjs` |
-| `APP_MIXER_TEST_POSTGRES_FAILOVER=docker` | Docker (PostgreSQL primary and synchronous standby) | `node --test packages/core/test/postgres-revocation-failover.test.mjs packages/agent/test/postgres-run-failover.test.mjs` |
+| `APP_MIXER_TEST_HA_FAILOVER=1` (with `APP_MIXER_TEST_HA_STANDBY_URL` and `APP_MIXER_TEST_POSTGRES_URL`) | A PostgreSQL primary with a synchronous standby | `node --test packages/agent/test/postgres-shared-failover.test.mjs` |
+| `APP_MIXER_TEST_KIND_NODE_FAILURE=1` (with `APP_MIXER_TEST_KUBE_CONTEXT`, `APP_MIXER_TEST_POD_POSTGRES_URL`, `APP_MIXER_TEST_WORKER_IMAGE`, `APP_MIXER_TEST_FIRST_NODE` and `APP_MIXER_TEST_REPLACEMENT_NODE`) | A kind cluster with two worker nodes | The `kubernetes-node-recovery` workflow |
+| `APP_MIXER_TEST_CONCURRENCY=1..32` | Nothing | `npm test` runs that many test files at once (default 2 on Windows, 8 elsewhere) |
 
 CI caches the pinned images these tests start (`node .github/scripts/docker-images.mjs` lists them) with `actions/cache`, so a registry rate limit or slow pull does not fail a run. The Docker Compose outage test runs with `node deploy/local/compose-smoke.mjs`. The Kubernetes (`kubernetes.yml`), agent pod recovery (`agent-pod-recovery.yml`), Flutter (`flutter*.yml`) and React Native device workflows need kind, an Android emulator or an iOS simulator; run them from GitHub with `gh workflow run <workflow>.yml --ref <branch>`. On Windows use Git Bash and set `MSYS_NO_PATHCONV=1` when passing paths to `kind` or `docker`.
 

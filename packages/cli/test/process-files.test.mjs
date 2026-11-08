@@ -15,7 +15,7 @@ test('CONTRIBUTING documents every opt-in test variable that a test or workflow 
  const found=new Set();
  for(const path of [...files(join(root,'packages')),...files(join(root,'adapters')),...files(join(root,'.github'))].filter(path=>/\.(mjs|ts|js|yml)$/.test(path)))for(const match of readFileSync(path,'utf8').matchAll(/APP_MIXER_TEST_[A-Z0-9_]+/g))found.add(match[0]);
  // Variables the tests pass to their own child processes or fixtures are internal.
- const internal=new Set(['APP_MIXER_TEST_PHASE','APP_MIXER_TEST_SCHEMA','APP_MIXER_TEST_OTEL_EXPORT','APP_MIXER_TEST_ALERT_EXPORT']),guide=read('CONTRIBUTING.md');
+ const internal=new Set(['APP_MIXER_TEST_PHASE','APP_MIXER_TEST_SCHEMA','APP_MIXER_TEST_OTEL_EXPORT','APP_MIXER_TEST_ALERT_EXPORT','APP_MIXER_TEST_DB','APP_MIXER_TEST_LEASE','APP_MIXER_TEST_PROVIDER','APP_MIXER_TEST_OPERATION','APP_MIXER_TEST_AGENT','APP_MIXER_TEST_CALL_ID','APP_MIXER_TEST_TERMINAL']),guide=read('CONTRIBUTING.md');
  assert.ok(found.has('APP_MIXER_TEST_POSTGRES_URL'));
  for(const name of found)if(!internal.has(name))assert.ok(guide.includes(name),name+' is documented in CONTRIBUTING.md');
  for(const workflow of readdirSync(join(root,'.github/workflows')).filter(name=>/^(kubernetes|agent-pod-recovery)\.yml$/.test(name)))assert.ok(guide.includes(workflow.replace('.yml','')),workflow+' is mentioned');
