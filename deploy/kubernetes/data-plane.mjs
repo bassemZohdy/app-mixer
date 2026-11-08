@@ -2,6 +2,9 @@ import {readFile,stat,open} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
 import pg from 'pg';
 import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+// Read a file through one handle and enforce the size limit on that handle, so the check and the read cannot see
+// different files (a path checked with stat() and then read can change in between).
+const readBounded=async(path,limit,tooLarge,encoding)=>{const handle=await open(path,'r');try{if((await handle.stat()).size>limit)throw Error(tooLarge);const data=await handle.readFile();if(data.length>limit)throw Error(tooLarge);return encoding?data.toString(encoding):data;}finally{await handle.close();}};
 
 // The host owns release approval and the trust roots mounted separately from the publication.
 const path=process.env.APP_MIXER_PUBLICATION_PATH;
