@@ -21,8 +21,8 @@ const enabled=process.env.APP_MIXER_TEST_BROWSER==='1';
 // Runs inside the page once the application has rendered, then reports.
 const runner=`
 const rules=['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa','best-practice'];
-const waitFor=async(check,ms)=>{const end=Date.now()+ms;while(Date.now()<end){if(check())return true;await new Promise(r=>setTimeout(r,100));}return false;};
-const rendered=await waitFor(()=>document.getElementById('pages')?.children.length>0,15000);
+// Wait for the application to render by watching the page container (no fixed sleep), with a limit.
+const rendered=await new Promise(resolve=>{const host=document.getElementById('pages');if(host?.children.length>0){resolve(true);return;}const observer=new MutationObserver(()=>{if(host.children.length>0){observer.disconnect();resolve(true);}});observer.observe(host,{childList:true});setTimeout(()=>{observer.disconnect();resolve(false);},15000);});
 const results=await axe.run(document,{runOnly:{type:'tag',values:rules}});
 const summarize=item=>({id:item.id,impact:item.impact,help:item.help,nodes:item.nodes.map(node=>({target:node.target.join(' '),html:node.html.slice(0,160),summary:node.failureSummary?.slice(0,300)}))});
 await fetch('/axe-result',{method:'POST',body:JSON.stringify({rendered,version:axe.version,passes:results.passes.length,violations:results.violations.map(summarize),incomplete:results.incomplete.map(item=>({id:item.id,impact:item.impact,nodes:item.nodes.length}))})});
