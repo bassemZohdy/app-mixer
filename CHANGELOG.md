@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- A shared accessibility and typography reference (`adapters/flutter/test/fixtures/accessibility.json`: role, name, heading level, value, multiline and enabled state of each node, and the font size and weight of each text variant). A real-browser test checks the web renderer against it, and a second runs axe-core over the same rendering (`APP_MIXER_TEST_BROWSER=1`; CI runs both). The Flutter and native checks against the same reference are not part of this change.
 - A draft labelled memory evaluation set (`packages/agent/test/fixtures/memory-evaluation-set.json`) is run through every retrieval mode on PostgreSQL with pgvector, among 900 synthetic distractor memories, comparing the approximate (HNSW) index with exact search. The embedder is a deterministic local reference, so the figures are a regression baseline for the harness, not a measure of a production embedding model.
 - A test runs axe-core 4.14.0 in a real browser against the generated app's page and expects no violations (`APP_MIXER_TEST_BROWSER=1`; CI runs it). The generated page's header is now a level-one heading, which axe's page-structure rules require.
 - `scripts/bench-data-plane.mjs`, a Data Plane load benchmark (requests per second, latency, CPU per request and memory), and a capacity section in `docs/kubernetes-data-plane.md`.

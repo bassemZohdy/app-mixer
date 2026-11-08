@@ -112,7 +112,7 @@ jobs:
         if: matrix.node == '22'
         env:
           APP_MIXER_TEST_BROWSER: '1'
-        run: node --test packages/cli/test/csp.test.mjs packages/cli/test/browser-accessibility-axe.test.mjs
+        run: node --test packages/cli/test/csp.test.mjs packages/cli/test/browser-accessibility-axe.test.mjs packages/web/test/browser-accessibility-parity.test.mjs packages/web/test/browser-accessibility-axe.test.mjs
       - name: Backup restore rollback characterization
         if: matrix.node == '22'
         env:
