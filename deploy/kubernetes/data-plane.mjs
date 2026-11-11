@@ -1,7 +1,7 @@
 import {readFile,stat,open} from 'node:fs/promises';
 import {createPublicKey} from 'node:crypto';
 import pg from 'pg';
-import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,createFileReleaseFloorAnchor,createFileSequenceAnchor,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
 // Read a file through one handle and enforce the size limit on that handle, so the check and the read cannot see
 // different files (a path checked with stat() and then read can change in between).
 const readBounded=async(path,limit,tooLarge,encoding)=>{const handle=await open(path,'r');try{if((await handle.stat()).size>limit)throw Error(tooLarge);const data=await handle.readFile();if(data.length>limit)throw Error(tooLarge);return encoding?data.toString(encoding):data;}finally{await handle.close();}};
@@ -28,6 +28,11 @@ const metricsPort=process.env.APP_MIXER_METRICS_PORT;
 if(metricsPort!==undefined&&(!/^[1-9][0-9]{0,4}$/.test(metricsPort)||Number(metricsPort)>65535||metricsPort===portText))throw Error('Invalid metrics configuration');
 const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,authenticateMetrics,revocationPool,releaseTenant,keyHealth=()=>true,stopJwksReload=()=>{};
 const jwksReloadText=process.env.APP_MIXER_JWKS_RELOAD_MS;if(jwksReloadText!==undefined&&(!/^[1-9][0-9]{3,6}$/.test(jwksReloadText)||Number(jwksReloadText)>3600000||accessMode!=='jwt'))throw Error('Invalid JWKS reload configuration');
+const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled',floorAnchorDir=process.env.APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR;
+// An optional floor held in a directory outside the revocation database (a separate durable volume), so a restored database whose floor went back is refused.
+if(floorAnchorDir!==undefined&&(floorMode!=='postgres'||!/^\/[A-Za-z0-9._\/-]{1,200}$/.test(floorAnchorDir)||floorAnchorDir.split('/').includes('..')))throw Error('Invalid publication release floor configuration');
+// A failed anchor update leaves protection degraded until a later update succeeds, so it is logged (at most once a minute, with only the error code).
+let lastAnchorWarning=0;const anchorError=error=>{const now=Date.now();if(now-lastAnchorWarning>60000){lastAnchorWarning=now;console.error('Anchor update failed: '+(typeof error?.code==='string'?error.code:'error'));}};
 if(metricsPort!==undefined&&accessMode!=='jwt')throw Error('Metrics require JWT access');
 // The metrics listener stays on loopback (a same-pod collector) unless APP_MIXER_METRICS_BIND=0.0.0.0 opens it to the pod network for a scraper that a NetworkPolicy admits.
 const metricsBind=process.env.APP_MIXER_METRICS_BIND??'127.0.0.1';
@@ -45,7 +50,7 @@ if(accessMode==='jwt'){
   if(!['postgres:','postgresql:'].includes(url.protocol)||!url.hostname||!url.username||!url.password||!/^\/[^/]+$/.test(url.pathname)||url.search||url.hash||!ca.trim())throw Error('Invalid revocation configuration');
   revocationPool=new pg.Pool({connectionString:dsn,ssl:{ca,rejectUnauthorized:true},max:5,connectionTimeoutMillis:2000,idleTimeoutMillis:10000,query_timeout:2000,statement_timeout:1500,application_name:'app-mixer-data-plane'});
   revocationPool.on('error',()=>{});
-  const revocations=new PostgresJwtRevocations({issuer,query:(sql,args)=>revocationPool.query(sql,args)});isTokenActive=claims=>revocations.isTokenActive(claims);
+  const revocations=new PostgresJwtRevocations({issuer,query:(sql,args)=>revocationPool.query(sql,args),...(floorAnchorDir!==undefined?{epochAnchor:createFileSequenceAnchor(floorAnchorDir),onAnchorError:anchorError}:{})});isTokenActive=claims=>revocations.isTokenActive(claims);
  }else if(revocationMode!=='disabled')throw Error('Invalid revocation configuration');
  const authenticator=scope=>createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),...(isTokenActive?{isTokenActive}:{}),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(scope)?{tenantId:tenant,principalId:claims.sub}:undefined});
  authenticate=authenticator(requiredScope);if(metricsPort!==undefined)authenticateMetrics=authenticator('app-mixer:metrics.read');
@@ -58,11 +63,13 @@ if(accessMode==='jwt'){
   timer=setTimeout(refresh,interval);stopJwksReload=()=>{closed=true;epoch++;clearTimeout(timer);probe.close();};
  }
 }else if(accessMode!=='public')throw Error('Invalid publication access configuration');
-const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled';let releaseAllowed;
+let releaseAllowed;
 if(floorMode==='postgres'){
  if(!revocationPool||!authenticate||!releaseEnvironment||!releaseTenant||! /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(releaseTenant))throw Error('Invalid publication release floor configuration');
- const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args)}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
- releaseAllowed=()=>registry.isAllowed(releaseScope,snapshot.version,digest);
+ const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args),...(floorAnchorDir!==undefined?{floorAnchor:createFileReleaseFloorAnchor(floorAnchorDir),onAnchorError:anchorError}:{})}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
+ let lastReleaseWarning=0;
+ // A refused or failed release check is logged (at most once a minute, without database details) so an operator can tell a rolled-back floor from an outage.
+ releaseAllowed=async()=>{try{return await registry.isAllowed(releaseScope,snapshot.version,digest);}catch(error){const now=Date.now();if(now-lastReleaseWarning>60000){lastReleaseWarning=now;console.error('Release floor check failed: '+(error instanceof Error&&error.message.startsWith('Release floor')?error.message:'database error'));}throw error;}};
 }else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
 const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
 metrics?.setPublicationVersion(snapshot.version);

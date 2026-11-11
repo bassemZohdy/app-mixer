@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The fresh overlay plus a release floor kept on a separate durable volume, so a revocation database restored to an older state is refused.
+# Replace the PersistentVolumeClaim with storage a database restore cannot reach, and make it writable for user 1000.
+resources:
+  - ../signed-jwt-tls-revocation-fresh-example
+  - floor-anchor-claim.yaml
+patches:
+  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR, value: /floor-anchor}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: floor-anchor, mountPath: /floor-anchor}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: floor-anchor, persistentVolumeClaim: {claimName: app-mixer-floor-anchor}}
