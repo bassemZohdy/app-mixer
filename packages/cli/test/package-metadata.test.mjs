@@ -52,3 +52,33 @@ test('TASK-002.1.6 jsdom 31 and OpenTelemetry API 1.10 are declared by every pac
  for(const name of ['core','agent'])assert.equal(manifest(name).dependencies['@opentelemetry/api'],'1.10.0',name+' @opentelemetry/api');
  for(const dependency of ['@opentelemetry/context-async-hooks','@opentelemetry/core','@opentelemetry/sdk-trace'])assert.equal(manifest('core').devDependencies[dependency],'3.1.0',dependency);
 });
+
+// TASK-014: JSON.parse keeps the last of a repeated key, so a duplicate hides in a manifest unless the text is scanned.
+function repeatedKeys(text){
+ const repeats=[],stack=[];let index=0;
+ const string=()=>{let end=index+1;while(text[end]!=='"'){if(text[end]===String.fromCharCode(92))end++;end++;}const value=JSON.parse(text.slice(index,end+1));index=end+1;return value;};
+ while(index<text.length){
+  const character=text[index];
+  if(character==='{'){stack.push({keys:new Set(),expectKey:true});index++;}
+  else if(character==='['){stack.push({array:true});index++;}
+  else if(character==='}'||character===']'){stack.pop();index++;}
+  else if(character==='"'){const top=stack.at(-1),value=string();if(top&&!top.array&&top.expectKey){if(top.keys.has(value))repeats.push(value);top.keys.add(value);top.expectKey=false;}}
+  else{if(character===','&&stack.at(-1)&&!stack.at(-1).array)stack.at(-1).expectKey=true;index++;}
+ }
+ return repeats;
+}
+
+test('TASK-014 no manifest repeats a key, and the scan finds a repeat',()=>{
+ assert.deepEqual(repeatedKeys('{"a":1,"b":{"a":2,"c":[{"a":1,"a":2}]},"a":3}'),['a','a']);
+ assert.deepEqual(repeatedKeys('{"license":"MIT","name":"x","license":"MIT"}'),['license']);
+ const offenders=[];
+ for(const path of ['package.json',...packages.map(name=>'packages/'+name+'/package.json'),'adapters/angular/package.json'])for(const key of repeatedKeys(readFileSync(join(root,path),'utf8')))offenders.push(path+': '+key);
+ assert.deepEqual(offenders,[],'repeated manifest keys');
+});
+
+test('TASK-014 CONTRIBUTING names the npm workspaces the root manifest declares',()=>{
+ const workspaces=JSON.parse(readFileSync(join(root,'package.json'),'utf8')).workspaces,intro=readFileSync(join(root,'CONTRIBUTING.md'),'utf8').replaceAll('\r\n','\n').split('\n')[2];
+ const named=[...intro.matchAll(/`((?:packages|adapters)\/\*)`/g)].map(match=>match[1]);
+ assert.ok(named.length>0,'the introduction names the workspaces');
+ for(const name of named)assert.ok(workspaces.includes(name),name+' is a workspace in package.json, not a standalone directory');
+});
