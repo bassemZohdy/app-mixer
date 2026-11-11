@@ -121,6 +121,11 @@ jobs:
         env:
           APP_MIXER_TEST_POSTGRES_RESTORE: docker
         run: node --test packages/core/test/postgres-restore-rollback.test.mjs
+      - name: OpenTelemetry Collector cross-service trace
+        if: matrix.node == '22'
+        env:
+          APP_MIXER_TEST_OTEL_COLLECTOR: docker
+        run: node --test packages/cli/test/otel-collector-trace.test.mjs
       - name: Browser smoke test
         run: |
           node .github/scripts/browser-smoke.mjs
