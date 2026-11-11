@@ -2,7 +2,6 @@
   "name": "@app-mixer/agent",
   "license": "Apache-2.0",
   "version": "0.1.0",
-  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bassemZohdy/app-mixer.git",
@@ -12,6 +11,24 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./webhooks": {
+      "types": "./dist/webhooks.d.ts",
+      "import": "./dist/webhooks.js"
+    },
+    "./stores": {
+      "types": "./dist/stores.d.ts",
+      "import": "./dist/stores.js"
+    },
+    "./dist/shared-run-experimental.js": {
+      "types": "./dist/shared-run-experimental.d.ts",
+      "import": "./dist/shared-run-experimental.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -20,8 +37,11 @@
   },
   "devDependencies": {
     "@notionhq/client": "5.23.0",
+    "@opentelemetry/context-async-hooks": "3.1.0",
+    "@opentelemetry/core": "3.1.0",
+    "@opentelemetry/sdk-trace": "3.1.0",
     "@types/node": "^22.15.0",
-    "jsdom": "^26.1.0",
+    "jsdom": "^31.0.0",
     "tweetnacl": "1.0.3",
     "typescript": "^5.9.3"
   },
@@ -32,8 +52,7 @@
     "@langchain/langgraph": "^1.5.3",
     "@langchain/langgraph-checkpoint": "^1.2.1",
     "@langchain/openai": "^1.8.0",
-    "@opentelemetry/api": "1.9.0",
-    "twilio": "6.2.0",
+    "@opentelemetry/api": "1.10.0",
     "zod": "^4.6.7"
   }
 }

@@ -9,12 +9,15 @@
   "scripts": {
     "build": "npm run build --workspace @app-mixer/web && npm run build --workspace @app-mixer/core && npm run build --workspaces",
     "test": "npm run build && node scripts/run-tests.mjs",
-    "docs": "node scripts/docs-index.mjs"
+    "docs": "node scripts/docs-index.mjs",
+    "lint": "eslint \"packages/*/src/**/*.ts\""
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.22.2"
   },
   "devDependencies": {
-    "axe-core": "4.14.0"
+    "axe-core": "4.14.0",
+    "eslint": "^10.14.0",
+    "typescript-eslint": "^8.72.1"
   }
 }

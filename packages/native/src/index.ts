@@ -190,7 +190,6 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   const fixedRegistry=new NativeComponentRegistry();for(const [name,entry] of installed)fixedRegistry.register(name,entry.render,entry.validate);
   // Approximate the browser's default heading scale for the supported text variants.
   // React Native's default font scaling remains enabled for accessibility.
-  const headingLevels:Record<string,number>={h1:1,h2:2,h3:3,h4:4,h5:5};
   const textStyles:Record<string,{fontSize:number;fontWeight?:'bold'}>={
     h1:{fontSize:32,fontWeight:'bold'},h2:{fontSize:24,fontWeight:'bold'},
     h3:{fontSize:18.72,fontWeight:'bold'},h4:{fontSize:16,fontWeight:'bold'},
