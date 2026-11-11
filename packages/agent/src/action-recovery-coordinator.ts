@@ -2,11 +2,12 @@ import {PostgresAgentActionRecoveryDiscoveryFoundation} from './postgres-recover
 import type {AgentRunScope} from './durable-runs.js';
 import {AgentActionRecoveryWorker} from './action-recovery-worker.js';
 import {SqliteAgentActionRecoveryDiscovery,type AgentActionRecoveryCandidate,type AgentActionRecoveryDiscoveryActor} from './action-recovery-discovery.js';
+import {isIdentifier} from './validation.js';
 
 export type AgentActionRecoveryCoordinatorObservation={outcome:'completed'|'failed'|'stopped';reconciled:number;durationMs:number};
 type Session={worker:AgentActionRecoveryWorker;close:()=>void|Promise<void>};
 type Options={scope:AgentRunScope;discovery:SqliteAgentActionRecoveryDiscovery|PostgresAgentActionRecoveryDiscoveryFoundation;actor:AgentActionRecoveryDiscoveryActor;authorize:(candidate:AgentActionRecoveryCandidate,signal:AbortSignal)=>boolean|Promise<boolean>;open:(candidate:AgentActionRecoveryCandidate,signal:AbortSignal)=>Session|Promise<Session>;maxRunsPerPass:number;pollMs:number;callbackTimeoutMs?:number;maxPendingCallbacks?:number;observe?:(observation:AgentActionRecoveryCoordinatorObservation)=>void|Promise<void>;onError:(error:unknown,runId?:string)=>void|Promise<void>};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Explicitly started, bounded recovery passes over host-authorized uncertain runs. */
 export class AgentActionRecoveryCoordinator {
  private readonly discovery:SqliteAgentActionRecoveryDiscovery|PostgresAgentActionRecoveryDiscoveryFoundation;private readonly scope:AgentRunScope;private readonly actor:AgentActionRecoveryDiscoveryActor;private readonly authorize:Options['authorize'];private readonly open:Options['open'];private readonly maxRunsPerPass:number;private readonly pollMs:number;private readonly callbackTimeoutMs:number|undefined;private readonly maxPendingCallbacks:number|undefined;private callbacksInFlight=0;private readonly observe:Options['observe'];private readonly onError:Options['onError'];private cursor?:string;private active=false;private generation=0;private pending?:Promise<number>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;

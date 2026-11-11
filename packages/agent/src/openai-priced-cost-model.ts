@@ -1,11 +1,12 @@
 import {AIMessage,type BaseMessage} from '@langchain/core/messages';
 import {createPricedCostLimitedToolModel} from './priced-cost-model.js';
 import type {CostLimitedToolModel} from './tool-model.js';
+import {isNonNegativeInteger} from './validation.js';
 
 type Prepared={messages:unknown[];tools?:unknown[];maxInputTokens:number};
 type Credentials={apiKey:string;getApiKey?:never}|{apiKey?:never;getApiKey:(signal:AbortSignal)=>string|Promise<string>};
 type Options=Credentials&{model:string;inputMicrosPerMillionTokens:number;outputMicrosPerMillionTokens:number;fixedMicrosPerCall:number;maxOutputTokens:number;timeoutMs:number;maxPending:number;prepare:(messages:BaseMessage[],signal?:AbortSignal)=>Prepared|Promise<Prepared>;fetch?:typeof fetch};
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const integer=isNonNegativeInteger;
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const key=(value:unknown):value is string=>typeof value==='string'&&/^[!-~]{1,4096}$/.test(value);
 const name=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(value);

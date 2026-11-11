@@ -1,9 +1,10 @@
 import {SqliteAgentRuns,type AgentRunScope,type ExpiredAgentLease} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;scope:AgentRunScope;runId:string;operationId:string;path:string;authorize:(actor:Actor,action:'access'|'recover',lease:ExpiredAgentLease|null,signal:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown):{reference:string;revision:number}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'reference')||!Object.hasOwn(input,'revision')||!id((input as {reference?:unknown}).reference)||!Number.isSafeInteger((input as {revision?:unknown}).revision)||Number((input as {revision:number}).revision)<1||Number((input as {revision:number}).revision)>=Number.MAX_SAFE_INTEGER)return;return {reference:(input as {reference:string}).reference,revision:(input as {revision:number}).revision};}
 /** Expose one host-selected expired lease transition; never retry or reconcile it. */
 export function registerAgentLeaseRecovery(registry:Registry,options:Options):void{

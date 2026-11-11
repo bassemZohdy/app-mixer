@@ -2,6 +2,7 @@ import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
 import {createBoundedOperation} from './bounded-operation.js';
 import {checkKey} from './data-provider.js';
 import {SqliteStagedOperations} from './staged-operations.js';
+import {AppMixerError} from './errors.js';
 
 type Actor={tenantId:string;principalId:string};
 type AggregateScope={tenantId:string;applicationId:string;externalOperationId:string};
@@ -13,7 +14,7 @@ export function registerStagedSummaryCapability(registry:CapabilityRegistry,stor
  const {applicationId,externalOperationId,authorize,authorizeAggregate,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid staged summary capability','Staged summary unavailable');
  registry.register(options.candidate,{authorize,validate:input=>!!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===0,execute:async(_input,context)=>{
   const actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId,externalOperationId};return runBounded(async signal=>{
-   const active=()=>{if(signal.aborted)throw Error('Staged summary unavailable');};const permit=async()=>{active();const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)throw Error('Capability forbidden');const aggregateAllowed=await authorizeAggregate({...actor},{...scope},signal);active();if(aggregateAllowed!==true)throw Error('Capability forbidden');};
+   const active=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Staged summary unavailable');};const permit=async()=>{active();const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)throw new AppMixerError('denied','Capability forbidden');const aggregateAllowed=await authorizeAggregate({...actor},{...scope},signal);active();if(aggregateAllowed!==true)throw new AppMixerError('denied','Capability forbidden');};
    await permit();active();const counts=store.countByStatus(scope,externalOperationId);await permit();active();return {counts};
   });
  }});

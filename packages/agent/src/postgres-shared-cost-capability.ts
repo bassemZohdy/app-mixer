@@ -1,9 +1,10 @@
 import {PostgresAgentSharedCost} from './postgres-agent-shared-cost.js';
 import type {SharedCostCall} from './postgres-agent-shared-cost.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={ledger:PostgresAgentSharedCost;operationId:string;path:string;limit:number;authorize:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown):{after?:SharedCostCall}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'query'))return;const query=(input as {query?:unknown}).query;if(!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(key=>!['afterAgent','afterRun','afterCall'].includes(key)))return;const {afterAgent,afterRun,afterCall}=query as Record<string,unknown>;if(afterAgent===undefined&&afterRun===undefined&&afterCall===undefined)return {};if(!id(afterAgent)||!id(afterRun)||!id(afterCall))return;return {after:{agentId:afterAgent,runId:afterRun,callId:afterCall}};}
 /** Register aggregate discovery for one host-selected shared budget. */
 export function registerSharedCostPending(registry:Registry,options:Options):void{

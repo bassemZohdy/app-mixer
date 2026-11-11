@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import type {createRemoteControlConnector} from './remote-control-connector.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
 import type {RemoteRolloutScope,RemoteRolloutRecoveryEvidence,RemoteRolloutRecoveryEvent} from './remote-rollout.js';
+import {AppMixerError} from './errors.js';
 
 type Actor={tenantId:string;principalId:string};
 type Connector=ReturnType<typeof createRemoteControlConnector>;
@@ -34,7 +35,7 @@ export class PostgresRemoteRollout {
   if((phase==='idle'&&(token!==null||sourceVersion!==null||expectedVersion!==null))||(phase==='running'&&(!validText(token)||sourceVersion!==null||expectedVersion!==null))||(['importing','uncertain'].includes(phase)&&(!validText(token)||!version(sourceVersion,1)||!version(expectedVersion,0))))throw Error('Invalid rollout state');
   return {phase,token:token as string|null,sourceVersion,expectedVersion};
  }
- private async change(sql:string,args:unknown[]):Promise<void>{const result=await this.query(sql,args);if(!Array.isArray(result.rows)||result.rows.length!==1)throw Error('Remote rollout state changed');}
+ private async change(sql:string,args:unknown[]):Promise<void>{const result=await this.query(sql,args);if(!Array.isArray(result.rows)||result.rows.length!==1)throw new AppMixerError('conflict','Remote rollout state changed');}
  private async release(token:string):Promise<void>{await this.change("UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND token=$2 AND phase IN ('running','importing') RETURNING id",[this.key,token]);}
  async runOnce(signal?:AbortSignal):Promise<{status:'unchanged'|'imported';sourceVersion:number;targetVersion:number}>{
   if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid rollout signal');const check=()=>{if(signal?.aborted)throw Error('Remote rollout cancelled');};check();
@@ -54,7 +55,7 @@ export class PostgresRemoteRollout {
  }
  async recover(authorize:(state:PostgresRemoteRolloutState)=>boolean|Promise<boolean>,evidence?:RemoteRolloutRecoveryEvidence):Promise<void>{
   if(evidence!==undefined&&(!evidence||!validText(evidence.principalId)||!validText(evidence.reference)||!Number.isSafeInteger(evidence.observedAt)||evidence.observedAt<0))throw Error('Invalid rollout recovery evidence');const recorded=evidence?{principalId:evidence.principalId,reference:evidence.reference,observedAt:evidence.observedAt}:undefined;
-  if(this.active||typeof authorize!=='function')throw Error('Invalid remote rollout recovery');const state=await this.getState();if(state.phase==='idle'||!state.token)throw Error('No rollout requires recovery');let permitted=false;try{permitted=await authorize({...state})===true;}catch{}if(!permitted)throw Error('Remote rollout recovery denied');
+  if(this.active||typeof authorize!=='function')throw Error('Invalid remote rollout recovery');const state=await this.getState();if(state.phase==='idle'||!state.token)throw new AppMixerError('conflict','No rollout requires recovery');let permitted=false;try{permitted=await authorize({...state})===true;}catch{}if(!permitted)throw Error('Remote rollout recovery denied');
   if(!recorded){await this.change("UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id",[this.key,state.phase,state.token]);return;}
   await this.change("WITH changed AS (UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id) INSERT INTO app_mixer_remote_rollout_recovery_events(rollout_id,principal_id,reference,phase,source_version,expected_version,observed_at) SELECT id,$4,$5,$2,$6,$7,$8 FROM changed RETURNING event_id",[this.key,state.phase,state.token,recorded.principalId,recorded.reference,state.sourceVersion,state.expectedVersion,recorded.observedAt]);
  }

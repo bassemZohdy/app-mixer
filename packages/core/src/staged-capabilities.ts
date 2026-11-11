@@ -2,6 +2,7 @@ import {CapabilityRegistry, type CapabilityCandidate} from './capabilities.js';
 import {createBoundedOperation} from './bounded-operation.js';
 import {checkKey} from './data-provider.js';
 import {SqliteStagedOperations,type StagedOperation,type StagedVerificationOutcome} from './staged-operations.js';
+import {AppMixerError} from './errors.js';
 
 type PolicyContext={tenantId:string;principalId:string};
 export type StagedCapabilityOptions={
@@ -36,7 +37,7 @@ export function registerStagedCapability(registry:CapabilityRegistry, external:C
       const value=input as {id:string;payload:Record<string,unknown>;requestKey?:string},scope={tenantId:context.tenantId,applicationId};
       if(operation==='stage')return store.stage(scope,externalOperationId,value.payload,value.requestKey);
       const staged=store.get(scope,value.id);
-      if(!staged||staged.operationId!==externalOperationId){if(operation==='get')return null;throw Error('Operation not found');}
+      if(!staged||staged.operationId!==externalOperationId){if(operation==='get')return null;throw new AppMixerError('not_found','Operation not found');}
       if(operation==='get')return staged;
       return store.submit(scope,value.id,external,{...context,origin:'service'});
     }
@@ -58,14 +59,14 @@ export function registerStagedVerificationCapability(registry:CapabilityRegistry
  registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).length===2&&Object.hasOwn(input,'id')&&Object.hasOwn(input,'reference')&&id(input.id)&&id(input.reference),execute:async(input,context)=>{
   const value=input as {id:string;reference:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};
   return runBounded(async signal=>{
-   const active=()=>{if(signal.aborted)throw Error('Staged verification unavailable');};
-   const staged=store.get(scope,value.id);if(!staged||staged.operationId!==externalOperationId)throw Error('Operation not found');
+   const active=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Staged verification unavailable');};
+   const staged=store.get(scope,value.id);if(!staged||staged.operationId!==externalOperationId)throw new AppMixerError('not_found','Operation not found');
    const permitted=async(operation:StagedOperation)=>{active();const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)return false;const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),value.reference,signal);active();return operationAllowed===true;};
-   if(!await permitted(staged))throw Error('Capability forbidden');active();
+   if(!await permitted(staged))throw new AppMixerError('denied','Capability forbidden');active();
    const outcome=await store.verifyAndReconcile(scope,value.id,async(_scope,operation)=>{
-    if(operation.operationId!==externalOperationId||!await permitted(operation))throw Error('Capability forbidden');active();
+    if(operation.operationId!==externalOperationId||!await permitted(operation))throw new AppMixerError('denied','Capability forbidden');active();
     const result=await verify({...actor},structuredClone(operation),signal);active();
-    if(!await permitted(operation))throw Error('Capability forbidden');active();return result;
+    if(!await permitted(operation))throw new AppMixerError('denied','Capability forbidden');active();return result;
    },{principalId:actor.principalId,reference:value.reference});
    return {outcome};
   });
@@ -92,7 +93,7 @@ function registerEvidenceCapability(registry:CapabilityRegistry,store:SqliteStag
  const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid staged evidence capability','Staged evidence unavailable');
  registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).every(key=>['id','after','limit'].includes(key))&&Object.hasOwn(input,'id')&&id(input.id)&&(input.after===undefined||(Number.isSafeInteger(input.after)&&Number(input.after)>=0))&&(input.limit===undefined||(Number.isSafeInteger(input.limit)&&Number(input.limit)>=1&&Number(input.limit)<=99)),execute:async(input,context)=>{
   const value=input as {id:string;after?:number;limit?:number},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};
-  return runBounded(async signal=>{const active=()=>{if(signal.aborted)throw Error('Staged evidence unavailable');};const permit=async()=>{active();const operation=store.get(scope,value.id);if(!operation||operation.operationId!==externalOperationId)throw Error('Operation not found');const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)throw Error('Capability forbidden');const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),signal);active();if(operationAllowed!==true)throw Error('Capability forbidden');};
+  return runBounded(async signal=>{const active=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Staged evidence unavailable');};const permit=async()=>{active();const operation=store.get(scope,value.id);if(!operation||operation.operationId!==externalOperationId)throw new AppMixerError('not_found','Operation not found');const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)throw new AppMixerError('denied','Capability forbidden');const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),signal);active();if(operationAllowed!==true)throw new AppMixerError('denied','Capability forbidden');};
    await permit();active();const limit=value.limit??50,rows=kind==='recovery'?store.listRecoveryEvidence(scope,value.id,{after:value.after,limit:limit+1}):store.listReconciliationEvidence(scope,value.id,{after:value.after,limit:limit+1});await permit();active();const items=rows.slice(0,limit);return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.revision}:{})};
   });
  }});
@@ -111,9 +112,9 @@ export function registerStagedRecoveryCapability(registry:CapabilityRegistry,sto
  const {applicationId,externalOperationId,authorize,authorizeOperation,verifyStopped,timeoutMs,maxPending}=options;checkKey({tenantId:'validation',applicationId},externalOperationId,'validation');const runBounded=createBoundedOperation(timeoutMs,maxPending,'Invalid staged recovery capability','Staged recovery unavailable');
  registry.register(options.candidate,{authorize,validate:input=>record(input)&&Object.keys(input).length===2&&Object.hasOwn(input,'id')&&Object.hasOwn(input,'reference')&&id(input.id)&&id(input.reference),execute:async(input,context)=>{
   const value=input as {id:string;reference:string},actor={tenantId:context.tenantId,principalId:context.principalId},scope={tenantId:actor.tenantId,applicationId};return runBounded(async signal=>{
-   const active=()=>{if(signal.aborted)throw Error('Staged recovery unavailable');},staged=store.get(scope,value.id);if(!staged||staged.operationId!==externalOperationId)throw Error('Operation not found');
+   const active=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Staged recovery unavailable');},staged=store.get(scope,value.id);if(!staged||staged.operationId!==externalOperationId)throw new AppMixerError('not_found','Operation not found');
    const permitted=async(operation:StagedOperation)=>{active();const actorAllowed=await authorize({...actor});active();if(actorAllowed!==true)return false;const operationAllowed=await authorizeOperation({...actor},structuredClone(operation),value.reference,signal);active();return operationAllowed===true;};
-   if(!await permitted(staged))throw Error('Capability forbidden');active();const recovered=await store.verifyAndRecoverAbandoned(scope,value.id,async(_scope,operation)=>{if(operation.operationId!==externalOperationId||!await permitted(operation))throw Error('Capability forbidden');active();const confirmed=await verifyStopped({...actor},structuredClone(operation),signal);active();if(!await permitted(operation))throw Error('Capability forbidden');active();return confirmed;},{principalId:actor.principalId,reference:value.reference});return {recovered};
+   if(!await permitted(staged))throw new AppMixerError('denied','Capability forbidden');active();const recovered=await store.verifyAndRecoverAbandoned(scope,value.id,async(_scope,operation)=>{if(operation.operationId!==externalOperationId||!await permitted(operation))throw new AppMixerError('denied','Capability forbidden');active();const confirmed=await verifyStopped({...actor},structuredClone(operation),signal);active();if(!await permitted(operation))throw new AppMixerError('denied','Capability forbidden');active();return confirmed;},{principalId:actor.principalId,reference:value.reference});return {recovered};
   });
  }});
 }

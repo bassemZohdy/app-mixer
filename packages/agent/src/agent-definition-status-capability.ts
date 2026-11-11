@@ -1,10 +1,11 @@
 import {PostgresAgentDefinitions} from './postgres-agent-definitions.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Snapshot={version:number;enabled:boolean};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={definitions:PostgresAgentDefinitions;scope:AgentRunScope;operationId:string;path:string;authorize:(actor:Actor,action:'access'|'read',definition:Snapshot|null,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const valid=(input:unknown):boolean=>!!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&!!(input as {query?:unknown}).query&&typeof (input as {query:unknown}).query==='object'&&!Array.isArray((input as {query:unknown}).query)&&Object.keys((input as {query:object}).query).length===0;
 /** Authorized, fixed-agent status without exposing the underlying manifest. */
 export function registerAgentDefinitionStatus(registry:Registry,options:Options):void{

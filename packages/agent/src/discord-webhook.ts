@@ -1,9 +1,10 @@
 import {createHash,createPublicKey,verify} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type DiscordWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;applicationId:string;publicKey:Uint8Array;previousPublicKeys?:Uint8Array[];eventTypes:string[];eventKey?:(payload:Record<string,unknown>)=>string;toleranceSeconds?:number;clock?:()=>number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const appId=(x:unknown):x is string=>typeof x==='string'&&/^[1-9][0-9]{0,19}$/.test(x);
 const eventType=(x:unknown):x is string=>typeof x==='string'&&/^[A-Z][A-Z0-9_]{0,110}$/.test(x);
 const parse=(body:Buffer):Record<string,unknown>=>{const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid Discord webhook');return value as Record<string,unknown>;};

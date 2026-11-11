@@ -1,10 +1,11 @@
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
 import type {AgentRunScope,DurableAgentRun} from './durable-runs.js';
 import type {AgentDefinitionVersion} from './persistent-definitions.js';
+import {isIdentifier} from './validation.js';
 
 type Outcome='succeeded'|'failed'|'stopped'|'uncertain'|{status:'approval_required';actionId:string}|{status:'delegation_expired';grantId:string;revision:number};
 type Options={runs:PostgresAgentRunLifecycleFoundation;definitions:{get:(tenantId:string,agentId:string)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>;getWithSignal?:(tenantId:string,agentId:string,signal:AbortSignal)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>};workerId:string;leaseMs:number;pollMs:number;authorizeStart:(run:DurableAgentRun,definition:AgentDefinitionVersion)=>boolean|Promise<boolean>;authorizeStartWithSignal?:(run:DurableAgentRun,definition:AgentDefinitionVersion,signal:AbortSignal)=>boolean|Promise<boolean>;startupCallbackTimeoutMs?:number;maxPendingStartupCallbacks?:number;maxPendingExecutions?:number;execute:(run:DurableAgentRun,context:{signal:AbortSignal;assertLease:()=>void;assertLeaseAsync:()=>Promise<void>})=>Promise<Outcome>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Internal integration only. Hosts must provision database timeouts and authorize all operations. */
 export class PostgresAgentWorkerFoundation {
  private readonly options:Options;private readonly startupTimeout:number;private readonly maxStartup:number;private readonly maxExecutions:number;private startupInFlight=0;private executionInFlight=0;

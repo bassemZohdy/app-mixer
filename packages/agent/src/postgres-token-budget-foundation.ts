@@ -1,10 +1,11 @@
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentTokenUsage,AgentCostUsage,AgentSharedCostBinding,AgentBudgetReconciliationEvidence,AgentBudgetReconciliationEvent} from './agent-token-budget.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;maxTokens:number;cost?:{currency:string;maxMicros:number};query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const valid=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Internal integration work. Host authentication, policy and provider usage verification are required. */
 export class PostgresAgentTokenBudgetFoundation {
  private readonly scope:AgentRunScope;private readonly runId:string;private readonly token:string;private readonly maxTokens:number;private readonly cost?:{currency:string;maxMicros:number};private readonly query:Query;private readonly transaction:Options['transaction'];

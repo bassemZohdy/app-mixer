@@ -1,3 +1,4 @@
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Actor={tenantId:string;principalId:string};
 type Scope={tenantId:string;budgetId:string;currency:string;maxMicros:number};
@@ -8,8 +9,8 @@ export type SharedCostReservation=Call&{reservedMicros:number;usedMicros:number|
 export type SharedCostSummary={currency:string;limitMicros:number;reservedMicros:number;committedMicros:number;calls:number};
 export type SharedCostMetricsSnapshot={currency:string;limitMicros:number;reservedMicros:number;committedMicros:number;reservedCalls:number;settledCalls:number;overrunCalls:number;oldestReservationSeconds:number};
 export type SharedCostReconciliation=Call&{id:number;principalId:string;reference:string;usedMicros:number;recordedAt:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 const dbNumber=(value:unknown):number=>{if(value===null||value===undefined||typeof value==='boolean'||(typeof value!=='string'&&typeof value!=='number')||(typeof value==='string'&&!/^(0|[1-9][0-9]*)$/.test(value)))throw Error('Invalid shared cost data');const n=Number(value);if(!integer(n))throw Error('Invalid shared cost data');return n;};
 const NOW='(extract(epoch from clock_timestamp())*1000)::bigint';
 /** One host-selected shared cost budget backed by an authoritative PostgreSQL primary. */

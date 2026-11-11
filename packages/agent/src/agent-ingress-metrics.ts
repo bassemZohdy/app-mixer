@@ -1,11 +1,12 @@
 import type {AgentEventIngressObservation} from './event-ingress.js';
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 
 const outcomes=['accepted','completed','rejected','unavailable','disconnected'] as const;
 type Outcome=typeof outcomes[number];
 const reasons=['busy','timeout','other'] as const;
 type Reason=typeof reasons[number];
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 export type AgentIngressMetricsOptions={authorize:(actor:AgentRunMetricsActor)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:AgentRunMetricsActor,signal:AbortSignal)=>boolean|Promise<boolean>};
 
 /** Process-wide ingress response metrics; host policy must authorize the whole aggregate. */

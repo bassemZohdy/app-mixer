@@ -12,6 +12,7 @@ export const DEVELOPMENT_UI = `<!doctype html>
 <script type="module">
 import {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry} from '/development/renderer.mjs';
 import {installedExtensions} from '/development/extensions.mjs';
+import {AppMixerError} from './errors.js';
 (()=>{
 const instruction=document.getElementById('instruction'),generate=document.getElementById('generate'),token=document.getElementById('token'),proposalId=document.getElementById('proposal-id'),status=document.getElementById('status'),patch=document.getElementById('patch'),preview=document.getElementById('preview'),load=document.getElementById('load'),approve=document.getElementById('approve'),reject=document.getElementById('reject'),publish=document.getElementById('publish');
 const rendered=document.getElementById('rendered-preview');
@@ -34,7 +35,7 @@ function renderPreview(definition){
       const title='page-'+i;components[0].children.push(title);components.push({id:title,component:'Text',text:page.title,variant:'h2'});
       if(definition.schemaVersion===2&&page.description){const descriptionId='page-'+i+'-description';components[0].children.push(descriptionId);components.push({id:descriptionId,component:'Text',text:page.description});}
       for(const [j,item] of page.components.entries()){
-        if(!item||typeof item!=='object'||Array.isArray(item))throw Error('Invalid component');
+        if(!item||typeof item!=='object'||Array.isArray(item))throw new AppMixerError('invalid','Invalid component');
         const id='page-'+i+'-item-'+j;components[0].children.push(id);
         if(item.type==='Text'){const props=item.props??{};if(Object.hasOwn(props,'path')){if(typeof props.path!=='string'||Object.hasOwn(props,'text')||Object.keys(props).some(key=>!['path','variant'].includes(key))||(props.variant!==undefined&&!['h1','h2','h3','h4','h5','body','caption'].includes(props.variant)))throw Error('Invalid Text properties');components.push({id:id,component:'Text',text:{path:props.path},...(props.variant===undefined?{}:{variant:props.variant})});}else components.push({id:id,component:'Text',text:String(props.text??'')});continue;}
         if(item.type==='Card'){const props=item.props??{};if(!props||typeof props!=='object'||Array.isArray(props)||Object.keys(props).some(key=>!['title','text'].includes(key))||(props.title!==undefined&&(typeof props.title!=='string'||props.title.length>10000))||(props.text!==undefined&&(typeof props.text!=='string'||props.text.length>10000)))throw Error('Invalid Card properties');const content=id+'-content',children=[];components.push({id:id,component:'Card',child:content},{id:content,component:'Column',children});if(props.title){const title=content+'-title';children.push(title);components.push({id:title,component:'Text',text:props.title,variant:'h3'});}if(props.text){const text=content+'-text';children.push(text);components.push({id:text,component:'Text',text:props.text});}continue;}

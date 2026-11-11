@@ -1,10 +1,11 @@
 import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 export type PostgresAgentRunSlotsOptions={enabled:true;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
 export type AgentRunSlotLimits={maxConcurrentRuns:number;maxRunsPerDay?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const positive=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=1;
 const NOW='(extract(epoch from clock_timestamp())*1000)::bigint';
 

@@ -2,10 +2,11 @@ import type {AgentRunScope} from './durable-runs.js';
 import type {AgentRunMetricStatus} from './agent-run-metrics.js';
 import type {AgentActionRecoveryPage,AgentActionRecoveryDiscoveryOptions,AgentActionRecoveryDiscoveryActor} from './action-recovery-discovery.js';
 import type {AgentBudgetRecoveryPage,AgentBudgetRecoveryDiscoveryOptions,AgentBudgetRecoveryDiscoveryActor} from './agent-budget-recovery-discovery.js';
+import {isIdentifier} from './validation.js';
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Actor={tenantId:string;principalId:string};
 type Options={scope:AgentRunScope;query:Query;authorize:(actor:Actor,scope:AgentRunScope,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'];
 class SharedDiscovery {
  private readonly scope:AgentRunScope;private readonly query:Query;private readonly authorize:Options['authorize'];private readonly timeout?:number;private readonly maxPending?:number;private pending=0;

@@ -1,10 +1,11 @@
 import {AgentBudgetRecovery} from './agent-budget-recovery.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Base={recovery:AgentBudgetRecovery;scope:AgentRunScope;runId:string;operationId:string;path:string};
 type HistoryOptions=Base&{limit:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function query(input:unknown):Record<string,unknown>|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'query'))return;const value=(input as {query?:unknown}).query;if(!value||typeof value!=='object'||Array.isArray(value))return;return value as Record<string,unknown>;}
 function check(registry:Registry,options:Base):void{if(!registry||typeof registry.register!=='function'||!options||!(options.recovery instanceof AgentBudgetRecovery)||!options.scope||!id(options.scope.tenantId)||!id(options.scope.agentId)||!id(options.runId)||!options.recovery.isBoundTo(options.scope,options.runId)||typeof options.operationId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(options.operationId)||typeof options.path!=='string'||!options.path.startsWith('/')||options.path.length>1024||/[\u0000-\u001f]/.test(options.path))throw Error('Invalid budget recovery capability');}
 function decision(input:unknown):{callId:string;reference:string}|undefined{const value=query(input);if(!value||Object.keys(value).length!==2||!id(value.callId)||!id(value.reference))return;return {callId:value.callId,reference:value.reference};}

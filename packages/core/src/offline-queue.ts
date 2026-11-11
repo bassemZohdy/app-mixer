@@ -4,6 +4,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {CapabilityRegistry,CapabilityOutcomeUncertainError, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 import {openDatabase} from './sqlite-open.js';
+import {AppMixerError} from './errors.js';
 
 export type OfflineStatus='pending'|'running'|'conflict'|'uncertain'|'exhausted'|'succeeded'|'discarded';
 export type OfflineOperation={id:string;operationId:string;requestKey:string;idempotencyKey:string;payload:Record<string,unknown>;status:OfflineStatus;attempts:number;nextAttemptAt:number;completedAt?:number};
@@ -104,9 +105,9 @@ export class SqliteOfflineQueue {
     try {
       if(expected&&!isDeepStrictEqual(this.get(scope,principalId,id),expected))throw Error('Stale offline operation');
       const result=this.db.prepare("INSERT INTO offline_archived_operations SELECT tenant_id,application_id,principal_id,id,operation_id,request_key,idempotency_key,status,?,?,? FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')").run(evidence.operatorId,evidence.reference,recordedAt,scope.tenantId,scope.applicationId,principalId,id);
-      if(result.changes!==1)throw Error('Invalid offline operation state');
+      if(result.changes!==1)throw new AppMixerError('conflict','Invalid offline operation state');
       const removed=this.db.prepare("DELETE FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')").run(scope.tenantId,scope.applicationId,principalId,id);
-      if(removed.changes!==1)throw Error('Invalid offline operation state');
+      if(removed.changes!==1)throw new AppMixerError('conflict','Invalid offline operation state');
       this.db.exec('COMMIT');
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
@@ -192,7 +193,7 @@ export class SqliteOfflineQueue {
   private evidenceTransition(scope:DataScope,principalId:string,id:string,from:OfflineStatus,to:OfflineStatus,action:SqliteOfflineRecoveryEvent['action'],evidence:SqliteOfflineRecoveryEvidence,recordedAt:number,expected?:OfflineOperation):void{
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
     this.checkRecoveryEvidence(scope,evidence,recordedAt);
-    this.db.exec('BEGIN IMMEDIATE');try{if(expected&&!isDeepStrictEqual(this.get(scope,principalId,id),expected))throw Error('Stale offline recovery');this.transition(scope,principalId,id,from,to,0);this.db.prepare('INSERT INTO offline_recovery_events (tenant_id,application_id,principal_id,queue_id,operator_id,reference,action,recorded_at) VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,evidence.operatorId,evidence.reference,action,recordedAt);this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
+    this.db.exec('BEGIN IMMEDIATE');try{if(expected&&!isDeepStrictEqual(this.get(scope,principalId,id),expected))throw new AppMixerError('conflict','Stale offline recovery');this.transition(scope,principalId,id,from,to,0);this.db.prepare('INSERT INTO offline_recovery_events (tenant_id,application_id,principal_id,queue_id,operator_id,reference,action,recorded_at) VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,evidence.operatorId,evidence.reference,action,recordedAt);this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   private checkRecoveryEvidence(scope:DataScope,evidence:SqliteOfflineRecoveryEvidence,recordedAt:number):void{
     if(!evidence||typeof evidence!=='object'||Array.isArray(evidence)||Object.keys(evidence).length!==2||!Object.hasOwn(evidence,'operatorId')||!Object.hasOwn(evidence,'reference')||!Number.isSafeInteger(recordedAt)||recordedAt<0)throw Error('Invalid offline recovery evidence');
@@ -200,12 +201,12 @@ export class SqliteOfflineQueue {
   }
   /** Recheck the exact observed claim after the host confirms its submitter has stopped. */
   async verifyAndRecoverAbandoned(scope:DataScope,principalId:string,id:string,verify:(scope:DataScope,operation:OfflineOperation)=>boolean|Promise<boolean>,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):Promise<boolean>{
-    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(typeof verify!=='function')throw Error('Invalid offline recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId};this.checkRecoveryEvidence(selected,evidence,recordedAt);const proof={operatorId:evidence.operatorId,reference:evidence.reference},snapshot=this.get(selected,principalId,id);if(!snapshot||snapshot.status!=='running')throw Error('Invalid offline operation state');
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(typeof verify!=='function')throw Error('Invalid offline recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId};this.checkRecoveryEvidence(selected,evidence,recordedAt);const proof={operatorId:evidence.operatorId,reference:evidence.reference},snapshot=this.get(selected,principalId,id);if(!snapshot||snapshot.status!=='running')throw new AppMixerError('conflict','Invalid offline operation state');
     const confirmed=await verify({...selected},structuredClone(snapshot));if(confirmed!==true)return false;this.evidenceTransition(selected,principalId,id,'running','uncertain','recover',proof,recordedAt,snapshot);return true;
   }
   /** Unknown results leave the operation uncertain; changed claims reject stale decisions. */
   async verifyAndReconcile(scope:DataScope,principalId:string,id:string,verify:(scope:DataScope,operation:OfflineOperation)=>'applied'|'not_applied'|'unknown'|Promise<'applied'|'not_applied'|'unknown'>,evidence:SqliteOfflineRecoveryEvidence,recordedAt=Date.now()):Promise<'applied'|'not_applied'|'unknown'>{
-    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(typeof verify!=='function')throw Error('Invalid offline recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId};this.checkRecoveryEvidence(selected,evidence,recordedAt);const proof={operatorId:evidence.operatorId,reference:evidence.reference},snapshot=this.get(selected,principalId,id);if(!snapshot||snapshot.status!=='uncertain')throw Error('Invalid offline operation state');
+    checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);if(typeof verify!=='function')throw Error('Invalid offline recovery verifier');const selected={tenantId:scope.tenantId,applicationId:scope.applicationId};this.checkRecoveryEvidence(selected,evidence,recordedAt);const proof={operatorId:evidence.operatorId,reference:evidence.reference},snapshot=this.get(selected,principalId,id);if(!snapshot||snapshot.status!=='uncertain')throw new AppMixerError('conflict','Invalid offline operation state');
     const outcome=await verify({...selected},structuredClone(snapshot));if(outcome==='unknown')return outcome;if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid offline verification outcome');this.evidenceTransition(selected,principalId,id,'uncertain',outcome==='applied'?'succeeded':'pending',outcome,proof,recordedAt,snapshot);return outcome;
   }
   /** Scoped recovery evidence; the caller must authorize access before exposing it. */
@@ -218,11 +219,11 @@ export class SqliteOfflineQueue {
   discard(scope:DataScope,principalId:string,id:string):void {
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
     const result=this.db.prepare("UPDATE offline_operations SET status='discarded',next_attempt_at=0 WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('pending','conflict','exhausted')").run(scope.tenantId,scope.applicationId,principalId,id);
-    if(result.changes!==1)throw Error('Invalid offline operation state');
+    if(result.changes!==1)throw new AppMixerError('conflict','Invalid offline operation state');
   }
   private transition(scope:DataScope,principalId:string,id:string,from:OfflineStatus,to:OfflineStatus,next:number):void {
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
     const result=this.db.prepare('UPDATE offline_operations SET status=?,next_attempt_at=? WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status=?').run(to,next,scope.tenantId,scope.applicationId,principalId,id,from);
-    if(result.changes!==1)throw Error('Invalid offline operation state');
+    if(result.changes!==1)throw new AppMixerError('conflict','Invalid offline operation state');
   }
 }

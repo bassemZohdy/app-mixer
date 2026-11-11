@@ -1,7 +1,8 @@
 import type {AgentRunExpiryObservation} from './agent-run-expiry.js';
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 const outcomes=['completed','failed','stopped'] as const;
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 export type AgentRunExpiryMetricsOptions={authorize:(actor:AgentRunMetricsActor,signal:AbortSignal)=>boolean|Promise<boolean>};
 /** Process-local observations; the host must authorize the entire aggregate. */
 export class AgentRunExpiryMetrics{

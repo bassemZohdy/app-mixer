@@ -133,6 +133,8 @@ export {SqliteAgentApprovals} from './agent-approvals.js';
 export type {AgentApproval,AgentApprovalActor,AgentApprovalStatus,AgentApprovalAccess,AgentApprovalsOptions} from './agent-approvals.js';
 
 export {createAgentApprovalServer} from './approval-server.js';
+export {AgentError,agentErrorStatus} from './errors.js';
+export type {AgentErrorCode} from './errors.js';
 export type {AgentApprovalServerOptions} from './approval-server.js';
 
 export {SqliteAgentDelegations} from './agent-delegations.js';

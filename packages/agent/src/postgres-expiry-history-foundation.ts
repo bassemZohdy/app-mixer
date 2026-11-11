@@ -1,9 +1,10 @@
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentRunExpiryEvent,AgentRunExpiryHistoryOptions,AgentRunExpiryHistoryActor} from './agent-expiry-history.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options=AgentRunExpiryHistoryOptions&{query:Query};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Scope-bound evidence; the host must supply an authorized read-only adapter. */
 export class PostgresAgentExpiryHistoryFoundation {
  private readonly scope:AgentRunScope;private readonly query:Query;private readonly authorize:Options['authorize'];

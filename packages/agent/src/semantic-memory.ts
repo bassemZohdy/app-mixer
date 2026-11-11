@@ -1,12 +1,13 @@
 import {PostgresAgentMemory} from './postgres-agent-memory.js';
 import {MemoryAccessDenied,SqliteAgentMemory,type AgentMemoryScope,type AgentMemoryActor,type AgentMemoryProvenance} from './agent-memory.js';
+import {isIdentifier} from './validation.js';
 
 type Embedder={modelId:string;dimensions:number;embed:(text:string)=>Promise<number[]>};
 export type SemanticMemorySearchOptions={minSimilarity?:number};
 export const validSimilarity=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=-1&&value<=1;
 export type SemanticMemoryRecord={id:string;revision:number;text:string;provenance:AgentMemoryProvenance;expiresAt:number};
 export type SemanticMemoryHit=SemanticMemoryRecord&{score:number};
-const validId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const validId=isIdentifier;
 const validText=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=2000;
 const terms=(text:string):Set<string>=>new Set((text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu)??[]).slice(0,256));
 function normalize(vector:unknown,dimensions:number):number[]{
