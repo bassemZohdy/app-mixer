@@ -68,9 +68,8 @@
       - Done when: the manifests parse and the workflow steps that exercise them exist; `node --test packages/cli/test/process-files.test.mjs`
     - [x] **TASK-002.5.3** · mid · Port the test that exports one cross-service trace to a real OpenTelemetry Collector (56cdcd23), which needs Docker and so runs in CI
       - Done when: one trace crosses the services and reaches the collector with the expected spans; `npm run build && node --test packages/cli/test/otel-collector-trace.test.mjs`
-  - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
+  - [x] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
     - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
-    - State: branch todo/TASK-002.6-port-remaining-docs from todo/TASK-002-port-remaining-local-acceptance; next: build children
     - [x] **TASK-002.6.1** · low · Port ADR 0011 (core keeps its dependency on the web renderer, 373bfb3a) and its entries in the ADR table and the docs index
       - Done when: the ADR file exists, the ADR table lists it and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
     - [x] **TASK-002.6.2** · mid · Port the store schema versions (246c6d57): an app_mixer_schema table, a refusal of databases from newer releases in the agent run and staged operation stores, and docs/schema-versions.md
