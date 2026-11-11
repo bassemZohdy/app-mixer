@@ -19,10 +19,10 @@
   - Done when: importing the root entry loads neither twilio nor @langchain/openai, each subpath resolves, and an unknown subpath is refused; `npm run build && node --test packages/agent/test/package-entries.test.mjs`
   - Links: Depends: TASK-002
   - State: next: decompose
-- [ ] **TASK-012** · P2 · mid · Verify Twilio signatures with node:crypto like the other webhook adapters, and keep the 20 MB twilio SDK only as a dev dependency used as a test oracle
+- [/] **TASK-012** · P2 · mid · Verify Twilio signatures with node:crypto like the other webhook adapters, and keep the 20 MB twilio SDK only as a dev dependency used as a test oracle
   - Done when: valid signatures pass, tampered bodies and URLs are refused, and results match the SDK; `npm run build && node --test packages/agent/test/twilio-webhook.test.mjs`
   - Links: Ref: docs/agent-event-ingress.md · Depends: TASK-002
-  - State: branch todo/TASK-012-twilio-webhook-test from harden-on-main; next: start TASK-012
+  - State: attempts 0/3; baseline 1938 passing; branch todo/TASK-012-twilio-webhook-test from harden-on-main; next: read docs
 - [ ] **FEAT-017** · P2 · mid · Add a coverage report with a minimum threshold to CI; nothing measures coverage today and the mutation script is run by hand
   - Done when: the coverage command reports a figure per package and exits non-zero below the threshold; `npm run coverage`
 - [ ] **FEAT-018** · P2 · mid · Add a workflow that builds the Data Plane image, scans it for vulnerabilities and produces an SBOM; no workflow does this today
