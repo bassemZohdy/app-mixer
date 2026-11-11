@@ -104,9 +104,9 @@ test('TASK-002.6.1 every ADR file is listed in the ADR table with its status and
  assert.ok(existsSync(join(root,'docs/adr/0011-core-depends-on-the-web-renderer.md')),'ADR 0011 records why core depends on the web renderer');
 });
 
-test('TASK-002.6.3 every repository path that the guides name in code spans exists',()=>{
+test('TASK-002.6.3 every repository path that the guides and the CHANGELOG name in code spans exists',()=>{
  const missing=[];
- const pages=[join(root,'README.md'),join(root,'CONTRIBUTING.md'),...files(join(root,'docs')).filter(path=>path.endsWith('.md')&&!path.includes(sep+'plans'+sep))];
+ const pages=[join(root,'README.md'),join(root,'CONTRIBUTING.md'),join(root,'CHANGELOG.md'),...files(join(root,'docs')).filter(path=>path.endsWith('.md')&&!path.includes(sep+'plans'+sep))];
  for(const page of pages)for(const match of readFileSync(page,'utf8').matchAll(/`((?:packages|deploy|scripts|\.github|adapters)\/[A-Za-z0-9_.\/-]+\.(?:mjs|cjs|js|ts|sh|ya?ml|json|md))`/g))if(!existsSync(join(root,match[1])))missing.push(match[1]+' (named in '+relative(root,page)+')');
  assert.deepEqual(missing,[],'paths named in the guides that are not in the repository');
 });

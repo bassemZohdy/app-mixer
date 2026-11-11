@@ -89,7 +89,7 @@
       - Done when: the derived image list equals the images the opt-in tests pin and the workflow caches them; `node --test packages/cli/test/process-files.test.mjs`
     - [x] **TASK-002.6.8** · high · Port the offline provisioning scenario on an Android emulator and in Safari on an iOS Simulator (70186874, 6476fc36, 0b0ca9ce, f1980080), with the shared fixture the headless-browser test then uses; the emulator runs only in CI
       - Done when: the headless-browser test uses the shared provisioning fixture and both device workflows run the scenario; `npm run build && node --test packages/web/test/browser-offline-provisioning.test.mjs packages/cli/test/process-files.test.mjs`
-    - [ ] **TASK-002.6.9** · low · Make the guides and the CHANGELOG name only files that exist: add the CHANGELOG to the path check and unquote the dropped progress script
+    - [x] **TASK-002.6.9** · low · Make the guides and the CHANGELOG name only files that exist: add the CHANGELOG to the path check and unquote the dropped progress script
       - Done when: every repository path in a code span of the CHANGELOG exists; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.6, TASK-002.6.7, TASK-002.6.8
 - [ ] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
