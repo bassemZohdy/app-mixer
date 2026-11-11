@@ -7,7 +7,7 @@
 - [ ] **TASK-006** · P1 · mid · Replace the error-message string lists that choose the HTTP status (94 literals in capability-server.ts, 19 in planes.ts) with typed errors that carry their status
   - Done when: every existing message keeps its status, and an unknown error still returns 500 without leaking its message; `npm run build && node --test packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
   - Links: Depends: TASK-002
-  - State: next: decompose
+  - State: branch todo/TASK-006-typed-errors-choose-http-status from harden-on-main; next: start TASK-006
 - [ ] **TASK-007** · P1 · low · Adopt a formatter with a CI check and reformat packages, templates, deploy and scripts; source lines now reach 5,687 characters and average 141
   - Done when: the format check passes, and a test fails on any source line over 200 characters; `node --test packages/cli/test/source-format.test.mjs`
   - Links: Depends: TASK-002
