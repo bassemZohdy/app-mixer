@@ -20,8 +20,9 @@
       - Done when: a slow client is cut off and a weak TLS version is refused; `npm run build && node --test packages/core/test/server-limits.test.mjs packages/agent/test/transport.test.mjs`
     - [x] **TASK-002.1.5** · mid · Port the Twilio signature check without the SDK and the agent subpath entries (89db8c76, efd1c31f, 0c38ce94)
       - Done when: a tampered signature and an unknown subpath are refused and npm pack ships no sources; `npm run build && node --test packages/agent/test/twilio-signature.test.mjs packages/agent/test/subpath-exports.test.mjs packages/cli/test/package-metadata.test.mjs`
-    - [ ] **TASK-002.1.6** · mid · Port the Node floor 22.22.2 with the jsdom 31 and OpenTelemetry 3.x updates (106a196c)
+    - [/] **TASK-002.1.6** · mid · Port the Node floor 22.22.2 with the jsdom 31 and OpenTelemetry 3.x updates (106a196c)
       - Done when: engines, README and the CI matrix agree on the floor and the package metadata test passes; `npm run build && node --test packages/cli/test/package-metadata.test.mjs`
+      - State: attempts 0/3; baseline 1837 passing; branch todo/TASK-002.1.6-port-node-floor-22-22-2 from todo/TASK-002.1-port-tooling-shared-code; next: read docs
     - [ ] **TASK-002.1.7** · mid · Port the lint baseline and editorconfig (0b0e88b9), last so it fixes the final state
       - Done when: lint passes with no suppressed rule; `npm run lint`
       - Links: Depends: TASK-002.1.2, TASK-002.1.3, TASK-002.1.4, TASK-002.1.5
