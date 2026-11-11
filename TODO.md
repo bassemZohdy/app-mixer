@@ -22,9 +22,9 @@
 - [ ] **TASK-012** · P2 · mid · Verify Twilio signatures with node:crypto like the other webhook adapters, and keep the 20 MB twilio SDK only as a dev dependency used as a test oracle
   - Done when: valid signatures pass, tampered bodies and URLs are refused, and results match the SDK; `npm run build && node --test packages/agent/test/twilio-webhook.test.mjs`
   - Links: Ref: docs/agent-event-ingress.md · Depends: TASK-002
-- [ ] **TASK-014** · P2 · low · Remove the duplicate license key from the five package manifests and settle whether adapters/angular is a workspace, as CONTRIBUTING.md says
+- [/] **TASK-014** · P2 · low · Remove the duplicate license key from the five package manifests and settle whether adapters/angular is a workspace, as CONTRIBUTING.md says
   - Done when: the metadata test rejects a manifest with a repeated key; `npm run build && node --test packages/cli/test/package-metadata.test.mjs`
-  - State: branch todo/TASK-014-remove-duplicate-manifest-keys from harden-on-main; next: start TASK-014
+  - State: attempts 0/3; baseline 1934 passing; branch todo/TASK-014-remove-duplicate-manifest-keys from harden-on-main; next: read docs
 - [ ] **TASK-015** · P2 · low · Pin the 30 tag-pinned GitHub Actions references (checkout, setup-node, setup-java, codeql-action) to commit SHAs
   - Done when: a test fails on any uses line without a 40-character commit SHA; `node --test packages/cli/test/process-files.test.mjs`
   - State: next: decompose
