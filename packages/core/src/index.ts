@@ -220,7 +220,9 @@ export {PostgresAuthenticationFailureAudit} from './postgres-auth-failure-audit.
 export type {AuthenticationFailureEvent,StoredAuthenticationFailure,PostgresAuthenticationFailureAuditOptions} from './postgres-auth-failure-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from './remote-control-connector.js';
-export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
+export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent,RemotePromotionFloorAnchor} from './remote-control-connector.js';
+export {exportDisconnectedPromotion,createDisconnectedPromotionImporter} from './disconnected-promotion.js';
+export type {DisconnectedPromotionDocument,DisconnectedImportDetails,DisconnectedImportEvent,DisconnectedPromotionRepository,DisconnectedPromotionImporterOptions} from './disconnected-promotion.js';
 export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
 export {createMetricsServer} from './metrics-server.js';
 export type {MetricsServerOptions} from './metrics-server.js';
