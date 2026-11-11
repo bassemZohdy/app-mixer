@@ -50,7 +50,8 @@
       - Done when: a restored database is detected by each store and a stale or unreadable anchor fails closed; `npm run build && node --test packages/core/test/store-epoch-anchors.test.mjs packages/core/test/audit-sequence-anchor.test.mjs packages/core/test/file-release-floor-anchor.test.mjs packages/core/test/postgres-release-floor-anchor.test.mjs`
   - [ ] **TASK-002.4** · high · Port the agent on shared PostgreSQL (runs, schedules, cost budgets, run supervisor, worker host) and the new webhook adapters the same way
     - Done when: two nodes cannot exceed one agent's run quota and the worker host drains on shutdown; `npm run build && node --test packages/agent/test/worker-host.test.mjs packages/agent/test/run-supervisor-logic.test.mjs packages/agent/test/discord-sendgrid-webhook.test.mjs packages/agent/test/postgres-run-quota-nodes.test.mjs`
-    - [ ] **TASK-002.4.1** · mid · Port the worker host that drains agent workers on shutdown (hardening 9ef0ef11)
+    - State: branch todo/TASK-002.4-port-agent-shared-postgres from todo/TASK-002-port-remaining-local-acceptance; next: build children
+    - [x] **TASK-002.4.1** · mid · Port the worker host that drains agent workers on shutdown (hardening 9ef0ef11)
       - Done when: hosted workers stop in order within a bounded time and a worker that will not stop is reported; `npm run build && node --test packages/agent/test/worker-host.test.mjs`
     - [ ] **TASK-002.4.2** · mid · Port the SendGrid webhook adapter (the Discord one is already here) from 578f95da
       - Done when: a valid signed SendGrid event is accepted and a tampered, stale or wrongly keyed one is refused; `npm run build && node --test packages/agent/test/discord-sendgrid-webhook.test.mjs`
