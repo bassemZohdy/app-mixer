@@ -114,16 +114,67 @@ export function mountGeneratedOfflineHistory(root,runtime,options={}){
 }
 
 // Optional host-owned cross-session request identities; this store contains no payload.
-export async function createPersistentOfflineRequestKeys({databaseName,scope,indexedDB=globalThis.indexedDB,crypto=globalThis.crypto}={}){
+// The local identity and generation stores can share the encrypted queue's rollback anchor contract. With an anchor,
+// the store keeps a counter and a digest of every row; each write commits both only if no other write happened since
+// it read them, and opening compares the counter with the host's floor. Without an anchor the store behaves as before.
+const FENCE_ROW='rollback-anchor';
+async function openFencedStore({indexedDB,crypto,databaseName,storeName,label,errors,rollbackAnchor}){
+  if(rollbackAnchor!==undefined&&(!rollbackAnchor||typeof rollbackAnchor.read!=='function'||typeof rollbackAnchor.advance!=='function'))throw Error('Invalid '+errors+' rollback anchor');
+  const db=await new Promise((resolve,reject)=>{const request=indexedDB.open(databaseName,1);let blocked=false;request.onupgradeneeded=()=>request.result.createObjectStore(storeName,{keyPath:'id'});request.onblocked=()=>{blocked=true;reject(Error(label+' database blocked'));};request.onerror=()=>reject(request.error??Error(label+' database unavailable'));request.onsuccess=()=>{if(blocked)request.result.close();else resolve(request.result);};});
+  let closed=false,pending=0,synced=0;db.onversionchange=()=>{closed=true;db.close();};
+  const rollback=()=>Error('Offline '+errors+' rollback detected'),tampered=()=>Error('Offline '+errors+' tampering detected');
+  const transact=(mode,body)=>new Promise((resolve,reject)=>{if(closed){reject(Error(label+' store closed'));return;}const tx=db.transaction(storeName,mode),store=tx.objectStore(storeName);let result,failure;body(store,value=>{result=value;},error=>{failure=error;tx.abort();});tx.oncomplete=()=>resolve(result);tx.onabort=tx.onerror=()=>reject(failure??tx.error??Error(label+(mode==='readonly'?' read failed':' write failed')));});
+  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+  const digest=async rows=>{const data=new TextEncoder().encode(JSON.stringify([...rows].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),byte=>byte.toString(16).padStart(2,'0')).join('');};
+  const snapshot=()=>transact('readonly',(store,done)=>{const request=store.getAll();request.onsuccess=()=>{const all=request.result;done({rows:all.filter(row=>row?.id!==FENCE_ROW),meta:all.find(row=>row?.id===FENCE_ROW)});};});
+  const checkMeta=meta=>{if(!meta||Object.keys(meta).sort().join(',')!=='counter,digest,id'||!Number.isSafeInteger(meta.counter)||meta.counter<0||typeof meta.digest!=='string'||!/^[a-f0-9]{64}$/.test(meta.digest))throw tampered();};
+  const verified=async()=>{const snap=await snapshot();if(snap.meta===undefined)throw rollback();checkMeta(snap.meta);if(await digest(snap.rows)!==snap.meta.digest)throw tampered();return snap;};
+  const push=async counter=>{pending=Math.max(pending,counter);if(pending<=synced)return;const target=pending;try{await rollbackAnchor.advance(target);synced=Math.max(synced,target);}catch{}};
+  if(rollbackAnchor){
+    let floor;try{floor=await rollbackAnchor.read();}catch{db.close();throw rollback();}
+    try{
+      if(!Number.isSafeInteger(floor)||floor<0)throw rollback();
+      const snap=await snapshot();
+      if(snap.meta===undefined){
+        // First anchored use: rows written before the anchor existed are adopted as they are, and only if nothing was ever anchored.
+        if(floor>0)throw rollback();const meta={id:FENCE_ROW,counter:0,digest:await digest(snap.rows)};
+        const created=await transact('readwrite',(store,done)=>{const request=store.get(FENCE_ROW);request.onsuccess=()=>{if(request.result!==undefined){done(false);return;}store.put(meta);done(true);};});
+        if(!created)await verified();
+      }else{checkMeta(snap.meta);if(await digest(snap.rows)!==snap.meta.digest)throw tampered();if(floor>snap.meta.counter)throw rollback();synced=floor;if(snap.meta.counter>floor)await push(snap.meta.counter);}
+    }catch(error){closed=true;db.close();throw error;}
+  }
+  return {
+    async read(id){if(!rollbackAnchor)return transact('readonly',(store,done)=>{const request=store.get(id);request.onsuccess=()=>done(request.result);});return (await verified()).rows.find(row=>row.id===id);},
+    // Replaces the row with next (or deletes it when next is undefined) only if it still equals expected.
+    async commit(id,expected,next){
+      if(!rollbackAnchor)return transact('readwrite',(store,done)=>{const request=store.get(id);request.onsuccess=()=>{if(!same(request.result,expected)){done(false);return;}if(next===undefined)store.delete(id);else store.put(next);done(true);};});
+      if(pending>synced)await push(pending);
+      for(let attempt=0;attempt<32;attempt++){
+        const snap=await verified(),current=snap.rows.find(row=>row.id===id);if(!same(current,expected))return false;
+        const meta={id:FENCE_ROW,counter:snap.meta.counter+1,digest:await digest([...snap.rows.filter(row=>row.id!==id),...(next===undefined?[]:[next])])};
+        const outcome=await transact('readwrite',(store,done)=>{const fence=store.get(FENCE_ROW);fence.onsuccess=()=>{if(!same(fence.result,snap.meta)){done('retry');return;}const row=store.get(id);row.onsuccess=()=>{if(!same(row.result,expected)){done('changed');return;}if(next===undefined)store.delete(id);else store.put(next);store.put(meta);done('committed');};};});
+        if(outcome==='committed'){await push(meta.counter);return true;}if(outcome==='changed')return false;
+        await new Promise(resolve=>setTimeout(resolve,Math.floor(Math.random()*(5+attempt*5))));
+      }
+      throw Error(label+' changed concurrently');
+    },
+    hasPendingRollbackAnchor:()=>pending>synced,
+    async syncRollbackAnchor(){if(!rollbackAnchor)return;await push(pending);if(pending>synced)throw Error('Offline '+errors+' rollback anchor unavailable');},
+    get closed(){return closed;},
+    close(){closed=true;db.close();}
+  };
+}
+
+export async function createPersistentOfflineRequestKeys({databaseName,scope,rollbackAnchor,indexedDB=globalThis.indexedDB,crypto=globalThis.crypto}={}){
   const valid=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value);
   if(!valid(databaseName)||!scope||!valid(scope.tenantId)||!valid(scope.applicationId)||!valid(scope.principalId)||!indexedDB||!crypto?.subtle||typeof crypto.randomUUID!=='function')throw Error('Invalid persistent request configuration');
   const identity=[scope.tenantId,scope.applicationId,scope.principalId],enc=new TextEncoder(),uuid=/^[0-9a-f-]{36}$/;
   const hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(value))),byte=>byte.toString(16).padStart(2,'0')).join('');
-  const db=await new Promise((resolve,reject)=>{const request=indexedDB.open(databaseName,1);let blocked=false;request.onupgradeneeded=()=>request.result.createObjectStore('request-identities',{keyPath:'id'});request.onblocked=()=>{blocked=true;reject(Error('Request identity database blocked'));};request.onerror=()=>reject(request.error??Error('Request identity database unavailable'));request.onsuccess=()=>{if(blocked)request.result.close();else resolve(request.result);};});
-  let closed=false;db.onversionchange=()=>{closed=true;db.close();};
+  const local=await openFencedStore({indexedDB,crypto,databaseName,storeName:'request-identities',label:'Request identity',errors:'request identity',rollbackAnchor});
   const slotId=async slot=>{if(!valid(slot))throw Error('Invalid request identity slot');return hash(JSON.stringify([...identity,slot]));};
-  const read=id=>new Promise((resolve,reject)=>{if(closed){reject(Error('Request identity store closed'));return;}const tx=db.transaction('request-identities','readonly'),request=tx.objectStore('request-identities').get(id);let value;request.onsuccess=()=>{value=request.result;};tx.oncomplete=()=>resolve(value);tx.onabort=tx.onerror=()=>reject(tx.error??Error('Request identity read failed'));});
-  const mutate=(id,action)=>new Promise((resolve,reject)=>{if(closed){reject(Error('Request identity store closed'));return;}const tx=db.transaction('request-identities','readwrite'),store=tx.objectStore('request-identities'),request=store.get(id);let result;request.onsuccess=()=>{try{result=action(store,request.result);}catch(error){tx.abort();reject(error);}};tx.oncomplete=()=>resolve(result);tx.onabort=tx.onerror=()=>reject(tx.error??Error('Request identity write failed'));});
+  const read=id=>local.read(id);
+  // Applies next(current) as a compare-and-swap, retrying when another tab changed the row first.
+  const update=async(id,next)=>{for(let i=0;i<30;i++){const current=await read(id);check(current);if(await local.commit(id,current,next(current)))return;}throw Error('Request identity changed concurrently');};
   const digest=(salt,operation,payload)=>hash(JSON.stringify([salt,operation,payload]));
   const check=value=>{if(value!==undefined&&(!value||Object.keys(value).sort().join(',')!=='digest,id,key,salt'||!uuid.test(value.key)||!uuid.test(value.salt)||typeof value.digest!=='string'||!/^[a-f0-9]{64}$/.test(value.digest)||typeof value.id!=='string'||!/^[a-f0-9]{64}$/.test(value.id)))throw Error('Invalid stored request identity');};
   return {
@@ -132,27 +183,30 @@ export async function createPersistentOfflineRequestKeys({databaseName,scope,ind
       for(let i=0;i<30;i++){
         const previous=await read(id);check(previous);if(previous&&previous.id!==id)throw Error('Invalid stored request identity');
         const matches=previous&&previous.digest===await digest(previous.salt,operation,fixed);const salt=matches?previous.salt:crypto.randomUUID(),candidate=matches?previous:{id,key:crypto.randomUUID(),salt,digest:await digest(salt,operation,fixed)};
-        const result=await mutate(id,(store,current)=>{check(current);if(JSON.stringify(current)!==JSON.stringify(previous))return false;if(!matches)store.put(candidate);return true;});if(result)return candidate.key;
+        if(matches||await local.commit(id,previous,candidate))return candidate.key;
       }
       throw Error('Request identity changed concurrently');
     },
-    async reset(slot){const id=await slotId(slot);await mutate(id,store=>{store.delete(id);});},
-    async restore(slot,operation,payload,key){if(!valid(operation)||!uuid.test(key)||!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid offline request');const id=await slotId(slot),salt=crypto.randomUUID(),value={id,key,salt,digest:await digest(salt,operation,JSON.parse(JSON.stringify(payload)))};await mutate(id,store=>{store.put(value);});},
-    close(){closed=true;db.close();}
+    async reset(slot){const id=await slotId(slot);await update(id,()=>undefined);},
+    async restore(slot,operation,payload,key){if(!valid(operation)||!uuid.test(key)||!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid offline request');const id=await slotId(slot),salt=crypto.randomUUID(),value={id,key,salt,digest:await digest(salt,operation,JSON.parse(JSON.stringify(payload)))};await update(id,()=>value);},
+    hasPendingRollbackAnchor:()=>local.hasPendingRollbackAnchor(),
+    syncRollbackAnchor:()=>local.syncRollbackAnchor(),
+    close(){local.close();}
   };
 }
 
 // Shared slots require an authenticated capability and a dedicated local generation store.
-export async function createSharedOfflineIdentityStore({databaseName,scope,operations,invoke,resolveActor,indexedDB=globalThis.indexedDB,crypto=globalThis.crypto}={}){
+export async function createSharedOfflineIdentityStore({databaseName,scope,operations,invoke,resolveActor,rollbackAnchor,indexedDB=globalThis.indexedDB,crypto=globalThis.crypto}={}){
   const valid=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value),cap=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   if(!valid(databaseName)||!scope||!valid(scope.tenantId)||!valid(scope.applicationId)||!valid(scope.principalId)||!Array.isArray(operations)||!operations.length||operations.length>100||typeof invoke!=='function'||typeof resolveActor!=='function'||!indexedDB||!crypto?.subtle)throw Error('Invalid shared identity configuration');
   const identity={tenantId:scope.tenantId,applicationId:scope.applicationId,principalId:scope.principalId},mapping=new Map();for(const item of operations){if(!item||typeof item.id!=='string'||!cap.test(item.id)||typeof item.slotCapability!=='string'||!cap.test(item.slotCapability)||mapping.has(item.id))throw Error('Invalid shared identity configuration');mapping.set(item.id,item.slotCapability);}
-  const db=await new Promise((resolve,reject)=>{const request=indexedDB.open(databaseName,1);let blocked=false;request.onupgradeneeded=()=>request.result.createObjectStore('shared-slots',{keyPath:'id'});request.onblocked=()=>{blocked=true;reject(Error('Shared identity database blocked'));};request.onerror=()=>reject(request.error??Error('Shared identity database unavailable'));request.onsuccess=()=>{if(blocked)request.result.close();else resolve(request.result);};});let closed=false;db.onversionchange=()=>{closed=true;db.close();};
-  const ensure=async()=>{if(closed)throw Error('Shared identity store closed');const actor=await resolveActor();if(closed||!actor||actor.tenantId!==identity.tenantId||actor.applicationId!==identity.applicationId||actor.principalId!==identity.principalId)throw Error('Shared identity unavailable');};
+  const local=await openFencedStore({indexedDB,crypto,databaseName,storeName:'shared-slots',label:'Shared identity',errors:'shared identity',rollbackAnchor});
+  const ensure=async()=>{if(local.closed)throw Error('Shared identity store closed');const actor=await resolveActor();if(local.closed||!actor||actor.tenantId!==identity.tenantId||actor.applicationId!==identity.applicationId||actor.principalId!==identity.principalId)throw Error('Shared identity unavailable');};
   const slotId=async slot=>{if(!valid(slot))throw Error('Invalid shared identity slot');const data=new TextEncoder().encode(JSON.stringify([identity.tenantId,identity.applicationId,identity.principalId,slot]));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),byte=>byte.toString(16).padStart(2,'0')).join('');};
   const check=(row,id)=>{if(row!==undefined&&(!row||Object.keys(row).sort().join(',')!=='id,requestKey'||row.id!==id||typeof row.requestKey!=='string'||!uuid.test(row.requestKey)))throw Error('Invalid stored shared identity');};
-  const read=id=>new Promise((resolve,reject)=>{if(closed){reject(Error('Shared identity store closed'));return;}const tx=db.transaction('shared-slots','readonly'),request=tx.objectStore('shared-slots').get(id);let row;request.onsuccess=()=>{row=request.result;};tx.oncomplete=()=>{try{check(row,id);resolve(row?.requestKey);}catch(error){reject(error);}};tx.onerror=tx.onabort=()=>reject(tx.error??Error('Shared identity read failed'));});
-  const compare=(id,expected,next)=>new Promise((resolve,reject)=>{if(closed){reject(Error('Shared identity store closed'));return;}const tx=db.transaction('shared-slots','readwrite'),store=tx.objectStore('shared-slots'),request=store.get(id);let changed=false;request.onsuccess=()=>{try{const row=request.result;check(row,id);if(row?.requestKey===expected){store.put({id,requestKey:next});changed=true;}}catch(error){tx.abort();reject(error);}};tx.oncomplete=()=>resolve(changed);tx.onerror=tx.onabort=()=>reject(tx.error??Error('Shared identity write failed'));});
+  const read=async id=>{const row=await local.read(id);check(row,id);return row?.requestKey;};
+  // Replaces the stored generation only if it is still the expected one.
+  const compare=async(id,expected,next)=>{const row=await local.read(id);check(row,id);if(row?.requestKey!==expected)return false;return local.commit(id,row,{id,requestKey:next});};
   const capability=operation=>{const value=mapping.get(operation);if(!value)throw Error('Shared identity operation unavailable');return value;};
   const call=async(operation,input)=>{await ensure();const result=await invoke(capability(operation),structuredClone(input));await ensure();return result;};
   const open=async(slot,operation)=>{const result=await call(operation,{action:'open',slot});if(!result||Object.keys(result).join(',')!=='requestKey'||typeof result.requestKey!=='string'||!uuid.test(result.requestKey))throw Error('Invalid shared identity response');return result.requestKey;};
@@ -162,8 +216,10 @@ export async function createSharedOfflineIdentityStore({databaseName,scope,opera
     async getOrCreate(slot,operation,payload){const safe=copyPayload(payload),id=await slotId(slot);capability(operation);await ensure();const requestKey=await current(slot,operation,id),result=await call(operation,{action:'allocate',slot,expectedRequestKey:requestKey,payload:safe});if(!result||Object.keys(result).sort().join(',')!=='idempotencyKey,requestKey'||result.requestKey!==requestKey||typeof result.idempotencyKey!=='string'||!uuid.test(result.idempotencyKey))throw Error('Invalid shared identity response');return {requestKey,idempotencyKey:result.idempotencyKey};},
     async reset(slot,operation){const id=await slotId(slot);capability(operation);await ensure();const previous=await current(slot,operation,id),result=await call(operation,{action:'reset',slot,expectedRequestKey:previous});if(!result||Object.keys(result).join(',')!=='requestKey'||typeof result.requestKey!=='string'||!uuid.test(result.requestKey)||result.requestKey===previous)throw Error('Invalid shared identity response');if(!await compare(id,previous,result.requestKey))throw Error('Shared identity changed concurrently');await ensure();},
     async restore(slot,operation,payload,pair){const safe=copyPayload(payload);if(!pair||typeof pair!=='object'||!uuid.test(pair.requestKey)||!uuid.test(pair.idempotencyKey))throw Error('Invalid shared request identity');const selected={requestKey:pair.requestKey,idempotencyKey:pair.idempotencyKey},id=await slotId(slot);capability(operation);await ensure();const previous=await current(slot,operation,id),result=await call(operation,{action:'restore',slot,expectedRequestKey:previous,...selected,payload:safe});if(!result||Object.keys(result).join(',')!=='requestKey'||result.requestKey!==selected.requestKey)throw Error('Invalid shared identity response');if(!await compare(id,previous,selected.requestKey))throw Error('Shared identity changed concurrently');await ensure();},
+    hasPendingRollbackAnchor:()=>local.hasPendingRollbackAnchor(),
+    syncRollbackAnchor:()=>local.syncRollbackAnchor(),
     async adoptCurrent(slot,operation){const id=await slotId(slot);capability(operation);await ensure();const previous=await read(id),remote=await open(slot,operation);if(!await compare(id,previous,remote))throw Error('Shared identity changed concurrently');await ensure();return remote;},
-    close(){closed=true;db.close();}
+    close(){local.close();}
   };
 }
 

@@ -45,9 +45,8 @@
       - Done when: a valid signed grant provisions the device and a forged, expired or replayed grant is refused; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs`
     - [x] **TASK-002.3.3** · mid · Port migration of data from retained builds of older offline clients (a43b1ec3)
       - Done when: data written by each retained client build opens in the current one and an unknown format is refused; `npm run build && node --test packages/web/test/offline-legacy-clients.test.mjs`
-    - [/] **TASK-002.3.4** · high · Port the rollback anchors for the promotion floor and the offline identity stores, and replication of promotions to a disconnected target (edbdc8ff, 278a7b96, 73eeb8ad)
+    - [x] **TASK-002.3.4** · high · Port the rollback anchors for the promotion floor and the offline identity stores, and replication of promotions to a disconnected target (edbdc8ff, 278a7b96, 73eeb8ad)
       - Done when: a restored older snapshot and a stale anchor are rejected and a carried promotion document replicates once; `npm run build && node --test packages/core/test/remote-promotion-floor-anchor.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
-      - State: attempts 0/3; baseline 1859 passing; branch todo/TASK-002.3.4-port-anchors-promotion from todo/TASK-002.3-port-offline-anchors; next: read docs
   - [ ] **TASK-002.4** · high · Port the agent on shared PostgreSQL (runs, schedules, cost budgets, run supervisor, worker host) and the new webhook adapters the same way
     - Done when: two nodes cannot exceed one agent's run quota and the worker host drains on shutdown; `npm run build && node --test packages/agent/test/worker-host.test.mjs packages/agent/test/run-supervisor-logic.test.mjs packages/agent/test/discord-sendgrid-webhook.test.mjs packages/agent/test/postgres-run-quota-nodes.test.mjs`
     - State: next: decompose

@@ -53,3 +53,30 @@ Generated applications also include the optional `mountRemoteRolloutControls(roo
 
 Generated applications can separately opt in to `mountRemoteRolloutRecovery(root, {statusOperation, recoveryOperation, evidenceOperation})` from `offline-runtime.mjs`. Register all three fixed-scope capabilities and restrict access through the authenticated capability proxy. The view shows the sanitized gate and paginated recovery history, and submits an evidence reference to the host-verified recovery capability. It does not establish worker fencing or reconcile provenance: the host verifier must establish both. After an ambiguous recovery response, refresh the gate and inspect evidence before retrying. Call `dispose()` when removing the view.
  A generated-app integration test exercises the authenticated proxy and SQLite journal: failed verification retains the gate without evidence, and successful verification clears it with actor-attributed evidence visible in the view.
+
+## Promotion floor anchor
+
+To detect a restored or replaced target database, pass `promotionFloorAnchor: {read, advance}` together with `requireAdvancingSource: true`; the repository must implement `getPromotionFloor`. `read()` returns the host-held floor (a nonnegative safe integer), and `advance(sourceVersion)` must durably keep the maximum value it receives. Store it outside the target database, for example in an authenticated record in another system, and scope it to the same application and source and target environments. After the export is authorized and before anything is fetched, the connector compares the target's retained floor with the anchor. A retained floor below the anchor fails with `Promotion floor rollback detected`; an unreadable anchor fails with `Promotion floor unavailable` and an invalid value with `Invalid promotion floor`. A source version at or below the retained floor is refused with `Source version is not newer than the promotion floor`. Each refusal is audited with the `floor_rejected` phase. A retained floor above the anchor is pushed to it. After a completed import the connector advances the anchor; if that fails, the import stays committed and the next import pushes the retained floor, so until then a rollback to a state at or after the old anchor value is not detected. The anchor does not protect a host that loses or resets it, and recovery from a detected rollback is a host decision.
+
+## Disconnected replication
+
+A target that cannot reach its source, such as an air-gapped site, can receive promotions as files carried on removable media or over another one-way channel.
+
+**On the source.** `exportDisconnectedPromotion(store, {applicationId, sourceEnvironment, targetEnvironment, sourceVersion, expectedVersion, sign})` wraps one published version in a document. `sign` is the host's authorized signer, `signPromotionPackage` with the expected target version, so each document is bound to the target version it must follow.
+
+**On the target.** `createDisconnectedPromotionImporter({applicationId, sourceEnvironment, targetEnvironment, repository, authorize, audit, verifyWithEvidence, promotionFloorAnchor?})` returns `importDocument({actor, document})`. It accepts the document as parsed JSON or text up to 2 MiB, and uses no network. Pass `verifyWithEvidence` from `createSignedPromotionVerifier(..., {requireVersionBound: true})`. The repository must implement `promoteAdvancing` and `getPromotionFloor`, as `ApplicationStore`, `SqliteApplicationStore` and `PostgresPromotionTarget` do. Each import:
+1. authorizes the actor
+2. checks the cover sheet against its configuration
+3. refuses a source version that does not advance past every earlier promotion, so a replayed or older document is refused
+4. verifies the signature, environment, application and version binding, and that the signed package matches the cover sheet
+5. authorizes again, then promotes atomically with its signature evidence
+
+A document applied in the wrong order is refused, because its expected version does not match the target, and nothing is written. With `promotionFloorAnchor` (a host-held floor stored outside the target, as for the connector), a target restored from an older backup is refused. Audit events cover each phase.
+
+Documents are signed but not encrypted. Protect the media if the definition is confidential. Carry documents in version order. A target that missed one needs the source to export the missing versions, or a new document bound to the target's current version.
+
+`packages/core/test/disconnected-promotion.test.mjs` carries five versions as files to a target with `fetch` disabled.
+- Accepted: the versions apply in order, and a document applied out of order is refused without changes.
+- Refused: replays, an altered package, a relabelled cover sheet, an untrusted key, a document for another target, unparsable text and an unauthorized actor.
+- After the refusals, the genuine document still applies.
+- A target restored behind the host-held floor is refused.
