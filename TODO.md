@@ -2,9 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [/] **FIX-001** · P1 · low · Make CONTRIBUTING.md match this branch: remove the duplicated paragraphs and the three conflicting Node versions, and drop or restore the three npm scripts and five files it names that do not exist
-  - Done when: every npm script and repository path CONTRIBUTING.md names exists, and no paragraph appears twice; `node --test packages/cli/test/process-files.test.mjs`
-  - State: attempts 0/3; baseline 1813 passing; branch todo/FIX-001-make-contributing-md-match from harden-on-main; next: build
 - [ ] **TASK-002** · P1 · mid · Port the remaining local-acceptance-hardening commits (216, with over 100 files found only there: ESLint setup, shared validators, editor-preview sync, provider idempotency check) onto this branch, leaving out the progress script written for the legacy TODO format
   - Done when: npm run lint exists and passes, and no file named by this branch's docs is found only on that branch; `npm run lint`
   - State: next: decompose
