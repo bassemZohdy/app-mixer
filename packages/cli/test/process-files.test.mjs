@@ -110,3 +110,13 @@ test('TASK-002.6.3 every repository path that the guides name in code spans exis
  for(const page of pages)for(const match of readFileSync(page,'utf8').matchAll(/`((?:packages|deploy|scripts|\.github|adapters)\/[A-Za-z0-9_.\/-]+\.(?:mjs|cjs|js|ts|sh|ya?ml|json|md))`/g))if(!existsSync(join(root,match[1])))missing.push(match[1]+' (named in '+relative(root,page)+')');
  assert.deepEqual(missing,[],'paths named in the guides that are not in the repository');
 });
+
+test('TASK-002.6.5 each acceptance checklist section states what is verified once and lists no item twice',()=>{
+ const sections=read('docs/acceptance-checklists.md').replaceAll('\r\n','\n').split(/^### /m).slice(1);
+ assert.ok(sections.length>10);
+ for(const section of sections){
+  const lines=section.split('\n'),title=lines[0],items=lines.filter(line=>/^(- \*\*|  - \[)/.test(line));
+  assert.ok(items.filter(line=>line.startsWith('- **Verified locally:**')).length<=1,title+' has more than one Verified locally line');
+  const seen=new Set();for(const line of items){const opening=line.slice(0,90);assert.equal(seen.has(opening),false,title+' repeats: '+opening);seen.add(opening);}
+ }
+});
