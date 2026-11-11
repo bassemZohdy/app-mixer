@@ -2,6 +2,7 @@ import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
 import {checkKey,dataCopy} from './data-provider.js';
 import {PostgresOfflineRequestKeys} from './postgres-offline-request-keys.js';
 import {PostgresOfflineExecutions} from './postgres-offline-executions.js';
+import {AppMixerError} from './errors.js';
 
 type Actor={tenantId:string;principalId:string};
 type Options={candidate:CapabilityCandidate;applicationId:string;targetOperationId:string;executions?:PostgresOfflineExecutions;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizePayload:(actor:Actor,payload:Record<string,unknown>)=>boolean|Promise<boolean>;validatePayload:(payload:Record<string,unknown>)=>boolean|Promise<boolean>};
@@ -26,6 +27,6 @@ export function registerSharedOfflineAllocation(registry:CapabilityRegistry,stor
 /** Check a shared key before forwarding through a separate authorized capability registry. */
 export function registerSharedOfflineDispatch(registry:CapabilityRegistry,external:CapabilityRegistry,store:PostgresOfflineRequestKeys,options:Options):void{
  prepare(registry,store,options);if(!(external instanceof CapabilityRegistry)||external===registry)throw Error('Invalid shared offline capability');const {applicationId,targetOperationId,executions}=options;
- registry.register(options.candidate,{...binding(options,'idempotencyKey'),execute:async(input,actor)=>{const value=input as {idempotencyKey:string;payload:Record<string,unknown>},scope={tenantId:actor.tenantId,applicationId},forward=(payload:Record<string,unknown>)=>external.invoke(targetOperationId,{idempotencyKey:value.idempotencyKey,payload},{...actor,origin:'service'});if(executions)return executions.execute(scope,actor.principalId,targetOperationId,value.payload,value.idempotencyKey,forward);if(!await store.verify(scope,actor.principalId,targetOperationId,value.payload,value.idempotencyKey))throw Error('Shared offline key forbidden');return forward(value.payload);}});
+ registry.register(options.candidate,{...binding(options,'idempotencyKey'),execute:async(input,actor)=>{const value=input as {idempotencyKey:string;payload:Record<string,unknown>},scope={tenantId:actor.tenantId,applicationId},forward=(payload:Record<string,unknown>)=>external.invoke(targetOperationId,{idempotencyKey:value.idempotencyKey,payload},{...actor,origin:'service'});if(executions)return executions.execute(scope,actor.principalId,targetOperationId,value.payload,value.idempotencyKey,forward);if(!await store.verify(scope,actor.principalId,targetOperationId,value.payload,value.idempotencyKey))throw new AppMixerError('denied','Shared offline key forbidden');return forward(value.payload);}});
 }
 export type {Options as SharedOfflineCapabilityOptions};

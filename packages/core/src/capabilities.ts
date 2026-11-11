@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {AppMixerError} from './errors.js';
 export type CapabilityCandidate = {operationId:string; method:string; path:string; summary?:string};
 export type InvocationContext = {tenantId:string; principalId:string; origin:'ui'|'agent'|'service'};
 export type CapabilityAuditEvent = {invocationId:string; operationId:string; tenantId:string; principalId:string; outcome:'attempt'|'not_found'|'denied'|'invalid'|'succeeded'|'failed'};
@@ -78,20 +79,20 @@ export class CapabilityRegistry {
       // An unavailable audit sink blocks execution before any side effect.
       await audit('attempt');
       entry=this.bindings.get(operationId);
-      if(!entry) { await audit('not_found'); throw Error('Capability not found'); }
+      if(!entry) { await audit('not_found'); throw new AppMixerError('not_found','Capability not found'); }
       let authorized:boolean;
       try { authorized=await entry.binding.authorize({...policyContext}) === true; }
       catch(error) { await audit('failed'); throw error; }
-      if(!authorized) { await audit('denied'); throw Error('Capability forbidden'); }
+      if(!authorized) { await audit('denied'); throw new AppMixerError('denied','Capability forbidden'); }
       let valid:boolean;
       try { if(snapshotFailed)throw snapshotError; valid=await entry.binding.validate(structuredClone(safeInput)) === true; }
       catch(error) { await audit('failed'); throw error; }
-      if(!valid) { await audit('invalid'); throw Error('Invalid capability input'); }
+      if(!valid) { await audit('invalid'); throw new AppMixerError('invalid','Invalid capability input'); }
       if(entry.binding.authorizeInput){
         let allowed:boolean;
         try { allowed=await entry.binding.authorizeInput({...policyContext},structuredClone(safeInput))===true; }
         catch(error) { await audit('failed'); throw error; }
-        if(!allowed) { await audit('denied'); throw Error('Capability forbidden'); }
+        if(!allowed) { await audit('denied'); throw new AppMixerError('denied','Capability forbidden'); }
       }
     }catch(error){throw markNoEffect(error);}
     let result:unknown;

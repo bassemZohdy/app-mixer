@@ -3,6 +3,7 @@ import {createRecordFieldValidator,type RecordField} from './record-field-valida
 import {CapabilityRegistry, type CapabilityCandidate} from './capabilities.js';
 import {checkKey, type DataProvider} from './data-provider.js';
 import {createBoundedOperation} from './bounded-operation.js';
+import {AppMixerError} from './errors.js';
 
 type PolicyContext={tenantId:string;principalId:string};
 export type DataCapabilityOptions={
@@ -31,7 +32,7 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
   if(options.recheckAuthorization!==undefined&&typeof options.recheckAuthorization!=='boolean')throw Error('Invalid data capability');
   const {applicationId,collection,operation,authorize,validate,authorizeRecord,recheckAuthorization}=options;
   const runPolicy=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid data capability','Data capability unavailable');
-  const checkPolicy=(callback:(signal:AbortSignal)=>boolean|Promise<boolean>)=>runPolicy(async signal=>{const result=await callback(signal);if(signal.aborted)throw Error('Data capability unavailable');return result===true;});
+  const checkPolicy=(callback:(signal:AbortSignal)=>boolean|Promise<boolean>)=>runPolicy(async signal=>{const result=await callback(signal);if(signal.aborted)throw new AppMixerError('unavailable','Data capability unavailable');return result===true;});
   if(((options.fields!==undefined||options.jsonSchema!==undefined)&&operation!=='put')||(options.fields!==undefined&&options.jsonSchema!==undefined)||(options.allowAdditionalFields!==undefined&&options.fields===undefined))throw Error('Invalid data capability schema');
   const validateFields=options.fields===undefined?undefined:createRecordFieldValidator(options.fields,{...(options.allowAdditionalFields===undefined?{}:{allowAdditionalFields:options.allowAdditionalFields})});
   const validateSchema=options.jsonSchema===undefined?undefined:createRecordJsonSchemaValidator(options.jsonSchema);
@@ -50,12 +51,12 @@ export function registerDataCapability(registry:CapabilityRegistry, provider:Dat
       const value=input as {id:string;expectedRevision:number|null;value:Record<string,unknown>;expectedSchemaVersion?:number};
       const scope={tenantId:context.tenantId,applicationId};
       if(recheckAuthorization){
-        if(!await checkPolicy(signal=>authorize({...context},signal)))throw Error('Capability forbidden');
-        if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw Error('Capability forbidden');
-        if(!await checkPolicy(signal=>authorize({...context},signal)))throw Error('Capability forbidden');
-        if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw Error('Capability forbidden');
+        if(!await checkPolicy(signal=>authorize({...context},signal)))throw new AppMixerError('denied','Capability forbidden');
+        if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw new AppMixerError('denied','Capability forbidden');
+        if(!await checkPolicy(signal=>authorize({...context},signal)))throw new AppMixerError('denied','Capability forbidden');
+        if(authorizeRecord&&!await checkPolicy(signal=>authorizeRecord({...context},structuredClone(input),signal)))throw new AppMixerError('denied','Capability forbidden');
       }
-      if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw Error('Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
+      if(operation==='get'){if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw new AppMixerError('unavailable','Data schema guard unavailable');return provider.get(scope,collection,value.id,value.expectedSchemaVersion)??null;}
       if(operation==='put')return provider.put(scope,collection,value.id,value.value,value.expectedRevision,value.expectedSchemaVersion);
       provider.delete(scope,collection,value.id,value.expectedRevision as number,value.expectedSchemaVersion);return null;
     }

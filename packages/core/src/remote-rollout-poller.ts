@@ -1,5 +1,6 @@
 import {SqliteRemoteRollout} from './remote-rollout.js';
 import {PostgresRemoteRollout} from './postgres-remote-rollout.js';
+import {AppMixerError} from './errors.js';
 
 type RolloutResult=Awaited<ReturnType<SqliteRemoteRollout['runOnce']>>;
 export type RemoteRolloutPollerStatus={running:boolean;inFlight:boolean;consecutiveFailures:number;reviewRequired:boolean;passStartedAt:number|null;lastSuccessAt:number|null;lastFailureAt:number|null};
@@ -24,7 +25,7 @@ export class RemoteRolloutPoller {
  /** A throwing or out-of-range random source falls back to the unjittered wait so polling never stops. */
  private jittered(base:number):number{let draw:number;try{draw=this.random();}catch{return base;}return Number.isFinite(draw)&&draw>=0&&draw<1?Math.max(1,Math.floor(base*(1-this.jitterRatio*draw))):base;}
  start():void{
-  if(this.active||this.pending)throw Error('Rollout poller already running');this.active=true;this.failures=0;this.loop();
+  if(this.active||this.pending)throw new AppMixerError('conflict','Rollout poller already running');this.active=true;this.failures=0;this.loop();
  }
  private loop():void{
   if(!this.active)return;

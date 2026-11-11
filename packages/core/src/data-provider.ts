@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {openDatabase} from './sqlite-open.js';
+import {AppMixerError} from './errors.js';
 
 export type DataScope = {tenantId:string; applicationId:string};
 export type DataRecord = {id:string; revision:number; value:Record<string,unknown>};
@@ -129,7 +130,7 @@ export class SqliteDataProvider implements DataProvider {
   }
   private requireSchema(scope:DataScope,collection:string,expected:number|undefined):void {
     if(expected!==undefined&&(!Number.isSafeInteger(expected)||expected<0))throw Error('Invalid schema version');
-    if((expected??0)!==this.getSchemaVersion(scope,collection))throw Error('Data schema version conflict');
+    if((expected??0)!==this.getSchemaVersion(scope,collection))throw new AppMixerError('conflict','Data schema version conflict');
   }
   private snapshot(scope:DataScope,collection:string):{preview:MigrationPreview;rows:DataRecord[]} {
     const version=this.getSchemaVersion(scope,collection),rows:DataRecord[]=[];let bytes=0;
@@ -157,7 +158,7 @@ export class SqliteDataProvider implements DataProvider {
   }
   private rehearsePlan(scope:DataScope,collection:string,plan:DataMigrationRehearsal,rollbackTarget?:number):DataMigrationRehearsalResult {
     checkKey(scope,collection,'validation');if(!plan||!Number.isSafeInteger(plan.fromVersion)||plan.fromVersion<0||plan.fromVersion>=Number.MAX_SAFE_INTEGER||typeof plan.transform!=='function'||typeof plan.validate!=='function')throw Error('Invalid data migration rehearsal');
-    const {fromVersion,transform,validate}=plan;scope={tenantId:scope.tenantId,applicationId:scope.applicationId};this.db.exec('BEGIN');try{const {preview,rows}=this.snapshot(scope,collection);if(preview.schemaVersion!==fromVersion)throw Error('Migration snapshot conflict');if(rollbackTarget!==undefined)this.checkRollbackTarget(scope,collection,rollbackTarget);const transformed=this.transformMigrationRows(rows,transform,validate),outputDigest=this.migrationOutputDigest(preview.digest,transformed);this.db.exec('ROLLBACK');return {...preview,outputDigest};}catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    const {fromVersion,transform,validate}=plan;scope={tenantId:scope.tenantId,applicationId:scope.applicationId};this.db.exec('BEGIN');try{const {preview,rows}=this.snapshot(scope,collection);if(preview.schemaVersion!==fromVersion)throw new AppMixerError('conflict','Migration snapshot conflict');if(rollbackTarget!==undefined)this.checkRollbackTarget(scope,collection,rollbackTarget);const transformed=this.transformMigrationRows(rows,transform,validate),outputDigest=this.migrationOutputDigest(preview.digest,transformed);this.db.exec('ROLLBACK');return {...preview,outputDigest};}catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
   }
   private checkRollbackTarget(scope:DataScope,collection:string,targetVersion:number):void{if(targetVersion!==0&&!this.db.prepare('SELECT 1 FROM business_schema_migrations WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version=?').get(scope.tenantId,scope.applicationId,collection,targetVersion))throw Error('Rollback target not found');}
   private migrationOutputDigest(inputDigest:string,rows:DataRecord[]):string{return createHash('sha256').update(JSON.stringify(['app-mixer-migration-output-v1',inputDigest,rows])).digest('hex');}
@@ -189,13 +190,13 @@ export class SqliteDataProvider implements DataProvider {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const {preview,rows}=this.snapshot(scope,collection);
-      if(preview.schemaVersion!==fromVersion||preview.digest!==digest)throw Error('Migration snapshot conflict');
+      if(preview.schemaVersion!==fromVersion||preview.digest!==digest)throw new AppMixerError('conflict','Migration snapshot conflict');
       if(rollbackTarget!==undefined)this.checkRollbackTarget(scope,collection,rollbackTarget);
       const transformed=this.transformMigrationRows(rows,transform,validate);
-      if(outputDigest!==undefined&&this.migrationOutputDigest(preview.digest,transformed)!==outputDigest)throw Error('Migration output conflict');
-      if(planDigest!==undefined&&migrationPlanDigest(scope,collection,fromVersion,toVersion,rollbackTarget,preview.digest,outputDigest!)!==planDigest)throw Error('Migration plan conflict');
+      if(outputDigest!==undefined&&this.migrationOutputDigest(preview.digest,transformed)!==outputDigest)throw new AppMixerError('conflict','Migration output conflict');
+      if(planDigest!==undefined&&migrationPlanDigest(scope,collection,fromVersion,toVersion,rollbackTarget,preview.digest,outputDigest!)!==planDigest)throw new AppMixerError('conflict','Migration plan conflict');
       const update=this.db.prepare('UPDATE business_records SET revision=?,value=? WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND revision=? AND deleted=0');
-      for(const row of transformed){const result=update.run(row.revision+1,JSON.stringify(row.value),scope.tenantId,scope.applicationId,collection,row.id,row.revision);if(result.changes!==1)throw Error('Migration snapshot conflict');}
+      for(const row of transformed){const result=update.run(row.revision+1,JSON.stringify(row.value),scope.tenantId,scope.applicationId,collection,row.id,row.revision);if(result.changes!==1)throw new AppMixerError('conflict','Migration snapshot conflict');}
       this.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?) ON CONFLICT(tenant_id,application_id,collection_id) DO UPDATE SET version=excluded.version').run(scope.tenantId,scope.applicationId,collection,toVersion);
       this.db.prepare('INSERT INTO business_schema_migrations VALUES (?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,preview.digest,preview.count);
       if(rollbackTarget!==undefined)this.db.prepare('INSERT INTO business_schema_rollbacks VALUES (?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,collection,fromVersion,toVersion,rollbackTarget,preview.digest,preview.count);
@@ -243,7 +244,7 @@ export class SqliteDataProvider implements DataProvider {
     try {
       this.requireSchema(scope,collection,expectedSchemaVersion);
       const current=this.db.prepare('SELECT revision,deleted FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=?').get(scope.tenantId,scope.applicationId,collection,id);
-      if((current && Number(current.deleted)===0 ? Number(current.revision) : null)!==expectedRevision)throw Error('Data revision conflict');
+      if((current && Number(current.deleted)===0 ? Number(current.revision) : null)!==expectedRevision)throw new AppMixerError('conflict','Data revision conflict');
       const prior=current ? Number(current.revision) : 0;
       if(!Number.isSafeInteger(prior)||prior>=Number.MAX_SAFE_INTEGER)throw Error('Invalid revision');
       const revision=prior+1;
@@ -257,7 +258,7 @@ export class SqliteDataProvider implements DataProvider {
     this.db.exec('BEGIN IMMEDIATE');
     try {this.requireSchema(scope,collection,expectedSchemaVersion);
       const result=this.db.prepare("UPDATE business_records SET revision=revision+1,deleted=1,value='{}' WHERE tenant_id=? AND application_id=? AND collection_id=? AND record_id=? AND revision=? AND deleted=0").run(scope.tenantId,scope.applicationId,collection,id,expectedRevision);
-      if(result.changes!==1)throw Error('Data revision conflict');this.db.exec('COMMIT');
+      if(result.changes!==1)throw new AppMixerError('conflict','Data revision conflict');this.db.exec('COMMIT');
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   /**
