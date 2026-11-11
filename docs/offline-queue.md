@@ -213,3 +213,30 @@ It makes no network request. The returned publication can seed `EncryptedPublica
 ## Capacity and retention
 
 `SqliteOfflineQueue` accepts up to 1,000 live operations per principal (`pending`, `running`, `conflict`, `uncertain`, `exhausted`); `succeeded` and `discarded` operations no longer count, so a principal is never locked out by history. `purge(scope, principalId, {statuses, limit})` is the host-authorized retention call: it deletes at most `limit` (up to 1,000) operations of that principal in the given terminal statuses (`succeeded`, `discarded`, `exhausted`), oldest first, and returns the count; live work is never removed. A purged operation's request key is forgotten, so purge only history that the client can no longer resubmit.
+
+## Retention of settled browser items
+
+`EncryptedBrowserQueue` holds at most 1,000 items per partition; a status is only visible after decryption, so the cap counts every stored item. `purge({statuses, limit})` frees a full queue: it deletes at most `limit` (up to 1,000) settled items (`succeeded`, `discarded`, `exhausted`), lowest id first (ids are hashes of the request key, so the order is arbitrary but stable), and returns the count. Deletion advances the authenticated counter and digest exactly like any other write, so the rollback anchor stays valid, a restored purged envelope is still detected as an integrity mismatch, and the host floor rises. A purged item's request key is forgotten; purge only history the client cannot resubmit.
+
+## Shared keys and failed submissions
+
+A host-issued shared idempotency key that another request already holds, in this tenant or another, is reported as `Offline request conflict`; the database's constraint text is not shown. If a staged submission's state moves on while its capability runs (an operator recovered it as uncertain), the capability's own error is still the one the caller sees and the operation stays uncertain for reconciliation.
+
+## Data written by older clients
+
+`packages/web/test/legacy-clients/` keeps compiled builds of the first and last IndexedDB version-1 offline clients and the last version-2 client (see its README). Each writes pending, uncertain and conflicted queue items, and a cached publication where it can. `offline-legacy-clients.test.mjs` then opens the same database with the current client while the legacy tab is still connected, and checks that:
+
+- the legacy connection is closed and every item survives with its state, version and keys;
+- each item resumes from its state, and a repeated request still deduplicates;
+- the partition rotates to a new key;
+- the legacy build can no longer open the database.
+
+Change a stored format only together with a new retained build of the client that wrote the previous one.
+
+## Rollback anchor for identity and generation stores
+
+`createPersistentOfflineRequestKeys` and `createSharedOfflineIdentityStore` accept the same `rollbackAnchor: {read, advance}` as the queue. Without it they behave as before. With it, each store keeps a change counter and a SHA-256 digest of all its rows in a `rollback-anchor` record. A write reads every row and the counter and checks the digest. It then commits the row change and the next counter together, and only if the counter is still the one it read; otherwise it retries, up to 32 attempts. Every row change advances the counter, including a reset, restore or new generation. Repeat lookups that find a matching row do not write. Opening fails with `Offline request identity rollback detected` (or `Offline shared identity rollback detected`) when the anchor cannot be read, returns something other than a nonnegative safe integer, or holds a floor above the local counter, including when the counter record was deleted. A row that no longer matches the digest fails with `... tampering detected`. Lookups check it, as well as opening and every write. A larger local counter is pushed to the anchor at opening and after each write. If `advance` fails, the write stays committed, `hasPendingRollbackAnchor()` returns true, and the next write or `syncRollbackAnchor()` retries.
+
+This catches the case the stores could not before. A restored older profile would give a new intent an old request key, which the server would treat as a request it had already handled, or would silently lose a device's generation fence. The first anchored open of a database written without an anchor adopts its rows as they are, but only while the host floor is zero. Use one floor per store, scoped to the same tenant, application and principal, and kept outside the browser profile. The queue's floor is separate. Every instance for a database must configure the anchor; an unanchored write makes anchored instances report tampering.
+
+These stores hold no key, so the counter and digest are not authenticated. They detect a restored or partly restored copy of browser storage, not deliberate edits by code that can write the database and recompute the digest; that code is already outside the threat model. Each write and each lookup reads every row, so the cost grows with the number of slots.

@@ -220,13 +220,17 @@ export {PostgresAuthenticationFailureAudit} from './postgres-auth-failure-audit.
 export type {AuthenticationFailureEvent,StoredAuthenticationFailure,PostgresAuthenticationFailureAuditOptions} from './postgres-auth-failure-audit.js';
 export type {StoredCapabilityAuditEvent} from './capability-audit.js';
 export {createRemoteControlConnector,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from './remote-control-connector.js';
-export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent} from './remote-control-connector.js';
+export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent,RemotePromotionFloorAnchor} from './remote-control-connector.js';
+export {exportDisconnectedPromotion,createDisconnectedPromotionImporter} from './disconnected-promotion.js';
+export type {DisconnectedPromotionDocument,DisconnectedImportDetails,DisconnectedImportEvent,DisconnectedPromotionRepository,DisconnectedPromotionImporterOptions} from './disconnected-promotion.js';
 export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
 export {createMetricsServer} from './metrics-server.js';
 export type {MetricsServerOptions} from './metrics-server.js';
 
 export {signPublicationRelease,verifyPublicationRelease} from './signed-publication.js';
 export type {ReleasePublication,SignedPublicationRelease,PublicationReleaseKey} from './signed-publication.js';
+export {signOfflineProvisioning,verifyOfflineProvisioning,MAX_OFFLINE_PROVISIONING_MS} from './offline-provisioning.js';
+export type {OfflineProvisioningGrant,SignedOfflineProvisioning} from './offline-provisioning.js';
 
 export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
 export type {PublicationReleaseScope,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';

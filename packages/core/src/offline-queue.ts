@@ -84,7 +84,12 @@ export class SqliteOfflineQueue {
       const id=randomUUID(),idempotencyKey=sharedKey??randomUUID();
       this.db.prepare('INSERT INTO offline_operations VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,principalId,id,operationId,requestKey,idempotencyKey,serialized,'pending',0,0);
       this.db.exec('COMMIT');return {id,operationId,requestKey,idempotencyKey,payload:dataCopy(normalized),status:'pending',attempts:0,nextAttemptAt:0};
-    }catch(error){this.db.exec('ROLLBACK');throw error;}
+    }catch(error){
+      this.db.exec('ROLLBACK');
+      // A host-issued shared key that another request already holds (in this tenant or any other) is a conflict; do not surface the database's constraint text or say where the key is held.
+      if(error instanceof Error&&/UNIQUE constraint failed: offline_operations\.idempotency_key/.test(error.message))throw Error('Offline request conflict',{cause:error});
+      throw error;
+    }
   }
   get(scope:DataScope,principalId:string,id:string):OfflineOperation|undefined {
     checkKey(scope,'principal',principalId);checkKey(scope,'offline',id);
