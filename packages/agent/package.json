@@ -12,6 +12,24 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./webhooks": {
+      "types": "./dist/webhooks.d.ts",
+      "import": "./dist/webhooks.js"
+    },
+    "./stores": {
+      "types": "./dist/stores.d.ts",
+      "import": "./dist/stores.js"
+    },
+    "./dist/shared-run-experimental.js": {
+      "types": "./dist/shared-run-experimental.d.ts",
+      "import": "./dist/shared-run-experimental.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -33,7 +51,6 @@
     "@langchain/langgraph-checkpoint": "^1.2.1",
     "@langchain/openai": "^1.8.0",
     "@opentelemetry/api": "1.9.0",
-    "twilio": "6.2.0",
     "zod": "^4.6.7"
   }
 }
