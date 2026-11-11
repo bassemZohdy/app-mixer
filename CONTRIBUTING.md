@@ -31,7 +31,7 @@ Tests that need an external service are skipped unless their variable is set. CI
 | `APP_MIXER_TEST_KIND_NODE_FAILURE=1` (with `APP_MIXER_TEST_KUBE_CONTEXT`, `APP_MIXER_TEST_POD_POSTGRES_URL`, `APP_MIXER_TEST_WORKER_IMAGE`, `APP_MIXER_TEST_FIRST_NODE` and `APP_MIXER_TEST_REPLACEMENT_NODE`) | A kind cluster with two worker nodes | The `kubernetes-node-recovery` workflow |
 | `APP_MIXER_TEST_CONCURRENCY=1..32` | Nothing | `npm test` runs that many test files at once (default 2 on Windows, 8 elsewhere) |
 | `APP_MIXER_TEST_POSTGRES_RESTORE=docker` | Docker (one PostgreSQL container) | `node --test packages/core/test/postgres-restore-rollback.test.mjs` |
-| `APP_MIXER_TEST_POSTGRES_FAILOVER=docker` | Docker (PostgreSQL primary and synchronous standby) | `node --test packages/core/test/postgres-revocation-failover.test.mjs` |
+| `APP_MIXER_TEST_POSTGRES_FAILOVER=docker` | Docker (PostgreSQL primary and synchronous standby) | `node --test packages/core/test/postgres-revocation-failover.test.mjs packages/agent/test/postgres-run-failover.test.mjs` |
 
 ## Code scanning
 

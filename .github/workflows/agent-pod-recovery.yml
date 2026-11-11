@@ -126,6 +126,8 @@ jobs:
             kubectl delete -n "$ns" "pod/memory-worker-$phase" --grace-period=0 --force --wait=true --timeout=90s
             kubectl exec -n "$ns" agent-test-manager -- node "$script" "verify-$phase"
           done
+      - name: Verify scheduled run workers survive a crash and a rolling restart
+        run: sh deploy/kubernetes/test-support/agent-recovery/run-supervisor.sh agent-recovery-test
       - name: Verify HTTPS notice recovery after deleting sender and receiver pods
         run: |
           set -eu
@@ -182,3 +184,39 @@ jobs:
           kubectl logs -n agent-recovery-test agent-memory-postgres || true
           kubectl logs -n agent-recovery-test notice-sender || true
           kubectl logs -n agent-recovery-test notice-receiver || true
+          kubectl logs -n agent-recovery-test -l app=agent-run-workers --prefix --tail=200 || true
+          kubectl logs -n agent-recovery-test agent-run-effects || true
+  node-failure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified kind
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  '"$RUNNER_TEMP/kind" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Create a cluster with two worker nodes and load the test image
+        run: |
+          cat > "$RUNNER_TEMP/kind.yaml" <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+          EOF
+          kind create cluster --name node-failure --config "$RUNNER_TEMP/kind.yaml"
+          docker build -f deploy/kubernetes/test-support/agent-recovery/Dockerfile -t app-mixer-agent-recovery:test .
+          kind load docker-image app-mixer-agent-recovery:test --name node-failure
+      - name: Verify run workers survive the loss of a whole node
+        run: sh deploy/kubernetes/test-support/agent-recovery/node-failure.sh agent-node-failure node-failure
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get nodes,pods -A -o wide || true
+          kubectl describe nodes || true
+          kubectl logs -n agent-node-failure -l app=agent-run-workers --prefix --tail=200 || true
+          kubectl logs -n agent-node-failure agent-run-effects || true
+          kubectl logs -n agent-node-failure agent-memory-postgres || true

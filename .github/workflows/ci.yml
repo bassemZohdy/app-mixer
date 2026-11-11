@@ -101,11 +101,11 @@ jobs:
         env:
           APP_MIXER_TEST_PROMETHEUS: docker
         run: node --test packages/cli/test/alert-rules.test.mjs
-      - name: Revocation store failover drill
+      - name: PostgreSQL failover drills
         if: matrix.node == '22'
         env:
           APP_MIXER_TEST_POSTGRES_FAILOVER: docker
-        run: node --test packages/core/test/postgres-revocation-failover.test.mjs
+        run: node --test packages/core/test/postgres-revocation-failover.test.mjs packages/agent/test/postgres-run-failover.test.mjs
       - name: A second real OIDC provider (Ory Hydra)
         if: matrix.node == '22'
         env:
