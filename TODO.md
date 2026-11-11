@@ -70,6 +70,19 @@
       - Done when: one trace crosses the services and reaches the collector with the expected spans; `npm run build && node --test packages/cli/test/otel-collector-trace.test.mjs`
   - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
     - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
+    - State: branch todo/TASK-002.6-port-remaining-docs from todo/TASK-002-port-remaining-local-acceptance; next: build children
+    - [ ] **TASK-002.6.1** · low · Port ADR 0011 (core keeps its dependency on the web renderer, 373bfb3a) and its entries in the ADR table and the docs index
+      - Done when: the ADR file exists, the ADR table lists it and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
+    - [ ] **TASK-002.6.2** · mid · Port the store schema versions (246c6d57): an app_mixer_schema table, a refusal of databases from newer releases in the agent run and staged operation stores, and docs/schema-versions.md
+      - Done when: a database recorded at a newer version is refused with the documented message and an older layout migrates; `npm run build && node --test packages/core/test/schema-version.test.mjs packages/agent/test/durable-runs.test.mjs`
+    - [ ] **TASK-002.6.3** · high · Port the shared run failover test and the kind recovery scripts that docs/durable-agent-runs.md names (78057dab, 6f4f1188, 67c66619, 057d8276 and their review fixes); the kind and PostgreSQL parts run in CI
+      - Done when: every script and test that docs/durable-agent-runs.md names exists and a static test checks the list; `node --test packages/cli/test/process-files.test.mjs`
+      - Links: Depends: TASK-002.6.2
+    - [ ] **TASK-002.6.4** · low · Port the sandbox idempotency check for outbound providers (986e967e, 378148f2 part) with its script test and its CONTRIBUTING entry
+      - Done when: the script refuses a provider that repeats a side effect on a retried key; `npm run build && node --test packages/cli/test/provider-idempotency-script.test.mjs`
+    - [ ] **TASK-002.6.5** · low · Reconcile docs/acceptance-checklists.md (the five repeated P3-02 lines, the collector and recovery items) and CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
+      - Done when: P3-02 has one verified line, CONTRIBUTING repeats no sentence and names every script that exists; `node --test packages/cli/test/process-files.test.mjs`
+      - Links: Depends: TASK-002.6.3, TASK-002.6.4
 - [ ] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
   - Done when: both Dockerfiles share one digest-pinned base image newer than 22.13.0, and a tag without a digest fails the test; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/kubernetes-data-plane.md · Depends: TASK-002
