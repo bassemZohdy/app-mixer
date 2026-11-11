@@ -90,11 +90,11 @@ function authorized(req: IncomingMessage, token: string): boolean {
 }
 function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,dispatch?:(req:IncomingMessage,res:ServerResponse,run:()=>void)=>void):RequestListener {
   return (req, res) => {
-    const run=()=>handler(req, res).catch(error => {
+    const run=():void=>{void handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
       else{const status=refusalStatus(error);if(status!==undefined&&error instanceof Error)respond(res,status,{error:error.message});else respond(res, 500, {error:'Internal server error'});}
-    });
+    });};
     if(dispatch)dispatch(req,res,run);else run();
   };
 }

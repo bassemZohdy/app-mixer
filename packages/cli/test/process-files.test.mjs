@@ -64,3 +64,16 @@ test('FIX-001 CONTRIBUTING repeats no sentence',()=>{
  for(const raw of guide().split(/\n|(?<=[.!?])\s+/)){const sentence=raw.replace(/\s+/g,' ').trim();if(sentence.length<=40)continue;if(seen.has(sentence))repeated.add(sentence);seen.add(sentence);}
  assert.deepEqual([...repeated],[],'sentences that appear more than once in CONTRIBUTING.md');
 });
+
+// TASK-002.1.7: the lint baseline.
+test('TASK-002.1.7 the lint baseline is configured, scripted, documented and run in CI',()=>{
+ const config=read('eslint.config.mjs');
+ for(const rule of ['no-floating-promises','no-misused-promises','await-thenable','no-unused-vars'])assert.ok(config.includes(rule),rule+' is enabled');
+ assert.ok(!config.includes('eslint-disable'),'no rule is switched off by a comment');
+ const manifest=JSON.parse(read('package.json'));
+ assert.equal(manifest.scripts.lint,'eslint "packages/*/src/**/*.ts"');
+ for(const name of ['eslint','typescript-eslint'])assert.ok(manifest.devDependencies[name],name+' is a dev dependency');
+ assert.ok(read('.github/workflows/ci.yml').includes('run: npm run lint'),'CI runs the lint');
+ assert.ok(read('CONTRIBUTING.md').includes('npm run lint'),'CONTRIBUTING names the script');
+ assert.ok(existsSync(join(root,'.editorconfig')),'.editorconfig exists');
+});

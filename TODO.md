@@ -22,7 +22,7 @@
       - Done when: a tampered signature and an unknown subpath are refused and npm pack ships no sources; `npm run build && node --test packages/agent/test/twilio-signature.test.mjs packages/agent/test/subpath-exports.test.mjs packages/cli/test/package-metadata.test.mjs`
     - [x] **TASK-002.1.6** · mid · Port the Node floor 22.22.2 with the jsdom 31 and OpenTelemetry 3.x updates (106a196c)
       - Done when: engines, README and the CI matrix agree on the floor and the package metadata test passes; `npm run build && node --test packages/cli/test/package-metadata.test.mjs`
-    - [ ] **TASK-002.1.7** · mid · Port the lint baseline and editorconfig (0b0e88b9), last so it fixes the final state
+    - [x] **TASK-002.1.7** · mid · Port the lint baseline and editorconfig (0b0e88b9), last so it fixes the final state
       - Done when: lint passes with no suppressed rule; `npm run lint`
       - Links: Depends: TASK-002.1.2, TASK-002.1.3, TASK-002.1.4, TASK-002.1.5
   - [ ] **TASK-002.2** · mid · Port the web, React Native and Flutter fixtures, accessibility checks and editor-preview sync the same way

@@ -70,6 +70,9 @@ jobs:
       # Known vulnerabilities in the shipped (non-development) dependency tree fail the build.
       - run: npm audit --omit=dev
         if: matrix.node == '22'
+      # Unawaited promises, promises passed where a value is expected, unused variables (see eslint.config.mjs).
+      - run: npm run lint
+        if: matrix.node == '22'
       - run: npm test
       - run: npm run build
       - name: Real React lifecycle smoke test
