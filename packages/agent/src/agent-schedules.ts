@@ -5,6 +5,8 @@ import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
 import {SqliteAgentRuns,resumeAgentRunWithTriggerInTransaction,type AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
+import {AgentError} from './errors.js';
 
 type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string;excludeDates?:string[];excludeDateRanges?:{start:string;end:string}[];excludeAnnualDates?:string[];observeAnnualWeekends?:boolean};
 type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
@@ -12,8 +14,8 @@ export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revi
 export type AgentScheduleCursor={nextAt:number;scheduleId:string};
 export type AgentSchedulePage={items:AgentSchedule[];next?:AgentScheduleCursor};
 type FireOptions={definitionVersion:number;maxAttempts:number;runTimeoutMs:number;maxPending:number;traceParent?:string;wakeup?:{runId:string;revision:number}};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 function field(raw:string,min:number,max:number,starMax=max):Set<number>{
  const values=new Set<number>();for(const piece of raw.split(',')){
   const parts=piece.split('/');if(parts.length>2||!parts[0]||parts[1]===''||(parts[1]!==undefined&&!/^\d+$/.test(parts[1])))throw Error('Invalid cron expression');
@@ -128,10 +130,10 @@ export class SqliteAgentSchedules {
   this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId))||!policy||!integer(policy.definitionVersion)||policy.definitionVersion<1||!integer(policy.maxAttempts)||policy.maxAttempts<1||policy.maxAttempts>100||!integer(policy.runTimeoutMs)||policy.runTimeoutMs<1000||policy.runTimeoutMs>86400000||!integer(policy.maxPending)||policy.maxPending<1||policy.maxPending>10000||!Number.isSafeInteger(now+policy.runTimeoutMs)||(policy.traceParent!==undefined&&!parseAgentTraceParent(policy.traceParent))||(policy.wakeup!==undefined&&(!policy.wakeup||!id(policy.wakeup.runId)||!integer(policy.wakeup.revision)||policy.wakeup.revision<1||policy.wakeup.revision>=Number.MAX_SAFE_INTEGER||policy.traceParent!==undefined)))throw Error('Invalid schedule fire');
   this.db.exec('BEGIN IMMEDIATE');try{
    const schedule=this.get(scope,scheduleId);if(!schedule||schedule.revision!==expectedRevision)throw Error('Schedule revision conflict');if(!schedule.config.enabled||schedule.nextAt>now)throw Error('Schedule not due');
-   const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);if(!policy.wakeup&&Number(count?.n)>=policy.maxPending)throw Error('Trigger backlog full');
+   const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);if(!policy.wakeup&&Number(count?.n)>=policy.maxPending)throw new AgentError('limit','Trigger backlog full');
    const scheduledAt=schedule.nextAt,coalesce=schedule.config.misfire==='coalesce',rule=schedule.config.rule;let nextAt=coalesce&&rule.kind==='interval'?now+(rule.intervalMs-((now-scheduledAt)%rule.intervalMs)):next(rule,coalesce?now:scheduledAt);if(!Number.isSafeInteger(nextAt))throw Error('Invalid schedule time');const runId=policy.wakeup?.runId??randomUUID(),sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${schedule.generation}:t${scheduledAt}`,payload=JSON.stringify({scheduleId,scheduledAt,...(coalesce?{coalescedThrough:now}:{})}),hash=createHash('sha256').update(payload).digest('hex');
-   const wakeups=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_run_wakeups'").get();if(wakeups&&this.db.prepare('SELECT 1 FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId))throw Error('Trigger identity conflict');
-   if(policy.wakeup){const resumed=resumeAgentRunWithTriggerInTransaction(this.db,scope,runId,policy.wakeup.revision,{sourceId,eventId,principalId:schedule.config.principalId,eventType:'schedule.tick',payload:JSON.parse(payload)},now);if(resumed.duplicate)throw Error('Trigger identity conflict');if(resumed.run.definitionVersion!==policy.definitionVersion)throw Error('Agent definition changed');}
+   const wakeups=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_run_wakeups'").get();if(wakeups&&this.db.prepare('SELECT 1 FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId))throw new AgentError('conflict','Trigger identity conflict');
+   if(policy.wakeup){const resumed=resumeAgentRunWithTriggerInTransaction(this.db,scope,runId,policy.wakeup.revision,{sourceId,eventId,principalId:schedule.config.principalId,eventType:'schedule.tick',payload:JSON.parse(payload)},now);if(resumed.duplicate)throw new AgentError('conflict','Trigger identity conflict');if(resumed.run.definitionVersion!==policy.definitionVersion)throw Error('Agent definition changed');}
    else{this.db.prepare("INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,policy.definitionVersion,policy.maxAttempts,now+policy.runTimeoutMs);
    insertAgentTraceParent(this.db,scope,runId,policy.traceParent);
    this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,sourceId,eventId,schedule.config.principalId,'schedule.tick',payload,hash,runId);

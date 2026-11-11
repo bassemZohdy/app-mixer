@@ -2,6 +2,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier} from './validation.js';
+import {AgentError} from './errors.js';
 
 type ActionStatus='ready'|'dispatching'|'uncertain'|'succeeded'|'failed';
 export type AgentAction={actionId:string;operationId:string;idempotencyKey:string;status:ActionStatus;attempts:number;maxAttempts:number};
@@ -12,7 +14,7 @@ export type ActionReconciliationEvidence={principalId:string;reference:string};
 export type ActionReconciliationEvent=ActionReconciliationEvidence & {id:number;actionId:string;outcome:'applied'|'not_applied'|'failed';method:'manual'|'verifier';recordedAt:number};
 export type AgentActionPage={actions:AgentAction[];next?:string};
 export type ActionVerificationPass={results:({actionId:string;outcome:ActionVerification['outcome']}|{actionId:string;error:unknown})[];next?:string};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const valid=isIdentifier;
 /** An error carrying `Symbol.for('app-mixer.effect') === 'none'` was thrown before any effect (CapabilityRegistry marks its refusals). */
 export const hadNoEffect=(error:unknown):boolean=>error!==null&&typeof error==='object'&&(error as Record<symbol,unknown>)[Symbol.for('app-mixer.effect')]==='none';
 /** Mark an error as thrown before any effect; the same error is returned. */
@@ -79,7 +81,7 @@ export class SqliteAgentActionJournal {
    if(row.operation_id!==operationId||row.input_hash!==hash||row.input_json!==serialized||Number(row.max_attempts)!==maxAttempts)throw Error('Action identity conflict');
    if(row.status==='succeeded')return {cached:true,result:row.result_json as string,key:String(row.idempotency_key)};
    if(row.status!=='ready'||Number(row.attempts)>=maxAttempts)throw Error('Action requires reconciliation');
-   if(requiresApproval){const approvalNow=this.clock();if(!Number.isSafeInteger(approvalNow)||approvalNow<0)throw Error('Invalid clock');const approval=this.db.prepare('SELECT operation_id,input_hash,input_json,definition_version,status,expires_at FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);const run=this.db.prepare('SELECT definition_version FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());const approvalAuthority=this.db.prepare('SELECT authority FROM agent_approval_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);if((approvalAuthority?.authority??undefined)!==authority)throw Error('Approval authority conflict');if(!approval||approval.status!=='approved'||approval.operation_id!==operationId||approval.input_hash!==hash||approval.input_json!==serialized||approval.definition_version!==run?.definition_version||Number(approval.expires_at)<=approvalNow)throw Error('Approval required');}
+   if(requiresApproval){const approvalNow=this.clock();if(!Number.isSafeInteger(approvalNow)||approvalNow<0)throw Error('Invalid clock');const approval=this.db.prepare('SELECT operation_id,input_hash,input_json,definition_version,status,expires_at FROM agent_approvals WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);const run=this.db.prepare('SELECT definition_version FROM agent_runs WHERE tenant_id=? AND agent_id=? AND run_id=?').get(...this.args());const approvalAuthority=this.db.prepare('SELECT authority FROM agent_approval_authority WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?').get(...this.args(),actionId);if((approvalAuthority?.authority??undefined)!==authority)throw Error('Approval authority conflict');if(!approval||approval.status!=='approved'||approval.operation_id!==operationId||approval.input_hash!==hash||approval.input_json!==serialized||approval.definition_version!==run?.definition_version||Number(approval.expires_at)<=approvalNow)throw new AgentError('conflict','Approval required');}
    this.db.prepare("UPDATE agent_action_journal SET status='dispatching',attempts=attempts+1 WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id=?").run(...this.args(),actionId);
    return {cached:false,result:null,key:String(row.idempotency_key)};
   });

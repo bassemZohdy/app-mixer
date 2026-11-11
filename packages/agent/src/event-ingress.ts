@@ -7,6 +7,8 @@ import {SqliteAgentRuns} from './durable-runs.js';
 import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
 import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '@opentelemetry/api';
+import {isIdentifier} from './validation.js';
+import {agentErrorStatus} from './errors.js';
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
@@ -27,7 +29,7 @@ type Options={
  wakeup?:{runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;select:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion,signal:AbortSignal)=>string|undefined|Promise<string|undefined>;authorize:(identity:SourceIdentity,event:EventRequest,definition:AgentDefinitionVersion,target:AgentEventWakeupTarget,signal:AbortSignal)=>boolean|Promise<boolean>};
  maxPending:number;maxInFlight?:number;requestTimeoutMs?:number;abortOnDisconnect?:boolean;observe?:(observation:AgentEventIngressObservation)=>void|Promise<void>;clock?:()=>number;
 };
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const reply=(res:ServerResponse,status:number,body:unknown)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body));};
 async function readBytes(req:IncomingMessage,contentType?:Options['contentType']):Promise<Buffer>{
  if(req.rawHeaders.filter((_,i)=>i%2===0&&req.rawHeaders[i].toLowerCase()==='content-type').length!==1)throw Error('CONTENT_TYPE');
@@ -93,7 +95,7 @@ export function createAgentEventIngress(options:Options):Server {
    if(expired)return;
    if((acknowledgement==='paddle'||acknowledgement==='linear'||acknowledgement==='discord')&&!result.duplicate)providerAccepted=true;
    if(acknowledgement==='discord'){res.writeHead(204,{'cache-control':'no-store','x-content-type-options':'nosniff'});res.end();}else if(acknowledgement==='twiml'){res.writeHead(200,{'content-type':'text/xml; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');}else reply(res,acknowledgement==='paddle'||acknowledgement==='linear'||result.duplicate?200:202,result);
-  }catch(error){if(expired)return;const message=error instanceof Error?error.message:'';reply(res,['Trigger identity conflict','Run revision conflict','Invalid run state','Run deadline expired','Run cannot be resumed','Run wait requires reconciliation','Run requires reconciliation','Approval required','Delegation renewal required','Run is archived'].includes(message)?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:['Trigger identity conflict','Run revision conflict','Invalid run state','Run deadline expired','Run cannot be resumed','Run wait requires reconciliation','Run requires reconciliation','Approval required','Delegation renewal required','Run is archived'].includes(message)?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
+  }catch(error){if(expired)return;const mapped=agentErrorStatus(error),status=mapped===409||mapped===429||mapped===400?mapped:500;reply(res,status,{error:status===409?'Event conflict':status===429?'Backlog full':status===400?'Invalid event':'Event unavailable'});}
   }finally{if(timer!==undefined)clearTimeout(timer);if(abortOnDisconnect)res.off('close',onDisconnect);inFlight--;}
  });
 }

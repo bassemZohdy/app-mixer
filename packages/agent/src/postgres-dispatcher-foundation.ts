@@ -1,9 +1,10 @@
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
 import {PostgresAgentWorkerFoundation} from './postgres-worker-foundation.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Options={runs:PostgresAgentRunLifecycleFoundation;worker:PostgresAgentWorkerFoundation;scope:AgentRunScope;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Internal host-started dispatcher. Competing hosts rely on the shared claim transaction. */
 export class PostgresAgentDispatcherFoundation {
  private readonly options:Options;private readonly scope:AgentRunScope;private active=false;private generation=0;private pending?:Promise<number>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;private cursor?:string;

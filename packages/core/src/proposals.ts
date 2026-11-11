@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ApplicationStore, type ApplicationDefinition, type Patch } from './index.js';
 import { isValidPatch, type DefinitionRepository } from './planes.js';
+import {AppMixerError} from './errors.js';
 
 export type Proposal = {
   id:string; baseRevision:number; patches:Patch[]; preview:ApplicationDefinition;
@@ -18,8 +19,8 @@ export class DevelopmentProposals {
   }
   private pendingCount = 0;
   propose(baseRevision: number, patches: unknown): Proposal {
-    if (!Number.isSafeInteger(baseRevision) || baseRevision < 0 || !Array.isArray(patches) || !patches.length || patches.length > 100 || !patches.every(isValidPatch)) throw Error('Invalid proposal');
-    if (this.pendingCount >= this.limit) throw Error('Proposal limit reached');
+    if (!Number.isSafeInteger(baseRevision) || baseRevision < 0 || !Array.isArray(patches) || !patches.length || patches.length > 100 || !patches.every(isValidPatch)) throw new AppMixerError('invalid','Invalid proposal');
+    if (this.pendingCount >= this.limit) throw new AppMixerError('limit','Proposal limit reached');
     const draft = this.repository.getDraft();
     const preview = new ApplicationStore(draft).apply(baseRevision, patches);
     const proposal:Proposal = {id:randomUUID(),baseRevision,patches:structuredClone(patches),preview,status:'pending'};
@@ -51,8 +52,8 @@ export class DevelopmentProposals {
   }
   private pending(id: string): Proposal {
     const proposal = this.proposals.get(id);
-    if (!proposal) throw Error('Proposal not found');
-    if (proposal.status !== 'pending') throw Error('Proposal is not pending');
+    if (!proposal) throw new AppMixerError('not_found','Proposal not found');
+    if (proposal.status !== 'pending') throw new AppMixerError('conflict','Proposal is not pending');
     return proposal;
   }
 }

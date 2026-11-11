@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {checkPromotionPackage,validEnvironment} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
+import {AppMixerError} from './errors.js';
 type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
 export type Page = {id:string;title:string;route:string;components:Component[];description?:string};
@@ -11,7 +12,7 @@ export type PublicationProvenance = {version:number;kind:'unknown'} | {version:n
 export function definitionSha256(definition:ApplicationDefinition):string{return createHash('sha256').update(JSON.stringify(definition)).digest('hex');}
 export type PublicationGuard = (draft:ApplicationDefinition) => true;
 export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
- if(!guard){if(draft.extensions?.length || draft.extensionOperations?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw Error('Extension compatibility failed');return;}
+ if(!guard){if(draft.extensions?.length || draft.extensionOperations?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw new AppMixerError('conflict','Extension compatibility failed');return;}
  const result:unknown=guard(structuredClone(draft));
  if(result instanceof Promise) result.catch(()=>{});
  if(result!==true)throw Error("Publication guard must synchronously return true");
@@ -37,12 +38,12 @@ export function isValidExtensionOperations(value:unknown):value is ExtensionOper
  return true;
 }
 export function validate(d:ApplicationDefinition):void {
- if(!d.id.trim()||![1,2].includes(d.schemaVersion)||!Number.isSafeInteger(d.revision)||d.revision<0)throw Error("Invalid manifest");
- if(d.extensions!==undefined&&!isValidExtensionReferences(d.extensions))throw Error('Invalid manifest');
- if(d.extensionOperations!==undefined&&!isValidExtensionOperations(d.extensionOperations))throw Error('Invalid manifest');
+ if(!d.id.trim()||![1,2].includes(d.schemaVersion)||!Number.isSafeInteger(d.revision)||d.revision<0)throw new AppMixerError('invalid',"Invalid manifest");
+ if(d.extensions!==undefined&&!isValidExtensionReferences(d.extensions))throw new AppMixerError('invalid','Invalid manifest');
+ if(d.extensionOperations!==undefined&&!isValidExtensionOperations(d.extensionOperations))throw new AppMixerError('invalid','Invalid manifest');
  const ids=new Set<string>(),routes=new Set<string>();
- for(const p of d.pages){if((d.schemaVersion===1&&p.description!==undefined)||(d.schemaVersion===2&&(typeof p.description!=='string'||p.description.length>10000))||!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw Error("Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
- const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||(!['Text','Card','Table','Input'].includes(c.type) && !(c.type==='Extension' && typeof c.extensionId==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name))))throw Error("Invalid component");components.add(c.id);}
+ for(const p of d.pages){if((d.schemaVersion===1&&p.description!==undefined)||(d.schemaVersion===2&&(typeof p.description!=='string'||p.description.length>10000))||!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw new AppMixerError('invalid',"Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
+ const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||(!['Text','Card','Table','Input'].includes(c.type) && !(c.type==='Extension' && typeof c.extensionId==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name))))throw new AppMixerError('invalid',"Invalid component");components.add(c.id);}
  }
 }
 export class ApplicationStore {
@@ -53,16 +54,16 @@ export class ApplicationStore {
  getPromotionFloor(sourceEnvironment:string,targetEnvironment:string):number{if(!validEnvironment(sourceEnvironment)||!validEnvironment(targetEnvironment)||sourceEnvironment===targetEnvironment)throw Error('Invalid promotion environment');let floor=0;for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===sourceEnvironment&&previous.targetEnvironment===targetEnvironment)floor=Math.max(floor,previous.sourceVersion);return floor;}
  getPublicationProvenance(version:number):PublicationProvenance|undefined{if(!Number.isSafeInteger(version)||version<1)throw Error('Invalid version');if(!this.published.some(p=>p.version===version))return undefined;return copy(this.provenance.get(version)??{version,kind:'unknown'});}
  apply(baseRevision:number,patches:Patch[]):ApplicationDefinition{
-  if(baseRevision!==this.draft.revision)throw Error("Revision conflict");
+  if(baseRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");
   const candidate=copy(this.draft);
   for(const p of patches){switch(p.op){
    case "addPage":candidate.pages.push(copy(p.page));break;
-   case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.title=p.title;break;}
-   case "setPageDescription":{if(candidate.schemaVersion!==2||typeof p.description!=='string'||p.description.length>10000)throw Error('Invalid page description');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error('Unknown page');page.description=p.description;break;}
-   case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw Error("Unknown page");page.components.push(copy(p.component));break;}
-   case 'setExtensions':if(!isValidExtensionReferences(p.extensions))throw Error('Invalid manifest');candidate.extensions=copy(p.extensions);break;
-   case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw Error('Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
-   default: throw Error("Unknown patch operation");
+   case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid',"Unknown page");page.title=p.title;break;}
+   case "setPageDescription":{if(candidate.schemaVersion!==2||typeof p.description!=='string'||p.description.length>10000)throw new AppMixerError('invalid','Invalid page description');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');page.description=p.description;break;}
+   case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid',"Unknown page");page.components.push(copy(p.component));break;}
+   case 'setExtensions':if(!isValidExtensionReferences(p.extensions))throw new AppMixerError('invalid','Invalid manifest');candidate.extensions=copy(p.extensions);break;
+   case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw new AppMixerError('invalid','Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
+   default: throw new AppMixerError('invalid',"Unknown patch operation");
   }}
   candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
  }
@@ -70,16 +71,16 @@ export class ApplicationStore {
   const candidate=this.previewDraftMigration(expectedRevision,targetVersion);this.draft=candidate;return copy(candidate);
  }
  previewDraftMigration(expectedRevision:number,targetVersion:number):ApplicationDefinition{
-  if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!Number.isSafeInteger(targetVersion))throw Error('Invalid migration request');
-  if(expectedRevision!==this.draft.revision)throw Error('Revision conflict');
-  if(!((this.draft.schemaVersion===1&&targetVersion===2)||(this.draft.schemaVersion===2&&targetVersion===1)))throw Error('Unsupported schema migration');
-  if(expectedRevision>=Number.MAX_SAFE_INTEGER)throw Error('Invalid migration request');
+  if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!Number.isSafeInteger(targetVersion))throw new AppMixerError('invalid','Invalid migration request');
+  if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict','Revision conflict');
+  if(!((this.draft.schemaVersion===1&&targetVersion===2)||(this.draft.schemaVersion===2&&targetVersion===1)))throw new AppMixerError('conflict','Unsupported schema migration');
+  if(expectedRevision>=Number.MAX_SAFE_INTEGER)throw new AppMixerError('invalid','Invalid migration request');
   const candidate=copy(this.draft);candidate.revision++;
   if(targetVersion===2){candidate.schemaVersion=2;candidate.pages=candidate.pages.map(page=>({...page,description:''}));}
-  else{if(candidate.pages.some(page=>page.description!==''))throw Error('Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:unused,...page})=>page);}
+  else{if(candidate.pages.some(page=>page.description!==''))throw new AppMixerError('conflict','Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:unused,...page})=>page);}
   validate(candidate);return copy(candidate);
  }
- publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw Error("Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
+ publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  promote(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){
   return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,false);
  }
@@ -87,7 +88,7 @@ export class ApplicationStore {
  private promoteInternal(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence|undefined,advancing:boolean){
   if(!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw Error('Invalid version');
   const item=checkPromotionPackage(input,targetEnvironment,this.draft.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence,expectedVersion),latest=this.published.at(-1)?.version??0;
-  if(latest!==expectedVersion)throw Error('Publication version conflict');
+  if(latest!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
   if(advancing)for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===item.sourceEnvironment&&previous.targetEnvironment===targetEnvironment&&item.sourceVersion<=previous.sourceVersion)throw Error('Source publication did not advance');
   enforcePublicationGuard(this.publicationGuard,item.definition);
   const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
@@ -97,9 +98,9 @@ export class ApplicationStore {
  promoteVerified(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence){if(evidence===undefined)throw Error('Invalid promotion evidence');return this.promote(input,expectedVersion,targetEnvironment,evidence);}
  rollback(sourceVersion:number,expectedVersion:number){
   if(!Number.isSafeInteger(sourceVersion)||sourceVersion<1||!Number.isSafeInteger(expectedVersion)||expectedVersion<1)throw Error('Invalid version');
-  const latest=this.published.at(-1);if(!latest||latest.version!==expectedVersion)throw Error('Publication version conflict');
-  const source=this.published.find(p=>p.version===sourceVersion);if(!source)throw Error('Publication not found');
-  if(sourceVersion>=expectedVersion)throw Error('Rollback requires an earlier version');
+  const latest=this.published.at(-1);if(!latest||latest.version!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
+  const source=this.published.find(p=>p.version===sourceVersion);if(!source)throw new AppMixerError('not_found','Publication not found');
+  if(sourceVersion>=expectedVersion)throw new AppMixerError('conflict','Rollback requires an earlier version');
   const definition=copy(source.definition);validate(definition);enforcePublicationGuard(this.publicationGuard,definition);
   const version=latest.version+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
   const publication={version,definition},hash=definitionSha256(definition);this.published.push(publication);this.provenance.set(version,{version,kind:'rollback',previousVersion:expectedVersion,sourceVersion,definitionSha256:hash});return copy(publication);
@@ -110,6 +111,8 @@ export { createPromotionPackage } from './promotion.js';
 export type { PromotionPackage } from './promotion.js';
 
 export { SqliteApplicationStore } from './sqlite.js';
+export { AppMixerError, httpStatus, refusalStatus } from './errors.js';
+export type { AppMixerErrorCode } from './errors.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
 export type { RemoteRolloutScope, RemoteRolloutRecoveryEvidence, RemoteRolloutRecoveryEvent } from './remote-rollout.js';
 export { registerRemoteRolloutStatusCapability } from './remote-rollout-status-capability.js';

@@ -2,12 +2,13 @@ import {SqliteAgentTokenBudget,type AgentTokenUsage,type AgentCostUsage,type Age
 import {PostgresAgentSharedCost} from './postgres-agent-shared-cost.js';
 import {PostgresAgentTokenBudgetFoundation} from './postgres-token-budget-foundation.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Target={scope:AgentRunScope;runId:string;maxTokens:number};
 type Usage={usedTokens:number;usedCostMicros?:number};
 type Options={budget:SqliteAgentTokenBudget|PostgresAgentTokenBudgetFoundation;target:Target;authorize:(actor:Actor,target:Target,action:'reconcile'|'history'|'pending',callId:string|undefined,signal:AbortSignal)=>boolean|Promise<boolean>;verify:(actor:Actor,target:Target,call:AgentTokenUsage,cost:AgentCostUsage|undefined,reference:string,signal:AbortSignal)=>Usage|undefined|Promise<Usage|undefined>;timeoutMs?:number;maxPending?:number;sharedCost?:PostgresAgentSharedCost};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Host-authorized, provider-verified reconciliation for one fixed run. */
 export class AgentBudgetRecovery {
  private readonly budget:SqliteAgentTokenBudget|PostgresAgentTokenBudgetFoundation;private readonly sharedCost?:PostgresAgentSharedCost;private readonly target:Target;private readonly authorize:Options['authorize'];private readonly verify:Options['verify'];private readonly timeoutMs?:number;private readonly maxPending?:number;private inFlight=0;

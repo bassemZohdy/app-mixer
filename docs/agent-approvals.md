@@ -90,3 +90,8 @@ A mutation run (`node scripts/mutate.mjs`, which changes one operator at a time 
 
 The 17 survivors left are equivalent changes: the input is compared twice (as a hash and as JSON), a missing scope throws either way, and the run-state, deadline and revision checks overlap with later ones.
 
+## Error codes
+
+Expected refusals in `@app-mixer/agent` (denied access, a missing record, a conflict, a limit, invalid input) are thrown as `AgentError(code, message, {cause?})`, with `code` one of `invalid` (400), `denied` (403), `not_found` (404), `conflict` (409), `limit` (429), `lost_race` (409) or `unavailable` (503); `agentErrorStatus(error)` returns the status. The approval, notice and event-ingress servers answer with a fixed text for the status and never echo the message.
+
+A host-supplied store that still throws a plain `Error` with one of the documented messages (for example `Approval not found`, `Notice changed`, `Run revision conflict`, `Trigger backlog full`) keeps the status it always had; the table is in `packages/agent/src/errors.ts`. Any other error is a 500.

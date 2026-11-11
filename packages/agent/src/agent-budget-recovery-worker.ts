@@ -2,9 +2,10 @@ import {SqliteAgentRuns,type AgentRunScope} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
 import {AgentBudgetRecovery,type AgentBudgetRecoveryActor} from './agent-budget-recovery.js';
 import type {AgentTokenUsage} from './agent-token-budget.js';
+import {isIdentifier} from './validation.js';
 
 type Options={runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;recovery:AgentBudgetRecovery;scope:AgentRunScope;runId:string;actor:AgentBudgetRecoveryActor;reference:(actor:AgentBudgetRecoveryActor,scope:AgentRunScope,runId:string,call:AgentTokenUsage,signal:AbortSignal)=>string|Promise<string>;maxPerPass:number;pollMs:number;onError:(error:unknown,callId?:string)=>void|Promise<void>};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Explicit host-driven verification of outstanding calls on one uncertain run. */
 export class AgentBudgetRecoveryWorker {
  private readonly runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;private readonly recovery:AgentBudgetRecovery;private readonly scope:AgentRunScope;private readonly runId:string;private readonly actor:AgentBudgetRecoveryActor;private readonly reference:Options['reference'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly onError:Options['onError'];private active=false;private generation=0;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;private controller?:AbortController;private cursor?:string;

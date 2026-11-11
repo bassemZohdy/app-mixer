@@ -1,11 +1,12 @@
 import {isAIMessage,type BaseMessage} from '@langchain/core/messages';
 import type {CostLimitedToolModel} from './tool-model.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Prepared={request:unknown;maxInputTokens:number};
 type Response={message:BaseMessage;inputTokens:number;outputTokens:number};
 type Options={currency:string;inputMicrosPerMillionTokens:number;outputMicrosPerMillionTokens:number;fixedMicrosPerCall:number;maxOutputTokens:number;prepare:(messages:BaseMessage[],signal?:AbortSignal)=>Prepared|Promise<Prepared>;dispatch:(request:unknown,options:{signal?:AbortSignal;maxOutputTokens:number;callId:string})=>Response|Promise<Response>};
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const integer=isNonNegativeInteger;
+const id=isIdentifier;
 const MILLION=1000000n,MAX_COST=100000000000;
 /** Price a host-prepared model request and pass a conservative output cap to a trusted provider adapter. */
 export function createPricedCostLimitedToolModel(options:Options):CostLimitedToolModel{

@@ -1,10 +1,11 @@
 import {AgentSemanticMemory,validSimilarity} from './semantic-memory.js';
 import type {AgentMemoryActor,AgentMemoryScope} from './agent-memory.js';
+import {isIdentifier} from './validation.js';
 
 export type MemoryEvaluationCase={id:string;query:string;relevantIds:string[]};
 export type MemoryEvaluationResult={id:string;retrievedIds:string[];recall:number;precision:number;reciprocalRank:number;averagePrecision:number;ndcg:number;exactIds?:string[];exactRecall?:number|null};
 export type MemoryEvaluationReport={mode:'semantic'|'hybrid'|'indexed'|'lexical';limit:number;minSimilarity?:number;maxCandidates?:number;cases:MemoryEvaluationResult[];meanRecall:number;meanPrecision:number;meanReciprocalRank:number;meanAveragePrecision:number;meanNdcg:number;meanExactRecall?:number|null};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 
 /** Evaluate a host-labeled set sequentially using the same scoped and authorized search as production. */
 export async function evaluateAgentMemoryRetrieval(options:{memory:AgentSemanticMemory;actor:AgentMemoryActor;scope:AgentMemoryScope;mode:'semantic'|'hybrid'|'indexed'|'lexical';limit:number;minSimilarity?:number;maxCandidates?:number;compareExact?:boolean;cases:MemoryEvaluationCase[]}):Promise<MemoryEvaluationReport>{

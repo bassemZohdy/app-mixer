@@ -1,13 +1,14 @@
 import {DatabaseSync} from 'node:sqlite';
 import {type AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Access='list'|'read';
 export type AgentRunEvent={id:number;tenantId:string;agentId:string;runId:string;kind:'created'|'transition'|'updated'|'archived';revision:number;previousStatus:string|null;status:string;attempts:number;definitionVersion:number;workerId:string|null;archived:boolean;waitKind:'approval'|'delegation'|null;waitSubject:string|null;observedAt:number};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:Access,event:AgentRunEvent|null)=>boolean|Promise<boolean>};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const valid=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Install run-level lifecycle capture on the same database as the registry. */
 export function ensureAgentRunHistory(db:DatabaseSync):void{db.exec(`
  CREATE TABLE IF NOT EXISTS agent_run_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,previous_status TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL,definition_version INTEGER NOT NULL,worker_id TEXT,archived INTEGER NOT NULL,wait_kind TEXT,wait_subject TEXT,observed_at INTEGER NOT NULL);

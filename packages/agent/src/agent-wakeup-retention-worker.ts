@@ -1,8 +1,9 @@
 import {SqliteAgentWakeupRetention,type AgentWakeupRetentionActor,type AgentWakeupRedactionCandidate} from './agent-wakeup-retention.js';
 import {PostgresAgentWakeupRetentionFoundation} from './postgres-wakeup-retention-foundation.js';
+import {isIdentifier} from './validation.js';
 
 type Options={retention:SqliteAgentWakeupRetention|PostgresAgentWakeupRetentionFoundation;actor:AgentWakeupRetentionActor;authorize:(actor:AgentWakeupRetentionActor,candidate:AgentWakeupRedactionCandidate,signal:AbortSignal)=>boolean|Promise<boolean>;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number;minAgeMs:number;ageFrom?:'observed'|'completion';maxPerPass:number;pollMs:number;clock?:()=>number;onError:(error:unknown,runId?:string)=>void|Promise<void>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Opt-in host-driven redaction of terminal wakeup payloads using recorded observation times. */
 export class AgentWakeupRetentionWorker {
  private readonly retention:SqliteAgentWakeupRetention|PostgresAgentWakeupRetentionFoundation;private readonly actor:AgentWakeupRetentionActor;private readonly authorize:Options['authorize'];private readonly minAgeMs:number;private readonly ageFrom:'observed'|'completion';private readonly maxPerPass:number;private readonly pollMs:number;private readonly clock:()=>number;private readonly onError:Options['onError'];private readonly authorizationTimeoutMs?:number;private readonly maxPendingAuthorizations?:number;private authorizationsInFlight=0;private cursor?:number;private active=false;private generation=0;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;private controller?:AbortController;

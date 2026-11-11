@@ -1,12 +1,13 @@
 import type {AgentActionRecoveryObservation} from './action-recovery-worker.js';
 import type {AgentActionRecoveryCoordinatorObservation} from './action-recovery-coordinator.js';
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 
 const outcomes=['completed','failed','stopped'] as const;
 type Outcome=typeof outcomes[number];
 const results=['denied','unknown','errors'] as const;
 type Result=typeof results[number];
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 export type AgentActionRecoveryMetricsOptions={authorize:(actor:AgentRunMetricsActor)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:AgentRunMetricsActor,signal:AbortSignal)=>boolean|Promise<boolean>};
 
 /** Process-local worker pass observations; policy must authorize the full aggregate. */

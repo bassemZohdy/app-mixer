@@ -1,9 +1,10 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type GithubWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;eventType:string;secret:Uint8Array;previousSecrets?:Uint8Array[]};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** A single host-configured GitHub webhook. GitHub signs the body, not delivery headers. */
 export function createGithubWebhookAdapter(options:GithubWebhookOptions){
  const identity=options?.identity;if(!options||!identity||!id(identity.tenantId)||!id(identity.principalId)||!id(identity.sourceId)||identity.sourceId.startsWith('schedule.')||!id(options.agentId)||!id(options.eventType)||(options.previousSecrets!==undefined&&(!Array.isArray(options.previousSecrets)||options.previousSecrets.length>2)))throw Error('Invalid GitHub webhook configuration');

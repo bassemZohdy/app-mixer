@@ -3,11 +3,13 @@ import {canonicalTriggerPayload} from './agent-trigger-payload.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentTriggerInput,AgentTriggerEnqueueOptions,TriggerRecord} from './agent-triggers.js';
+import {isIdentifier} from './validation.js';
+import {AgentError} from './errors.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
 type DurationOptions=Omit<AgentTriggerEnqueueOptions,'deadline'>&{runTimeoutMs:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 
 /** Internal migration foundation. No shared worker, recovery, retention or public capability is available yet. */
 export class PostgresAgentTriggerFoundation {
@@ -41,9 +43,9 @@ export class PostgresAgentTriggerFoundation {
    const lock=await query('SELECT agent_id FROM app_mixer_shared_run_scopes WHERE tenant_id=$1 AND agent_id=$2 FOR UPDATE',[tenant,agent]);if(lock.rows.length!==1)throw Error('Shared run scope unavailable');
    const now=Number((await query('SELECT (extract(epoch from clock_timestamp())*1000)::bigint AS now',[])).rows[0]?.now),deadline=requestedDeadline??(now+timeout!);if(!Number.isSafeInteger(now)||now<0||!Number.isSafeInteger(deadline)||deadline<=now)throw Error('Invalid trigger');
    const prior=(await query('SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,d.run_id AS redacted FROM app_mixer_shared_trigger_inbox i LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.source_id=$3 AND i.event_id=$4',[tenant,agent,source,eventId])).rows[0];
-   if(prior){if((prior.redacted!==null&&prior.payload!=='null')||prior.principal_id!==principal||prior.event_type!==eventType||(prior.redacted===null&&prior.payload!==payload)||prior.payload_hash!==hash||!id(prior.run_id))throw Error('Trigger identity conflict');signal?.throwIfAborted();return {runId:prior.run_id,duplicate:true};}
-   const wakeups=(await query("SELECT to_regclass('app_mixer_shared_run_wakeups') AS name",[])).rows[0];if(wakeups?.name&&(await query('SELECT 1 FROM app_mixer_shared_run_wakeups WHERE tenant_id=$1 AND agent_id=$2 AND source_id=$3 AND event_id=$4',[tenant,agent,source,eventId])).rows.length)throw Error('Trigger identity conflict');
-   const count=Number((await query("SELECT count(*)::bigint AS n FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')",[tenant,agent])).rows[0]?.n);if(!Number.isSafeInteger(count)||count<0)throw Error('Shared run count unavailable');if(count>=limit)throw Error('Trigger backlog full');
+   if(prior){if((prior.redacted!==null&&prior.payload!=='null')||prior.principal_id!==principal||prior.event_type!==eventType||(prior.redacted===null&&prior.payload!==payload)||prior.payload_hash!==hash||!id(prior.run_id))throw new AgentError('conflict','Trigger identity conflict');signal?.throwIfAborted();return {runId:prior.run_id,duplicate:true};}
+   const wakeups=(await query("SELECT to_regclass('app_mixer_shared_run_wakeups') AS name",[])).rows[0];if(wakeups?.name&&(await query('SELECT 1 FROM app_mixer_shared_run_wakeups WHERE tenant_id=$1 AND agent_id=$2 AND source_id=$3 AND event_id=$4',[tenant,agent,source,eventId])).rows.length)throw new AgentError('conflict','Trigger identity conflict');
+   const count=Number((await query("SELECT count(*)::bigint AS n FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')",[tenant,agent])).rows[0]?.n);if(!Number.isSafeInteger(count)||count<0)throw Error('Shared run count unavailable');if(count>=limit)throw new AgentError('limit','Trigger backlog full');
    const runId=randomUUID();await query("INSERT INTO app_mixer_shared_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,trace_parent) VALUES ($1,$2,$3,$4,1,'queued',0,$5,$6,$7)",[tenant,agent,runId,version,attempts,deadline,trace]);
    await query('INSERT INTO app_mixer_shared_trigger_inbox (tenant_id,agent_id,source_id,event_id,principal_id,event_type,payload,payload_hash,run_id,received_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[tenant,agent,source,eventId,principal,eventType,payload,hash,runId,now]);signal?.throwIfAborted();return {runId,duplicate:false};
   });

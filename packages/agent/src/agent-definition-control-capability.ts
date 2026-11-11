@@ -1,10 +1,11 @@
 import {PostgresAgentDefinitions} from './postgres-agent-definitions.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Snapshot={version:number;enabled:boolean};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={definitions:PostgresAgentDefinitions;scope:AgentRunScope;operationId:string;path:string;authorize:(actor:Actor,action:'access'|'enable'|'suspend',definition:Snapshot|null,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown):{version:number;enabled:boolean}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'version')||!Object.hasOwn(input,'enabled'))return;const value=input as {version:unknown;enabled:unknown};if(!Number.isSafeInteger(value.version)||Number(value.version)<1||Number(value.version)>=Number.MAX_SAFE_INTEGER||typeof value.enabled!=='boolean')return;return {version:value.version as number,enabled:value.enabled};}
 /** Modify only enabled state on one shared definition, using its versioned audit transaction. */
 export function registerAgentDefinitionControl(registry:Registry,options:Options):void{

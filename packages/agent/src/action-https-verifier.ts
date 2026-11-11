@@ -1,10 +1,11 @@
 import {actionJSON,type ActionVerification,type ActionVerificationRequest} from './action-journal.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type LookupContext={tenantId:string;agentId:string;runId:string;actionId:string;operationId:string;idempotencyKey:string};
 type Credentials={bearerToken:string;getBearerToken?:never}|{bearerToken?:never;getBearerToken:(signal:AbortSignal)=>string|Promise<string>};
 export type ActionHttpsVerifierOptions=Credentials&{scope:AgentRunScope;runId:string;operationId:string;url:string;timeoutMs:number;maxPending:number;maxResponseBytes?:number;interpret:(body:unknown,context:LookupContext,signal:AbortSignal)=>ActionVerification|Promise<ActionVerification>};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const token=(value:unknown):value is string=>typeof value==='string'&&/^[\x21-\x7e]{32,4096}$/.test(value);
 async function readBody(response:Response,maxBytes:number,signal:AbortSignal):Promise<unknown>{
  if(!response.ok||response.status!==200||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body){void response.body?.cancel().catch(()=>{});throw Error('Invalid response');}const rawLength=response.headers.get('content-length');if(rawLength!==null&&(!/^\d+$/.test(rawLength)||Number(rawLength)>maxBytes)){void response.body.cancel().catch(()=>{});throw Error('Invalid response');}const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;

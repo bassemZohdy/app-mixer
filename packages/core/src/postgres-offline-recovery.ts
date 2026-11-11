@@ -1,5 +1,6 @@
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+import {isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Target={scope:DataScope;principalId:string;idempotencyKey:string};
@@ -7,7 +8,7 @@ type Action='mark_uncertain'|'reconcile'|'history';
 type Options={query:PostgresJwtRevocationQuery;authorize:(actor:Actor,target:Target,action:Action)=>boolean|Promise<boolean>;clock?:()=>number};
 export type OfflineRecoveryEvent={id:number;actorId:string;attemptToken:string;action:'mark_uncertain'|'reconciled_applied'|'reconciled_not_applied';reference:string;recordedAt:number};
 const uuid=(x:unknown):x is string=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const integer=isNonNegativeInteger;
 const reference=(x:unknown):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=512&&!/[\u0000-\u001f\u007f]/.test(x);
 const actions=new Set(['mark_uncertain','reconciled_applied','reconciled_not_applied']);
 

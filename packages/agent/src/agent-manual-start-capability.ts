@@ -2,10 +2,11 @@ import {SqliteAgentTriggers} from './agent-triggers.js';
 import {PostgresAgentTriggerFoundation} from './postgres-trigger-foundation.js';
 import type {AgentRunScope} from './durable-runs.js';
 import {validateAgentManifest,type AgentDefinitionVersion} from './persistent-definitions.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={triggers:SqliteAgentTriggers|PostgresAgentTriggerFoundation;scope:AgentRunScope;sourceId:string;operationId:string;path:string;maxPendingRuns:number;getDefinition:(tenantId:string,agentId:string,signal:AbortSignal)=>AgentDefinitionVersion|undefined|Promise<AgentDefinitionVersion|undefined>;authorize:(actor:Actor,action:'access'|'start',definition:AgentDefinitionVersion|null,signal:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown):{requestId:string;definitionVersion:number}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'requestId')||!Object.hasOwn(input,'definitionVersion'))return;const value=input as {requestId:unknown;definitionVersion:unknown};if(!id(value.requestId)||!Number.isSafeInteger(value.definitionVersion)||Number(value.definitionVersion)<1)return;return {requestId:value.requestId,definitionVersion:value.definitionVersion as number};}
 /** Host-fixed manual run start with durable request deduplication. */
 export function registerAgentManualStart(registry:Registry,options:Options):void{

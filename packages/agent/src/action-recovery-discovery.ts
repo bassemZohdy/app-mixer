@@ -1,13 +1,14 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentRunMetricStatus} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,scope:AgentRunScope)=>boolean|Promise<boolean>};
 export type AgentActionRecoveryCandidate={runId:string;runStatus:AgentRunMetricStatus;dispatching:number;uncertain:number};
 export type AgentActionRecoveryPage={items:AgentActionRecoveryCandidate[];nextAfter?:string};
 const statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'];
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Authorized, bounded discovery of runs with unresolved action journal entries. */
 export class SqliteAgentActionRecoveryDiscovery {
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];

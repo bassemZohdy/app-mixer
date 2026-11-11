@@ -15,6 +15,7 @@ import { RECORD_EDITOR_PREVIEW } from './data-editor-preview.js';
 import { STAGED_EDITOR_PREVIEW } from './staged-editor-preview.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 import {createBoundedOperation} from './bounded-operation.js';
+import {AppMixerError,refusalStatus} from './errors.js';
 
 export interface DefinitionRepository {
   getDraft(): ApplicationDefinition;
@@ -91,11 +92,7 @@ function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promis
     const run=()=>handler(req, res).catch(error => {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof RequestError) respond(res, error.status, {error: error.message});
-      else if (error instanceof Error && ['Revision conflict','Unsupported schema migration','Migration would lose page descriptions','Proposal is not pending','Extension compatibility failed','Publication version conflict','Rollback requires an earlier version'].includes(error.message)) respond(res, 409, {error:error.message});
-      else if (error instanceof Error && ['Proposal not found','Publication not found'].includes(error.message)) respond(res, 404, {error:error.message});
-      else if (error instanceof Error && error.message === 'Proposal limit reached') respond(res, 429, {error:error.message});
-      else if (error instanceof Error && ['Duplicate or invalid page','Invalid component','Unknown page','Invalid manifest','Unknown patch operation','Invalid proposal','Invalid promotion package','Invalid page description','Invalid migration request'].includes(error.message)) respond(res, 400, {error:error.message});
-      else respond(res, 500, {error:'Internal server error'});
+      else{const status=refusalStatus(error);if(status!==undefined&&error instanceof Error)respond(res,status,{error:error.message});else respond(res, 500, {error:'Internal server error'});}
     });
     if(dispatch)dispatch(req,res,run);else run();
   };
@@ -141,7 +138,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (!record(input) || !exact(input,['instruction']) || !string(input.instruction) || input.instruction.length>1000) throw new RequestError(400,'Invalid development request');
       const result=await develop(input.instruction,repository.getDraft());
       const proposal=proposals.get(result.id);
-      if (!proposal || proposal.status !== 'pending') throw Error('Proposal not found');
+      if (!proposal || proposal.status !== 'pending') throw new AppMixerError('not_found','Proposal not found');
       respond(res,201,proposal); return;
     }
     const proposalRoute = /^\/proposals\/([0-9a-f-]{36})(?:\/(approve|reject))?$/.exec(req.url ?? '');
@@ -149,7 +146,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       const [,proposalId,action] = proposalRoute;
       if (req.method === 'GET' && !action) {
         const proposal=proposals.get(proposalId);
-        if (!proposal) throw Error('Proposal not found');
+        if (!proposal) throw new AppMixerError('not_found','Proposal not found');
         respond(res,200,proposal); return;
       }
       if (req.method === 'POST' && action === 'approve') { respond(res,200,proposals.approve(proposalId)); return; }
@@ -176,20 +173,20 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       respond(res, 201, repository.publish(input.expectedRevision)); return;
     }
     if (req.method === 'GET' && req.url === '/publications/latest') {
-      const publication=repository.getPublished();if(!publication)throw Error('Publication not found');
+      const publication=repository.getPublished();if(!publication)throw new AppMixerError('not_found','Publication not found');
       respond(res,200,{applicationId:publication.definition.id,version:publication.version});return;
     }
     if (req.method === 'POST' && req.url === '/promotion/export') {
       const input=await body(req);
       if(!record(input)||!exact(input,['sourceEnvironment','version'])||!validEnvironment(input.sourceEnvironment)||!revision(input.version)||input.version<1)throw new RequestError(400,'Invalid promotion request');
-      const publication=repository.getPublished(input.version);if(!publication)throw Error('Publication not found');
+      const publication=repository.getPublished(input.version);if(!publication)throw new AppMixerError('not_found','Publication not found');
       respond(res,200,createPromotionPackage(input.sourceEnvironment,publication));return;
     }
     if (req.method === 'POST' && req.url === '/promotion/export-signed') {
       if(!exportSigner)throw new RequestError(501,'Signed export unavailable');
       const input=await body(req);
       if(!record(input)||!exact(input,['sourceEnvironment','version','targetEnvironment','expectedVersion'])||!validEnvironment(input.sourceEnvironment)||!revision(input.version)||input.version<1||!validEnvironment(input.targetEnvironment)||input.sourceEnvironment===input.targetEnvironment||!revision(input.expectedVersion)||input.expectedVersion>=Number.MAX_SAFE_INTEGER)throw new RequestError(400,'Invalid promotion request');
-      const publication=repository.getPublished(input.version);if(!publication)throw Error('Publication not found');
+      const publication=repository.getPublished(input.version);if(!publication)throw new AppMixerError('not_found','Publication not found');
       const pkg=createPromotionPackage(input.sourceEnvironment,publication),signed=await exportSigner(structuredClone(pkg),input.targetEnvironment,input.expectedVersion);
       if(!signed||(signed.formatVersion!==2&&signed.formatVersion!==3)||signed.expectedVersion!==input.expectedVersion||signed.targetEnvironment!==input.targetEnvironment||typeof signed.keyId!=='string'||typeof signed.signature!=='string'||createPromotionPackage(input.sourceEnvironment,{version:input.version,definition:signed.package?.definition}).digest!==pkg.digest||signed.package?.digest!==pkg.digest||signed.package?.sourceEnvironment!==input.sourceEnvironment||signed.package?.sourceVersion!==input.version)throw Error('Invalid signed export');
       respond(res,200,signed);return;
@@ -207,7 +204,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (!Number.isSafeInteger(version)) throw new RequestError(400, 'Invalid version');
       if (!repository.getPublicationProvenance) throw new RequestError(501, 'Publication provenance unavailable');
       const provenance=repository.getPublicationProvenance(version);
-      if (!provenance) throw Error('Publication not found');
+      if (!provenance) throw new AppMixerError('not_found','Publication not found');
       respond(res,200,provenance); return;
     }
     if (req.method === 'POST' && req.url === '/rollback') {

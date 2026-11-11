@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier} from './validation.js';
 
 type MemoryScope={tenantId:string;agentId:string;owner:{kind:'organization'|'team'|'application'|'user';id:string};kind:'session'|'semantic'|'episodic'|'procedural'};
 type MemoryActor={tenantId:string;principalId:string};
@@ -9,7 +10,7 @@ export type AgentMemoryRecord={id:string;revision:number;value:unknown;provenanc
 export type AgentMemoryAuditEvent={id:number;action:'write'|'delete'|'purge'|'erase';actorId:string;memoryId:string|null;revision:number|null;count:number;observedAt:number};
 type Options={enabled:true;maxTtlMs:number;maxEntries:number;authorize:(actor:MemoryActor,scope:MemoryScope,action:MemoryAction,id?:string)=>boolean|Promise<boolean>;clock?:()=>number;audit?:boolean};
 export class MemoryAccessDenied extends Error {constructor(){super('Memory access denied');}}
-export const validMemoryId=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+export const validMemoryId=isIdentifier;
 export function checkedMemoryScope(actor:MemoryActor,scope:MemoryScope):{actor:MemoryActor;scope:MemoryScope}{
  if(!actor||!scope||!validMemoryId(actor.tenantId)||!validMemoryId(actor.principalId)||!validMemoryId(scope.tenantId)||!validMemoryId(scope.agentId)||actor.tenantId!==scope.tenantId||!scope.owner||!['organization','team','application','user'].includes(scope.owner.kind)||!validMemoryId(scope.owner.id)||!['session','semantic','episodic','procedural'].includes(scope.kind))throw Error('Invalid memory scope');
  return {actor:{tenantId:actor.tenantId,principalId:actor.principalId},scope:{tenantId:scope.tenantId,agentId:scope.agentId,owner:{kind:scope.owner.kind,id:scope.owner.id},kind:scope.kind}};
