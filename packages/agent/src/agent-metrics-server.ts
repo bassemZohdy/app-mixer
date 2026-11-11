@@ -1,5 +1,6 @@
 import {createServer,type IncomingMessage,type Server,type ServerResponse} from 'node:http';
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {limitServer} from './server-limits.js';
 
 export type AgentMetricsServerOptions={metrics:{render:(actor:AgentRunMetricsActor)=>string|Promise<string>;renderWithSignal?:(actor:AgentRunMetricsActor,signal:AbortSignal)=>string|Promise<string>};authenticate:(request:IncomingMessage,signal:AbortSignal)=>AgentRunMetricsActor|undefined|Promise<AgentRunMetricsActor|undefined>;timeoutMs:number;maxPending:number};
 function reply(res:ServerResponse,status:number,body:string,type='text/plain; charset=utf-8'):void{if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'});res.end(body);}
@@ -8,7 +9,7 @@ function reply(res:ServerResponse,status:number,body:string,type='text/plain; ch
 export function createAgentMetricsServer(options:AgentMetricsServerOptions):Server{
  if(!options||!options.metrics||typeof options.metrics.render!=='function'||(options.metrics.renderWithSignal!==undefined&&typeof options.metrics.renderWithSignal!=='function')||typeof options.authenticate!=='function'||!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000||!Number.isSafeInteger(options.maxPending)||options.maxPending<1||options.maxPending>1000)throw Error('Invalid agent metrics server configuration');
  const {metrics,authenticate,timeoutMs,maxPending}=options;let pending=0;
- return createServer((req,res)=>{
+ return limitServer(createServer((req,res)=>{
   if(req.method!=='GET'||req.url!=='/metrics'){reply(res,404,'Not found\n');return;}
   if(pending>=maxPending){reply(res,503,'Unavailable\n');return;}
   pending++;const controller=new AbortController();let finished=false;
@@ -20,5 +21,5 @@ export function createAgentMetricsServer(options:AgentMetricsServerOptions):Serv
    if(!actor)return {status:401,body:'Unauthorized\n'};
    try{const text=await (metrics.renderWithSignal?metrics.renderWithSignal(actor,controller.signal):metrics.render(actor));if(typeof text!=='string'||Buffer.byteLength(text)>65536)throw Error('Invalid metrics');return {status:200,body:text};}catch(error){const message=error instanceof Error?error.message:'';return message==='Agent metrics access denied'||message==='Invalid agent metrics actor'||message==='Shared cost access denied'||message==='Invalid shared cost actor'||message==='Rollout metrics access denied'||message==='Invalid rollout metrics actor'||message==='Extension approval metrics access denied'||message==='Invalid extension approval metrics actor'?{status:403,body:'Forbidden\n'}:{status:503,body:'Unavailable\n'};}
   }).then(result=>{if(finished)return;finished=true;clearTimeout(timer);reply(res,result.status,result.body,result.status===200?'text/plain; version=0.0.4; charset=utf-8':undefined);},()=>{if(!finished){finished=true;clearTimeout(timer);reply(res,503,'Unavailable\n');}}).finally(()=>{pending--;}).catch(()=>{});
- });
+ }));
 }

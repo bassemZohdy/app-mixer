@@ -48,3 +48,8 @@ test('disconnect aborts the active model stream', {timeout:10000}, async () => {
     try { await Promise.race([aborted,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Abort was not propagated')),3000);})]); } finally {clearTimeout(timer);}
   } finally { await stop(server); }
 });
+
+test('the AG-UI server bounds slow clients without cutting silent event streams',()=>{
+ const server=createAGUIServer(new LangGraphAGUIAdapter({async *stream(){yield 'hi';}}),'t'.repeat(32));
+ assert.deepEqual({headers:server.headersTimeout,request:server.requestTimeout,keepAlive:server.keepAliveTimeout,idle:server.timeout},{headers:10000,request:30000,keepAlive:5000,idle:0});
+});
