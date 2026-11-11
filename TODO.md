@@ -85,8 +85,9 @@
       - Links: Depends: TASK-002.6.3, TASK-002.6.4
     - [x] **TASK-002.6.6** · mid · Port the audited operator tool that lists, reads and raises the file rollback anchors, and the recovery procedure for a rollback refusal (417ddc62, 378148f2)
       - Done when: the tool lists and raises an anchor, lowers one only with a reason, and logs every change; `npm run build && node --test packages/cli/test/anchor-admin.test.mjs`
-    - [ ] **TASK-002.6.7** · low · Port the script that derives the pinned container images from the tests and the CI cache steps that use it (48ff2e26)
+    - [/] **TASK-002.6.7** · low · Port the script that derives the pinned container images from the tests and the CI cache steps that use it (48ff2e26)
       - Done when: the derived image list equals the images the opt-in tests pin and the workflow caches them; `node --test packages/cli/test/process-files.test.mjs`
+      - State: attempts 0/3; baseline 1923 passing; branch todo/TASK-002.6.7-port-docker-image-cache from todo/TASK-002.6-port-remaining-docs; next: read docs
     - [ ] **TASK-002.6.8** · high · Port the offline provisioning scenario on an Android emulator and in Safari on an iOS Simulator (70186874, 6476fc36, 0b0ca9ce, f1980080), with the shared fixture the headless-browser test then uses; the emulator runs only in CI
       - Done when: the headless-browser test uses the shared provisioning fixture and both device workflows run the scenario; `npm run build && node --test packages/web/test/browser-offline-provisioning.test.mjs packages/cli/test/process-files.test.mjs`
     - [ ] **TASK-002.6.9** · low · Make the guides and the CHANGELOG name only files that exist: add the CHANGELOG to the path check and unquote the dropped progress script
