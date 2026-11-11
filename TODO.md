@@ -2,9 +2,9 @@
 
 ## 🌳 Task Tree
 
-- [ ] **FIX-024** · P0 · low · Keep coded-error constructors out of the browser code that core embeds as strings: the development review page called AppMixerError, which does not exist in a browser, and never became ready (CI browser-smoke has failed since the typed-errors change)
+- [/] **FIX-024** · P0 · low · Keep coded-error constructors out of the browser code that core embeds as strings: the development review page called AppMixerError, which does not exist in a browser, and never became ready (CI browser-smoke has failed since the typed-errors change)
   - Done when: no embedded page references AppMixerError or AgentError and the review page script still throws plain errors; `npm run build && node --test packages/core/test/errors.test.mjs`
-  - State: branch todo/FIX-024-keep-coded-error-constructors from harden-on-main; next: start FIX-024
+  - State: attempts 0/3; baseline 1866 passing; branch todo/FIX-024-keep-coded-error-constructors from harden-on-main; next: build
 - [ ] **TASK-002** · P1 · mid · Port the remaining local-acceptance-hardening commits (216, with over 100 files found only there: ESLint setup, shared validators, editor-preview sync, provider idempotency check) onto this branch, leaving out the progress script written for the legacy TODO format
   - Done when: npm run lint exists and passes, and no file named by this branch's docs is found only on that branch; `npm run lint`
   - State: branch todo/TASK-002-port-remaining-local-acceptance from harden-on-main; next: build children
