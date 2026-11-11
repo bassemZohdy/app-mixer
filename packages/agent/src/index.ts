@@ -158,7 +158,7 @@ export type {AgentSharedCostBinding,AgentTokenUsage,AgentCostUsage,AgentTokenBud
 
 export {SqliteAgentRunHistory} from './agent-run-history.js';
 export {SqliteAgentRunMetrics} from './agent-run-metrics.js';
-export type {AgentRunMetricStatus,AgentRunMetricsActor,AgentRunMetricsSnapshot,AgentRunMetricsOptions,AgentRunOperationalMetric,AgentActionBacklogMetric,AgentBudgetBacklogMetric} from './agent-run-metrics.js';
+export type {AgentRunMetricStatus,AgentActionMetricStatus,AgentActionMetric,AgentScheduleMetric,AgentApprovalMetricStatus,AgentApprovalMetric,AgentNoticeDeliveryMetricStatus,AgentNoticeDeliveryMetric,AgentMemoryMetricState,AgentMemoryMetric,AgentCostMetric,AgentTokenMetric,AgentRunMetricsActor,AgentRunMetricsSnapshot,AgentRunMetricsOptions,AgentRunOperationalMetric,AgentActionBacklogMetric,AgentBudgetBacklogMetric} from './agent-run-metrics.js';
 export {createAgentMetricsServer} from './agent-metrics-server.js';
 export type {AgentMetricsServerOptions} from './agent-metrics-server.js';
 export type {AgentRunEvent,AgentRunHistoryActor,AgentRunHistoryAccess,AgentRunHistoryOptions} from './agent-run-history.js';
