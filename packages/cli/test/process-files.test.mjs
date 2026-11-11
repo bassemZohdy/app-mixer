@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,readdirSync,statSync} from 'node:fs';
-import {join,sep} from 'node:path';
+import {join,relative,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),read=path=>readFileSync(join(root,path),'utf8');
 function files(directory){return readdirSync(directory).flatMap(name=>{if(['node_modules','dist','.git'].includes(name))return[];const path=join(directory,name);return statSync(path).isDirectory()?files(path):[path];});}
@@ -102,4 +102,11 @@ test('TASK-002.6.1 every ADR file is listed in the ADR table with its status and
  const table=read('docs/adr/README.md');
  for(const name of readdirSync(join(root,'docs/adr')).filter(file=>/^d{4}-.+.md$/.test(file)))assert.ok(table.includes('('+name+')'),name+' is listed in docs/adr/README.md');
  assert.ok(existsSync(join(root,'docs/adr/0011-core-depends-on-the-web-renderer.md')),'ADR 0011 records why core depends on the web renderer');
+});
+
+test('TASK-002.6.3 every repository path that the guides name in code spans exists',()=>{
+ const missing=[];
+ const pages=[join(root,'README.md'),join(root,'CONTRIBUTING.md'),...files(join(root,'docs')).filter(path=>path.endsWith('.md')&&!path.includes(sep+'plans'+sep))];
+ for(const page of pages)for(const match of readFileSync(page,'utf8').matchAll(/`((?:packages|deploy|scripts|\.github|adapters)\/[A-Za-z0-9_.\/-]+\.(?:mjs|cjs|js|ts|sh|ya?ml|json|md))`/g))if(!existsSync(join(root,match[1])))missing.push(match[1]+' (named in '+relative(root,page)+')');
+ assert.deepEqual(missing,[],'paths named in the guides that are not in the repository');
 });

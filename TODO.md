@@ -75,7 +75,7 @@
       - Done when: the ADR file exists, the ADR table lists it and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
     - [x] **TASK-002.6.2** · mid · Port the store schema versions (246c6d57): an app_mixer_schema table, a refusal of databases from newer releases in the agent run and staged operation stores, and docs/schema-versions.md
       - Done when: a database recorded at a newer version is refused with the documented message and an older layout migrates; `npm run build && node --test packages/core/test/schema-version.test.mjs packages/agent/test/durable-runs.test.mjs`
-    - [ ] **TASK-002.6.3** · high · Port the shared run failover test and the kind recovery scripts that docs/durable-agent-runs.md names (78057dab, 6f4f1188, 67c66619, 057d8276 and their review fixes); the kind and PostgreSQL parts run in CI
+    - [x] **TASK-002.6.3** · high · Port the shared run failover test and the kind recovery scripts that docs/durable-agent-runs.md names (78057dab, 6f4f1188, 67c66619, 057d8276 and their review fixes); the kind and PostgreSQL parts run in CI
       - Done when: every script and test that docs/durable-agent-runs.md names exists and a static test checks the list; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.2
     - [ ] **TASK-002.6.4** · low · Port the sandbox idempotency check for outbound providers (986e967e, 378148f2 part) with its script test and its CONTRIBUTING entry
