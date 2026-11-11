@@ -71,9 +71,8 @@
   - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
     - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
     - State: branch todo/TASK-002.6-port-remaining-docs from todo/TASK-002-port-remaining-local-acceptance; next: build children
-    - [/] **TASK-002.6.1** · low · Port ADR 0011 (core keeps its dependency on the web renderer, 373bfb3a) and its entries in the ADR table and the docs index
+    - [x] **TASK-002.6.1** · low · Port ADR 0011 (core keeps its dependency on the web renderer, 373bfb3a) and its entries in the ADR table and the docs index
       - Done when: the ADR file exists, the ADR table lists it and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
-      - State: attempts 0/3; baseline 1913 passing; branch todo/TASK-002.6.1-port-adr-0011 from todo/TASK-002.6-port-remaining-docs; next: build
     - [ ] **TASK-002.6.2** · mid · Port the store schema versions (246c6d57): an app_mixer_schema table, a refusal of databases from newer releases in the agent run and staged operation stores, and docs/schema-versions.md
       - Done when: a database recorded at a newer version is refused with the documented message and an older layout migrates; `npm run build && node --test packages/core/test/schema-version.test.mjs packages/agent/test/durable-runs.test.mjs`
     - [ ] **TASK-002.6.3** · high · Port the shared run failover test and the kind recovery scripts that docs/durable-agent-runs.md names (78057dab, 6f4f1188, 67c66619, 057d8276 and their review fixes); the kind and PostgreSQL parts run in CI
