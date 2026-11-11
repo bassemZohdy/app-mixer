@@ -48,3 +48,19 @@ test('dependency updates are automated and production vulnerabilities fail CI',(
  const dependabot=read('.github/dependabot.yml');for(const ecosystem of ['npm','github-actions','docker'])assert.match(dependabot,new RegExp('package-ecosystem: '+ecosystem));
  assert.match(dependabot,/interval: weekly/);assert.match(read('.github/workflows/ci.yml'),/run: npm audit --omit=dev/);
 });
+
+// FIX-001: CONTRIBUTING.md must describe this branch, not another one.
+const guide=()=>read('CONTRIBUTING.md').replaceAll('\r\n','\n');
+test('FIX-001 every npm script CONTRIBUTING names exists in package.json',()=>{
+ const scripts=Object.keys(JSON.parse(read('package.json')).scripts),missing=[...new Set([...guide().matchAll(/npm run ([\w:-]+)/g)].map(match=>match[1]))].filter(name=>!scripts.includes(name));
+ assert.deepEqual(missing,[],'npm scripts named in CONTRIBUTING.md but absent from package.json');
+});
+test('FIX-001 every file CONTRIBUTING names exists',()=>{
+ const names=new Set(files(root).map(path=>path.split(sep).pop())),missing=[...new Set([...guide().matchAll(/[\w.@/-]+\.(?:mjs|cjs|js|ts|json|yml|md)\b/g)].map(match=>match[0]))].filter(word=>word!=='Node.js'&&(word.includes('/')?!existsSync(join(root,word)):!names.has(word)));
+ assert.deepEqual(missing,[],'files named in CONTRIBUTING.md but absent from the repository');
+});
+test('FIX-001 CONTRIBUTING repeats no sentence',()=>{
+ const seen=new Set(),repeated=new Set();
+ for(const raw of guide().split(/\n|(?<=[.!?])\s+/)){const sentence=raw.replace(/\s+/g,' ').trim();if(sentence.length<=40)continue;if(seen.has(sentence))repeated.add(sentence);seen.add(sentence);}
+ assert.deepEqual([...repeated],[],'sentences that appear more than once in CONTRIBUTING.md');
+});
