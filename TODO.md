@@ -67,7 +67,7 @@
       - Done when: each metric reports its counts without identifier labels and refuses an unauthorized scrape; `npm run build && node --test packages/agent/test/agent-run-metrics-backlog.test.mjs packages/agent/test/agent-approval-metrics.test.mjs packages/agent/test/agent-notice-delivery-metrics.test.mjs packages/agent/test/agent-token-metrics.test.mjs packages/agent/test/agent-memory-metrics.test.mjs packages/agent/test/agent-cost-metrics.test.mjs`
     - [x] **TASK-002.5.2** · mid · Port the Kubernetes manifests that let a labelled pod scrape the Data Plane metrics and enforce namespace-wide admission rules around the Data Plane (543dd7b5, f498b6e9, 0e0d2be0, b303af44); only the kind workflows in CI run them
       - Done when: the manifests parse and the workflow steps that exercise them exist; `node --test packages/cli/test/process-files.test.mjs`
-    - [ ] **TASK-002.5.3** · mid · Port the test that exports one cross-service trace to a real OpenTelemetry Collector (56cdcd23), which needs Docker and so runs in CI
+    - [x] **TASK-002.5.3** · mid · Port the test that exports one cross-service trace to a real OpenTelemetry Collector (56cdcd23), which needs Docker and so runs in CI
       - Done when: one trace crosses the services and reaches the collector with the expected spans; `npm run build && node --test packages/cli/test/otel-collector-trace.test.mjs`
   - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
     - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`

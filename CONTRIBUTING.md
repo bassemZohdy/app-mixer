@@ -25,6 +25,7 @@ Tests that need an external service are skipped unless their variable is set. CI
 | `APP_MIXER_TEST_BROWSER=1` | Chrome or Edge (headless, DevTools protocol) | The browser steps of `.github/workflows/ci.yml` |
 | `APP_MIXER_TEST_HYDRA=docker` | Docker (pulls the Ory Hydra image) | `node --test packages/core/test/hydra-identity.test.mjs` |
 | `APP_MIXER_TEST_PROMETHEUS=docker` | Docker (Prometheus) | `node --test packages/cli/test/alert-rules.test.mjs` |
+| `APP_MIXER_TEST_OTEL_COLLECTOR=docker` | Docker (OpenTelemetry Collector) | `node --test packages/cli/test/otel-collector-trace.test.mjs` |
 | `APP_MIXER_TEST_OLLAMA_CHAT_MODEL` (with `APP_MIXER_TEST_OLLAMA_URL`) | An Ollama server with that chat model pulled | `node --test packages/agent/test/openai-limited-model-provider.test.mjs` |
 | `APP_MIXER_TEST_HA_FAILOVER=1` (with `APP_MIXER_TEST_HA_STANDBY_URL` and `APP_MIXER_TEST_POSTGRES_URL`) | A PostgreSQL primary with a synchronous standby | `node --test packages/agent/test/postgres-shared-failover.test.mjs` |
 | `APP_MIXER_TEST_KIND_NODE_FAILURE=1` (with `APP_MIXER_TEST_KUBE_CONTEXT`, `APP_MIXER_TEST_POD_POSTGRES_URL`, `APP_MIXER_TEST_WORKER_IMAGE`, `APP_MIXER_TEST_FIRST_NODE` and `APP_MIXER_TEST_REPLACEMENT_NODE`) | A kind cluster with two worker nodes | The `kubernetes-node-recovery` workflow |
