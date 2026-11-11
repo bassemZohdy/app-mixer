@@ -1,9 +1,10 @@
 import {createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type StandardWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;secret:string;previousSecrets?:string[];clock?:()=>number;toleranceSeconds?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const base64=/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 function key(x:unknown):Buffer|undefined{
  if(typeof x!=='string'||!x.startsWith('whsec_')||!base64.test(x.slice(6)))return undefined;const bytes=Buffer.from(x.slice(6),'base64');return bytes.byteLength>=24&&bytes.byteLength<=64?bytes:undefined;

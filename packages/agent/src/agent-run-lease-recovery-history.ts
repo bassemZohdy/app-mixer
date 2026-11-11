@@ -1,10 +1,11 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 export type AgentRunLeaseRecoveryEvent={id:number;runId:string;revision:number;previousStatus:'running'|'pause_requested'|'cancel_requested';leaseUntil:number;principalId:string;reference:string;observedAt:number};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'list'|'read',event:AgentRunLeaseRecoveryEvent|null)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,action:'list'|'read',event:AgentRunLeaseRecoveryEvent|null,signal:AbortSignal)=>boolean|Promise<boolean>;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Authorized, fixed-scope access to atomic lease-recovery decisions. */
 export class SqliteAgentLeaseRecoveryHistory{
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly authorizeWithSignal:Options['authorizeWithSignal'];private readonly timeout:number|undefined;private readonly maxPending:number|undefined;private inFlight=0;

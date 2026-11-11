@@ -1,11 +1,12 @@
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Outcome='retry'|'succeeded'|'failed'|'cancelled'|'paused';
 type Snapshot={runId:string;revision:number;status:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={runs:PostgresAgentRunLifecycleFoundation;scope:AgentRunScope;runId:string;operationId:string;path:string;authorize:(actor:Actor,action:'access'|Outcome,run:Snapshot|null,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 function parse(input:unknown):{revision:number;outcome:Outcome;reference:string}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==3||!Object.hasOwn(input,'revision')||!Object.hasOwn(input,'outcome')||!Object.hasOwn(input,'reference'))return;const v=input as {revision:unknown;outcome:unknown;reference:unknown};if(!Number.isSafeInteger(v.revision)||Number(v.revision)<1||Number(v.revision)>=Number.MAX_SAFE_INTEGER||typeof v.outcome!=='string'||!['retry','succeeded','failed','cancelled','paused'].includes(v.outcome)||!id(v.reference))return;return {revision:v.revision as number,outcome:v.outcome as Outcome,reference:v.reference};}
 /** Fixed-run, host-authorized reconciliation of a reviewed uncertain shared run. */
 export function registerSharedAgentRunReconciliation(registry:Registry,options:Options):void{

@@ -2,10 +2,11 @@ import {PostgresAgentBudgetRecoveryDiscoveryFoundation} from './postgres-recover
 import type {AgentRunScope} from './durable-runs.js';
 import {AgentBudgetRecoveryWorker} from './agent-budget-recovery-worker.js';
 import {SqliteAgentBudgetRecoveryDiscovery,type AgentBudgetRecoveryCandidate,type AgentBudgetRecoveryDiscoveryActor} from './agent-budget-recovery-discovery.js';
+import {isIdentifier} from './validation.js';
 
 type Session={worker:AgentBudgetRecoveryWorker;close:()=>void|Promise<void>};
 type Options={scope:AgentRunScope;discovery:SqliteAgentBudgetRecoveryDiscovery|PostgresAgentBudgetRecoveryDiscoveryFoundation;actor:AgentBudgetRecoveryDiscoveryActor;authorize:(candidate:AgentBudgetRecoveryCandidate,signal:AbortSignal)=>boolean|Promise<boolean>;open:(candidate:AgentBudgetRecoveryCandidate,signal:AbortSignal)=>Session|Promise<Session>;maxRunsPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void|Promise<void>};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Explicitly started, bounded recovery passes over host-authorized uncertain runs. */
 export class AgentBudgetRecoveryCoordinator {
  private readonly discovery:SqliteAgentBudgetRecoveryDiscovery|PostgresAgentBudgetRecoveryDiscoveryFoundation;private readonly scope:AgentRunScope;private readonly actor:AgentBudgetRecoveryDiscoveryActor;private readonly authorize:Options['authorize'];private readonly open:Options['open'];private readonly maxRunsPerPass:number;private readonly pollMs:number;private readonly onError:Options['onError'];private cursor?:string;private active=false;private generation=0;private pending?:Promise<number>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;

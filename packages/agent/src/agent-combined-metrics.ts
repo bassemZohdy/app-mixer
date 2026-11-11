@@ -1,8 +1,9 @@
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 
 type Source={render:(actor:AgentRunMetricsActor)=>string|Promise<string>;renderWithSignal?:(actor:AgentRunMetricsActor,signal:AbortSignal)=>string|Promise<string>};
 export type AgentCombinedMetricsOptions={sources:Source[];authorize:(actor:AgentRunMetricsActor,signal:AbortSignal)=>boolean|Promise<boolean>;callbackTimeoutMs?:number;maxPendingCallbacks?:number};
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 
 /** Combine explicitly selected, independently authorized metric sources on one listener. */
 export class AgentCombinedMetrics{

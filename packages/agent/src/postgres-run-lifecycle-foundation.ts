@@ -2,10 +2,11 @@ import {randomUUID,createHash} from 'node:crypto';
 import {canonicalTriggerPayload} from './agent-trigger-payload.js';
 import {PostgresAgentTriggerFoundation} from './postgres-trigger-foundation.js';
 import type {AgentRunScope,DurableAgentRun,ExpiredAgentLease} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const positive=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>0;
 const statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'];
 function expired(row:Record<string,unknown>):ExpiredAgentLease{const revision=Number(row.revision),leaseUntil=Number(row.lease_until);if(!id(row.run_id)||!positive(revision)||!Number.isSafeInteger(leaseUntil)||leaseUntil<0||!['running','pause_requested','cancel_requested'].includes(String(row.status)))throw Error('Invalid shared lease data');return {runId:row.run_id,revision,status:row.status as ExpiredAgentLease['status'],leaseUntil};}

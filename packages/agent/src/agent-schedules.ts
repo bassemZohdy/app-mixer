@@ -5,6 +5,7 @@ import {Temporal} from '@js-temporal/polyfill';
 import {createHash,randomUUID} from 'node:crypto';
 import {SqliteAgentRuns,resumeAgentRunWithTriggerInTransaction,type AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string;excludeDates?:string[];excludeDateRanges?:{start:string;end:string}[];excludeAnnualDates?:string[];observeAnnualWeekends?:boolean};
 type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
@@ -12,8 +13,8 @@ export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revi
 export type AgentScheduleCursor={nextAt:number;scheduleId:string};
 export type AgentSchedulePage={items:AgentSchedule[];next?:AgentScheduleCursor};
 type FireOptions={definitionVersion:number;maxAttempts:number;runTimeoutMs:number;maxPending:number;traceParent?:string;wakeup?:{runId:string;revision:number}};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 function field(raw:string,min:number,max:number,starMax=max):Set<number>{
  const values=new Set<number>();for(const piece of raw.split(',')){
   const parts=piece.split('/');if(parts.length>2||!parts[0]||parts[1]===''||(parts[1]!==undefined&&!/^\d+$/.test(parts[1])))throw Error('Invalid cron expression');

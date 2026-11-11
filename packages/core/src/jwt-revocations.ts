@@ -2,8 +2,9 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import type {JWTPayload} from 'jose';
 import {openDatabase} from './sqlite-open.js';
+import {isNonNegativeInteger} from './validation.js';
 const valid=(x:unknown,max=256):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=max&&!/[\x00-\x1f\x7f]/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const integer=isNonNegativeInteger;
 export function verifiedJwtRevocationDeadline(claims:JWTPayload,issuer:string,options:{maxClockToleranceSeconds:number;maxClockSkewSeconds:number}):number{
  if(!claims||claims.iss!==issuer||!valid(claims.jti)||!integer(claims.iat)||!integer(claims.exp)||claims.exp<=claims.iat||!options||!integer(options.maxClockToleranceSeconds)||options.maxClockToleranceSeconds>60||!integer(options.maxClockSkewSeconds)||options.maxClockSkewSeconds>86400)throw Error('Invalid verified JWT revocation');
  const seconds=claims.exp+options.maxClockToleranceSeconds+options.maxClockSkewSeconds+1,retainUntil=seconds*1000;if(!integer(seconds)||!integer(retainUntil))throw Error('Invalid verified JWT revocation');return retainUntil;

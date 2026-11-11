@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash,randomUUID} from 'node:crypto';
 import {type AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier} from './validation.js';
 
 type ActionStatus='ready'|'dispatching'|'uncertain'|'succeeded'|'failed';
 export type AgentAction={actionId:string;operationId:string;idempotencyKey:string;status:ActionStatus;attempts:number;maxAttempts:number};
@@ -12,7 +13,7 @@ export type ActionReconciliationEvidence={principalId:string;reference:string};
 export type ActionReconciliationEvent=ActionReconciliationEvidence & {id:number;actionId:string;outcome:'applied'|'not_applied'|'failed';method:'manual'|'verifier';recordedAt:number};
 export type AgentActionPage={actions:AgentAction[];next?:string};
 export type ActionVerificationPass={results:({actionId:string;outcome:ActionVerification['outcome']}|{actionId:string;error:unknown})[];next?:string};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const valid=isIdentifier;
 /** An error carrying `Symbol.for('app-mixer.effect') === 'none'` was thrown before any effect (CapabilityRegistry marks its refusals). */
 export const hadNoEffect=(error:unknown):boolean=>error!==null&&typeof error==='object'&&(error as Record<symbol,unknown>)[Symbol.for('app-mixer.effect')]==='none';
 /** Mark an error as thrown before any effect; the same error is returned. */

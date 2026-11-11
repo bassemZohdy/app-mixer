@@ -1,9 +1,10 @@
 import {createHash,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type TelegramWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;secret:string;previousSecrets?:string[]}&({updateType:string;updateTypes?:never}|{updateType?:never;updateTypes:string[]});
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const secret=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(x);
 const object=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x);
 const digest=(value:string)=>createHash('sha256').update(value,'utf8').digest();

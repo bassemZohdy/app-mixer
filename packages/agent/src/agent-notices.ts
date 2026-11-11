@@ -1,14 +1,15 @@
 import {DatabaseSync} from 'node:sqlite';
 import {type AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Kind='approval_requested'|'delegation_renewal_required';
 export type AgentNotice={id:number;tenantId:string;agentId:string;runId:string;kind:Kind;subjectId:string;subjectRevision:number;createdAt:number;actionable:boolean;acknowledgedAt:number|null};
 type Access='list'|'read'|'acknowledge';
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:Access,notice:AgentNotice|null,signal:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number;timeoutMs?:number;maxPending?:number};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const valid=isIdentifier;
+const integer=isNonNegativeInteger;
 export function ensureAgentNoticeSchema(db:DatabaseSync):void{db.exec(`
  CREATE TABLE IF NOT EXISTS agent_notices (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,subject_id TEXT NOT NULL,subject_revision INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,kind,subject_id,subject_revision));
  CREATE TABLE IF NOT EXISTS agent_notice_receipts (notice_id INTEGER NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,principal_id TEXT NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(notice_id,tenant_id,agent_id,principal_id));

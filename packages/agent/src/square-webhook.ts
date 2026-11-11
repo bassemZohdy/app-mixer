@@ -2,9 +2,10 @@ import {createHmac,timingSafeEqual} from 'node:crypto';
 import {Temporal} from '@js-temporal/polyfill';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type SquareWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;merchantId:string;notificationUrl:string;eventTypes:string[];signatureKey:string;previousSignatureKeys?:string[];maxAgeMs?:number;futureSkewMs?:number;clock?:()=>number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const key=(x:unknown):x is string=>typeof x==='string'&&/^[\x21-\x7e]{8,1024}$/.test(x);
 const eventType=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(x);
 /** One fixed Square merchant and host-approved set of event types. */

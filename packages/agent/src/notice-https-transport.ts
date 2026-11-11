@@ -1,9 +1,10 @@
 import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Destination={id:string;url:string}&({bearerToken:string;getBearerToken?:never}|{bearerToken?:never;getBearerToken:()=>string|Promise<string>});
 type Options={scope:AgentRunScope;destinations:Destination[];timeoutMs?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const positive=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>0;
 const token=(value:unknown):value is string=>typeof value==='string'&&/^[\x21-\x7e]{32,4096}$/.test(value);
 async function credential(provider:()=>string|Promise<string>,signal:AbortSignal):Promise<string>{

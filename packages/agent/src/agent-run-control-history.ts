@@ -1,10 +1,11 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 export type AgentRunControlEvent={id:number;runId:string;revision:number;action:'pause'|'resume'|'cancel'|'archive';previousStatus:string;status:string;principalId:string;observedAt:number};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'list'|'read',event:AgentRunControlEvent|null)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,action:'list'|'read',event:AgentRunControlEvent|null,signal:AbortSignal)=>boolean|Promise<boolean>;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 const statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'];
 /** Separately authorized scoped reads of atomic lifecycle decisions. */
 export class SqliteAgentRunControlHistory{

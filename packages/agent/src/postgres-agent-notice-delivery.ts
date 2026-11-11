@@ -1,10 +1,11 @@
 import {randomUUID} from 'node:crypto';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentNoticeDelivery,AgentNoticeDeliveryActor,AgentNoticeDeliveryAccess,AgentNoticeDeliveryEvent,AgentNoticeMessage} from './agent-notice-delivery.js';
+import {isIdentifier} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={scope:AgentRunScope;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>;authorize:(actor:AgentNoticeDeliveryActor,action:AgentNoticeDeliveryAccess,delivery:AgentNoticeDelivery,message:AgentNoticeMessage)=>boolean|Promise<boolean>;authorizeList:(actor:AgentNoticeDeliveryActor,scope:AgentRunScope)=>boolean|Promise<boolean>};
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 const positive=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>0;
 
 /** Shared, explicitly authorized outbox. Hosts must stop an old sender before recovering it. */

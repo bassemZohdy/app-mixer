@@ -1,9 +1,10 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 export type AgentScheduleMetricsOptions={scope:AgentRunScope;authorize:(actor:AgentRunMetricsActor,scope:AgentRunScope)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:AgentRunMetricsActor,scope:AgentRunScope,signal:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number};
 export type AgentScheduleMetricsSnapshot={due:number;upcoming:number;disabled:number;oldestDueSeconds:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 export function readAgentScheduleMetrics(db:DatabaseSync,scope:AgentRunScope,now:number):AgentScheduleMetricsSnapshot{if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid schedule metrics clock');const row=db.prepare("SELECT SUM(CASE WHEN enabled=1 AND next_at<=? THEN 1 ELSE 0 END) AS due,SUM(CASE WHEN enabled=1 AND next_at>? THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN enabled=0 THEN 1 ELSE 0 END) AS disabled,MIN(CASE WHEN enabled=1 AND next_at<=? THEN next_at END) AS oldest,SUM(CASE WHEN typeof(enabled)<>'integer' OR enabled NOT IN (0,1) OR typeof(next_at)<>'integer' OR next_at<0 OR next_at>9007199254740991 THEN 1 ELSE 0 END) AS invalid FROM agent_schedules WHERE tenant_id=? AND agent_id=?").get(now,now,now,scope.tenantId,scope.agentId);if(!row)throw Error('Invalid schedule metrics data');const due=Number(row.due??0),upcoming=Number(row.upcoming??0),disabled=Number(row.disabled??0),invalid=Number(row.invalid??0),oldest=row.oldest===null?undefined:Number(row.oldest);if(![due,upcoming,disabled,invalid].every(value=>Number.isSafeInteger(value)&&value>=0)||invalid!==0||(due===0&&oldest!==undefined)||(due>0&&(oldest===undefined||!Number.isSafeInteger(oldest)||oldest<0||oldest>now)))throw Error('Invalid schedule metrics data');return {due,upcoming,disabled,oldestDueSeconds:oldest===undefined?0:(now-oldest)/1000};}
 /** Fixed-scope aggregate schedule gauges without schedule or tenant labels. */
 export class SqliteAgentScheduleMetrics {

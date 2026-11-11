@@ -1,11 +1,12 @@
 import {createHash} from 'node:crypto';
 import type {JWTPayload} from 'jose';
 import {verifiedJwtRevocationDeadline} from './jwt-revocations.js';
+import {isNonNegativeInteger} from './validation.js';
 
 type Query=(sql:string,parameters:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount:number|null}>;
 type Options={issuer:string;query:Query;clock?:()=>number};
 const valid=(x:unknown,max=256):x is string=>typeof x==='string'&&x.trim().length>0&&x.length<=max&&!/[\x00-\x1f\x7f]/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const integer=isNonNegativeInteger;
 
 /** Shared PostgreSQL revocations. The host owns connections, authentication and schema provisioning. */
 export class PostgresJwtRevocations {

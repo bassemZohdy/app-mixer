@@ -5,11 +5,12 @@ import {SqliteAgentApprovals,type AgentApprovalActor} from './agent-approvals.js
 import {PostgresAgentApprovalsFoundation} from './postgres-agent-approvals-foundation.js';
 import {type AgentRunScope} from './durable-runs.js';
 import {inlineHashes} from './csp.js';
+import {isIdentifier} from './validation.js';
 
 type ApprovalStore=SqliteAgentApprovals|PostgresAgentApprovalsFoundation;
 type NoticeStore=SqliteAgentNotices|PostgresAgentNoticesFoundation;
 type Options={authenticate:(request:IncomingMessage,signal?:AbortSignal)=>AgentApprovalActor|undefined|Promise<AgentApprovalActor|undefined>;resolve:(scope:AgentRunScope,runId:string,signal?:AbortSignal)=>ApprovalStore|undefined|Promise<ApprovalStore|undefined>;resolveNotices?:(scope:AgentRunScope,signal?:AbortSignal)=>NoticeStore|undefined|Promise<NoticeStore|undefined>;abortOnDisconnect?:boolean;hostTimeoutMs?:number;hostMaxPending?:number};
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Review agent approvals</title><style>body{font:16px system-ui;max-width:850px;margin:2rem auto;padding:0 1rem;color:#172033}label{display:block;margin:.8rem 0}input{display:block;width:100%;max-width:32rem;padding:.5rem;box-sizing:border-box}button{padding:.5rem .8rem;margin:.3rem .4rem .3rem 0}article{border:1px solid #aab4c4;border-radius:8px;padding:1rem;margin:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f4f7;padding:.8rem}#message{min-height:1.5em}</style><h1>Review agent approvals</h1><p>Review the operation and exact input before deciding. Decisions do not resume a run automatically.</p><label>Reviewer token<input id="token" type="password" autocomplete="off"></label><label>Agent ID<input id="agent" autocomplete="off"></label><label>Run ID<input id="run" autocomplete="off"></label><button id="loadNotices" type="button">Load notices for agent</button><p id="noticeMessage" role="status"></p><div id="notices"></div><button id="load" type="button">Load approvals</button><p id="message" role="status"></p><div id="items"></div><script>
 const byId=id=>document.getElementById(id), message=byId('message'), items=byId('items');
 function endpoint(){return '/api/agents/'+encodeURIComponent(byId('agent').value)+'/runs/'+encodeURIComponent(byId('run').value)+'/approvals'}

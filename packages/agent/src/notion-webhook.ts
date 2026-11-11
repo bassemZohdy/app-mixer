@@ -2,9 +2,10 @@ import {createHmac,timingSafeEqual} from 'node:crypto';
 import {Temporal} from '@js-temporal/polyfill';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type NotionWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;workspaceId:string;subscriptionId:string;integrationId:string;eventTypes:string[];verificationToken:string;previousVerificationTokens?:string[];maxAgeMs?:number;futureSkewMs?:number;clock?:()=>number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const uuid=(x:unknown):x is string=>typeof x==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(x);
 const token=(x:unknown):x is string=>typeof x==='string'&&/^[\x21-\x7e]{16,1024}$/.test(x);
 const timestamp=(x:unknown):boolean=>{if(typeof x!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i.test(x))return false;try{Temporal.Instant.from(x);return true;}catch{return false;}};

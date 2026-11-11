@@ -3,13 +3,14 @@ import {createServer,type IncomingMessage,type Server,type ServerResponse} from 
 import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Access='receive'|'verify'|'list'|'read'|'acknowledge';
 export type ReceivedAgentNotice={id:number;senderId:string;message:AgentNoticeMessage;receivedAt:number;acknowledgedAt:number|null;acknowledgedBy:string|null};
 type Options={scope:AgentRunScope;maxPending:number;authorize:(actor:Actor,action:Access,notice:ReceivedAgentNotice|null)=>boolean|Promise<boolean>;clock?:()=>number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 const key=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
 function message(value:unknown,scope:AgentRunScope):AgentNoticeMessage{
  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid notice message');const m=value as Record<string,unknown>;

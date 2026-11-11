@@ -1,9 +1,10 @@
 import {PostgresAgentDefinitions} from './postgres-agent-definitions.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={definitions:PostgresAgentDefinitions;scope:AgentRunScope;operationId:string;path:string;limit:number;authorize:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown):{after?:number}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'query'))return;const query=(input as {query?:unknown}).query;if(!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(key=>key!=='after'))return;const after=(query as {after?:unknown}).after;if(after!==undefined&&(!Number.isSafeInteger(after)||Number(after)<0))return;return after===undefined?{}:{after:after as number};}
 /** Separately authorized, fixed-agent reads of the shared definition audit. */
 export function registerAgentDefinitionControlHistory(registry:Registry,options:Options):void{

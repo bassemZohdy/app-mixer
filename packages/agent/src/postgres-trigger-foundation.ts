@@ -3,11 +3,12 @@ import {canonicalTriggerPayload} from './agent-trigger-payload.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentTriggerInput,AgentTriggerEnqueueOptions,TriggerRecord} from './agent-triggers.js';
+import {isIdentifier} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
 type DurationOptions=Omit<AgentTriggerEnqueueOptions,'deadline'>&{runTimeoutMs:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 
 /** Internal migration foundation. No shared worker, recovery, retention or public capability is available yet. */
 export class PostgresAgentTriggerFoundation {

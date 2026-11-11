@@ -1,11 +1,12 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 export type AgentRunExpiryEvent={id:number;runId:string;revision:number;previousStatus:'queued'|'paused';deadline:number;principalId:string;reference:string;observedAt:number};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'list'|'read',event:AgentRunExpiryEvent|null)=>boolean|Promise<boolean>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Authorized access to atomic operator-attributed expiry decisions for one agent. */
 export class SqliteAgentExpiryHistory{
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];

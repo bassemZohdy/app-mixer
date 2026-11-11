@@ -1,9 +1,10 @@
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentRunLeaseRecoveryEvent,AgentRunLeaseRecoveryHistoryOptions,AgentRunLeaseRecoveryHistoryActor} from './agent-run-lease-recovery-history.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options=AgentRunLeaseRecoveryHistoryOptions&{query:Query};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 /** Separately authorized scope-local recovery evidence. Host supplies a read-only database adapter. */
 export class PostgresAgentLeaseRecoveryHistoryFoundation {
  private readonly scope:AgentRunScope;private readonly query:Query;private readonly authorize:Options['authorize'];private readonly authorizeWithSignal:Options['authorizeWithSignal'];private readonly timeout?:number;private readonly maxPending?:number;private inFlight=0;

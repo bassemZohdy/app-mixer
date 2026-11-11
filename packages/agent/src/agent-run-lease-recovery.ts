@@ -1,9 +1,10 @@
 import {SqliteAgentRuns,type AgentRunScope,type ExpiredAgentLease,type AgentRunLeaseRecoveryEvidence} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {isIdentifier} from './validation.js';
 type Cursor={leaseUntil:number;runId:string};
 export type AgentLeaseRecoveryObservation={outcome:'completed'|'failed'|'stopped';recovered:number;denied:number;errors:number;durationMs:number};
 type Options={runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;scope:AgentRunScope;authorize:(lease:ExpiredAgentLease,signal:AbortSignal)=>boolean|Promise<boolean>;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void;observe?:(observation:AgentLeaseRecoveryObservation)=>void|Promise<void>;clock?:()=>number;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number;evidence?:AgentRunLeaseRecoveryEvidence};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Host-driven lease discovery and conservative transition to uncertainty; never retries a run. */
 export class AgentRunLeaseRecoveryWorker{
  private readonly runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly clock:()=>number;private readonly onError:Options['onError'];private readonly observe:Options['observe'];private readonly evidence:AgentRunLeaseRecoveryEvidence|undefined;private readonly timeout:number|undefined;private readonly maxPending:number|undefined;private inFlight=0;private active=false;private generation=0;private pending?:Promise<number>;private controller?:AbortController;private timer?:ReturnType<typeof setTimeout>;private cursor?:Cursor;

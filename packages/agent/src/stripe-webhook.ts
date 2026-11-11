@@ -1,9 +1,10 @@
 import {createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type StripeWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;secret:string;previousSecrets?:string[];clock?:()=>number;toleranceSeconds?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const secret=(x:unknown):x is string=>typeof x==='string'&&/^whsec_[\x21-\x7e]{16,1018}$/.test(x);
 
 /** One host-configured Stripe snapshot-event endpoint. */

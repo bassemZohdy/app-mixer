@@ -1,10 +1,11 @@
 import type {IncomingMessage} from 'node:http';
 import type {JSONWebKeySet} from 'jose';
 import type {createJwtCapabilityAuthenticator,JwtCapabilityActor} from './jwt-capability-auth.js';
+import {isNonNegativeInteger} from './validation.js';
 
 type Authenticator=ReturnType<typeof createJwtCapabilityAuthenticator>;
 export type JwtJwksManagerOptions={authenticator:Authenticator;jwksUrl:string;pollMs:number;maxStaleMs:number;timeoutMs:number;onError:(error:unknown)=>void;allowLoopbackHttp?:boolean;clock?:()=>number};
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const integer=isNonNegativeInteger;
 /**
  * A well-formed key the authenticator does not support: no kid, a kid already taken, an RSA exponent other than 65537, a modulus of 1024 to 2040
  * bits, or key operations beyond verification. The authenticator refuses a whole key set that contains one, so the manager leaves such keys out
