@@ -70,3 +70,39 @@ test('successful capability without a return value uses an explicit null result'
  const registry=new CapabilityRegistry(()=>{});registry.register({operationId:'write',method:'POST',path:'/write'},{authorize:()=>true,validate:()=>true,execute:()=>undefined});const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'person'}),()=>{});
  try{const url=await start(server),response=await fetch(`${url}/capabilities/write/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,200);assert.deepEqual(await response.json(),{result:null});}finally{await stop(server);}
 });
+
+test('TASK-006 a refusal keeps the status its error code or documented legacy message gives, and any other error is a 500 without its message',async()=>{
+ const {AppMixerError}=await import('../dist/index.js');
+ const registry=new CapabilityRegistry(()=>{}),outcomes={
+  typedInvalid:()=>{throw new AppMixerError('invalid','Typed invalid input');},
+  typedDenied:()=>{throw new AppMixerError('denied','Typed denial');},
+  typedMissing:()=>{throw new AppMixerError('not_found','Typed missing');},
+  typedConflict:()=>{throw new AppMixerError('conflict','Typed conflict');},
+  typedLimit:()=>{throw new AppMixerError('limit','Typed limit');},
+  typedUnavailable:()=>{throw new AppMixerError('unavailable','Typed unavailable');},
+  legacyInvalid:()=>{throw Error('Invalid capability input');},
+  legacyConflict:()=>{throw Error('Data revision conflict');},
+  legacyMissing:()=>{throw Error('Operation not found');},
+  unknown:()=>{throw Error('database password is hunter2');},
+  notAnError:()=>{throw 'database password is hunter2';}
+ };
+ for(const [operationId,execute] of Object.entries(outcomes))registry.register({operationId,method:'POST',path:'/'+operationId},{authorize:()=>true,validate:()=>true,execute});
+ const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{}),url=await start(server);
+ try{
+  const expected={typedInvalid:[400,'Typed invalid input'],typedDenied:[403,'Typed denial'],typedMissing:[404,'Typed missing'],typedConflict:[409,'Typed conflict'],typedLimit:[429,'Typed limit'],typedUnavailable:[503,'Typed unavailable'],legacyInvalid:[400,'Invalid capability input'],legacyConflict:[409,'Data revision conflict'],legacyMissing:[404,'Operation not found'],unknown:[500,'Capability invocation failed'],notAnError:[500,'Capability invocation failed']};
+  for(const [operationId,[status,message]] of Object.entries(expected)){
+   const response=await fetch(`${url}/capabilities/${operationId}/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})}),text=await response.text();
+   assert.equal(response.status,status,operationId+': '+text);assert.equal(JSON.parse(text).error,message,operationId);assert.equal(text.includes('hunter2'),false,operationId+' leaks nothing');
+  }
+ }finally{await stop(server);}
+});
+
+test('TASK-006 the HTTP layers choose a status through the error code, not through message lists of their own',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ for(const file of ['capability-server.ts','planes.ts']){
+  const source=await readFile(new URL('../src/'+file,import.meta.url),'utf8');
+  assert.match(source,/refusalStatus\(/,file+' asks the error module for a status');
+  assert.doesNotMatch(source,/new Set\(\[\s*'[A-Z][^']*',\s*'[A-Z][^']*'/,file+' keeps no list of refusal messages');
+  assert.ok((source.match(/message===/g)??[]).length<=1,file+' compares at most the one documented outcome message');
+ }
+});
