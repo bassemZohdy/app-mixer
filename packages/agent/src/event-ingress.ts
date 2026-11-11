@@ -8,6 +8,7 @@ import {type AgentDefinitionVersion} from './persistent-definitions.js';
 import {parseAgentTraceParent} from './agent-trace-context.js';
 import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '@opentelemetry/api';
 import {isIdentifier} from './validation.js';
+import {agentErrorStatus} from './errors.js';
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
@@ -94,7 +95,7 @@ export function createAgentEventIngress(options:Options):Server {
    if(expired)return;
    if((acknowledgement==='paddle'||acknowledgement==='linear'||acknowledgement==='discord')&&!result.duplicate)providerAccepted=true;
    if(acknowledgement==='discord'){res.writeHead(204,{'cache-control':'no-store','x-content-type-options':'nosniff'});res.end();}else if(acknowledgement==='twiml'){res.writeHead(200,{'content-type':'text/xml; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');}else reply(res,acknowledgement==='paddle'||acknowledgement==='linear'||result.duplicate?200:202,result);
-  }catch(error){if(expired)return;const message=error instanceof Error?error.message:'';reply(res,['Trigger identity conflict','Run revision conflict','Invalid run state','Run deadline expired','Run cannot be resumed','Run wait requires reconciliation','Run requires reconciliation','Approval required','Delegation renewal required','Run is archived'].includes(message)?409:message==='Trigger backlog full'?429:message==='Invalid trigger payload'?400:500,{error:['Trigger identity conflict','Run revision conflict','Invalid run state','Run deadline expired','Run cannot be resumed','Run wait requires reconciliation','Run requires reconciliation','Approval required','Delegation renewal required','Run is archived'].includes(message)?'Event conflict':message==='Trigger backlog full'?'Backlog full':message==='Invalid trigger payload'?'Invalid event':'Event unavailable'});}
+  }catch(error){if(expired)return;const mapped=agentErrorStatus(error),status=mapped===409||mapped===429||mapped===400?mapped:500;reply(res,status,{error:status===409?'Event conflict':status===429?'Backlog full':status===400?'Invalid event':'Event unavailable'});}
   }finally{if(timer!==undefined)clearTimeout(timer);if(abortOnDisconnect)res.off('close',onDisconnect);inFlight--;}
  });
 }
