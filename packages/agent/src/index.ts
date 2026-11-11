@@ -341,4 +341,6 @@ export {createNotionWebhookAdapter} from './notion-webhook.js';
 export type {NotionWebhookOptions} from './notion-webhook.js';
 
 export {createDiscordWebhookAdapter} from './discord-webhook.js';
+export {createSendGridWebhookAdapter} from './sendgrid-webhook.js';
 export type {DiscordWebhookOptions} from './discord-webhook.js';
+export type {SendGridWebhookOptions} from './sendgrid-webhook.js';
