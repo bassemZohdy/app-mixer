@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHmac} from 'node:crypto';
-import {createLinearWebhookAdapter,createPagerDutyWebhookAdapter,createPaddleWebhookAdapter,createSentryWebhookAdapter,createShopifyWebhookAdapter,createSlackWebhookAdapter,createGithubWebhookAdapter,createGitlabWebhookAdapter,createStripeWebhookAdapter,createStandardWebhookAdapter,createTwilioMessageWebhookAdapter} from '../dist/index.js';
+import {createHmac,generateKeyPairSync} from 'node:crypto';
+import {createLinearWebhookAdapter,createPagerDutyWebhookAdapter,createPaddleWebhookAdapter,createSentryWebhookAdapter,createShopifyWebhookAdapter,createSlackWebhookAdapter,createGithubWebhookAdapter,createGitlabWebhookAdapter,createStripeWebhookAdapter,createStandardWebhookAdapter,createTwilioMessageWebhookAdapter,createSendGridWebhookAdapter} from '../dist/index.js';
 
 const identity={tenantId:'tenant',principalId:'sender',sourceId:'source'},secret='s'.repeat(32),now=1_700_000_000_000;
 const adapters={
@@ -15,7 +15,8 @@ const adapters={
  gitlab:{adapter:createGitlabWebhookAdapter({identity,agentId:'agent',eventType:'gitlab.push',signingToken:'whsec_'+Buffer.alloc(32,5).toString('base64'),clock:()=>now}),header:'webhook-signature',extra:[['webhook-id','msg_1'],['webhook-timestamp',String(now/1000)]]},
  stripe:{adapter:createStripeWebhookAdapter({identity,agentId:'agent',secret:'whsec_'+'a'.repeat(32),clock:()=>now}),header:'stripe-signature'},
  standard:{adapter:createStandardWebhookAdapter({identity,agentId:'agent',secret:'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw',clock:()=>now}),header:'webhook-signature',extra:[['webhook-id','msg_1'],['webhook-timestamp',String(now/1000)]]},
- twilio:{adapter:createTwilioMessageWebhookAdapter({identity,agentId:'agent',accountSid:'AC'+'a'.repeat(32),url:'https://example.test/events',authToken:'b'.repeat(32)}),header:'x-twilio-signature'}
+ twilio:{adapter:createTwilioMessageWebhookAdapter({identity,agentId:'agent',accountSid:'AC'+'a'.repeat(32),url:'https://example.test/events',authToken:'b'.repeat(32)}),header:'x-twilio-signature'},
+ sendgrid:{adapter:createSendGridWebhookAdapter({identity,agentId:'agent',verificationKey:generateKeyPairSync('ec',{namedCurve:'prime256v1'}).publicKey.export({type:'spki',format:'der'}).toString('base64'),clock:()=>now}),header:'x-twilio-email-event-webhook-signature',extra:[['x-twilio-email-event-webhook-timestamp',String(now/1000)]]}
 };
 function rng(seed){return()=>{seed=(seed*1664525+1013904223)>>>0;return seed/2**32;};}
 const text=(random,max)=>Array.from({length:Math.floor(random()*max)},()=>String.fromCharCode(Math.floor(random()*256))).join('');

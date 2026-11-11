@@ -53,7 +53,7 @@
     - State: branch todo/TASK-002.4-port-agent-shared-postgres from todo/TASK-002-port-remaining-local-acceptance; next: build children
     - [x] **TASK-002.4.1** · mid · Port the worker host that drains agent workers on shutdown (hardening 9ef0ef11)
       - Done when: hosted workers stop in order within a bounded time and a worker that will not stop is reported; `npm run build && node --test packages/agent/test/worker-host.test.mjs`
-    - [ ] **TASK-002.4.2** · mid · Port the SendGrid webhook adapter (the Discord one is already here) from 578f95da
+    - [x] **TASK-002.4.2** · mid · Port the SendGrid webhook adapter (the Discord one is already here) from 578f95da
       - Done when: a valid signed SendGrid event is accepted and a tampered, stale or wrongly keyed one is refused; `npm run build && node --test packages/agent/test/discord-sendgrid-webhook.test.mjs`
     - [ ] **TASK-002.4.3** · high · Port the shared PostgreSQL run registry, action journal and run supervisor with lost-race handling, run quotas, queued-run order and store schema versions (20bee302, 78057dab, 36992814, ce6d6aef, 4c5c9eff, 6045bf6d, 6d6b1c7d, 246c6d57); only CI has a database, so it is verified there
       - Done when: two nodes never exceed one agent's run quota, a lost race is ignored by code and a frozen worker's lease is recovered; `npm run build && node --test packages/agent/test/run-supervisor-logic.test.mjs packages/agent/test/postgres-run-nodes.test.mjs packages/agent/test/postgres-run-quota-nodes.test.mjs`
