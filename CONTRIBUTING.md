@@ -33,6 +33,8 @@ Tests that need an external service are skipped unless their variable is set. CI
 | `APP_MIXER_TEST_POSTGRES_RESTORE=docker` | Docker (one PostgreSQL container) | `node --test packages/core/test/postgres-restore-rollback.test.mjs` |
 | `APP_MIXER_TEST_POSTGRES_FAILOVER=docker` | Docker (PostgreSQL primary and synchronous standby) | `node --test packages/core/test/postgres-revocation-failover.test.mjs packages/agent/test/postgres-run-failover.test.mjs` |
 
+CI caches the pinned images these tests start (`node .github/scripts/docker-images.mjs` lists them) with `actions/cache`, so a registry rate limit or slow pull does not fail a run. The Docker Compose outage test runs with `node deploy/local/compose-smoke.mjs`. The Kubernetes (`kubernetes.yml`), agent pod recovery (`agent-pod-recovery.yml`), Flutter (`flutter*.yml`) and React Native device workflows need kind, an Android emulator or an iOS simulator; run them from GitHub with `gh workflow run <workflow>.yml --ref <branch>`. On Windows use Git Bash and set `MSYS_NO_PATHCONV=1` when passing paths to `kind` or `docker`.
+
 ## Code scanning
 
 `codeql.yml` runs CodeQL (`security-extended` queries) weekly, on main and on pull requests that touch shipped code, deploy files, scripts or workflows. Test code and fixtures are excluded (`.github/codeql/codeql-config.yml`). Findings appear under Security > Code scanning. Fix a finding in shipped code; if one is a false positive, dismiss it there with the reason.
@@ -42,8 +44,6 @@ Open alerts after the first review (2026-11-08), all judged not to need a code c
 - `js/request-forgery` in `.github/scripts/browser-shell-smoke.mjs`: a test proxy on loopback. It refuses a request whose URL leaves the app's origin; CodeQL does not recognise that check.
 - `js/insecure-temporary-file` in `deploy/kubernetes/test-support/agent-recovery/run-supervisor.mjs`: a test-support script that runs only in the kind test pod.
 - `js/file-access-to-http` in `scripts/check-provider-idempotency.mjs` (two alerts): reading a credential from the environment and sending it to the provider under test is the purpose of the script, and it refuses production endpoints.
-
-The Docker Compose outage test runs with `node deploy/local/compose-smoke.mjs`. The Kubernetes (`kubernetes.yml`), agent pod recovery (`agent-pod-recovery.yml`), Flutter (`flutter*.yml`) and React Native device workflows need kind, an Android emulator or an iOS simulator; run them from GitHub with `gh workflow run <workflow>.yml --ref <branch>`. On Windows use Git Bash and set `MSYS_NO_PATHCONV=1` when passing paths to `kind` or `docker`.
 
 ## Pull requests
 

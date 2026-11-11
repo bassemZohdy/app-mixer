@@ -120,3 +120,12 @@ test('TASK-002.6.5 each acceptance checklist section states what is verified onc
   const seen=new Set();for(const line of items){const opening=line.slice(0,90);assert.equal(seen.has(opening),false,title+' repeats: '+opening);seen.add(opening);}
  }
 });
+
+test('TASK-002.6.7 CI caches the pinned Docker images the container tests start',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const images=execFileSync(process.execPath,[join(root,'.github/scripts/docker-images.mjs')],{encoding:'utf8'}).trim().split('\n');
+ assert.ok(images.length>=5,'found '+images.length+' images');
+ for(const image of images)assert.match(image,/@sha256:[a-f0-9]{64}$|:[0-9][A-Za-z0-9._-]*$/,image+' is pinned to a version or digest');
+ for(const name of ['hydra','grafana','opentelemetry-collector','prometheus','alertmanager','pgvector'])assert.ok(images.some(image=>image.includes(name)),name+' is cached');
+ const workflow=read('.github/workflows/ci.yml').replaceAll('\r\n','\n');assert.match(workflow,/uses: actions\/cache@v4\s*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
+});
