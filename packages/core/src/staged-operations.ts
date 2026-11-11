@@ -5,6 +5,7 @@ import {CapabilityRegistry, type InvocationContext} from './capabilities.js';
 import {checkKey,dataCopy,type DataScope} from './data-provider.js';
 import {openDatabase} from './sqlite-open.js';
 import {AppMixerError} from './errors.js';
+import {assertSchemaSupported,recordSchemaVersion} from './schema-version.js';
 
 export type StagedStatus='staged'|'submitting'|'uncertain'|'succeeded';
 export type StagedOperation={id:string;operationId:string;idempotencyKey:string;payload:Record<string,unknown>;status:StagedStatus};
@@ -26,6 +27,7 @@ export class SqliteStagedOperations {
     try {
       this.db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
       try {
+        assertSchemaSupported(this.db,'staged_operations',2);
         this.db.exec(`CREATE TABLE IF NOT EXISTS staged_business_operations (
           tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, id TEXT NOT NULL,
           operation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, payload TEXT NOT NULL,
@@ -45,6 +47,7 @@ export class SqliteStagedOperations {
         CREATE TRIGGER IF NOT EXISTS staged_recovery_no_replace BEFORE INSERT ON staged_recovery_evidence WHEN EXISTS(SELECT 1 FROM staged_recovery_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;`);
         this.db.exec('CREATE INDEX IF NOT EXISTS staged_status_listing ON staged_business_operations(tenant_id,application_id,operation_id,status,id)');
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
+        recordSchemaVersion(this.db,'staged_operations',2);
         this.db.exec('COMMIT');
       } catch(error){this.db.exec('ROLLBACK');throw error;}
     }catch(error){this.db.close();throw error;}
