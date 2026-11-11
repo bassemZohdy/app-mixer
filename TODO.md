@@ -60,9 +60,8 @@
     - [x] **TASK-002.4.4** · high · Port the shared PostgreSQL schedules and daily cost budget across nodes (ead22b97, b301ffb6, ce2151fc, c907943b); verified by CI as well
       - Done when: each schedule occurrence fires once across nodes and an agent's daily cost cap holds across nodes; `npm run build && node --test packages/agent/test/postgres-schedule-nodes.test.mjs packages/agent/test/postgres-cost-budget-nodes.test.mjs`
       - Links: Depends: TASK-002.4.3
-  - [ ] **TASK-002.5** · mid · Port the deploy, CI and observability changes (admission rules, alert rules, collector trace test, new workflows, agent metrics) the same way
+  - [x] **TASK-002.5** · mid · Port the deploy, CI and observability changes (admission rules, alert rules, collector trace test, new workflows, agent metrics) the same way
     - Done when: every workflow keeps its job timeouts and the new agent metrics report their backlog; `npm run build && node --test packages/cli/test/process-files.test.mjs packages/agent/test/agent-run-metrics-backlog.test.mjs`
-    - State: branch todo/TASK-002.5-port-deploy-observability from todo/TASK-002-port-remaining-local-acceptance; next: build children
     - [x] **TASK-002.5.1** · mid · Port the agent metrics: schedule backlog and journaled action states (0b50338e) and the opt-in approvals, notice deliveries, token reservations, stored memories and cost series (9ef55463, 4982db66, 902ea79f, 9ac867ec, d9b31b0f)
       - Done when: each metric reports its counts without identifier labels and refuses an unauthorized scrape; `npm run build && node --test packages/agent/test/agent-run-metrics-backlog.test.mjs packages/agent/test/agent-approval-metrics.test.mjs packages/agent/test/agent-notice-delivery-metrics.test.mjs packages/agent/test/agent-token-metrics.test.mjs packages/agent/test/agent-memory-metrics.test.mjs packages/agent/test/agent-cost-metrics.test.mjs`
     - [x] **TASK-002.5.2** · mid · Port the Kubernetes manifests that let a labelled pod scrape the Data Plane metrics and enforce namespace-wide admission rules around the Data Plane (543dd7b5, f498b6e9, 0e0d2be0, b303af44); only the kind workflows in CI run them
