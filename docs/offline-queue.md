@@ -221,3 +221,14 @@ It makes no network request. The returned publication can seed `EncryptedPublica
 ## Shared keys and failed submissions
 
 A host-issued shared idempotency key that another request already holds, in this tenant or another, is reported as `Offline request conflict`; the database's constraint text is not shown. If a staged submission's state moves on while its capability runs (an operator recovered it as uncertain), the capability's own error is still the one the caller sees and the operation stays uncertain for reconciliation.
+
+## Data written by older clients
+
+`packages/web/test/legacy-clients/` keeps compiled builds of the first and last IndexedDB version-1 offline clients and the last version-2 client (see its README). Each writes pending, uncertain and conflicted queue items, and a cached publication where it can. `offline-legacy-clients.test.mjs` then opens the same database with the current client while the legacy tab is still connected, and checks that:
+
+- the legacy connection is closed and every item survives with its state, version and keys;
+- each item resumes from its state, and a repeated request still deduplicates;
+- the partition rotates to a new key;
+- the legacy build can no longer open the database.
+
+Change a stored format only together with a new retained build of the client that wrote the previous one.

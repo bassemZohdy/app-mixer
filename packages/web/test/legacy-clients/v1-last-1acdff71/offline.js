@@ -1,0 +1,350 @@
+const enc = new TextEncoder(), dec = new TextDecoder('utf-8', { fatal: true });
+const identifier = (x) => typeof x === 'string' && x.trim().length > 0 && x.length <= 256 && !/[\u0000-\u001f]/.test(x);
+const record = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const hex = (bytes) => Array.from(new Uint8Array(bytes), x => x.toString(16).padStart(2, '0')).join('');
+const req = (request) => new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error ?? Error('IndexedDB request failed')); });
+const complete = (tx) => new Promise((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error ?? Error('IndexedDB transaction aborted')); tx.onerror = () => { }; });
+function copy(input) {
+    let count = 0;
+    const ancestors = new Set();
+    const visit = (value, depth) => {
+        if (++count > 10000 || depth > 40)
+            throw Error('Offline payload too large');
+        if (value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)))
+            return value;
+        if (typeof value !== 'object' || value === null || ancestors.has(value))
+            throw Error('Invalid offline payload');
+        ancestors.add(value);
+        let result;
+        if (Array.isArray(value)) {
+            if (value.length > 10000 || Object.keys(value).length !== value.length || Array.from({ length: value.length }, (_, i) => Object.hasOwn(value, i)).some(p => !p))
+                throw Error('Invalid offline payload');
+            result = value.map(item => visit(item, depth + 1));
+        }
+        else {
+            if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+                throw Error('Invalid offline payload');
+            const out = {};
+            for (const [key, item] of Object.entries(value)) {
+                if (['__proto__', 'prototype', 'constructor'].includes(key))
+                    throw Error('Invalid offline payload');
+                out[key] = visit(item, depth + 1);
+            }
+            result = out;
+        }
+        ancestors.delete(value);
+        return result;
+    };
+    if (!record(input))
+        throw Error('Invalid offline payload');
+    const serialized = JSON.stringify(visit(input, 0));
+    if (enc.encode(serialized).length > 1024 * 1024)
+        throw Error('Offline payload too large');
+    return JSON.parse(serialized);
+}
+function canonical(value) {
+    if (Array.isArray(value))
+        return '[' + value.map(canonical).join(',') + ']';
+    if (record(value))
+        return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+    return JSON.stringify(value);
+}
+export class EncryptedBrowserQueue {
+    db;
+    crypt;
+    key;
+    partition;
+    scope;
+    closed = false;
+    marker;
+    constructor(db, crypt, key, partition, scope) {
+        this.db = db;
+        this.crypt = crypt;
+        this.key = key;
+        this.partition = partition;
+        this.scope = scope;
+    }
+    static async open(options) {
+        const factory = options?.indexedDB ?? globalThis.indexedDB, crypt = options?.crypto ?? globalThis.crypto, scope = options?.scope, key = options?.key;
+        if (options?.enabled !== true || !identifier(options.databaseName) || !scope || !identifier(scope.tenantId) || !identifier(scope.applicationId) || !identifier(scope.principalId) || !factory || !crypt?.subtle || typeof crypt.randomUUID !== 'function' || !key || key.type !== 'secret' || key.extractable || key.algorithm.name !== 'AES-GCM' || !key.usages.includes('encrypt') || !key.usages.includes('decrypt'))
+            throw Error('Invalid encrypted offline storage configuration');
+        const fixedScope = { tenantId: scope.tenantId, applicationId: scope.applicationId, principalId: scope.principalId }, databaseName = options.databaseName;
+        const partition = hex(await crypt.subtle.digest('SHA-256', enc.encode(JSON.stringify([fixedScope.tenantId, fixedScope.applicationId, fixedScope.principalId]))));
+        const request = factory.open(databaseName, 1);
+        request.onupgradeneeded = () => { const store = request.result.createObjectStore('offline', { keyPath: 'id' }); store.createIndex('partition', 'partition', { unique: false }); };
+        let blocked = false;
+        const db = await new Promise((resolve, reject) => {
+            request.onblocked = () => { blocked = true; reject(Error('Offline database upgrade blocked')); };
+            request.onerror = () => reject(request.error ?? Error('IndexedDB open failed'));
+            request.onsuccess = () => { if (blocked)
+                request.result.close();
+            else
+                resolve(request.result); };
+        });
+        const queue = new EncryptedBrowserQueue(db, crypt, key, partition, fixedScope);
+        db.onversionchange = () => queue.close();
+        try {
+            await queue.initializeMarker();
+            return queue;
+        }
+        catch (error) {
+            queue.close();
+            throw error;
+        }
+    }
+    close() { this.closed = true; this.db.close(); }
+    markerId() { return '@queue-key:' + this.partition; }
+    markerAad(epoch) { return enc.encode(JSON.stringify(['queue-key-v1', this.partition, epoch])); }
+    sameMarker(value) {
+        const expected = this.marker;
+        if (value === undefined)
+            return expected === undefined;
+        if (!expected || !record(value) || value.id !== expected.id || value.partition !== expected.partition || value.epoch !== expected.epoch || !(value.iv instanceof Uint8Array) || !(value.ciphertext instanceof ArrayBuffer))
+            return false;
+        const equal = (a, b) => a.length === b.length && a.every((byte, index) => byte === b[index]);
+        return equal(value.iv, expected.iv) && equal(new Uint8Array(value.ciphertext), new Uint8Array(expected.ciphertext));
+    }
+    async initializeMarker() {
+        const tx = this.db.transaction('offline', 'readonly'), done = complete(tx), value = await req(tx.objectStore('offline').get(this.markerId()));
+        await done;
+        if (value !== undefined) {
+            if (!record(value) || value.id !== this.markerId() || value.partition !== '@meta:' + this.partition || !Number.isSafeInteger(value.epoch) || value.epoch < 1 || !(value.iv instanceof Uint8Array) || value.iv.length !== 12 || !(value.ciphertext instanceof ArrayBuffer) || value.ciphertext.byteLength !== 28)
+                throw Error('Invalid offline queue key marker');
+            try {
+                const clear = await this.crypt.subtle.decrypt({ name: 'AES-GCM', iv: value.iv, additionalData: this.markerAad(value.epoch) }, this.key, value.ciphertext);
+                if (dec.decode(clear) !== 'queue-key-v1')
+                    throw Error('Invalid marker');
+            }
+            catch {
+                throw Error('Cannot authenticate offline queue key');
+            }
+            this.marker = value;
+        }
+        await this.ensureCurrent();
+    }
+    async guard(store, tx, done) { const value = await req(store.get(this.markerId())); if (this.closed || !this.sameMarker(value)) {
+        tx.abort();
+        try {
+            await done;
+        }
+        catch { }
+        throw Error('Offline queue key changed');
+    } }
+    async ensureCurrent() { if (this.closed)
+        throw Error('Offline queue key changed'); const tx = this.db.transaction('offline', 'readonly'), done = complete(tx), store = tx.objectStore('offline'); await this.guard(store, tx, done); await done; if (this.closed)
+        throw Error('Offline queue key changed'); }
+    async newMarker(key) { const epoch = (this.marker?.epoch ?? 0) + 1; if (!Number.isSafeInteger(epoch))
+        throw Error('Invalid offline queue key epoch'); const iv = this.crypt.getRandomValues(new Uint8Array(12)), ciphertext = await this.crypt.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: this.markerAad(epoch) }, key, enc.encode('queue-key-v1')); return { id: this.markerId(), partition: '@meta:' + this.partition, epoch, iv, ciphertext }; }
+    getScope() { return { ...this.scope }; }
+    async itemId(requestKey) { return hex(await this.crypt.subtle.digest('SHA-256', enc.encode(JSON.stringify([this.partition, requestKey])))); }
+    aad(id, version) { return enc.encode(JSON.stringify([this.partition, id, version])); }
+    async seal(item, key = this.key) {
+        const iv = this.crypt.getRandomValues(new Uint8Array(12));
+        const ciphertext = await this.crypt.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: this.aad(item.id, item.version) }, key, enc.encode(JSON.stringify(item)));
+        return { id: item.id, partition: this.partition, version: item.version, iv, ciphertext };
+    }
+    async unseal(envelope) {
+        if (!envelope || envelope.partition !== this.partition || !identifier(envelope.id) || !Number.isSafeInteger(envelope.version) || envelope.version < 1 || !(envelope.iv instanceof Uint8Array) || envelope.iv.length !== 12 || !(envelope.ciphertext instanceof ArrayBuffer) || envelope.ciphertext.byteLength > 1024 * 1024 + 16384)
+            throw Error('Invalid encrypted offline entry');
+        try {
+            const bytes = await this.crypt.subtle.decrypt({ name: 'AES-GCM', iv: envelope.iv, additionalData: this.aad(envelope.id, envelope.version) }, this.key, envelope.ciphertext);
+            const value = JSON.parse(dec.decode(bytes));
+            if (!record(value) || value.id !== envelope.id || value.version !== envelope.version || !identifier(value.operationId) || !identifier(value.requestKey) || !identifier(value.idempotencyKey) || !['pending', 'running', 'conflict', 'uncertain', 'exhausted', 'succeeded', 'discarded'].includes(value.status) || !Number.isSafeInteger(value.attempts) || value.attempts < 0 || (Object.keys(value).length !== 8 && Object.keys(value).length !== 9) || (value.replacementId !== undefined && (value.status !== 'discarded' || typeof value.replacementId !== 'string' || !/^[a-f0-9]{64}$/.test(value.replacementId))) || (Object.keys(value).length === 9 && !Object.hasOwn(value, 'replacementId')) || await this.itemId(value.requestKey) !== value.id)
+                throw Error('Invalid entry');
+            value.payload = copy(value.payload);
+            return value;
+        }
+        catch {
+            throw Error('Cannot authenticate offline entry');
+        }
+    }
+    async get(id) {
+        if (!/^[a-f0-9]{64}$/.test(id))
+            throw Error('Invalid offline ID');
+        const tx = this.db.transaction('offline', 'readonly'), done = complete(tx), store = tx.objectStore('offline');
+        await this.guard(store, tx, done);
+        const entry = await req(store.get(id));
+        await done;
+        const result = !entry || entry.partition !== this.partition ? undefined : await this.unseal(entry);
+        await this.ensureCurrent();
+        return result;
+    }
+    async list() {
+        const tx = this.db.transaction('offline', 'readonly'), done = complete(tx), store = tx.objectStore('offline');
+        await this.guard(store, tx, done);
+        const entries = await req(store.index('partition').getAll(this.partition));
+        await done;
+        if (entries.length > 1000)
+            throw Error('Offline queue too large');
+        const items = await Promise.all(entries.map(entry => this.unseal(entry)));
+        await this.ensureCurrent();
+        return items;
+    }
+    /** Re-encrypt a quiescent partition atomically; callers must coordinate all other queue instances. */
+    async rotateKey(nextKey) {
+        if (!nextKey || nextKey.type !== 'secret' || nextKey.extractable || nextKey.algorithm.name !== 'AES-GCM' || !nextKey.usages.includes('encrypt') || !nextKey.usages.includes('decrypt'))
+            throw Error('Invalid offline queue key');
+        const read = this.db.transaction('offline', 'readonly'), readDone = complete(read), readStore = read.objectStore('offline');
+        await this.guard(readStore, read, readDone);
+        const cursorRequest = readStore.index('partition').openCursor(this.partition), entries = [];
+        let bytes = 0;
+        for (let cursor = await req(cursorRequest); cursor; cursor = await req(cursorRequest)) {
+            const entry = cursor.value;
+            if (!(entry.ciphertext instanceof ArrayBuffer)) {
+                read.abort();
+                try {
+                    await readDone;
+                }
+                catch { }
+                throw Error('Invalid encrypted offline entry');
+            }
+            bytes += entry.ciphertext.byteLength;
+            if (entries.length >= 1000 || bytes > 64 * 1024 * 1024) {
+                read.abort();
+                try {
+                    await readDone;
+                }
+                catch { }
+                throw Error('Offline queue too large to rotate');
+            }
+            entries.push(entry);
+            cursor.continue();
+        }
+        await readDone;
+        const items = await Promise.all(entries.map(entry => this.unseal(entry)));
+        if (items.some(item => item.status === 'running'))
+            throw Error('Offline queue has running operations');
+        if (items.some(item => item.version >= Number.MAX_SAFE_INTEGER))
+            throw Error('Invalid offline version');
+        const [replacements, marker] = await Promise.all([Promise.all(items.map(item => this.seal({ ...item, version: item.version + 1 }, nextKey))), this.newMarker(nextKey)]);
+        const tx = this.db.transaction('offline', 'readwrite'), done = complete(tx), store = tx.objectStore('offline');
+        await this.guard(store, tx, done);
+        const check = store.index('partition').openCursor(this.partition), versions = new Map(entries.map(entry => [entry.id, entry.version]));
+        let count = 0;
+        for (let cursor = await req(check); cursor; cursor = await req(check)) {
+            const entry = cursor.value;
+            count++;
+            if (count > entries.length || entry.partition !== this.partition || !versions.has(entry.id) || versions.get(entry.id) !== entry.version) {
+                tx.abort();
+                try {
+                    await done;
+                }
+                catch { }
+                throw Error('Offline queue changed during rotation');
+            }
+            cursor.continue();
+        }
+        if (count !== entries.length) {
+            tx.abort();
+            try {
+                await done;
+            }
+            catch { }
+            throw Error('Offline queue changed during rotation');
+        }
+        for (const entry of replacements)
+            store.put(entry);
+        store.put(marker);
+        await done;
+        this.close();
+        return replacements.length;
+    }
+    async enqueue(operationId, requestKey, payload) {
+        if (!identifier(operationId) || !identifier(requestKey))
+            throw Error('Invalid offline request');
+        const normalized = copy(payload), id = await this.itemId(requestKey), item = { id, version: 1, operationId, requestKey, idempotencyKey: this.crypt.randomUUID(), payload: normalized, status: 'pending', attempts: 0 }, envelope = await this.seal(item);
+        const tx = this.db.transaction('offline', 'readwrite'), done = complete(tx), store = tx.objectStore('offline');
+        await this.guard(store, tx, done);
+        const existing = await req(store.get(id));
+        if (!existing) {
+            const count = await req(store.index('partition').count(this.partition));
+            if (count >= 1000) {
+                tx.abort();
+                try {
+                    await done;
+                }
+                catch { }
+                throw Error('Offline queue full');
+            }
+            store.add(envelope);
+        }
+        await done;
+        if (existing) {
+            const previous = await this.unseal(existing);
+            await this.ensureCurrent();
+            if (previous.operationId !== operationId || canonical(previous.payload) !== canonical(normalized))
+                throw Error('Offline request conflict');
+            return previous;
+        }
+        return structuredClone(item);
+    }
+    /** Atomically replace a reviewed conflict with a new, separately idempotent intent. */
+    async resolveConflict(id, expectedVersion, requestKey, payload) {
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion >= Number.MAX_SAFE_INTEGER || !identifier(requestKey))
+            throw Error('Invalid conflict resolution');
+        const normalized = copy(payload), replacementId = await this.itemId(requestKey), current = await this.get(id);
+        if (!current || replacementId === id)
+            throw Error('Invalid conflict resolution');
+        if (current.status === 'discarded' && current.version > expectedVersion && current.replacementId === replacementId) {
+            const previous = await this.get(replacementId);
+            if (!previous || previous.operationId !== current.operationId || canonical(previous.payload) !== canonical(normalized))
+                throw Error('Offline request conflict');
+            return previous;
+        }
+        if (current.status !== 'conflict' || current.version !== expectedVersion)
+            throw Error('Offline version conflict');
+        const replacement = { id: replacementId, version: 1, operationId: current.operationId, requestKey, idempotencyKey: this.crypt.randomUUID(), payload: normalized, status: 'pending', attempts: 0 };
+        const original = { ...current, status: 'discarded', version: current.version + 1, replacementId };
+        const [originalEnvelope, replacementEnvelope] = await Promise.all([this.seal(original), this.seal(replacement)]);
+        const tx = this.db.transaction('offline', 'readwrite'), done = complete(tx), store = tx.objectStore('offline');
+        await this.guard(store, tx, done);
+        const latest = await req(store.get(id)), existing = await req(store.get(replacementId)), count = await req(store.index('partition').count(this.partition));
+        if (!latest || latest.partition !== this.partition || latest.version !== expectedVersion || existing || count >= 1000) {
+            tx.abort();
+            try {
+                await done;
+            }
+            catch { }
+            if (existing)
+                throw Error('Offline request conflict');
+            if (count >= 1000)
+                throw Error('Offline queue full');
+            throw Error('Offline version conflict');
+        }
+        store.put(originalEnvelope);
+        store.add(replacementEnvelope);
+        await done;
+        return structuredClone(replacement);
+    }
+    /** Compare-and-swap transitions prevent two tabs from claiming the same entry. */
+    async transition(id, expectedVersion, action) {
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion >= Number.MAX_SAFE_INTEGER)
+            throw Error('Invalid offline version');
+        const current = await this.get(id);
+        if (!current || current.version !== expectedVersion)
+            throw Error('Offline version conflict');
+        const transitions = { claim: { pending: 'running' }, succeed: { running: 'succeeded' }, conflict: { running: 'conflict' }, uncertain: { running: 'uncertain' }, exhaust: { running: 'exhausted' }, requeue: { running: 'pending' }, discard: { pending: 'discarded', conflict: 'discarded', exhausted: 'discarded' }, reconcileApplied: { uncertain: 'succeeded' }, reconcileNotApplied: { uncertain: 'pending' }, release: { running: 'pending' }, exhaustPending: { pending: 'exhausted' } };
+        const target = transitions[action]?.[current.status];
+        if (!target)
+            throw Error('Invalid offline transition');
+        if ((action === 'claim' && current.attempts >= Number.MAX_SAFE_INTEGER) || (action === 'release' && current.attempts < 1))
+            throw Error('Invalid offline attempt count');
+        const updated = { ...current, status: target, version: current.version + 1, attempts: current.attempts + (action === 'claim' ? 1 : action === 'release' ? -1 : 0) }, envelope = await this.seal(updated);
+        const tx = this.db.transaction('offline', 'readwrite'), done = complete(tx), store = tx.objectStore('offline');
+        await this.guard(store, tx, done);
+        const latest = await req(store.get(id));
+        if (!latest || latest.partition !== this.partition || latest.version !== expectedVersion) {
+            tx.abort();
+            try {
+                await done;
+            }
+            catch { }
+            throw Error('Offline version conflict');
+        }
+        store.put(envelope);
+        await done;
+        return structuredClone(updated);
+    }
+}
+export { BrowserOfflineWorker } from './offline-worker.js';
+export { mountOfflineConflictPanel } from './offline-ui.js';
