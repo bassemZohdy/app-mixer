@@ -77,3 +77,12 @@ test('TASK-002.1.7 the lint baseline is configured, scripted, documented and run
  assert.ok(read('CONTRIBUTING.md').includes('npm run lint'),'CONTRIBUTING names the script');
  assert.ok(existsSync(join(root,'.editorconfig')),'.editorconfig exists');
 });
+
+// TASK-002.2.4
+test('the record editor preview shares its schema parser with the template through the sync script',async()=>{
+ const {synced}=await import('../../../scripts/sync-editor-previews.mjs'),template=read('packages/cli/templates/data-editor.mjs'),preview=read('packages/core/src/data-editor-preview.ts');
+ assert.equal(synced(template,preview),preview.replaceAll('\r\n','\n'),'the preview is current; run npm run previews');
+ const changed=template.replace("function normalizeFields(","function normalizeFields(/* edited */ ");assert.notEqual(changed,template);
+ assert.match(synced(changed,preview),/function normalizeFields\(\/\* edited \*\//,'an edit to the template reaches the preview');
+ const escaped=synced(template.replace("function normalizeFields(","function normalizeFields(a=`x${1}`,"),preview);assert.ok(escaped.includes('a='+String.fromCharCode(92)+'`x'+String.fromCharCode(92)+'${1}'+String.fromCharCode(92)+'`'),'backticks and interpolation are escaped for the template literal');
+});
