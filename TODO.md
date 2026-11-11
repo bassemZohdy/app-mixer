@@ -4,10 +4,6 @@
 
 - [ ] **FEAT-004** · P1 · high · Serve the generated app's pages with a hash-based Content-Security-Policy, frame-ancestors none and a Referrer-Policy, as the review pages already do
   - Done when: the generated index page is served with a policy without unsafe-inline that covers each of its inline blocks, and a page with an extra inline script fails the hash check; `npm run build && node --test packages/cli/test/csp.test.mjs`
-- [/] **TASK-006** · P1 · mid · Replace the error-message string lists that choose the HTTP status (94 literals in capability-server.ts, 19 in planes.ts) with typed errors that carry their status
-  - Done when: every existing message keeps its status, and an unknown error still returns 500 without leaking its message; `npm run build && node --test packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
-  - Links: Depends: TASK-002
-  - State: attempts 0/3; baseline 1931 passing; branch todo/TASK-006-typed-errors-choose-http-status from harden-on-main; next: read docs
 - [ ] **TASK-007** · P1 · low · Adopt a formatter with a CI check and reformat packages, templates, deploy and scripts; source lines now reach 5,687 characters and average 141
   - Done when: the format check passes, and a test fails on any source line over 200 characters; `node --test packages/cli/test/source-format.test.mjs`
   - Links: Depends: TASK-002
