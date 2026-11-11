@@ -13,7 +13,7 @@ async function main(){
  assert.equal((await get(tokens.revoked)).status,401);
  const response=await get(tokens.metrics);assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const body=await response.text();assert.match(body,/app_mixer_data_plane_requests_total/);assert.doesNotMatch(body,/ci-user|demo-tenant|Bearer/);
  const address=(os.networkInterfaces().eth0||[]).find(item=>item.family==='IPv4'&&!item.internal)?.address;assert.ok(address,'pod IPv4 address unavailable');
- await assert.rejects(get(tokens.metrics,`http://${address}:39092/metrics`));
- console.log('Scoped metrics and loopback binding verified');
+ if(process.env.APP_MIXER_METRICS_BIND==='0.0.0.0'){const pod=await get(tokens.metrics,`http://${address}:39092/metrics`);assert.equal(pod.status,200);assert.equal((await get(undefined,`http://${address}:39092/metrics`)).status,401);console.log('Scoped metrics reachable on the pod network only with a token');}
+ else{await assert.rejects(get(tokens.metrics,`http://${address}:39092/metrics`));console.log('Scoped metrics and loopback binding verified');}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

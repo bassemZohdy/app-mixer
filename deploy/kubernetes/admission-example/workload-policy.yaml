@@ -1,0 +1,159 @@
+# Namespace-wide admission rules that close the paths around the Deployment policy in policy.yaml. In a namespace
+# labelled app-mixer.dev/enforce-data-plane=true:
+# - only the ReplicaSet controller creates Data Plane pods, with the approved image, and existing pods cannot be
+#   relabelled into the Data Plane or given debug containers;
+# - only the Deployment controller creates Data Plane ReplicaSets, and no other workload kind carries the Data Plane
+#   template (so the approved Deployment, checked by policy.yaml, is the only source of Data Plane pods);
+# - only the approved ClusterIP Service selects Data Plane pods;
+# - every pod uses digest-pinned images, no privileged or added capabilities, no host namespaces and no hostPath.
+# Controller identities assume kube-controller-manager runs with per-controller service account credentials (the
+# kubeadm and kind default). Changing these policies and bindings needs cluster-level RBAC that workload owners
+# must not hold.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-namespace-pods
+spec:
+  failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: ConfigMap}
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods, pods/ephemeralcontainers]
+  variables:
+    - name: dataPlane
+      expression: >-
+        has(object.metadata.labels) && 'app.kubernetes.io/component' in object.metadata.labels &&
+        object.metadata.labels['app.kubernetes.io/component'] == 'data-plane'
+    - name: wasDataPlane
+      expression: >-
+        oldObject != null && has(oldObject.metadata.labels) && 'app.kubernetes.io/component' in oldObject.metadata.labels &&
+        oldObject.metadata.labels['app.kubernetes.io/component'] == 'data-plane'
+    - name: debugging
+      expression: "has(request.subResource) && request.subResource == 'ephemeralcontainers'"
+    - name: checked
+      expression: request.operation == 'CREATE' || variables.debugging
+  validations:
+    - message: Only the ReplicaSet controller can create Data Plane pods.
+      expression: >-
+        !variables.dataPlane || request.operation != 'CREATE' ||
+        request.userInfo.username == 'system:serviceaccount:kube-system:replicaset-controller'
+    - message: Existing pods cannot be relabelled into the Data Plane.
+      expression: "!variables.dataPlane || request.operation != 'UPDATE' || variables.wasDataPlane"
+    - message: Debug containers cannot be attached to Data Plane pods.
+      expression: "!variables.debugging || !(variables.dataPlane || variables.wasDataPlane)"
+    - message: Data Plane pods must run only the approved image.
+      expression: >-
+        !variables.dataPlane || request.operation != 'CREATE' ||
+        (has(params.data) && 'image' in params.data && object.spec.containers.size() == 1 && object.spec.containers[0].image == params.data.image &&
+         (!has(object.spec.initContainers) || object.spec.initContainers.size() == 0))
+    - message: Pods must not use host namespaces or hostPath volumes.
+      expression: >-
+        !variables.checked ||
+        ((!has(object.spec.hostNetwork) || !object.spec.hostNetwork) && (!has(object.spec.hostPID) || !object.spec.hostPID) &&
+         (!has(object.spec.hostIPC) || !object.spec.hostIPC) &&
+         (!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))))
+    - message: Containers must use digest-pinned images and must not be privileged or add capabilities.
+      expression: >-
+        !variables.checked ||
+        (object.spec.containers.all(c, c.image.matches('@sha256:[a-f0-9]{64}$') && (!has(c.securityContext) ||
+           ((!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+            (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) || c.securityContext.capabilities.add.size() == 0)))) &&
+         (!has(object.spec.initContainers) || object.spec.initContainers.all(c, c.image.matches('@sha256:[a-f0-9]{64}$') && (!has(c.securityContext) ||
+           ((!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+            (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) || c.securityContext.capabilities.add.size() == 0))))) &&
+         (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.all(c, c.image.matches('@sha256:[a-f0-9]{64}$') && (!has(c.securityContext) ||
+           ((!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+            (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) || c.securityContext.capabilities.add.size() == 0))))))
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-mixer-namespace-pods
+spec:
+  policyName: app-mixer-namespace-pods
+  validationActions: [Deny]
+  paramRef:
+    name: app-mixer-security-policy
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-data-plane-controllers
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, replicasets, statefulsets, daemonsets]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [jobs, cronjobs]
+  variables:
+    - name: template
+      expression: "request.kind.kind == 'CronJob' ? object.spec.jobTemplate.spec.template : object.spec.template"
+    - name: dataPlane
+      expression: >-
+        has(variables.template.metadata) && has(variables.template.metadata.labels) &&
+        'app.kubernetes.io/component' in variables.template.metadata.labels &&
+        variables.template.metadata.labels['app.kubernetes.io/component'] == 'data-plane'
+  validations:
+    - message: Only the app-mixer-data-plane Deployment may run Data Plane pods.
+      expression: >-
+        !variables.dataPlane || request.kind.kind == 'ReplicaSet' ||
+        (request.kind.kind == 'Deployment' && object.metadata.name == 'app-mixer-data-plane')
+    - message: Only the Deployment controller can create or change Data Plane ReplicaSets.
+      expression: >-
+        !variables.dataPlane || request.kind.kind != 'ReplicaSet' ||
+        request.userInfo.username == 'system:serviceaccount:kube-system:deployment-controller' ||
+        (request.operation == 'UPDATE' && object.spec.template == oldObject.spec.template)
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-mixer-data-plane-controllers
+spec:
+  policyName: app-mixer-data-plane-controllers
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-mixer-data-plane-service
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [services]
+  validations:
+    - message: Only the approved ClusterIP Service may select Data Plane pods.
+      expression: >-
+        !(has(object.spec.selector) && 'app.kubernetes.io/component' in object.spec.selector && object.spec.selector['app.kubernetes.io/component'] == 'data-plane') ||
+        (object.metadata.name == 'app-mixer-data-plane' && (!has(object.spec.type) || object.spec.type == 'ClusterIP') &&
+         (!has(object.spec.externalIPs) || object.spec.externalIPs.size() == 0))
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-mixer-data-plane-service
+spec:
+  policyName: app-mixer-data-plane-service
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
