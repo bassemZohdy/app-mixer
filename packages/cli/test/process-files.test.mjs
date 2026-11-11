@@ -129,3 +129,10 @@ test('TASK-002.6.7 CI caches the pinned Docker images the container tests start'
  for(const name of ['hydra','grafana','opentelemetry-collector','prometheus','alertmanager','pgvector'])assert.ok(images.some(image=>image.includes(name)),name+' is cached');
  const workflow=read('.github/workflows/ci.yml').replaceAll('\r\n','\n');assert.match(workflow,/uses: actions\/cache@v4\s*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
 });
+
+test('TASK-002.7.2 the Data Plane image installs only its workspaces, has a healthcheck and CI bounds its size',()=>{
+ const dockerfile=read('Dockerfile.data-plane'),workflow=read('.github/workflows/kubernetes.yml');
+ assert.match(dockerfile,/npm ci --workspace @app-mixer\/core --workspace @app-mixer\/web/);assert.doesNotMatch(dockerfile,/npm ci\s*&&/,'no whole-workspace install');
+ assert.doesNotMatch(dockerfile,/npm run build\s*&&|npm run build --workspaces/,'only core and web are built');
+ assert.match(dockerfile,/^HEALTHCHECK /m);assert.match(workflow,/docker image inspect app-mixer-data-plane:test[^\n]*\.Size/);assert.match(workflow,/test "\$size" -le \d+/);
+});

@@ -2,7 +2,8 @@ FROM node:22.22.2-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json tsconfig.base.json ./
 COPY packages ./packages
-RUN npm ci && npm run build && npm prune --omit=dev
+# Install and build only the workspaces the Data Plane loads, so the agent package's dependencies (LangChain, provider SDKs, ...) stay out of the image.
+RUN npm ci --workspace @app-mixer/core --workspace @app-mixer/web  && npm run build --workspace @app-mixer/web && npm run build --workspace @app-mixer/core  && npm prune --omit=dev --workspace @app-mixer/core --workspace @app-mixer/web
 
 FROM node:22.22.2-bookworm-slim
 ENV NODE_ENV=production
@@ -15,4 +16,6 @@ COPY --from=build /app/packages/web/dist ./packages/web/dist
 COPY deploy/kubernetes/data-plane.mjs ./deploy/kubernetes/data-plane.mjs
 USER 1000:1000
 EXPOSE 3002
+# Liveness for Compose and plain Docker: the Data Plane's listener (TLS or plain) accepts connections. Kubernetes uses its own probes.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["node", "-e", "require('net').connect(Number(process.env.DATA_PORT||3002),'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
 CMD ["node", "deploy/kubernetes/data-plane.mjs"]
