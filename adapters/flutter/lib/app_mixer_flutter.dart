@@ -9,6 +9,14 @@ typedef A2UISubscribe = VoidCallback? Function(ValueChanged<Object?> receive);
 bool _withinCodePointLimit(String value, int limit) => value.length <= limit || value.runes.take(limit+1).length <= limit;
 bool _id(Object? value) => value is String && value.isNotEmpty && _withinCodePointLimit(value,256);
 bool _only(Map<String, dynamic> value, List<String> keys) => value.keys.every(keys.contains);
+/// Display text of a Text component: strings as is; finite numbers and booleans in their JSON spelling
+/// (`3`, `2.5`, `true`, never `2.0`); anything else (null, missing, maps, lists) is empty.
+String _displayText(dynamic value) {
+  if (value is String) return value;
+  if (value is bool) return value.toString();
+  if (value is num && value.isFinite) return value == value.truncateToDouble() && value.abs() < 1e21 ? value.truncate().toString() : value.toString();
+  return '';
+}
 Map<String, dynamic> _object(Object? value) {
   if (value is! Map || value.keys.any((key) => key is! String)) throw FormatException('Expected object');
   return Map<String, dynamic>.from(value);
@@ -322,7 +330,7 @@ class FlutterSurfaceStore {
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
       final renderChildren=ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList();
-      return NativeNode._(id, c['component'] as String, renderChildren.where((child)=>child.kind!='__placeholder').toList(), text: c['component']=='Text' ? (bound is String ? bound : '') : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props,renderChildren:renderChildren);
+      return NativeNode._(id, c['component'] as String, renderChildren.where((child)=>child.kind!='__placeholder').toList(), text: c['component']=='Text' ? _displayText(bound) : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props,renderChildren:renderChildren);
     }
     return visit('root', {}, 0, true, false, false);
   }
