@@ -174,3 +174,7 @@ export {SqliteAgentDelegations} from './agent-delegations.js';
 export type {AgentDelegationActor,AgentDelegationAccess,AgentDelegationRecord,AgentDelegationStoreOptions} from './agent-delegations.js';
 export {AgentWorkerHost} from './worker-host.js';
 export type {AgentHostedWorker,AgentWorkerHostState,AgentWorkerHostStopResult,AgentWorkerHostOptions} from './worker-host.js';
+export {PostgresAgentRuns,PostgresAgentActionJournal} from './postgres-agent-runs.js';
+export type {PostgresAgentRunsOptions,PostgresAgentRun,PostgresRunClaimLimits} from './postgres-agent-runs.js';
+export {PostgresRunSupervisor} from './postgres-run-supervisor.js';
+export type {PostgresRunSupervisorOptions,PostgresRunExecution,PostgresRunSupervisorEvent} from './postgres-run-supervisor.js';
