@@ -22,7 +22,7 @@
     "@opentelemetry/context-async-hooks": "3.1.0",
     "@opentelemetry/core": "3.1.0",
     "@opentelemetry/sdk-trace": "3.1.0",
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.6.6",
     "typescript": "^5.9.3"
   },
   "dependencies": {

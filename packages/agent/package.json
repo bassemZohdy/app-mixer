@@ -40,7 +40,7 @@
     "@opentelemetry/context-async-hooks": "3.1.0",
     "@opentelemetry/core": "3.1.0",
     "@opentelemetry/sdk-trace": "3.1.0",
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.6.6",
     "jsdom": "^31.0.0",
     "tweetnacl": "1.0.3",
     "typescript": "^5.9.3"
