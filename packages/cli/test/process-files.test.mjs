@@ -86,3 +86,14 @@ test('the record editor preview shares its schema parser with the template throu
  assert.match(synced(changed,preview),/function normalizeFields\(\/\* edited \*\//,'an edit to the template reaches the preview');
  const escaped=synced(template.replace("function normalizeFields(","function normalizeFields(a=`x${1}`,"),preview);assert.ok(escaped.includes('a='+String.fromCharCode(92)+'`x'+String.fromCharCode(92)+'${1}'+String.fromCharCode(92)+'`'),'backticks and interpolation are escaped for the template literal');
 });
+
+// FIX-025: a force-deleted pod can still hold a lock for a moment, so a raw connection must wait for it instead of failing at once.
+test('FIX-025 every raw database open in the pod recovery scripts sets a busy timeout first',()=>{
+ const directory=join(root,'deploy/kubernetes/test-support/agent-recovery'),offenders=[];let opens=0;
+ for(const name of readdirSync(directory).filter(file=>file.endsWith('.mjs'))){
+  const text=readFileSync(join(directory,name),'utf8').replaceAll('\r\n','\n');
+  for(const match of text.matchAll(/(\w+)=new DatabaseSync\(/g)){opens++;if(!new RegExp(match[1]+"\\.exec\\('PRAGMA busy_timeout=\\d+'\\)").test(text.slice(match.index)))offenders.push(name);}
+ }
+ assert.ok(opens>=2,'the scripts open the database directly ('+opens+' opens)');
+ assert.deepEqual(offenders,[],'scripts that open the database without a busy timeout');
+});
