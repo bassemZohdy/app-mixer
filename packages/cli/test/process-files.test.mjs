@@ -97,3 +97,9 @@ test('FIX-025 every raw database open in the pod recovery scripts sets a busy ti
  assert.ok(opens>=2,'the scripts open the database directly ('+opens+' opens)');
  assert.deepEqual(offenders,[],'scripts that open the database without a busy timeout');
 });
+
+test('TASK-002.6.1 every ADR file is listed in the ADR table with its status and the core dependency decision is recorded',()=>{
+ const table=read('docs/adr/README.md');
+ for(const name of readdirSync(join(root,'docs/adr')).filter(file=>/^d{4}-.+.md$/.test(file)))assert.ok(table.includes('('+name+')'),name+' is listed in docs/adr/README.md');
+ assert.ok(existsSync(join(root,'docs/adr/0011-core-depends-on-the-web-renderer.md')),'ADR 0011 records why core depends on the web renderer');
+});
