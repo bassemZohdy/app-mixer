@@ -168,3 +168,14 @@ test('TASK-015 every action a workflow uses is pinned to a 40-character commit S
  });
  assert.deepEqual(unpinned,[],'uses lines without a commit SHA');
 });
+
+test('TASK-016 every test that reads the PostgreSQL URL is matched by a path or a glob in a workflow',()=>{
+ const reads=['process','env','APP_MIXER_TEST_POSTGRES_URL'].join('.'),workflows=readdirSync(join(root,'.github/workflows')).filter(name=>name.endsWith('.yml')).map(name=>readFileSync(join(root,'.github/workflows',name),'utf8')).join('\n');
+ const patterns=[...workflows.matchAll(/packages\/[\w.\/*-]+\.test\.mjs/g)].map(match=>new RegExp('^'+match[0].replace(/[.]/g,'\.').replace(/\*/g,'[^/]*')+'$'));
+ const tests=files(join(root,'packages')).filter(path=>path.endsWith('.test.mjs')&&readFileSync(path,'utf8').includes(reads)).map(path=>path.slice(root.length).replaceAll(sep,'/'));
+ assert.ok(tests.length>30,'found '+tests.length+' database tests');
+ assert.ok(patterns.some(pattern=>pattern.test('packages/agent/test/postgres-trigger-foundation.test.mjs')),'the patterns read globs');
+ // Two tests need infrastructure a workflow does not have (a primary with a synchronous standby, a kind cluster); CONTRIBUTING.md documents how to run them by hand.
+ const guide=read('CONTRIBUTING.md');
+ assert.deepEqual(tests.filter(path=>!patterns.some(pattern=>pattern.test(path))&&!guide.includes(path)),[],'database tests that neither a workflow nor CONTRIBUTING.md runs');
+});
