@@ -83,7 +83,7 @@
     - [x] **TASK-002.6.5** · low · Reconcile docs/acceptance-checklists.md (the five repeated P3-02 lines, the collector and recovery items) and CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
       - Done when: P3-02 has one verified line, CONTRIBUTING repeats no sentence and names every script that exists; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.3, TASK-002.6.4
-    - [ ] **TASK-002.6.6** · mid · Port the audited operator tool that lists, reads and raises the file rollback anchors, and the recovery procedure for a rollback refusal (417ddc62, 378148f2)
+    - [x] **TASK-002.6.6** · mid · Port the audited operator tool that lists, reads and raises the file rollback anchors, and the recovery procedure for a rollback refusal (417ddc62, 378148f2)
       - Done when: the tool lists and raises an anchor, lowers one only with a reason, and logs every change; `npm run build && node --test packages/cli/test/anchor-admin.test.mjs`
     - [ ] **TASK-002.6.7** · low · Port the script that derives the pinned container images from the tests and the CI cache steps that use it (48ff2e26)
       - Done when: the derived image list equals the images the opt-in tests pin and the workflow caches them; `node --test packages/cli/test/process-files.test.mjs`
