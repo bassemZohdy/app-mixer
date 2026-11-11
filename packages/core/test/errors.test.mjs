@@ -20,7 +20,7 @@ test('expected refusals carry a code, keep their message and cause, and map to o
 test('every AppMixerError thrown in core uses a code that maps to a status',()=>{
  const dir=fileURLToPath(new URL('../src/',import.meta.url));let sites=0;
  for(const name of readdirSync(dir).filter(file=>file.endsWith('.ts')))for(const match of readFileSync(join(dir,name),'utf8').matchAll(/new AppMixerError\('([a-z_]+)'/g)){sites++;assert.notEqual(httpStatus(new AppMixerError(match[1],'x')),undefined,`${name}: unknown code ${match[1]}`);}
- assert.ok(sites>=219,'the mapped refusals are thrown as AppMixerError ('+sites+' sites)');
+ assert.ok(sites>=218,'the mapped refusals are thrown as AppMixerError ('+sites+' sites)');
 });
 
 test('the control plane maps by code, with only documented plain messages as legacy',async()=>{
@@ -70,4 +70,37 @@ test('every message that used to select a status still selects the same one',()=
  for(const [status,messages] of Object.entries(PREVIOUS_STATUS_BY_MESSAGE))for(const message of messages){assert.equal(refusalStatus(new Error(message)),Number(status),message);checked++;}
  assert.equal(checked,111);
  for(const lookalike of ['Revision conflict ','revision conflict','Capability forbidden: detail','','constructor','__proto__','toString'])assert.equal(refusalStatus(new Error(lookalike)),undefined,lookalike);
+});
+
+// FIX-024: pages that core and agent embed as strings run in a browser, where AppMixerError and AgentError do not exist.
+test('FIX-024 no coded-error constructor sits inside embedded browser code',async()=>{
+ const found=[];
+ for(const pkg of ['core','agent']){
+  const dir=fileURLToPath(new URL('../../'+pkg+'/src/',import.meta.url));
+  for(const name of readdirSync(dir).filter(file=>file.endsWith('.ts'))){
+   const text=readFileSync(join(dir,name),'utf8'),stack=[];let i=0,line=1;
+   const constructor=at=>/^new (AppMixerError|AgentError)\(/.test(text.slice(at,at+24));
+   while(i<text.length){
+    const c=text[i],inCode=stack.length===0||stack.at(-1)==='expr';
+    if(c==='\n')line++;
+    if(inCode){
+     if(c==='/'&&text[i+1]==='/'){while(i<text.length&&text[i]!=='\n')i++;continue;}
+     if(c==='/'&&text[i+1]==='*'){i+=2;while(i<text.length&&!(text[i]==='*'&&text[i+1]==='/')){if(text[i]==='\n')line++;i++;}i+=2;continue;}
+     if(c==="'"||c==='"'){const quote=c;i++;while(i<text.length&&text[i]!==quote){if(text[i]==='\\')i++;i++;}i++;continue;}
+     if(c==='`'){stack.push('template');i++;continue;}
+     if(c==='}'&&stack.at(-1)==='expr'){stack.pop();i++;continue;}
+     i++;continue;
+    }
+    if(c==='\\'){i+=2;continue;}
+    if(c==='`'){stack.pop();i++;continue;}
+    if(c==='$'&&text[i+1]==='{'){stack.push('expr');i+=2;continue;}
+    if(constructor(i))found.push(pkg+'/src/'+name+':'+line);
+    i++;
+   }
+  }
+ }
+ assert.deepEqual(found,[],'server-side error classes referenced by code that is sent to a browser');
+ const {DEVELOPMENT_UI}=await import('../dist/development-ui.js');
+ assert.ok(!/AppMixerError|AgentError/.test(DEVELOPMENT_UI),'the development review page script uses plain errors');
+ assert.match(DEVELOPMENT_UI,/throw Error\('Invalid component'\)/,'the page still refuses an invalid component');
 });
