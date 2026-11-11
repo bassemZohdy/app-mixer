@@ -41,6 +41,10 @@
     "./offline-publications": {
       "types": "./dist/offline-publications.d.ts",
       "import": "./dist/offline-publications.js"
+    },
+    "./offline-provisioning": {
+      "types": "./dist/offline-provisioning.d.ts",
+      "import": "./dist/offline-provisioning.js"
     }
   }
 }
