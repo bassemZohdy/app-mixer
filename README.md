@@ -6,7 +6,7 @@ Base: harden-on-main
 
 ## Getting started
 
-Requires Node.js 22.13+ and npm. The SQLite repository uses the experimental built-in `node:sqlite` API.
+Requires Node.js 22.22.2+ and npm. The SQLite repository uses the experimental built-in `node:sqlite` API.
 
 ```bash
 npm install

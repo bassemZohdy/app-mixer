@@ -1,6 +1,6 @@
 # Contributing
 
-App Mixer is a Node.js workspace (`packages/*`, `adapters/*`). Use Node 22.13 or later (`.nvmrc` pins 22; CI also runs 22.13.0 and 24).
+App Mixer is a Node.js workspace (`packages/*`, `adapters/*`). Use Node 22.22.2 or later (`.nvmrc` pins 22; CI also runs 22.22.2 and 24).
 
 ## Build and test
 
