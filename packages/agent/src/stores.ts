@@ -172,3 +172,5 @@ export {registerSharedCostPending} from './postgres-shared-cost-capability.js';
 export type {SharedCostPendingCapabilityOptions} from './postgres-shared-cost-capability.js';
 export {SqliteAgentDelegations} from './agent-delegations.js';
 export type {AgentDelegationActor,AgentDelegationAccess,AgentDelegationRecord,AgentDelegationStoreOptions} from './agent-delegations.js';
+export {AgentWorkerHost} from './worker-host.js';
+export type {AgentHostedWorker,AgentWorkerHostState,AgentWorkerHostStopResult,AgentWorkerHostOptions} from './worker-host.js';
