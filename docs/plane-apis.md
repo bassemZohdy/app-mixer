@@ -31,3 +31,9 @@ Control requests require `Authorization: Bearer <token>`. JSON mutations require
 | Data | `GET /application/versions/:version` | A specific published version. |
 
 A stale revision returns 409. Bad requests return 400; unauthorized requests return 401. No Data Plane route reads drafts or changes definitions. Optional local proposal endpoints and a review UI provide separate agent and developer tokens; see [development proposals](development-proposals.md). Complete schema, capability and permission validation and production authorization remain separate roadmap items.
+
+## Error codes
+
+Expected refusals in `@app-mixer/core` (validation, missing resource, conflict, limit, denied access, an unavailable dependency) are thrown as `AppMixerError(code, message, {cause?})`, with `code` one of `invalid` (400), `denied` (403), `not_found` (404), `conflict` (409), `limit` (429) or `unavailable` (503); `httpStatus(error)` returns the status. The control plane and the capability server answer with the error's own message and the status of its code.
+
+Host-supplied repositories, providers and capability executors, and the agent package, report these refusals with a plain `Error` whose message is exactly one of the documented messages (the table in `packages/core/src/errors.ts`); `refusalStatus(error)` maps those too, so they keep the status they always had. Any other error is a 500 whose message is never returned to the client.
