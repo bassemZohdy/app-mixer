@@ -2,7 +2,6 @@
   "name": "@app-mixer/cli",
   "license": "Apache-2.0",
   "version": "0.1.0",
-  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bassemZohdy/app-mixer.git",
@@ -21,9 +20,12 @@
     "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@opentelemetry/context-async-hooks": "3.1.0",
+    "@opentelemetry/core": "3.1.0",
+    "@opentelemetry/sdk-trace": "3.1.0",
     "@types/node": "^22.15.0",
     "fake-indexeddb": "^6.2.4",
-    "jsdom": "^26.1.0",
+    "jsdom": "^31.0.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
