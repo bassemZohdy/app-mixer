@@ -9,7 +9,7 @@ import {once} from 'node:events';
 import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import pg from 'pg';
-import {PostgresAgentRuns} from '../dist/index.js';
+import {PostgresAgentRuns,PostgresAgentSchedules} from '../dist/index.js';
 
 const url=process.env.APP_MIXER_TEST_POSTGRES_URL,nodePath=fileURLToPath(new URL('./fixtures/run-node.mjs',import.meta.url));
 const scope={tenantId:'tenant',agentId:'agent'},skip=!url&&'set APP_MIXER_TEST_POSTGRES_URL to run against PostgreSQL';
@@ -75,6 +75,14 @@ test('the shared PostgreSQL run registry keeps the SQLite lifecycle, limits and 
   const recovered=await runs.recoverExpired(scope,'r4',short.revision);assert.equal(recovered.status,'uncertain');
   await assert.rejects(runs.recoverExpired(scope,'r4',short.revision),/revision conflict/,'a second node cannot recover it again');
   assert.equal((await runs.get({tenantId:'other',agentId:'agent'},'r4')),undefined,'runs are tenant-scoped');
+  // A schedule hand-off taken over after an expired claim creates the run only once.
+  const schedules=new PostgresAgentSchedules(db.options);await schedules.initialize();
+  await schedules.save(scope,'tick',{enabled:true,principalId:'service',rule:{kind:'interval',intervalMs:60000}},0,1000);
+  await schedules.fire(scope,'tick',1,{definitionVersion:1,maxAttempts:2,runTimeoutMs:60000,maxPending:10},{now:61000,nodeId:'n'});
+  const stale=await schedules.claimRun(scope,'node-a',50);await runs.create(scope,stale.runId,config);await sleep(120);
+  const takeover=await schedules.claimRun(scope,'node-b',1000);assert.equal(takeover.runId,stale.runId);
+  await assert.rejects(runs.create(scope,takeover.runId,config),/Run already exists/,'the reclaimed request does not start a second run');
+  assert.equal(await schedules.markStarted(scope,takeover.runId,takeover.token),true);
  }finally{await db.close();}
 });
 

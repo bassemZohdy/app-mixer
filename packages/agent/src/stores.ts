@@ -178,3 +178,7 @@ export {PostgresAgentRuns,PostgresAgentActionJournal} from './postgres-agent-run
 export type {PostgresAgentRunsOptions,PostgresAgentRun,PostgresRunClaimLimits} from './postgres-agent-runs.js';
 export {PostgresRunSupervisor} from './postgres-run-supervisor.js';
 export type {PostgresRunSupervisorOptions,PostgresRunExecution,PostgresRunSupervisorEvent} from './postgres-run-supervisor.js';
+export {PostgresAgentSchedules} from './postgres-agent-schedules.js';
+export type {PostgresAgentSchedulesOptions,AgentScheduledRun,AgentScheduledRunClaim,AgentScheduleHistoryEvent,AgentScheduleFirePass} from './postgres-agent-schedules.js';
+export {PostgresAgentCostBudget} from './postgres-agent-cost-budget.js';
+export type {PostgresCostCall,PostgresCostSummary} from './postgres-agent-cost-budget.js';
