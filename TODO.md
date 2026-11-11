@@ -27,9 +27,8 @@
   - [ ] **TASK-002.2** · mid · Port the web, React Native and Flutter fixtures, accessibility checks and editor-preview sync the same way
     - Done when: the renderers agree on the shared fixtures; `npm run build && node --test packages/web/test/browser-accessibility-parity.test.mjs packages/native/test/parity.test.mjs`
     - State: branch todo/TASK-002.2-port-web-react-native from todo/TASK-002-port-remaining-local-acceptance; next: build children
-    - [/] **TASK-002.2.1** · mid · Port the shared catalog-variant and TextField fixtures for web, native and Flutter (hardening 0f633ba6, 5697df45); the CI smoke-script and device replays go with TASK-002.5
+    - [x] **TASK-002.2.1** · mid · Port the shared catalog-variant and TextField fixtures for web, native and Flutter (hardening 0f633ba6, 5697df45); the CI smoke-script and device replays go with TASK-002.5
       - Done when: every catalog variant and layout value renders the same through the native adapter as the fixture says; `npm run build && node --test packages/native/test/parity.test.mjs`
-      - State: attempts 0/3; baseline 1840 passing; branch todo/TASK-002.2.1-port-shared-catalog-variant from todo/TASK-002.2-port-web-react-native; next: read docs
     - [ ] **TASK-002.2.2** · mid · Port rendering of numbers and booleans bound to Text and the stable component and variant hooks on every renderer (1fb6579a, 8e7739f2)
       - Done when: a bound number and a bound boolean render as text and every component exposes its hook, while an unsupported bound value is still rejected; `npm run build && node --test packages/web/test/renderer.test.mjs packages/native/test/parity.test.mjs`
       - Links: Depends: TASK-002.2.1
