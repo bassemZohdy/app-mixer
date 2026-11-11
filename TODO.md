@@ -13,7 +13,7 @@
     - [x] **TASK-002.1.2** · high · Port typed errors in core and the capability server (a5e7cb1b, d4f3ef3d, core part of 6045bf6d) so statuses come from error codes, with the documented legacy fallback
       - Done when: every existing refusal keeps its HTTP status and an unknown error still returns 500 without its message; `npm run build && node --test packages/core/test/errors.test.mjs packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
       - Links: Depends: TASK-002.1.1
-    - [ ] **TASK-002.1.3** · mid · Port typed errors in the agent servers and supervisor (0a76282c, agent part of 6045bf6d), keeping swallowed causes
+    - [x] **TASK-002.1.3** · mid · Port typed errors in the agent servers and supervisor (0a76282c, agent part of 6045bf6d), keeping swallowed causes
       - Done when: agent refusals map by code and lost races are ignored by code; `npm run build && node --test packages/agent/test/errors.test.mjs`
       - Links: Depends: TASK-002.1.2
     - [ ] **TASK-002.1.4** · mid · Port the slow-client bounds and TLS policy for every server (d0db960c)
