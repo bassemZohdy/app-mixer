@@ -77,7 +77,7 @@ export class ApplicationStore {
   if(expectedRevision>=Number.MAX_SAFE_INTEGER)throw new AppMixerError('invalid','Invalid migration request');
   const candidate=copy(this.draft);candidate.revision++;
   if(targetVersion===2){candidate.schemaVersion=2;candidate.pages=candidate.pages.map(page=>({...page,description:''}));}
-  else{if(candidate.pages.some(page=>page.description!==''))throw new AppMixerError('conflict','Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:unused,...page})=>page);}
+  else{if(candidate.pages.some(page=>page.description!==''))throw new AppMixerError('conflict','Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:_description,...page})=>page);}
   validate(candidate);return copy(candidate);
  }
  publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
