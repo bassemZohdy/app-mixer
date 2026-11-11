@@ -92,6 +92,18 @@ test('PostgreSQL revocation unavailability denies tokens and readiness',async()=
  try{await writeFile(dsn,'postgresql://user:password@localhost/db?sslmode=disable');const invalid=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});assert.notEqual(invalid.status,0);assert.doesNotMatch(invalid.stderr,/user:password/);}finally{await rm(dir,{recursive:true,force:true});}
 });
 
+test('a release floor anchor needs the PostgreSQL floor mode and an absolute directory',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-anchor-')),path=join(dir,'publication.json');
+ try{
+  await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));
+  for(const [mode,anchor] of [['disabled','/floor-anchor'],[undefined,'/floor-anchor'],['postgres','relative/path'],['postgres','/floor-anchor/../tmp'],['postgres','/bad path'],['postgres','']]){
+   const env={...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:'39123',APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR:anchor};
+   if(mode===undefined)delete env.APP_MIXER_RELEASE_FLOOR_MODE;else env.APP_MIXER_RELEASE_FLOOR_MODE=mode;
+   const child=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});
+   assert.ok(child.status!==null&&child.status!==0,'must exit with an error, not run until the timeout');assert.match(child.stderr,/Invalid publication release floor configuration/,`${mode}/${anchor}: ${child.stderr.slice(0,200)}`);
+  }
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
 test('mounted JWKS reload rotates both scopes and fails readiness closed when stale',{timeout:25000},async()=>{
  const dir=await mkdtemp(join(tmpdir(),'app-mixer-jwks-reload-')),path=join(dir,'publication.json'),keys=join(dir,'jwks.json'),first=generateKeyPairSync('rsa',{modulusLength:2048}),second=generateKeyPairSync('rsa',{modulusLength:2048}),now=Math.floor(Date.now()/1000),document=(...entries)=>JSON.stringify({keys:entries.map(([pair,kid])=>({...pair.publicKey.export({format:'jwk'}),kid,alg:'RS256',use:'sig'}))});await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));await writeFile(keys,document([first,'one']));
  const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'jwt',APP_MIXER_REVOCATION_MODE:'disabled',APP_MIXER_JWKS_PATH:keys,APP_MIXER_JWKS_RELOAD_MS:'1000',APP_MIXER_JWT_ISSUER:'https://issuer.example/',APP_MIXER_JWT_AUDIENCE:'data-plane',APP_MIXER_TENANT_ID:'tenant',APP_MIXER_METRICS_PORT:'3003',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs',import.meta.url))],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPorts(child),token=(pair,kid,scope)=>new SignJWT({iss:env.APP_MIXER_JWT_ISSUER,aud:env.APP_MIXER_JWT_AUDIENCE,sub:'alice',client_id:'client',jti:'id',iat:now,exp:now+300,tenant_id:'tenant',scope}).setProtectedHeader({alg:'RS256',kid,typ:'at+jwt'}).sign(pair.privateKey),get=(url,t)=>fetch(url,{headers:{authorization:`Bearer ${t}`}}),waitFor=async fn=>{for(let i=0;i<100;i++){if(await fn())return;await delay(100);}throw Error('Timed out waiting for key rotation');};
