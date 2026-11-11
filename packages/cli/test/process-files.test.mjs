@@ -146,3 +146,16 @@ test('FIX-003 every Dockerfile builds from the same Node base image, newer than 
  }
  assert.equal(images.size,1,'every Dockerfile uses the same pinned image: '+[...images].join(', '));
 });
+
+test('TASK-013 no Markdown file repeats a line of more than 120 characters',()=>{
+ const repeats=[];
+ for(const file of files(root).filter(path=>path.endsWith('.md'))){
+  const seen=new Map();
+  readFileSync(file,'utf8').replaceAll('\r\n','\n').split('\n').forEach((line,index)=>{
+   if(line.length<=120)return;
+   const key=line.trim();
+   if(seen.has(key))repeats.push(file.slice(root.length)+':'+(index+1)+' repeats line '+seen.get(key));else seen.set(key,index+1);
+  });
+ }
+ assert.deepEqual(repeats,[],'repeated passages');
+});

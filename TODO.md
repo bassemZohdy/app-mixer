@@ -22,9 +22,6 @@
 - [ ] **TASK-012** · P2 · mid · Verify Twilio signatures with node:crypto like the other webhook adapters, and keep the 20 MB twilio SDK only as a dev dependency used as a test oracle
   - Done when: valid signatures pass, tampered bodies and URLs are refused, and results match the SDK; `npm run build && node --test packages/agent/test/twilio-webhook.test.mjs`
   - Links: Ref: docs/agent-event-ingress.md · Depends: TASK-002
-- [ ] **TASK-013** · P2 · low · Remove the duplicated passages in CHANGELOG.md (8 repeated entries, two Added blocks under Unreleased) and in docs/kubernetes-data-plane.md, docs/acceptance-checklists.md and docs/runbooks.md
-  - Done when: a test fails when a line over 120 characters appears twice in one Markdown file; `node --test packages/cli/test/process-files.test.mjs`
-  - State: branch todo/TASK-013-remove-duplicated-doc-passages from harden-on-main; next: start TASK-013
 - [ ] **TASK-014** · P2 · low · Remove the duplicate license key from the five package manifests and settle whether adapters/angular is a workspace, as CONTRIBUTING.md says
   - Done when: the metadata test rejects a manifest with a repeated key; `npm run build && node --test packages/cli/test/package-metadata.test.mjs`
   - State: next: decompose
