@@ -9,6 +9,7 @@ import {parseAgentTraceParent} from './agent-trace-context.js';
 import {ROOT_CONTEXT,SpanKind,SpanStatusCode,trace,type Tracer,type Span} from '@opentelemetry/api';
 import {isIdentifier} from './validation.js';
 import {agentErrorStatus} from './errors.js';
+import {limitServer} from './server-limits.js';
 
 type SourceIdentity={tenantId:string;principalId:string;sourceId:string};
 type EventRequest={agentId:string;eventId:string;eventType:string;payload:unknown};
@@ -55,7 +56,7 @@ export function createAgentEventIngress(options:Options):Server {
  const {triggers,definitions,authenticate,authenticateRaw,authorize,maxPending,maxInFlight,requestTimeoutMs,abortOnDisconnect,observe,mapAuthenticatedBody,challengeAuthenticatedBody,traceParent,tracing,contentType,acknowledgement}=options,clock=options.clock??Date.now;
  const basicLookup=definitions.get.bind(definitions),getDefinition=definitions.getWithSignal?definitions.getWithSignal.bind(definitions):(tenantId:string,agentId:string,_signal:AbortSignal)=>basicLookup(tenantId,agentId);
  let inFlight=0;
- return createServer(async(req,res)=>{
+ return limitServer(createServer(async(req,res)=>{
   let unavailableReason:'busy'|'timeout'|undefined,providerAccepted=false;
   if(observe){const started=performance.now();let reported=false;const report=(disconnected:boolean)=>{if(reported)return;reported=true;const status=disconnected?undefined:res.statusCode,outcome:AgentEventIngressObservation['outcome']=disconnected?'disconnected':(status===202||providerAccepted)?'accepted':status===200||status===204?'completed':status!==undefined&&status>=500?'unavailable':'rejected';try{const result=observe({outcome,...(status===undefined?{}:{status}),...(outcome==='unavailable'?{reason:unavailableReason??'other'}:{}),durationMs:Math.max(0,performance.now()-started)});if(result&&typeof result.then==='function')Promise.resolve(result).catch(()=>{});}catch{}};res.once('finish',()=>report(false));res.once('close',()=>report(true));}
   if(req.method!=='POST'||req.url!=='/events'){reply(res,404,{error:'Not found'});return;}
@@ -97,6 +98,6 @@ export function createAgentEventIngress(options:Options):Server {
    if(acknowledgement==='discord'){res.writeHead(204,{'cache-control':'no-store','x-content-type-options':'nosniff'});res.end();}else if(acknowledgement==='twiml'){res.writeHead(200,{'content-type':'text/xml; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');}else reply(res,acknowledgement==='paddle'||acknowledgement==='linear'||result.duplicate?200:202,result);
   }catch(error){if(expired)return;const mapped=agentErrorStatus(error),status=mapped===409||mapped===429||mapped===400?mapped:500;reply(res,status,{error:status===409?'Event conflict':status===429?'Backlog full':status===400?'Invalid event':'Event unavailable'});}
   }finally{if(timer!==undefined)clearTimeout(timer);if(abortOnDisconnect)res.off('close',onDisconnect);inFlight--;}
- });
+ }));
 }
 export type {Options as AgentEventIngressOptions,SourceIdentity as AgentEventSourceIdentity,EventRequest as AgentEventRequest};

@@ -209,6 +209,8 @@ export {discoverOidcJwks,createOidcJwtJwksManager} from './oidc-discovery.js';
 export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discovery.js';
 export {SqliteCapabilityAudit} from './capability-audit.js';
 export {createTlsCredentialReloader,validateTlsCredentials} from './tls-reloader.js';
+export {limitServer,TLS_POLICY,TLS_CIPHERS,DEFAULT_SERVER_LIMITS} from './server-limits.js';
+export type {ServerLimits} from './server-limits.js';
 export type {TlsCredentials,TlsCredentialInfo,TlsCredentialReloaderOptions} from './tls-reloader.js';
 export {SqlitePromotionSigningAudit,createAuditedPromotionSigner} from './promotion-signing-audit.js';
 export type {PromotionSigningAuditEntry,PromotionSigningAuditHead,PromotionImportRecord,UnauditedPromotionImport} from './promotion-signing-audit.js';

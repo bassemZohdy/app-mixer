@@ -1,6 +1,7 @@
 import {X509Certificate,createPrivateKey,createHash} from 'node:crypto';
 import {createSecureContext} from 'node:tls';
 import type {Server as HttpsServer} from 'node:https';
+import {TLS_POLICY} from './server-limits.js';
 
 export type TlsCredentials={cert:string|Buffer;key:string|Buffer;clientCa?:string|Buffer};
 /** `subject` is empty for a certificate without one (cert-manager's default); `altNames` lists its subject alternative names. */
@@ -20,7 +21,7 @@ const pem=(value:unknown):value is string|Buffer=>(typeof value==='string'&&valu
 export function validateTlsCredentials(credentials:TlsCredentials,now:number=Date.now()):TlsCredentialInfo{
  if(!credentials||typeof credentials!=='object'||Object.keys(credentials).some(key=>!['cert','key','clientCa'].includes(key))||!pem(credentials.cert)||!pem(credentials.key)||(credentials.clientCa!==undefined&&!pem(credentials.clientCa))||!Number.isSafeInteger(now))throw Error('Invalid TLS credentials');
  let leaf:X509Certificate;
- try{leaf=new X509Certificate(credentials.cert);if(!leaf.checkPrivateKey(createPrivateKey(credentials.key)))throw Error('mismatch');if(credentials.clientCa!==undefined)new X509Certificate(credentials.clientCa);createSecureContext({cert:credentials.cert,key:credentials.key,minVersion:'TLSv1.2',...(credentials.clientCa!==undefined?{ca:credentials.clientCa}:{})});}
+ try{leaf=new X509Certificate(credentials.cert);if(!leaf.checkPrivateKey(createPrivateKey(credentials.key)))throw Error('mismatch');if(credentials.clientCa!==undefined)new X509Certificate(credentials.clientCa);createSecureContext({cert:credentials.cert,key:credentials.key,...TLS_POLICY,...(credentials.clientCa!==undefined?{ca:credentials.clientCa}:{})});}
  catch{throw Error('Invalid TLS credentials');}
  const validFrom=Date.parse(leaf.validFrom),validTo=Date.parse(leaf.validTo);
  if(!Number.isFinite(validFrom)||!Number.isFinite(validTo)||now<validFrom||now>=validTo)throw Error('TLS certificate is not currently valid');
@@ -40,7 +41,7 @@ export function createTlsCredentialReloader(server:HttpsServer,options:TlsCreden
   const credentials=await load();if(stopped)return false;
   if(!credentials||(credentials.clientCa!==undefined)!==clientCa)throw Error('TLS client CA presence changed');
   const info=validateTlsCredentials(credentials,clock());if(info.fingerprint===current)return false;
-  server.setSecureContext({cert:credentials.cert,key:credentials.key,minVersion:'TLSv1.2',...(credentials.clientCa!==undefined?{ca:credentials.clientCa}:{})});
+  server.setSecureContext({cert:credentials.cert,key:credentials.key,...TLS_POLICY,...(credentials.clientCa!==undefined?{ca:credentials.clientCa}:{})});
   current=info.fingerprint;try{onReload?.({...info});}catch{}return true;
  };
  /** Load once now. Resolves true when new credentials were applied; rejects when they were invalid. */
