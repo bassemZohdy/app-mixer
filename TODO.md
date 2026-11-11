@@ -80,7 +80,7 @@
       - Links: Depends: TASK-002.6.2
     - [x] **TASK-002.6.4** · low · Port the sandbox idempotency check for outbound providers (986e967e, 378148f2 part) with its script test and its CONTRIBUTING entry
       - Done when: the script refuses a provider that repeats a side effect on a retried key; `npm run build && node --test packages/cli/test/provider-idempotency-script.test.mjs`
-    - [ ] **TASK-002.6.5** · low · Reconcile docs/acceptance-checklists.md (the five repeated P3-02 lines, the collector and recovery items) and CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
+    - [x] **TASK-002.6.5** · low · Reconcile docs/acceptance-checklists.md (the five repeated P3-02 lines, the collector and recovery items) and CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
       - Done when: P3-02 has one verified line, CONTRIBUTING repeats no sentence and names every script that exists; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.3, TASK-002.6.4
 - [ ] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
