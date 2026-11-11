@@ -1,0 +1,53 @@
+name: Web storage on Android
+on:
+  pull_request:
+    paths:
+      - 'packages/web/**'
+      - 'packages/core/src/offline-provisioning.ts'
+      - '.github/workflows/web-android.yml'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  android-browser-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+      - name: Download a current Chromium for Android (x86_64)
+        run: |
+          # The system image's Chrome is old. Chromium's own snapshot of the Android build for x86_64 devices is current.
+          base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+          rev=$(curl -fsS "$base/LAST_CHANGE")
+          curl -fsS -o "$RUNNER_TEMP/chromium.zip" "$base/$rev/chrome-android-desktop.zip"
+          unzip -q "$RUNNER_TEMP/chromium.zip" -d "$RUNNER_TEMP/chromium"
+          find "$RUNNER_TEMP/chromium" -name '*.apk' | sort
+          apk=$(find "$RUNNER_TEMP/chromium" -name 'ChromePublic.apk' | head -1)
+          test -n "$apk"
+          echo "CHROMIUM_APK=$apk" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            ALLOW_UNSUPPORTED=1 node packages/web/device-test/android-browser-storage.mjs
+            ANDROID_BROWSER_PACKAGE=org.chromium.chrome ANDROID_BROWSER_APK="$CHROMIUM_APK" node packages/web/device-test/android-browser-storage.mjs
