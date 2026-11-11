@@ -1,0 +1,221 @@
+// A run registry and action journal shared by separate processes through PostgreSQL. Workers killed mid-dispatch
+// leave runs that the surviving nodes recover exactly once, verifying each interrupted action against the external
+// system instead of replaying it, so no external effect is duplicated.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fork} from 'node:child_process';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {randomUUID} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import pg from 'pg';
+import {PostgresAgentRuns,PostgresAgentSchedules} from '../dist/index.js';
+
+const url=process.env.APP_MIXER_TEST_POSTGRES_URL,nodePath=fileURLToPath(new URL('./fixtures/run-node.mjs',import.meta.url));
+const scope={tenantId:'tenant',agentId:'agent'},skip=!url&&'set APP_MIXER_TEST_POSTGRES_URL to run against PostgreSQL';
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}};
+async function database(prefix){
+ const schema=prefix+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+ await admin.query(`CREATE SCHEMA "${schema}"`);
+ const options={enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)};
+ return {schema,pool,options,close:async()=>{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(()=>{});await admin.end();}};
+}
+
+test('the shared PostgreSQL run registry keeps the SQLite lifecycle, limits and lease fencing',{skip,timeout:60000},async()=>{
+ const db=await database('runs_');
+ try{
+  assert.throws(()=>new PostgresAgentRuns({enabled:true,query:()=>{}}),/Invalid agent run registry configuration/);
+  const runs=new PostgresAgentRuns(db.options);await runs.initialize();await runs.initialize();
+  const deadline=Date.now()+600000,config={definitionVersion:1,maxAttempts:2,deadline};
+  await assert.rejects(runs.create(scope,'past',{...config,deadline:1}),/Invalid run configuration/);
+  const created=await runs.create(scope,'r1',config);assert.deepEqual([created.status,created.revision,created.attempts],['queued',1,0]);
+  await assert.rejects(runs.create(scope,'r1',config),/Run already exists/);
+  await runs.create(scope,'r2',config);await runs.create(scope,'r3',config);
+  await assert.rejects(runs.claim(scope,'r1',2,'w',1000),/revision conflict/);
+  const lease=await runs.claim(scope,'r1',1,'w',1000,{maxRunsPerDay:2});assert.equal(lease.status,'running');assert.equal(lease.attempts,1);
+  await assert.rejects(runs.claim(scope,'r2',1,'w',1000,{maxRunsPerDay:2}),/concurrency limit/,'one active run by default');
+  const second=await runs.claim(scope,'r2',1,'w',1000,{maxConcurrentRuns:3,maxRunsPerDay:2});
+  await assert.rejects(runs.claim(scope,'r3',1,'w',1000,{maxConcurrentRuns:3,maxRunsPerDay:2}),/daily run limit/);
+  // The journal is fenced on the live lease: a wrong token cannot dispatch, a renewed lease still can.
+  let calls=0;const dispatch=async(input,key)=>{calls++;return {ok:input.n,key};};
+  await assert.rejects(runs.journal(scope,'r1',randomUUID()).invoke('x','op',{n:1},2,dispatch),/Action lease unavailable/);
+  const renewed=await runs.renew(scope,'r1',lease.revision,lease.leaseToken,1000);
+  const journal=runs.journal(scope,'r1',lease.leaseToken),first=await journal.invoke('x','op',{n:1},2,dispatch);
+  assert.deepEqual(await journal.invoke('x','op',{n:1},2,dispatch),first);assert.equal(calls,1,'a recorded result is not dispatched again');
+  await assert.rejects(journal.invoke('x','op',{n:2},2,dispatch),/identity conflict/);
+  await assert.rejects(journal.invoke('y','op',{},2,async()=>{throw Error('network');}),/Action outcome uncertain/);
+  await assert.rejects(journal.invoke('y','op',{},2,dispatch),/requires reconciliation/);
+  // A refusal before any effect (as the capability registry marks it) is retried with the same key or fails once attempts are exhausted; it never needs reconciliation.
+  const refusal=()=>Object.defineProperty(Error('Capability forbidden'),Symbol.for('app-mixer.effect'),{value:'none'});
+  await assert.rejects(journal.invoke('w','op',{n:3},2,async()=>{throw refusal();}),{message:'Capability forbidden'});assert.equal((await journal.get('w')).status,'ready');
+  const freed=await journal.invoke('w','op',{n:3},2,dispatch);assert.equal(freed.ok,3);assert.equal((await journal.get('w')).attempts,2);
+  await assert.rejects(journal.invoke('v','op',{n:4},1,async()=>{throw refusal();}),{message:'Capability forbidden'});assert.equal((await journal.get('v')).status,'failed');
+  await assert.rejects(journal.invoke('v','op',{n:4},1,dispatch),/requires reconciliation/);
+  // Settling with an unresolved action makes the run uncertain; it cannot be retried until the action is decided.
+  const uncertain=await runs.settle(scope,'r1',renewed.revision,lease.leaseToken,'succeeded');assert.equal(uncertain.status,'uncertain');
+  await assert.rejects(journal.invoke('z','op',{},2,dispatch),/Action lease unavailable/,'a released lease fences the old worker');
+  await assert.rejects(runs.reconcile(scope,'r1',uncertain.revision,'retry'),/requires reconciliation/);
+  const recovery=runs.journal(scope,'r1','recovery');assert.deepEqual((await recovery.unresolved()).map(action=>[action.actionId,action.status]),[['y','uncertain']]);
+  await assert.rejects(recovery.reconcileWith('y',async()=>({outcome:'applied'})),/Invalid action verification/);
+  assert.equal(await recovery.reconcileWith('y',async()=>({outcome:'not_applied'})),'not_applied');
+  const retried=await runs.reconcile(scope,'r1',uncertain.revision,'retry');assert.equal(retried.status,'queued');
+  const again=await runs.claim(scope,'r1',retried.revision,'w',1000,{maxConcurrentRuns:3,maxRunsPerDay:2});assert.equal(again.attempts,2,'a retry is not a new run for the daily limit');
+  const lost=await runs.settle(scope,'r1',again.revision,again.leaseToken,'uncertain');assert.equal(lost.status,'uncertain');
+  await assert.rejects(runs.reconcile(scope,'r1',lost.revision,'retry'),/cannot be retried/,'attempts are bounded');
+  // Pause, cancel and archive; an expired lease is recovered once.
+  const pausing=await runs.request(scope,'r2',second.revision,'pause');assert.equal(pausing.status,'pause_requested');
+  const paused=await runs.settle(scope,'r2',pausing.revision,second.leaseToken,'stopped');assert.equal(paused.status,'paused');
+  const cancelled=await runs.request(scope,'r2',paused.revision,'cancel');assert.equal(cancelled.status,'cancelled');
+  assert.equal((await runs.archive(scope,'r2',cancelled.revision)).archived,true);await assert.rejects(runs.archive(scope,'r2',cancelled.revision+1),/archived/);
+  await runs.create(scope,'r4',config);const short=await runs.claim(scope,'r4',1,'w',50,{maxConcurrentRuns:3});
+  await assert.rejects(runs.recoverExpired(scope,'r4',short.revision),/Lease is active/);await sleep(120);
+  assert.deepEqual((await runs.expiredLeases(scope)).map(run=>run.runId),['r4']);
+  await assert.rejects(runs.renew(scope,'r4',short.revision,short.leaseToken,1000),/expired lease/);
+  const recovered=await runs.recoverExpired(scope,'r4',short.revision);assert.equal(recovered.status,'uncertain');
+  await assert.rejects(runs.recoverExpired(scope,'r4',short.revision),/revision conflict/,'a second node cannot recover it again');
+  assert.equal((await runs.get({tenantId:'other',agentId:'agent'},'r4')),undefined,'runs are tenant-scoped');
+  // A schedule hand-off taken over after an expired claim creates the run only once.
+  const schedules=new PostgresAgentSchedules(db.options);await schedules.initialize();
+  await schedules.save(scope,'tick',{enabled:true,principalId:'service',rule:{kind:'interval',intervalMs:60000}},0,1000);
+  await schedules.fire(scope,'tick',1,{definitionVersion:1,maxAttempts:2,runTimeoutMs:60000,maxPending:10},{now:61000,nodeId:'n'});
+  const stale=await schedules.claimRun(scope,'node-a',50);await runs.create(scope,stale.runId,config);await sleep(120);
+  const takeover=await schedules.claimRun(scope,'node-b',1000);assert.equal(takeover.runId,stale.runId);
+  await assert.rejects(runs.create(scope,takeover.runId,config),/Run already exists/,'the reclaimed request does not start a second run');
+  assert.equal(await schedules.markStarted(scope,takeover.runId,takeover.token),true);
+ }finally{await db.close();}
+});
+
+test('runs on killed nodes are recovered exactly once with no duplicated external effect',{skip,timeout:120000},async t=>{
+ const db=await database('run_nodes_'),nodes=new Map(),events=[],applications=[],effects=new Map(),held=new Map();
+ // The external system applies every POST it receives (no deduplication), so a replayed action would show twice.
+ const server=createServer(async(request,response)=>{
+  const key=decodeURIComponent(request.url.slice('/effects/'.length));
+  if(request.method==='GET'){const effect=effects.get(key);response.writeHead(effect?200:404,{'content-type':'application/json'}).end(JSON.stringify(effect??{}));return;}
+  let body='';for await(const chunk of request)body+=chunk;const input=JSON.parse(body),node=request.headers['x-node'];
+  const apply=()=>{const effect={applied:true,runId:input.runId,actionId:input.actionId};applications.push({key,...input});effects.set(key,effect);return effect;};
+  // node-a's first request is applied but the reply never arrives; node-b's first request never gets applied.
+  if((node==='node-a'||node==='node-b')&&!held.has(node)){if(node==='node-a')apply();held.set(node,input);request.socket.on('error',()=>{});return;}
+  response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(apply()));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');const effectsUrl=`http://127.0.0.1:${server.address().port}`;
+ const start=(nodeId,concurrency='4')=>{const child=fork(nodePath,[url,db.schema,nodeId,effectsUrl,concurrency],{stdio:['ignore','inherit','inherit','ipc']});nodes.set(nodeId,child);child.on('message',message=>events.push({nodeId,...message}));return new Promise((resolve,reject)=>{child.on('message',message=>{if(message.type==='ready')resolve();});child.once('exit',code=>reject(Error(nodeId+' exited '+code)));});};
+ try{
+  const runs=new PostgresAgentRuns(db.options);await runs.initialize();
+  const ids=['run-1','run-2','run-3','run-4','run-5','run-6'];for(const runId of ids)await runs.create(scope,runId,{definitionVersion:1,maxAttempts:3,deadline:Date.now()+600000});
+  await Promise.all([start('node-a','1'),start('node-b','1')]);
+  for(const deadline=Date.now()+20000;held.size<2;await sleep(20))assert.ok(Date.now()<deadline,'both workers reached their first dispatch');
+  for(const nodeId of ['node-a','node-b']){const child=nodes.get(nodeId),gone=once(child,'exit');child.kill('SIGKILL');await gone;}
+  t.diagnostic(`killed node-a mid-dispatch of ${JSON.stringify(held.get('node-a'))} (applied) and node-b of ${JSON.stringify(held.get('node-b'))} (not applied)`);
+  await Promise.all([start('node-c'),start('node-d')]);
+  for(const deadline=Date.now()+40000;;await sleep(100)){
+   const all=await Promise.all(ids.map(runId=>runs.get(scope,runId)));if(all.every(run=>run.status==='succeeded'))break;
+   assert.ok(Date.now()<deadline,'all runs finish: '+all.map(run=>run.runId+'='+run.status).join(' '));
+  }
+  for(const nodeId of ['node-c','node-d']){const child=nodes.get(nodeId),gone=once(child,'exit');child.send('stop');const [code]=await gone;assert.equal(code,0,nodeId+' stopped cleanly');}
+  assert.deepEqual(events.filter(event=>event.type==='error'),[],'the surviving supervisors reported no errors');
+  const killedRuns=[held.get('node-a').runId,held.get('node-b').runId].sort();
+  // Each killed run was recovered exactly once, by one of the surviving nodes, and retried once.
+  const recoveries=events.filter(event=>event.type==='recovered');
+  assert.deepEqual(recoveries.map(event=>event.runId).sort(),killedRuns,'each interrupted run recovered exactly once');
+  assert.ok(recoveries.every(event=>['node-c','node-d'].includes(event.nodeId)));
+  for(const runId of ids){const run=await runs.get(scope,runId);assert.equal(run.attempts,killedRuns.includes(runId)?2:1,runId+' attempts');}
+  // The interrupted actions were verified, not replayed blindly: the applied one is reused, the other dispatched once.
+  const reconciled=events.filter(event=>event.type==='reconciled').map(event=>[event.runId,event.actionId,event.outcome]).sort();
+  assert.deepEqual(reconciled,[[held.get('node-a').runId,held.get('node-a').actionId,'applied'],[held.get('node-b').runId,held.get('node-b').actionId,'not_applied']].sort());
+  // Every action of every run took effect exactly once, under one idempotency key.
+  assert.equal(applications.length,ids.length*3,'no duplicated external effect');
+  assert.deepEqual(new Set(applications.map(effect=>effect.runId+'/'+effect.actionId)).size,ids.length*3);
+  assert.equal(new Set(applications.map(effect=>effect.key)).size,ids.length*3);
+  const completed=events.filter(event=>event.type==='completed');assert.deepEqual(completed.map(event=>event.runId).sort(),[...ids].sort(),'each run completed once');
+  t.diagnostic(`${ids.length} runs, ${applications.length} external effects, each once; recovered ${killedRuns.join(', ')} by ${recoveries.map(event=>event.nodeId).join(', ')}`);
+ }finally{for(const child of nodes.values())if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');server.closeAllConnections();server.close();await db.close();}
+});
+
+test('a stopping worker drains its running executions and claims nothing new',{skip,timeout:60000},async()=>{
+ const db=await database('run_drain_'),held=[],applications=[],events=[];let child;
+ // Every first action is held until the test releases it, so the worker is mid-run when it is told to stop.
+ const server=createServer(async(request,response)=>{
+  let body='';for await(const chunk of request)body+=chunk;const input=JSON.parse(body);applications.push(input);
+  const reply=()=>response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({applied:true,...input}));
+  if(input.actionId==='a1')held.push(reply);else reply();
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{
+  const runs=new PostgresAgentRuns(db.options);await runs.initialize();
+  const ids=['run-1','run-2','run-3','run-4'];for(const runId of ids)await runs.create(scope,runId,{definitionVersion:1,maxAttempts:3,deadline:Date.now()+600000});
+  child=fork(nodePath,[url,db.schema,'drainer',`http://127.0.0.1:${server.address().port}`,'2'],{stdio:['ignore','inherit','inherit','ipc']});child.on('message',message=>events.push(message));
+  for(const deadline=Date.now()+20000;held.length<2;await sleep(20))assert.ok(Date.now()<deadline,'two runs in flight');
+  const exited=once(child,'exit');child.send('stop');await sleep(500);
+  assert.equal(child.exitCode,null,'the worker waits for its running executions');
+  for(const reply of held.splice(0))reply();const [code]=await exited;assert.equal(code,0);
+  const final=await Promise.all(ids.map(runId=>runs.get(scope,runId)));
+  assert.deepEqual(final.map(run=>run.status).sort(),['queued','queued','succeeded','succeeded'],'in-flight runs finished; no new run was claimed');
+  assert.equal(events.filter(event=>event.type==='claimed').length,2);assert.equal(events.filter(event=>event.type==='error').length,0);
+  assert.equal(applications.length,6,'each finished run applied its three actions once');
+ }finally{if(child&&child.exitCode===null)child.kill('SIGKILL');server.closeAllConnections();server.close();await db.close();}
+});
+
+test('queued runs start in creation order across two nodes and a registry created before the sequence column keeps its order',{skip,timeout:60000},async()=>{
+ const db=await database('run_order_');
+ try{
+  // A registry written before the sequence column existed: three runs inserted in a known order.
+  await db.pool.query("CREATE TABLE app_mixer_agent_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,revision BIGINT NOT NULL,status TEXT NOT NULL CHECK (status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(tenant_id,agent_id,run_id))");
+  for(const runId of ['zulu','alpha','mike'])await db.pool.query("INSERT INTO app_mixer_agent_runs VALUES ('tenant','agent',$1,1,1,'queued',0,2,$2,NULL,NULL,NULL,false)",[runId,Date.now()+600000]);
+  const first=new PostgresAgentRuns(db.options),second=new PostgresAgentRuns(db.options);await first.initialize();await second.initialize();await first.initialize();
+  const deadline=Date.now()+600000,config={definitionVersion:1,maxAttempts:2,deadline};
+  assert.deepEqual((await first.queued(scope)).map(run=>run.runId),['zulu','alpha','mike'],'migrated rows are numbered in their insertion order');
+  // New runs have IDs sorted opposite to creation order, as random UUIDs are.
+  const ids=Array.from({length:50},(_,n)=>'run-'+String(99-n).padStart(2,'0'));for(const runId of ids)await first.create(scope,runId,config);
+  assert.deepEqual((await second.queued(scope,100)).map(run=>run.runId),['zulu','alpha','mike',...ids].slice(0,100),'every node sees the same creation order');
+  // Two nodes alternately claim the head of the queue: runs start in creation order.
+  const started=[];const limits={maxConcurrentRuns:100,maxRunsPerDay:1000};
+  for(let turn=0;turn<53;turn++){const node=turn%2?second:first,head=(await node.queued(scope,1))[0];const lease=await node.claim(scope,head.runId,head.revision,'node-'+turn%2,60000,limits);started.push(lease.runId);}
+  assert.deepEqual(started,['zulu','alpha','mike',...ids]);
+  // The component's schema version is recorded, and a database written by a newer release is refused.
+  assert.equal(Number((await db.pool.query("SELECT version FROM app_mixer_schema WHERE component='agent_runs'")).rows[0].version),2);
+  await db.pool.query("UPDATE app_mixer_schema SET version=3 WHERE component='agent_runs'");await assert.rejects(new PostgresAgentRuns(db.options).initialize(),/newer than this release supports \(2\)/);
+ }finally{await db.close();}
+});
+
+test('a frozen node that resumes after its run was taken over cannot dispatch again or complete it',{skip:skip||(process.platform==='win32'&&'SIGSTOP is not available on Windows'),timeout:120000},async t=>{
+ // A process stopped with SIGSTOP stands in for a pause or partition that outlasts the lease: it keeps its in-memory state, its
+ // pending request and its belief that it still holds the run.
+ const db=await database('run_frozen_'),nodes=new Map(),events=[],applications=[],effects=new Map();let held;
+ const server=createServer(async(request,response)=>{
+  const key=decodeURIComponent(request.url.slice('/effects/'.length));
+  if(request.method==='GET'){const effect=effects.get(key);response.writeHead(effect?200:404,{'content-type':'application/json'}).end(JSON.stringify(effect??{}));return;}
+  let body='';for await(const chunk of request)body+=chunk;const input=JSON.parse(body),node=request.headers['x-node'];
+  const effect={applied:true,runId:input.runId,actionId:input.actionId};applications.push({key,node,...input});effects.set(key,effect);
+  // node-a's first request is applied but its reply is held until the node has been frozen, taken over and resumed.
+  if(node==='node-a'&&!held){held={input,reply:()=>{if(!response.destroyed)response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(effect));}};request.socket.on('error',()=>{});return;}
+  response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(effect));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');const effectsUrl=`http://127.0.0.1:${server.address().port}`;
+ const start=(nodeId,concurrency)=>{const child=fork(nodePath,[url,db.schema,nodeId,effectsUrl,concurrency],{stdio:['ignore','inherit','inherit','ipc']});nodes.set(nodeId,child);child.on('message',message=>events.push({nodeId,...message}));return new Promise((resolve,reject)=>{child.on('message',message=>{if(message.type==='ready')resolve();});child.once('exit',code=>reject(Error(nodeId+' exited '+code)));});};
+ try{
+  const runs=new PostgresAgentRuns(db.options);await runs.initialize();
+  const ids=['run-1','run-2','run-3','run-4'];for(const runId of ids)await runs.create(scope,runId,{definitionVersion:1,maxAttempts:3,deadline:Date.now()+600000});
+  await start('node-a','1');
+  for(const deadline=Date.now()+20000;!held;await sleep(20))assert.ok(Date.now()<deadline,'node-a reached its first dispatch');
+  const frozenRun=held.input.runId;nodes.get('node-a').kill('SIGSTOP');
+  await start('node-b','4');
+  for(const deadline=Date.now()+40000;;await sleep(100)){
+   const all=await Promise.all(ids.map(runId=>runs.get(scope,runId)));if(all.every(run=>run.status==='succeeded'))break;
+   assert.ok(Date.now()<deadline,'node-b finished every run while node-a was frozen: '+all.map(run=>run.runId+'='+run.status).join(' '));
+  }
+  const before=applications.length;
+  // Resume the frozen node and let it receive the reply it was waiting for; it must find that it no longer holds the run.
+  nodes.get('node-a').kill('SIGCONT');held.reply();await sleep(3000);
+  assert.equal(applications.length,before,'the resumed node dispatched nothing');
+  assert.equal(applications.length,ids.length*3,'no duplicated external effect');
+  assert.equal(new Set(applications.map(effect=>effect.runId+'/'+effect.actionId)).size,ids.length*3);
+  assert.equal(new Set(applications.map(effect=>effect.key)).size,ids.length*3);
+  const completed=events.filter(event=>event.type==='completed');assert.deepEqual(completed.map(event=>event.runId).sort(),[...ids].sort(),'each run completed once');
+  assert.ok(completed.every(event=>event.nodeId==='node-b'),'only the node that took over completed runs');
+  const run=await runs.get(scope,frozenRun);assert.equal(run.status,'succeeded');assert.equal(run.attempts,2,'the frozen run was retried once, by the other node');
+  assert.deepEqual(events.filter(event=>event.type==='recovered').map(event=>[event.nodeId,event.runId]),[['node-b',frozenRun]],'the frozen node\'s run was recovered exactly once, by node-b');
+  t.diagnostic(`node-a was frozen holding ${frozenRun}; node-b recovered it; after the resume node-a dispatched nothing and ${applications.length} effects were applied once each`);
+  for(const nodeId of ['node-a','node-b']){const child=nodes.get(nodeId),gone=once(child,'exit');child.send('stop');await gone;}
+ }finally{for(const child of nodes.values()){if(child.exitCode===null&&child.signalCode===null){child.kill('SIGCONT');child.kill('SIGKILL');}}server.closeAllConnections();server.close();await db.close();}
+});
