@@ -16,8 +16,9 @@
     - [x] **TASK-002.1.3** · mid · Port typed errors in the agent servers and supervisor (0a76282c, agent part of 6045bf6d), keeping swallowed causes
       - Done when: agent refusals map by code and lost races are ignored by code; `npm run build && node --test packages/agent/test/errors.test.mjs`
       - Links: Depends: TASK-002.1.2
-    - [ ] **TASK-002.1.4** · mid · Port the slow-client bounds and TLS policy for every server (d0db960c)
+    - [/] **TASK-002.1.4** · mid · Port the slow-client bounds and TLS policy for every server (d0db960c)
       - Done when: a slow client is cut off and a weak TLS version is refused; `npm run build && node --test packages/core/test/server-limits.test.mjs packages/agent/test/transport.test.mjs`
+      - State: attempts 0/3; baseline 1828 passing; branch todo/TASK-002.1.4-port-slow-client-bounds from todo/TASK-002.1-port-tooling-shared-code; next: read docs
     - [ ] **TASK-002.1.5** · mid · Port the Twilio signature check without the SDK and the agent subpath entries (89db8c76, efd1c31f, 0c38ce94)
       - Done when: a tampered signature and an unknown subpath are refused and npm pack ships no sources; `npm run build && node --test packages/agent/test/twilio-signature.test.mjs packages/agent/test/subpath-exports.test.mjs packages/cli/test/package-metadata.test.mjs`
     - [ ] **TASK-002.1.6** · mid · Port the Node floor 22.22.2 with the jsdom 31 and OpenTelemetry 3.x updates (106a196c)
