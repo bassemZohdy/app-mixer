@@ -18,7 +18,7 @@
 - [ ] **TASK-011** · P2 · high · Give @app-mixer/agent subpath entries and load provider SDKs on first use; importing the package now takes about 0.9 s and 111 MB because one barrel has 217 export lines (an earlier attempt was reverted in 314b6860)
   - Done when: importing the root entry loads neither twilio nor @langchain/openai, each subpath resolves, and an unknown subpath is refused; `npm run build && node --test packages/agent/test/package-entries.test.mjs`
   - Links: Depends: TASK-002
-  - State: next: decompose
+  - State: branch todo/TASK-011-load-provider-sdks-lazily from harden-on-main; next: start TASK-011
 - [ ] **FEAT-017** · P2 · mid · Add a coverage report with a minimum threshold to CI; nothing measures coverage today and the mutation script is run by hand
   - Done when: the coverage command reports a figure per package and exits non-zero below the threshold; `npm run coverage`
 - [ ] **FEAT-018** · P2 · mid · Add a workflow that builds the Data Plane image, scans it for vulnerabilities and produces an SBOM; no workflow does this today
