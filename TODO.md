@@ -7,6 +7,7 @@
 - [ ] **FIX-005** · P1 · mid · Stop copying agent-only dependencies (twilio, LangChain, openai, about 80 MB) into the Data Plane image; install only what core and web need
   - Done when: the image's dependency set contains pg, jose and ajv but no twilio, @langchain or openai package, and adding one fails the test; `node --test packages/cli/test/data-plane-image.test.mjs`
   - Links: Ref: docs/kubernetes-data-plane.md
+  - State: branch todo/FIX-005-keep-agent-deps-out-of-data-plane-image from harden-on-main; next: start FIX-005
 - [ ] **TASK-006** · P1 · mid · Replace the error-message string lists that choose the HTTP status (94 literals in capability-server.ts, 19 in planes.ts) with typed errors that carry their status
   - Done when: every existing message keeps its status, and an unknown error still returns 500 without leaking its message; `npm run build && node --test packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
   - Links: Depends: TASK-002
