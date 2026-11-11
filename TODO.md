@@ -29,9 +29,10 @@
     - State: branch todo/TASK-002.2-port-web-react-native from todo/TASK-002-port-remaining-local-acceptance; next: build children
     - [x] **TASK-002.2.1** · mid · Port the shared catalog-variant and TextField fixtures for web, native and Flutter (hardening 0f633ba6, 5697df45); the CI smoke-script and device replays go with TASK-002.5
       - Done when: every catalog variant and layout value renders the same through the native adapter as the fixture says; `npm run build && node --test packages/native/test/parity.test.mjs`
-    - [ ] **TASK-002.2.2** · mid · Port rendering of numbers and booleans bound to Text and the stable component and variant hooks on every renderer (1fb6579a, 8e7739f2)
+    - [/] **TASK-002.2.2** · mid · Port rendering of numbers and booleans bound to Text and the stable component and variant hooks on every renderer (1fb6579a, 8e7739f2)
       - Done when: a bound number and a bound boolean render as text and every component exposes its hook, while an unsupported bound value is still rejected; `npm run build && node --test packages/web/test/renderer.test.mjs packages/native/test/parity.test.mjs`
       - Links: Depends: TASK-002.2.1
+      - State: attempts 0/3; baseline 1842 passing; branch todo/TASK-002.2.2-port-bound-text-hooks from todo/TASK-002.2-port-web-react-native; next: read docs
     - [ ] **TASK-002.2.3** · mid · Port in-place patching of bound nodes on data-only updates and keeping text that is being composed with an input method (6bec636d, 216f6164)
       - Done when: a data-only update keeps node identity and focus, and composing text survives an update to another path; `npm run build && node --test packages/web/test/renderer.test.mjs packages/web/test/conformance.test.mjs`
       - Links: Depends: TASK-002.2.2
