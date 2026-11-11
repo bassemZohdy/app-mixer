@@ -2,6 +2,8 @@
 
 **App Mixer** is an early-stage open-source, API-first, greenfield framework for agent-native applications. It combines conventional pages with a conversational interface. **Status: foundation prototype; not production ready.**
 
+Base: harden-on-main
+
 ## Getting started
 
 Requires Node.js 22.13+ and npm. The SQLite repository uses the experimental built-in `node:sqlite` API.
