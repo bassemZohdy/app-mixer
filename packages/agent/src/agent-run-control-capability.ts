@@ -1,11 +1,12 @@
 import {SqliteAgentRuns,type AgentRunScope} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Action='pause'|'resume'|'cancel'|'archive';
 type Snapshot={runId:string;revision:number;status:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;scope:AgentRunScope;runId:string;operationId:string;path:string;authorize:(actor:Actor,action:'access'|Action,run:Snapshot|null,signal:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown):{action:Action;revision:number}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'action')||!Object.hasOwn(input,'revision'))return;const value=input as {action:unknown;revision:unknown};if(!['pause','resume','cancel','archive'].includes(value.action as string)||!Number.isSafeInteger(value.revision)||Number(value.revision)<1||Number(value.revision)>=Number.MAX_SAFE_INTEGER)return;return {action:value.action as Action,revision:value.revision as number};}
 /** Authenticated fixed-run controls; policy and reviewed revision are rechecked before transition. */
 export function registerAgentRunControl(registry:Registry,options:Options):void{

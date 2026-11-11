@@ -1,11 +1,12 @@
 import {SqliteAgentRuns,type AgentRunScope,type DurableAgentRun,type AgentRunExpiryEvidence} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {isIdentifier} from './validation.js';
 
 export type AgentRunExpiryObservation={outcome:'completed'|'failed'|'stopped';expired:number;denied:number;errors:number;durationMs:number};
 type PassCounts={denied:number;errors:number};
 type Cursor={deadline:number;runId:string};
 type Options={runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;scope:AgentRunScope;authorize:(run:DurableAgentRun,signal:AbortSignal)=>boolean|Promise<boolean>;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number;observe?:(observation:AgentRunExpiryObservation)=>void|Promise<void>;maxPerPass:number;pollMs:number;onError:(error:unknown,runId?:string)=>void;clock?:()=>number;evidence?:AgentRunExpiryEvidence};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Explicit host-driven cleanup of expired, unleased runs. */
 export class AgentRunExpiryWorker{
  private readonly runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;private readonly scope:AgentRunScope;private readonly authorize:Options['authorize'];private readonly maxPerPass:number;private readonly pollMs:number;private readonly clock:()=>number;private readonly onError:Options['onError'];private readonly observe:Options['observe'];private readonly evidence:AgentRunExpiryEvidence|undefined;private active=false;private generation=0;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;private cursor?:Cursor;private controller?:AbortController;private readonly authorizationTimeoutMs:number|undefined;private readonly maxPendingAuthorizations:number|undefined;private authorizationsInFlight=0;

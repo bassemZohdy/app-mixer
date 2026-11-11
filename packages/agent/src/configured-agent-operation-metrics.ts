@@ -1,11 +1,12 @@
 import type {ConfiguredAgentOperationObservation} from './configured-runtime.js';
 import type {AgentRunMetricsActor} from './agent-run-metrics.js';
+import {isIdentifier} from './validation.js';
 const kinds=['model','capability'] as const,outcomes=['succeeded','failed'] as const,bounds=[0.1,0.25,0.5,1,2.5,5,10,30] as const;
 type Kind=typeof kinds[number];type Outcome=typeof outcomes[number];
 type Entry={counts:Record<Outcome,number>;count:number;sumSeconds:number;buckets:number[]};
 export type ConfiguredAgentOperationMetricsOptions={authorize:(actor:AgentRunMetricsActor)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:AgentRunMetricsActor,signal:AbortSignal)=>boolean|Promise<boolean>};
 export type ConfiguredAgentOperationMetricsSnapshot={kind:Kind;outcome:Outcome;count:number}[];
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 const empty=():Entry=>({counts:{succeeded:0,failed:0},count:0,sumSeconds:0,buckets:bounds.map(()=>0)});
 /** Process-wide, fixed-label operation counts and latency distributions. */
 export class ConfiguredAgentOperationMetrics {

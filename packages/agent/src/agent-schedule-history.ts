@@ -2,12 +2,13 @@ import {DatabaseSync} from 'node:sqlite';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentScheduleConfig} from './agent-schedules.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 export type AgentScheduleEvent={id:number;tenantId:string;agentId:string;scheduleId:string;kind:'created'|'updated'|'fired';revision:number;generation:number;nextAt:number;config:AgentScheduleConfig;actorId:string|null;runId:string|null;scheduledAt:number|null;observedAt:number};
 type Options={scope:AgentRunScope;authorize:(actor:Actor,action:'list'|'read',event:AgentScheduleEvent|null)=>boolean|Promise<boolean>};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 
 /** Host-authorized read access to immutable schedule configuration and activation history. */
 export class SqliteAgentScheduleHistory {

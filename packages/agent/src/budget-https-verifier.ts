@@ -1,13 +1,14 @@
 import {actionJSON} from './action-journal.js';
 import type {AgentBudgetRecoveryActor,AgentBudgetRecoveryTarget,AgentBudgetVerifiedUsage} from './agent-budget-recovery.js';
 import type {AgentTokenUsage,AgentCostUsage} from './agent-token-budget.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 
 type Context={tenantId:string;agentId:string;runId:string;callId:string;reference:string;reservedTokens:number;cost?:{currency:string;reservedMicros:number}};
 type Credentials={bearerToken:string;getBearerToken?:never}|{bearerToken?:never;getBearerToken:(signal:AbortSignal)=>string|Promise<string>};
 export type BudgetHttpsVerifierOptions=Credentials&{target:AgentBudgetRecoveryTarget;url:string;timeoutMs:number;maxPending:number;maxResponseBytes?:number;interpret:(body:unknown,context:Context,signal:AbortSignal)=>AgentBudgetVerifiedUsage|undefined|Promise<AgentBudgetVerifiedUsage|undefined>};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 const token=(value:unknown):value is string=>typeof value==='string'&&/^[\x21-\x7e]{32,4096}$/.test(value);
-const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const integer=isNonNegativeInteger;
 async function readBody(response:Response,maxBytes:number,signal:AbortSignal):Promise<unknown>{
  if(!response.ok||response.status!==200||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body){void response.body?.cancel().catch(()=>{});throw Error('Invalid response');}const rawLength=response.headers.get('content-length');if(rawLength!==null&&(!/^\d+$/.test(rawLength)||Number(rawLength)>maxBytes)){void response.body.cancel().catch(()=>{});throw Error('Invalid response');}const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;try{for(;;){if(signal.aborted)throw Error('Cancelled');const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>maxBytes)throw Error('Response too large');chunks.push(value);}}finally{void reader.cancel().catch(()=>{});}if(signal.aborted)throw Error('Cancelled');return JSON.parse(actionJSON(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)))));
 }

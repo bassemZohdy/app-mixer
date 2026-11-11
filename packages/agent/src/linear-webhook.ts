@@ -1,9 +1,10 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type LinearWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;organizationId:string;webhookId:string;eventType:string;secret:string;previousSecrets?:string[];clock?:()=>number;toleranceMs?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const secret=(x:unknown):x is string=>typeof x==='string'&&/^[\x21-\x7e]{32,1024}$/.test(x);
 const decode=(body:Buffer):Record<string,unknown>=>{const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid Linear event');return value as Record<string,unknown>;};
 

@@ -1,10 +1,11 @@
 import {PostgresAgentDefinitions} from './postgres-agent-definitions.js';
 import {validateAgentManifest,type PersistentAgentManifest} from './persistent-definitions.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={definitions:PostgresAgentDefinitions;scope:AgentRunScope;operationId:string;path:string;authorize:(actor:Actor,action:'access'|'write',manifest:PersistentAgentManifest|null,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 function parse(input:unknown,scope:AgentRunScope):{expectedVersion:number;manifest:PersistentAgentManifest}|undefined{try{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==2||!Object.hasOwn(input,'expectedVersion')||!Object.hasOwn(input,'manifest'))return;const value=input as {expectedVersion:unknown;manifest:unknown};if(!Number.isSafeInteger(value.expectedVersion)||Number(value.expectedVersion)<0||Number(value.expectedVersion)>=Number.MAX_SAFE_INTEGER)return;const manifest=validateAgentManifest(value.manifest);if(manifest.tenantId!==scope.tenantId||manifest.agentId!==scope.agentId)return;return {expectedVersion:value.expectedVersion as number,manifest};}catch{return;}}
 /** Create or update a host-fixed agent through the shared versioned and audited store. */
 export function registerAgentDefinitionWrite(registry:Registry,options:Options):void{

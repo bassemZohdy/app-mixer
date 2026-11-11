@@ -1,12 +1,13 @@
 import {AgentSemanticMemory} from './semantic-memory.js';
 import type {AgentMemoryScope,AgentMemoryProvenance} from './agent-memory.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 type Input={memoryId:string;text:string;expectedRevision:number|null};
 type Metadata={expiresAt:number;provenance:AgentMemoryProvenance};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(context:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean|Promise<boolean>;authorizeInput:(context:Actor,input:unknown)=>boolean|Promise<boolean>;execute:(input:unknown,context:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={memory:AgentSemanticMemory;scope:AgentMemoryScope;operationId:string;path:string;authorize:(actor:Actor)=>boolean|Promise<boolean>;authorizeWrite:(actor:Actor,input:Input)=>boolean|Promise<boolean>;metadata:(actor:Actor,input:Input)=>Metadata|Promise<Metadata>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const parse=(input:unknown):Input|undefined=>{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'query'))return;const value=(input as {query?:unknown}).query;if(!value||typeof value!=='object'||Array.isArray(value))return;const fields=value as Record<string,unknown>;if(Object.keys(fields).length!==3||!['memoryId','text','expectedRevision'].every(key=>Object.hasOwn(fields,key))||!id(fields.memoryId)||typeof fields.text!=='string'||!fields.text.trim()||fields.text.length>2000||!Number.isSafeInteger(fields.expectedRevision)||Number(fields.expectedRevision)<0)return;return {memoryId:fields.memoryId,text:fields.text,expectedRevision:fields.expectedRevision===0?null:Number(fields.expectedRevision)};};
 /** Fixed-scope, host-authorized memory writes with host-supplied provenance and expiry. */
 export function registerSemanticMemoryWrite(registry:Registry,options:Options):void{

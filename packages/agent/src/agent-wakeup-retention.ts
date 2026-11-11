@@ -2,12 +2,13 @@ import {DatabaseSync} from 'node:sqlite';
 import {ensureAgentRunTerminalSchema} from './agent-run-terminal.js';
 import type {AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier} from './validation.js';
 
 type Actor={tenantId:string;principalId:string};
 export type AgentWakeupRetentionTarget={runId:string;sourceId:string;eventId:string};
 type Options={scope:AgentRunScope;authorizeScope:(actor:Actor,scope:AgentRunScope,signal?:AbortSignal)=>boolean|Promise<boolean>;authorize:(actor:Actor,action:'redact'|'read',target:AgentWakeupRetentionTarget,signal?:AbortSignal)=>boolean|Promise<boolean>;authorizeDiscovery?:(actor:Actor,scope:AgentRunScope,signal?:AbortSignal)=>boolean|Promise<boolean>;authorizationTimeoutMs?:number;maxPendingAuthorizations?:number};
 export type AgentWakeupRedactionCandidate=AgentWakeupRetentionTarget & {id:number;status:'succeeded'|'failed'|'cancelled';observedAt?:number;completedAt?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const id=isIdentifier;
 /** Explicit host-authorized payload redaction for wakeups of terminal runs. */
 export class SqliteAgentWakeupRetention{
  private readonly db:DatabaseSync;private readonly scope:AgentRunScope;private readonly authorizeScope:Options['authorizeScope'];private readonly authorize:Options['authorize'];private readonly authorizeDiscovery:Options['authorizeDiscovery'];private readonly authorizationTimeoutMs?:number;private readonly maxPendingAuthorizations?:number;private authorizationsInFlight=0;

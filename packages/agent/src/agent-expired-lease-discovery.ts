@@ -1,12 +1,13 @@
 import {createCipheriv,createDecipheriv,createHash,randomBytes} from 'node:crypto';
 import {SqliteAgentRuns,type AgentRunScope,type ExpiredAgentLease} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Actor={tenantId:string;principalId:string};
 type Cursor={leaseUntil:number;runId:string};
 type Registry={register:(candidate:{operationId:string;method:string;path:string;summary?:string},binding:{authorize:(actor:Actor)=>boolean|Promise<boolean>;validate:(input:unknown)=>boolean;execute:(input:unknown,actor:Actor)=>unknown|Promise<unknown>})=>void};
 type Options={runs:SqliteAgentRuns|PostgresAgentRunLifecycleFoundation;scope:AgentRunScope;operationId:string;path:string;limit:number;cursorKey:Uint8Array;authorize:(actor:Actor,action:'list'|'read',lease:ExpiredAgentLease|null,signal:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number;timeoutMs?:number;maxPending?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const number=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const id=isIdentifier;
+const number=isNonNegativeInteger;
 const size=512;
 function parse(input:unknown):{cursor?:string}|undefined{if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==1||!Object.hasOwn(input,'query'))return;const query=(input as {query?:unknown}).query;if(!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(key=>key!=='cursor'))return;const cursor=(query as {cursor?:unknown}).cursor;if(cursor!==undefined&&(typeof cursor!=='string'||cursor.length>1000))return;return cursor===undefined?{}:{cursor};}
 const aad=(scope:AgentRunScope,actor:Actor,operationId:string)=>createHash('sha256').update(JSON.stringify([scope.tenantId,scope.agentId,actor.principalId,operationId])).digest();

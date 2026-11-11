@@ -1,10 +1,11 @@
 import {createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type SignedWebhookSource = AgentEventSourceIdentity & {secret:Uint8Array;previousSecrets?:Uint8Array[]};
 export type SignedWebhookOptions = {sources:SignedWebhookSource[];clock?:()=>number;maxAgeSeconds?:number};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 function oneHeader(req:IncomingMessage,name:string):string|undefined {
  let value:string|undefined;for(let i=0;i<req.rawHeaders.length;i+=2){if(req.rawHeaders[i].toLowerCase()===name){if(value!==undefined)return undefined;value=req.rawHeaders[i+1];}}return value;
 }

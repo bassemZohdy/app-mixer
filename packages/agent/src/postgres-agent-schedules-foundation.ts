@@ -4,10 +4,11 @@ import {parseAgentTraceParent} from './agent-trace-context.js';
 import {validateAgentScheduleConfig,nextAgentScheduleOccurrence,type AgentSchedule,type AgentScheduleConfig,type AgentScheduleCursor,type AgentSchedulePage,type AgentScheduleFireOptions} from './agent-schedules.js';
 import type {AgentRunScope} from './durable-runs.js';
 import {PostgresAgentRunLifecycleFoundation} from './postgres-run-lifecycle-foundation.js';
+import {isIdentifier,isNonNegativeInteger} from './validation.js';
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-const integer=(x:unknown):x is number=>Number.isSafeInteger(x)&&Number(x)>=0;
+const id=isIdentifier;
+const integer=isNonNegativeInteger;
 const now=async(query:Query)=>{const n=Number((await query('SELECT (extract(epoch from clock_timestamp())*1000)::bigint AS now',[])).rows[0]?.now);if(!integer(n)||n>Number.MAX_SAFE_INTEGER-86400000)throw Error('Invalid database clock');return n;};
 /** Internal shared schedules. Host supplies authorization and bounded database operations. */
 export class PostgresAgentSchedulesFoundation {

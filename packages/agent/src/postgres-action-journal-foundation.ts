@@ -1,10 +1,11 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {actionJSON,type AgentAction,type AgentActionPage,type ActionReconciliationEvidence,type ActionVerification,type ActionVerificationRequest} from './action-journal.js';
 import type {AgentRunScope} from './durable-runs.js';
+import {isIdentifier} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Options={scope:AgentRunScope;runId:string;leaseToken:string;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 const states=['ready','dispatching','uncertain','succeeded','failed'];
 function metadata(row:Record<string,unknown>):AgentAction{const attempts=Number(row.attempts),maxAttempts=Number(row.max_attempts);if(!id(row.action_id)||!id(row.operation_id)||!id(row.idempotency_key)||typeof row.status!=='string'||!states.includes(row.status)||!Number.isSafeInteger(attempts)||attempts<0||!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>20||attempts>maxAttempts)throw Error('Invalid shared action data');return {actionId:row.action_id,operationId:row.operation_id,idempotencyKey:row.idempotency_key,status:row.status as AgentAction['status'],attempts,maxAttempts};}
 

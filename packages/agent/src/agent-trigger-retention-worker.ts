@@ -1,8 +1,9 @@
 import {SqliteAgentTriggerRetention,type AgentTriggerRetentionActor,type TriggerRedactionCandidate} from './agent-trigger-retention.js';
 import {PostgresAgentTriggerRetentionFoundation} from './postgres-trigger-retention-foundation.js';
+import {isIdentifier} from './validation.js';
 
 type Options={retention:SqliteAgentTriggerRetention|PostgresAgentTriggerRetentionFoundation;actor:AgentTriggerRetentionActor;authorize:(actor:AgentTriggerRetentionActor,candidate:TriggerRedactionCandidate,signal:AbortSignal)=>boolean|Promise<boolean>;minAgeMs:number;ageFrom?:'receipt'|'completion';maxPerPass:number;pollMs:number;clock?:()=>number;onError:(error:unknown,runId?:string)=>void|Promise<void>};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Opt-in host-driven redaction of terminal trigger payloads using recorded receipt times. */
 export class AgentTriggerRetentionWorker {
  private readonly retention:SqliteAgentTriggerRetention|PostgresAgentTriggerRetentionFoundation;private readonly actor:AgentTriggerRetentionActor;private readonly authorize:Options['authorize'];private readonly minAgeMs:number;private readonly ageFrom:'receipt'|'completion';private readonly maxPerPass:number;private readonly pollMs:number;private readonly clock:()=>number;private readonly onError:Options['onError'];private cursor?:string;private active=false;private generation=0;private pending?:Promise<number>;private timer?:ReturnType<typeof setTimeout>;private controller?:AbortController;

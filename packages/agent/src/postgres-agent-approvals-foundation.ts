@@ -2,11 +2,12 @@ import {createHash} from 'node:crypto';
 import {actionJSON} from './action-journal.js';
 import type {AgentRunScope} from './durable-runs.js';
 import type {AgentApproval,AgentApprovalActor,AgentApprovalAccess} from './agent-approvals.js';
+import {isIdentifier} from './validation.js';
 
 type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
 type Identity={tenantId:string;agentId:string;runId:string;actionId:string;operationId:string};
 type Options={scope:AgentRunScope;runId:string;authorize:(actor:AgentApprovalActor,action:AgentApprovalAccess,approval:Identity,signal:AbortSignal)=>boolean|Promise<boolean>;query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>;timeoutMs?:number;maxPending?:number};
-const valid=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const valid=isIdentifier;
 /** Internal integration work; the host authenticates actors and authorizes access. */
 export class PostgresAgentApprovalsFoundation {
  private readonly scope:AgentRunScope;private readonly runId:string;private readonly query:Query;private readonly transaction:Options['transaction'];private readonly authorize:Options['authorize'];private readonly timeoutMs?:number;private readonly maxPending?:number;private pending=0;

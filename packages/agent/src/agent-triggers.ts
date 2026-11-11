@@ -5,11 +5,12 @@ import {randomUUID,createHash} from 'node:crypto';
 import {SqliteAgentRuns,type AgentRunScope} from './durable-runs.js';
 import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
 import {openDatabase} from './sqlite-open.js';
+import {isIdentifier} from './validation.js';
 
 type EventInput={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown};
 type EnqueueOptions={definitionVersion:number;maxAttempts:number;deadline:number;maxPending:number;traceParent?:string};
 export type TriggerRecord={sourceId:string;principalId:string;eventId:string;eventType:string;payload:unknown;runId:string;payloadRedacted?:true};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 /** Local trigger inbox; caller must authenticate and authorize the source and scope. */
 export class SqliteAgentTriggers {
  private readonly db:DatabaseSync;

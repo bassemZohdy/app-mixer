@@ -3,6 +3,7 @@ import type {AgentRunScope} from './durable-runs.js';
 import {readTriggerRetentionMetrics,formatTriggerRetentionMetrics,type TriggerRetentionMetricsSnapshot} from './agent-trigger-retention-metrics.js';
 import {readWakeupRetentionMetrics,formatWakeupRetentionMetrics,type WakeupRetentionMetricsSnapshot} from './agent-wakeup-retention-metrics.js';
 import {readAgentScheduleMetrics,formatAgentScheduleMetrics,type AgentScheduleMetricsSnapshot} from './agent-schedule-metrics.js';
+import {isIdentifier} from './validation.js';
 
 const statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'] as const;
 export type AgentRunMetricStatus=typeof statuses[number];
@@ -12,7 +13,7 @@ export type AgentRunOperationalMetric={kind:'queued'|'paused'|'lease';count:numb
 export type AgentActionBacklogMetric={actionStatus:'dispatching'|'uncertain';runStatus:AgentRunMetricStatus;count:number};
 export type AgentBudgetBacklogMetric={runStatus:AgentRunMetricStatus;count:number};
 export type AgentRunMetricsOptions={includeActionBacklog?:boolean;includeBudgetBacklog?:boolean;includeScheduleBacklog?:boolean;retentionBacklog?:{minAgeMs:number;ageFrom?:'receipt'|'completion'};wakeupRetentionBacklog?:{minAgeMs:number;ageFrom?:'observed'|'completion'};scope:AgentRunScope;authorize:(actor:AgentRunMetricsActor,scope:AgentRunScope)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:AgentRunMetricsActor,scope:AgentRunScope,signal:AbortSignal)=>boolean|Promise<boolean>;includeOperational?:boolean;clock?:()=>number};
-const valid=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const valid=isIdentifier;
 
 /** Authorized current-state aggregates for one tenant and agent; no run identifiers are returned. */
 export class SqliteAgentRunMetrics {

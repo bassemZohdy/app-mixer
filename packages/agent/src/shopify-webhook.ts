@@ -1,9 +1,10 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
 import type {AgentEventSourceIdentity,AgentEventRequest} from './event-ingress.js';
+import {isIdentifier} from './validation.js';
 
 export type ShopifyWebhookOptions={identity:AgentEventSourceIdentity;agentId:string;eventType:string;secret:Uint8Array;previousSecrets?:Uint8Array[]};
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+const id=isIdentifier;
 
 /** Shopify HTTPS webhooks sign only the body with an app-wide secret. */
 export function createShopifyWebhookAdapter(options:ShopifyWebhookOptions){
