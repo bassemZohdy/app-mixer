@@ -38,7 +38,14 @@
       - Done when: the preview parser equals the generated one and a hand edit to it fails the sync check; `npm run build && node --test packages/cli/test/process-files.test.mjs`
   - [ ] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
     - Done when: a restored older snapshot and a stale anchor are rejected; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs packages/web/test/offline-legacy-clients.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
-    - State: next: decompose
+    - [ ] **TASK-002.3.1** · mid · Port the browser queue hardening: detect selective substitution of stored envelopes, let hosts purge settled items from a full queue, act on the review of the offline queue (5a3a34c4, 70913ae7, 5236384e)
+      - Done when: a swapped envelope is detected, a full queue accepts a purge of settled items only, and queue limits hold; `npm run build && node --test packages/web/test/offline.test.mjs packages/core/test/offline-queue.test.mjs`
+    - [ ] **TASK-002.3.2** · high · Port offline provisioning of a device that has never been online from a signed grant (7ce2b9e2)
+      - Done when: a valid signed grant provisions the device and a forged, expired or replayed grant is refused; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs`
+    - [ ] **TASK-002.3.3** · mid · Port migration of data from retained builds of older offline clients (a43b1ec3)
+      - Done when: data written by each retained client build opens in the current one and an unknown format is refused; `npm run build && node --test packages/web/test/offline-legacy-clients.test.mjs`
+    - [ ] **TASK-002.3.4** · high · Port the rollback anchors for the promotion floor and the offline identity stores, and replication of promotions to a disconnected target (edbdc8ff, 278a7b96, 73eeb8ad)
+      - Done when: a restored older snapshot and a stale anchor are rejected and a carried promotion document replicates once; `npm run build && node --test packages/core/test/remote-promotion-floor-anchor.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
   - [ ] **TASK-002.4** · high · Port the agent on shared PostgreSQL (runs, schedules, cost budgets, run supervisor, worker host) and the new webhook adapters the same way
     - Done when: two nodes cannot exceed one agent's run quota and the worker host drains on shutdown; `npm run build && node --test packages/agent/test/worker-host.test.mjs packages/agent/test/run-supervisor-logic.test.mjs packages/agent/test/discord-sendgrid-webhook.test.mjs packages/agent/test/postgres-run-quota-nodes.test.mjs`
     - State: next: decompose
