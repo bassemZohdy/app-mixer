@@ -36,9 +36,8 @@
       - Links: Depends: TASK-002.2.2
     - [x] **TASK-002.2.4** · mid · Port generation of the editor preview's shared schema parser from the CLI template (2f9d4e0e), replacing the hand copy
       - Done when: the preview parser equals the generated one and a hand edit to it fails the sync check; `npm run build && node --test packages/cli/test/process-files.test.mjs`
-  - [ ] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
+  - [x] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
     - Done when: a restored older snapshot and a stale anchor are rejected; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs packages/web/test/offline-legacy-clients.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
-    - State: branch todo/TASK-002.3-port-offline-anchors from todo/TASK-002-port-remaining-local-acceptance; next: build children
     - [x] **TASK-002.3.1** · mid · Port the browser queue hardening: detect selective substitution of stored envelopes, let hosts purge settled items from a full queue, act on the review of the offline queue (5a3a34c4, 70913ae7, 5236384e)
       - Done when: a swapped envelope is detected, a full queue accepts a purge of settled items only, and queue limits hold; `npm run build && node --test packages/web/test/offline.test.mjs packages/core/test/offline-queue.test.mjs`
     - [x] **TASK-002.3.2** · high · Port offline provisioning of a device that has never been online from a signed grant (7ce2b9e2)
@@ -47,7 +46,7 @@
       - Done when: data written by each retained client build opens in the current one and an unknown format is refused; `npm run build && node --test packages/web/test/offline-legacy-clients.test.mjs`
     - [x] **TASK-002.3.4** · high · Port the rollback anchors for the promotion floor and the offline identity stores, and replication of promotions to a disconnected target (edbdc8ff, 278a7b96, 73eeb8ad)
       - Done when: a restored older snapshot and a stale anchor are rejected and a carried promotion document replicates once; `npm run build && node --test packages/core/test/remote-promotion-floor-anchor.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
-    - [ ] **TASK-002.3.5** · high · Port the external floor and sequence anchors for the release registry, the audit logs and the revocation and approval stores (hardening ae1efdae, 92e57a90, 655e0e29, 7168cb57, 378148f2, c992fca6); the parent's Done when names store-epoch-anchors.test.mjs, which these supply
+    - [x] **TASK-002.3.5** · high · Port the external floor and sequence anchors for the release registry, the audit logs and the revocation and approval stores (hardening ae1efdae, 92e57a90, 655e0e29, 7168cb57, 378148f2, c992fca6); the parent's Done when names store-epoch-anchors.test.mjs, which these supply
       - Done when: a restored database is detected by each store and a stale or unreadable anchor fails closed; `npm run build && node --test packages/core/test/store-epoch-anchors.test.mjs packages/core/test/audit-sequence-anchor.test.mjs packages/core/test/file-release-floor-anchor.test.mjs packages/core/test/postgres-release-floor-anchor.test.mjs`
   - [ ] **TASK-002.4** · high · Port the agent on shared PostgreSQL (runs, schedules, cost budgets, run supervisor, worker host) and the new webhook adapters the same way
     - Done when: two nodes cannot exceed one agent's run quota and the worker host drains on shutdown; `npm run build && node --test packages/agent/test/worker-host.test.mjs packages/agent/test/run-supervisor-logic.test.mjs packages/agent/test/discord-sendgrid-webhook.test.mjs packages/agent/test/postgres-run-quota-nodes.test.mjs`
