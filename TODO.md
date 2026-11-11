@@ -39,9 +39,8 @@
   - [ ] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
     - Done when: a restored older snapshot and a stale anchor are rejected; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs packages/web/test/offline-legacy-clients.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
     - State: branch todo/TASK-002.3-port-offline-anchors from todo/TASK-002-port-remaining-local-acceptance; next: build children
-    - [/] **TASK-002.3.1** · mid · Port the browser queue hardening: detect selective substitution of stored envelopes, let hosts purge settled items from a full queue, act on the review of the offline queue (5a3a34c4, 70913ae7, 5236384e)
+    - [x] **TASK-002.3.1** · mid · Port the browser queue hardening: detect selective substitution of stored envelopes, let hosts purge settled items from a full queue, act on the review of the offline queue (5a3a34c4, 70913ae7, 5236384e)
       - Done when: a swapped envelope is detected, a full queue accepts a purge of settled items only, and queue limits hold; `npm run build && node --test packages/web/test/offline.test.mjs packages/core/test/offline-queue.test.mjs`
-      - State: attempts 0/3; baseline 1849 passing; branch todo/TASK-002.3.1-port-browser-queue-hardening from todo/TASK-002.3-port-offline-anchors; next: read docs
     - [ ] **TASK-002.3.2** · high · Port offline provisioning of a device that has never been online from a signed grant (7ce2b9e2)
       - Done when: a valid signed grant provisions the device and a forged, expired or replayed grant is refused; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs`
     - [ ] **TASK-002.3.3** · mid · Port migration of data from retained builds of older offline clients (a43b1ec3)

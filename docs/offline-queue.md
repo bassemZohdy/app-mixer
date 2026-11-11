@@ -213,3 +213,11 @@ It makes no network request. The returned publication can seed `EncryptedPublica
 ## Capacity and retention
 
 `SqliteOfflineQueue` accepts up to 1,000 live operations per principal (`pending`, `running`, `conflict`, `uncertain`, `exhausted`); `succeeded` and `discarded` operations no longer count, so a principal is never locked out by history. `purge(scope, principalId, {statuses, limit})` is the host-authorized retention call: it deletes at most `limit` (up to 1,000) operations of that principal in the given terminal statuses (`succeeded`, `discarded`, `exhausted`), oldest first, and returns the count; live work is never removed. A purged operation's request key is forgotten, so purge only history that the client can no longer resubmit.
+
+## Retention of settled browser items
+
+`EncryptedBrowserQueue` holds at most 1,000 items per partition; a status is only visible after decryption, so the cap counts every stored item. `purge({statuses, limit})` frees a full queue: it deletes at most `limit` (up to 1,000) settled items (`succeeded`, `discarded`, `exhausted`), lowest id first (ids are hashes of the request key, so the order is arbitrary but stable), and returns the count. Deletion advances the authenticated counter and digest exactly like any other write, so the rollback anchor stays valid, a restored purged envelope is still detected as an integrity mismatch, and the host floor rises. A purged item's request key is forgotten; purge only history the client cannot resubmit.
+
+## Shared keys and failed submissions
+
+A host-issued shared idempotency key that another request already holds, in this tenant or another, is reported as `Offline request conflict`; the database's constraint text is not shown. If a staged submission's state moves on while its capability runs (an operator recovered it as uncertain), the capability's own error is still the one the caller sees and the operation stays uncertain for reconciliation.
