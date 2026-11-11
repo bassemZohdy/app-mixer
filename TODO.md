@@ -4,10 +4,43 @@
 
 - [ ] **TASK-002** · P1 · mid · Port the remaining local-acceptance-hardening commits (216, with over 100 files found only there: ESLint setup, shared validators, editor-preview sync, provider idempotency check) onto this branch, leaving out the progress script written for the legacy TODO format
   - Done when: npm run lint exists and passes, and no file named by this branch's docs is found only on that branch; `npm run lint`
-  - State: next: decompose
+  - State: branch todo/TASK-002-port-remaining-local-acceptance from harden-on-main; next: build children
+  - [ ] **TASK-002.1** · high · Port tooling and shared code (editorconfig, ESLint, validators, typed errors, server limits, agent subpath exports, Twilio signature check) by cherry-picking the matching commits that git cherry lists for local-acceptance-hardening
+    - Done when: typed errors keep their HTTP statuses, a tampered Twilio signature and an unknown subpath are refused, and lint passes; `npm run lint && npm run build && node --test packages/core/test/errors.test.mjs packages/agent/test/errors.test.mjs packages/core/test/server-limits.test.mjs packages/agent/test/subpath-exports.test.mjs packages/agent/test/twilio-signature.test.mjs`
+    - [ ] **TASK-002.1.1** · low · Port the shared identifier and integer validators (hardening commit 6c6a16c6) so core and agent each keep one definition
+      - Done when: each package exports one isIdentifier and one isNonNegativeInteger, an invalid identifier is rejected, and a test caps the copies; `npm run build && node --test packages/cli/test/shared-validators.test.mjs`
+    - [ ] **TASK-002.1.2** · high · Port typed errors in core and the capability server (a5e7cb1b, d4f3ef3d, core part of 6045bf6d) so statuses come from error codes, with the documented legacy fallback
+      - Done when: every existing refusal keeps its HTTP status and an unknown error still returns 500 without its message; `npm run build && node --test packages/core/test/errors.test.mjs packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
+      - Links: Depends: TASK-002.1.1
+    - [ ] **TASK-002.1.3** · mid · Port typed errors in the agent servers and supervisor (0a76282c, agent part of 6045bf6d), keeping swallowed causes
+      - Done when: agent refusals map by code and lost races are ignored by code; `npm run build && node --test packages/agent/test/errors.test.mjs`
+      - Links: Depends: TASK-002.1.2
+    - [ ] **TASK-002.1.4** · mid · Port the slow-client bounds and TLS policy for every server (d0db960c)
+      - Done when: a slow client is cut off and a weak TLS version is refused; `npm run build && node --test packages/core/test/server-limits.test.mjs packages/agent/test/transport.test.mjs`
+    - [ ] **TASK-002.1.5** · mid · Port the Twilio signature check without the SDK and the agent subpath entries (89db8c76, efd1c31f, 0c38ce94)
+      - Done when: a tampered signature and an unknown subpath are refused and npm pack ships no sources; `npm run build && node --test packages/agent/test/twilio-signature.test.mjs packages/agent/test/subpath-exports.test.mjs packages/cli/test/package-metadata.test.mjs`
+    - [ ] **TASK-002.1.6** · mid · Port the Node floor 22.22.2 with the jsdom 31 and OpenTelemetry 3.x updates (106a196c)
+      - Done when: engines, README and the CI matrix agree on the floor and the package metadata test passes; `npm run build && node --test packages/cli/test/package-metadata.test.mjs`
+    - [ ] **TASK-002.1.7** · mid · Port the lint baseline and editorconfig (0b0e88b9), last so it fixes the final state
+      - Done when: lint passes with no suppressed rule; `npm run lint`
+      - Links: Depends: TASK-002.1.2, TASK-002.1.3, TASK-002.1.4, TASK-002.1.5
+  - [ ] **TASK-002.2** · mid · Port the web, React Native and Flutter fixtures, accessibility checks and editor-preview sync the same way
+    - Done when: the renderers agree on the shared fixtures; `npm run build && node --test packages/web/test/browser-accessibility-parity.test.mjs packages/native/test/parity.test.mjs`
+    - State: next: decompose
+  - [ ] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
+    - Done when: a restored older snapshot and a stale anchor are rejected; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs packages/web/test/offline-legacy-clients.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
+    - State: next: decompose
+  - [ ] **TASK-002.4** · high · Port the agent on shared PostgreSQL (runs, schedules, cost budgets, run supervisor, worker host) and the new webhook adapters the same way
+    - Done when: two nodes cannot exceed one agent's run quota and the worker host drains on shutdown; `npm run build && node --test packages/agent/test/worker-host.test.mjs packages/agent/test/run-supervisor-logic.test.mjs packages/agent/test/discord-sendgrid-webhook.test.mjs packages/agent/test/postgres-run-quota-nodes.test.mjs`
+    - State: next: decompose
+  - [ ] **TASK-002.5** · mid · Port the deploy, CI and observability changes (admission rules, alert rules, collector trace test, new workflows, agent metrics) the same way
+    - Done when: every workflow keeps its job timeouts and the new agent metrics report their backlog; `npm run build && node --test packages/cli/test/process-files.test.mjs packages/agent/test/agent-run-metrics-backlog.test.mjs`
+    - State: next: decompose
+  - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
+    - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
 - [ ] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
   - Done when: both Dockerfiles share one digest-pinned base image newer than 22.13.0, and a tag without a digest fails the test; `node --test packages/cli/test/process-files.test.mjs`
-  - Links: Ref: docs/kubernetes-data-plane.md
+  - Links: Ref: docs/kubernetes-data-plane.md · Depends: TASK-002
 - [ ] **FEAT-004** · P1 · high · Serve the generated app's pages with a hash-based Content-Security-Policy, frame-ancestors none and a Referrer-Policy, as the review pages already do
   - Done when: the generated index page is served with a policy without unsafe-inline that covers each of its inline blocks, and a page with an extra inline script fails the hash check; `npm run build && node --test packages/cli/test/csp.test.mjs`
 - [ ] **FIX-005** · P1 · mid · Stop copying agent-only dependencies (twilio, LangChain, openai, about 80 MB) into the Data Plane image; install only what core and web need
@@ -15,6 +48,7 @@
   - Links: Ref: docs/kubernetes-data-plane.md
 - [ ] **TASK-006** · P1 · mid · Replace the error-message string lists that choose the HTTP status (94 literals in capability-server.ts, 19 in planes.ts) with typed errors that carry their status
   - Done when: every existing message keeps its status, and an unknown error still returns 500 without leaking its message; `npm run build && node --test packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
+  - Links: Depends: TASK-002
   - State: next: decompose
 - [ ] **TASK-007** · P1 · low · Adopt a formatter with a CI check and reformat packages, templates, deploy and scripts; source lines now reach 5,687 characters and average 141
   - Done when: the format check passes, and a test fails on any source line over 200 characters; `node --test packages/cli/test/source-format.test.mjs`
@@ -23,18 +57,17 @@
 - [ ] **TASK-008** · P2 · mid · Move the generated server, page, chat and workspace sources out of String.raw literals in packages/cli/src/index.ts into packages/cli/templates so they can be linted and syntax-checked
   - Done when: createProject writes the same files byte for byte as before, and each template passes a syntax check; `npm run build && node --test packages/cli/test/create.test.mjs`
   - State: next: decompose
-- [ ] **TASK-009** · P2 · mid · Generate the 64 KB of editor code in core's data-editor-preview.ts from packages/cli/templates/data-editor.mjs instead of keeping a hand copy
-  - Done when: a test fails when the preview and the template differ; `npm run build && node --test packages/cli/test/editor-preview-sync.test.mjs`
-  - Links: Depends: TASK-002
 - [ ] **TASK-010** · P2 · mid · Share one copy of csp.ts and sqlite-open.ts (identical in core and agent), of the JSON body reader (8 inline copies) and of the bearer-token comparison (about 18 files)
   - Done when: each helper has one definition, and a test caps the number of copies; `npm run build && node --test packages/cli/test/shared-helpers.test.mjs`
+  - Links: Depends: TASK-002
   - State: next: decompose
 - [ ] **TASK-011** · P2 · high · Give @app-mixer/agent subpath entries and load provider SDKs on first use; importing the package now takes about 0.9 s and 111 MB because one barrel has 217 export lines (an earlier attempt was reverted in 314b6860)
   - Done when: importing the root entry loads neither twilio nor @langchain/openai, each subpath resolves, and an unknown subpath is refused; `npm run build && node --test packages/agent/test/package-entries.test.mjs`
+  - Links: Depends: TASK-002
   - State: next: decompose
 - [ ] **TASK-012** · P2 · mid · Verify Twilio signatures with node:crypto like the other webhook adapters, and keep the 20 MB twilio SDK only as a dev dependency used as a test oracle
   - Done when: valid signatures pass, tampered bodies and URLs are refused, and results match the SDK; `npm run build && node --test packages/agent/test/twilio-webhook.test.mjs`
-  - Links: Ref: docs/agent-event-ingress.md
+  - Links: Ref: docs/agent-event-ingress.md · Depends: TASK-002
 - [ ] **TASK-013** · P2 · low · Remove the duplicated passages in CHANGELOG.md (8 repeated entries, two Added blocks under Unreleased) and in docs/kubernetes-data-plane.md, docs/acceptance-checklists.md and docs/runbooks.md
   - Done when: a test fails when a line over 120 characters appears twice in one Markdown file; `node --test packages/cli/test/process-files.test.mjs`
 - [ ] **TASK-014** · P2 · low · Remove the duplicate license key from the five package manifests and settle whether adapters/angular is a workspace, as CONTRIBUTING.md says
