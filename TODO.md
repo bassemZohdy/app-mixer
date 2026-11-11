@@ -24,9 +24,18 @@
     - [x] **TASK-002.1.7** · mid · Port the lint baseline and editorconfig (0b0e88b9), last so it fixes the final state
       - Done when: lint passes with no suppressed rule; `npm run lint`
       - Links: Depends: TASK-002.1.2, TASK-002.1.3, TASK-002.1.4, TASK-002.1.5
-  - [ ] **TASK-002.2** · mid · Port the web, React Native and Flutter fixtures, accessibility checks and editor-preview sync the same way
+  - [x] **TASK-002.2** · mid · Port the web, React Native and Flutter fixtures, accessibility checks and editor-preview sync the same way
     - Done when: the renderers agree on the shared fixtures; `npm run build && node --test packages/web/test/browser-accessibility-parity.test.mjs packages/native/test/parity.test.mjs`
-    - State: next: decompose
+    - [x] **TASK-002.2.1** · mid · Port the shared catalog-variant and TextField fixtures for web, native and Flutter (hardening 0f633ba6, 5697df45); the CI smoke-script and device replays go with TASK-002.5
+      - Done when: every catalog variant and layout value renders the same through the native adapter as the fixture says; `npm run build && node --test packages/native/test/parity.test.mjs`
+    - [x] **TASK-002.2.2** · mid · Port rendering of numbers and booleans bound to Text and the stable component and variant hooks on every renderer (1fb6579a, 8e7739f2)
+      - Done when: a bound number and a bound boolean render as text and every component exposes its hook, while an unsupported bound value is still rejected; `npm run build && node --test packages/web/test/renderer.test.mjs packages/native/test/parity.test.mjs`
+      - Links: Depends: TASK-002.2.1
+    - [x] **TASK-002.2.3** · mid · Port in-place patching of bound nodes on data-only updates and keeping text that is being composed with an input method (6bec636d, 216f6164)
+      - Done when: a data-only update keeps node identity and focus, and composing text survives an update to another path; `npm run build && node --test packages/web/test/renderer.test.mjs packages/web/test/conformance.test.mjs`
+      - Links: Depends: TASK-002.2.2
+    - [x] **TASK-002.2.4** · mid · Port generation of the editor preview's shared schema parser from the CLI template (2f9d4e0e), replacing the hand copy
+      - Done when: the preview parser equals the generated one and a hand edit to it fails the sync check; `npm run build && node --test packages/cli/test/process-files.test.mjs`
   - [ ] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
     - Done when: a restored older snapshot and a stale anchor are rejected; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs packages/web/test/offline-legacy-clients.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
     - State: next: decompose

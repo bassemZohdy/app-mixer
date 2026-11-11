@@ -4,7 +4,7 @@ export const APP_MIXER_CATALOG = 'https://raw.githubusercontent.com/bassemZohdy/
 export const BASIC_CATALOG = 'https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj = Record<string, unknown>;
 export type ActionMessage = {version:'v0.9.1'; action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string, unknown>}};
-type Interaction = {controlKey: string; write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; composing: (input: HTMLInputElement | HTMLTextAreaElement, active: boolean) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
+type Interaction = {bind: (update: (data: unknown) => void) => void; controlKey: string; write: (path: string, value: string, input: HTMLInputElement | HTMLTextAreaElement) => void; composing: (input: HTMLInputElement | HTMLTextAreaElement, active: boolean) => void; action: (name: string, context: Obj) => void; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; enabled: boolean};
 type Renderer = (component: Obj, renderChild: (id: string) => HTMLElement, data: unknown, document: Document, interaction: Interaction) => HTMLElement;
 const obj = (x: unknown): x is Obj => x !== null && typeof x === 'object' && !Array.isArray(x);
 const only = (value: Obj, keys: string[]): boolean => Object.keys(value).every(key => keys.includes(key));
@@ -83,6 +83,11 @@ function textValue(value: unknown, data: unknown): string {
   const result = typeof value === 'string' ? value : obj(value) && typeof value.path === 'string' ? read(data, value.path) : undefined;
   return typeof result === 'string' ? result : '';
 }
+/** Display text of a Text component: strings as is; finite numbers and booleans in their JSON spelling (`3`, `2.5`, `true`); anything else (null, missing, objects, arrays) is empty. */
+function displayText(value: unknown, data: unknown): string {
+  const result = typeof value === 'string' ? value : obj(value) && typeof value.path === 'string' ? read(data, value.path) : undefined;
+  return typeof result === 'string' ? result : (typeof result === 'number' && Number.isFinite(result)) || typeof result === 'boolean' ? String(result) : '';
+}
 function children(c: Obj): string[] {
   if (!Array.isArray(c.children) || !Array.from(c.children).every(id)) throw Error('Invalid children');
   return c.children;
@@ -118,15 +123,19 @@ function validateBasic(c: Obj): void {
     }
   } else throw Error('Unsupported component');
 }
+/** Renderers created by `basicRegistry`; any other renderer may read data in ways the incremental path cannot see. */
+const BUILTIN = new WeakSet<Renderer>();
 export function basicRegistry(): ComponentRegistry {
   const registry = new ComponentRegistry();
-  registry.register('Text', (c, _child, data, doc) => {
+  registry.register('Text', (c, _child, data, doc, interaction) => {
     if (!only(c, ['id','component','text','variant'])) throw Error('Unsupported Text property');
     if (c.variant !== undefined && !['h1','h2','h3','h4','h5','caption','body'].includes(c.variant as string)) throw Error('Unsupported Text variant');
     if (!(typeof c.text === 'string' || (obj(c.text) && typeof c.text.path === 'string'))) throw Error('Invalid Text');
     const variants: Record<string,string> = {h1:'h1', h2:'h2', h3:'h3', h4:'h4', h5:'h5', caption:'small', body:'p'};
     const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant] : 'p';
-    const element = doc.createElement(tag); element.textContent = textValue(c.text, data); return element;
+    const element = doc.createElement(tag); element.textContent = displayText(c.text, data);
+    interaction.bind(next => { const text = displayText(c.text, next); if (element.textContent !== text) element.textContent = text; });
+    return element;
   }, validateBasic);
   for (const type of ['Column', 'Row']) registry.register(type, (c, child, _data, doc) => {
     if (!only(c, ['id','component','children','justify','align'])) throw Error('Unsupported layout property');
@@ -160,6 +169,15 @@ export function basicRegistry(): ComponentRegistry {
     input.addEventListener('compositionstart', () => { composing = true; interaction.composing(input, true); });
     input.addEventListener('compositionend', () => { composing = false; interaction.composing(input, false); interaction.write(path, input.value, input); });
     input.addEventListener('input', () => { if (!composing) interaction.write(path, input.value, input); });
+    // Text being composed with an input method is not in the data model yet; an update to any other path must not overwrite it. The data catches up when composition ends.
+    interaction.bind(next => {
+      if (composing) return;
+      const value = textValue(c.value, next);
+      if (input.value === value) return;
+      const active = input.ownerDocument.activeElement === input, start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
+      input.value = value;
+      if (active && start !== null && end !== null) input.setSelectionRange(Math.min(start, value.length), Math.min(end, value.length), direction ?? 'none');
+    });
     interaction.controls.set(interaction.controlKey, input);
     wrapper.appendChild(input); return wrapper;
   }, validateBasic);
@@ -180,10 +198,15 @@ export function basicRegistry(): ComponentRegistry {
     button.addEventListener('click', () => interaction.action(event.name as string, context));
     return button;
   }, validateBasic);
+  for (const name of ['Text','Column','Row','Card','TextField','Button']) BUILTIN.add(registry.get(name)!);
   return registry;
 }
-type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; controlComponents: Map<string, Obj>; composing: Set<HTMLInputElement | HTMLTextAreaElement>; componentRevision: object };
+type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; controlComponents: Map<string, Obj>; composing: Set<HTMLInputElement | HTMLTextAreaElement>; componentRevision: object;
+  /** Set when every rendered component is a built-in one: a data-only update then refreshes the bound Text and TextField nodes in place instead of rebuilding the surface. */
+  patch?: ((data: unknown) => void)[] | undefined };
 export class A2UIRenderer {
+  /** True while a field edit is being applied: the surface is rebuilt then, so the elements of the previous render stop being able to write. */
+  private fieldEdit = false;
   private readonly surfaces = new Map<string, Surface>();
   constructor(private readonly host: HTMLElement, private readonly registry = basicRegistry(), private readonly onAction?: (message: ActionMessage) => void) {}
   apply(message: unknown): void {
@@ -222,6 +245,10 @@ export class A2UIRenderer {
       if (payload.path !== undefined && typeof payload.path !== 'string') throw Error('Invalid data path');
       data = update(surface.data, (payload.path as string | undefined) ?? '/', payload.value, !Object.hasOwn(payload,'value') || payload.value === undefined);
     }
+    if (kind === 'updateDataModel' && surface.patch && !this.fieldEdit) {
+      for (const update of surface.patch) update(data);
+      surface.data = data; return;
+    }
     const doc = this.host.ownerDocument;
     // Retain focus only when the same field definition survives at the same tree path.
     const focusedEntry = [...surface.controls].find(([, control]) => doc.activeElement === control);
@@ -229,6 +256,7 @@ export class A2UIRenderer {
     const controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
     const controlComponents = new Map<string, Obj>();
     let renderedCount = 0;
+    const patches: ((data: unknown) => void)[] = []; let patchable = true;
     const render = (componentId: string, visited: Set<string>, inButton = false, path = 'root;'): HTMLElement => {
       if (++renderedCount > 5000) throw Error('Component tree too large');
       const c = components.get(componentId);
@@ -239,10 +267,12 @@ export class A2UIRenderer {
       if (c.component === 'TextField') controlComponents.set(path,c);
       const occurrences = new Map<string,number>();
       const interaction: Interaction = {
+        bind: update => { patches.push(update); },
         controlKey:path, controls, enabled: !!this.onAction,
         write: (fieldPath, value, input) => {
           if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(path) !== input) return;
-          this.apply({version:'v0.9.1', updateDataModel:{surfaceId,path:fieldPath,value}});
+          this.fieldEdit = true;
+          try { this.apply({version:'v0.9.1', updateDataModel:{surfaceId,path:fieldPath,value}}); } finally { this.fieldEdit = false; }
         },
         composing: (input, active) => {
           if (this.surfaces.get(surfaceId) !== surface || surface.controls.get(path) !== input) return;
@@ -260,10 +290,15 @@ export class A2UIRenderer {
           this.onAction({version:'v0.9.1', action:{name,surfaceId,sourceComponentId:componentId,timestamp:new Date().toISOString(),context:resolved}});
         }
       };
-      const element = this.registry.get(c.component as string)!(c, child => {
+      const renderer = this.registry.get(c.component as string)!;
+      if (!BUILTIN.has(renderer)) patchable = false;
+      const element = renderer(c, child => {
         const occurrence=occurrences.get(child) ?? 0;occurrences.set(child,occurrence+1);
         return render(child, next, inButton || c.component === 'Button', `${path}${child.length}:${child}:${occurrence};`);
       }, data, doc, interaction);
+      // Stable hooks for host styling and test selection: the component ID and, when given, its variant. Colors and borders are the host's theme.
+      element.dataset.componentId = c.id as string;
+      if (typeof c.variant === 'string') element.dataset.variant = c.variant;
       // A heading used as a button label is presentational; preserve its visual tag and text.
       if (inButton && c.component === 'Text' && /^h[1-5]$/i.test(element.tagName)) element.setAttribute('role', 'presentation');
       return element;
@@ -274,7 +309,7 @@ export class A2UIRenderer {
     if (kind === 'updateDataModel' && surface.composing.size) { surface.data = data; return; }
     const restoreFocus = focused && doc.activeElement === focused.control && surface.controlComponents.get(focused.id) === controlComponents.get(focused.id);
     surface.element.replaceChildren(...(root ? [root] : []));
-    surface.components = components; surface.data = data; surface.controls = controls; surface.controlComponents = controlComponents; surface.composing.clear(); surface.componentRevision = componentRevision;
+    surface.components = components; surface.data = data; surface.controls = controls; surface.controlComponents = controlComponents; surface.composing.clear(); surface.componentRevision = componentRevision; surface.patch = patchable ? patches : undefined;
     const replacement = restoreFocus ? controls.get(focused.id) : undefined;
     if (replacement && focused) {
       replacement.focus({preventScroll:true});

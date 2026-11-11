@@ -9,6 +9,7 @@ npm ci
 npm run build          # web bundle first, then every workspace
 npm test               # builds, then runs every default test with node --test
 npm run lint           # typescript-eslint: floating and misused promises, awaiting non-promises, unused variables (eslint.config.mjs); CI runs it on Node 22
+npm run previews       # copies the shared schema parser from the generated editor template into the control plane's inert preview; a test fails when it is stale
 npm run docs           # regenerates docs/README.md after adding, renaming or retitling a document
 ```
 

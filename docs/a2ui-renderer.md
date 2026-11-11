@@ -4,7 +4,7 @@
 
 | Component | Supported properties (in addition to `id` and `component`) |
 | --- | --- |
-| Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Literal text is limited to 10,000 Unicode code points and displayed literally, including Markdown syntax. |
+| Text | `text`: literal string or absolute data path; optional `variant`: h1–h5, body, caption. Literal text is limited to 10,000 Unicode code points and displayed literally, including Markdown syntax. A bound value that is a finite number or a boolean is shown in its JSON spelling (`3`, `2.5`, `true`; a whole number never gains `.0`); null, a missing path, an object or an array shows nothing. The web, React Native and Flutter renderers behave the same and the shared bindings fixture checks it. |
 | Column, Row | `children`: array of component IDs; optional `justify` and `align` flex alignment. |
 | Card | `child`: component ID. |
 | TextField | Literal `label`, absolute `value.path`, and optional `variant` (`shortText` or `longText`); writes changes to the local model. |
@@ -37,3 +37,18 @@ Application-definition `Input` components use `props: {label, path, variant?}`, 
 An application-definition `Text` component can use `props: {path, variant?}` to display a value from the local surface data model, including values edited by an Input. `path` is an absolute JSON Pointer and `variant`, when provided, is `h1` through `h5`, `body`, or `caption`. A bound Text cannot also specify `text`; displayed values are literal text. Existing `props.text` definitions remain supported. Local bindings do not persist data.
 
 An application-definition `Card` can use `props: {title?, text?}` to display an optional heading and body in a section. Both values must be strings of at most 10,000 characters and are rendered as plain text; unknown properties are rejected. The card is static and does not load data or invoke an action.
+
+## Variants and stable hooks
+
+The renderers do not impose a theme: colors, borders and fonts belong to the host. Variants and component IDs are exposed so a host can style and select them.
+
+| | Web | React Native |
+| --- | --- | --- |
+| Component ID | `data-component-id` on the component's root element | `testID` |
+| Variant | `data-variant` (`h1`-`h5`, `body`, `caption`, `shortText`, `longText`, `default`, `primary`, `borderless`) | `variantStyles={{Button:{primary:...},TextField:{longText:...}}}` prop, applied as `style` |
+
+Example (web): `button[data-variant="primary"] { background: #1a56db; color: white }`, or select a component in a test with `[data-component-id="save"]`. Text variants also keep their element or text-theme mapping. The Flutter renderer does not expose these hooks yet.
+
+## Data updates
+
+A data-only update that arrives from outside the surface (`updateDataModel` from the host or the stream) no longer rebuilds it when every rendered component is built in (`Text`, `Column`, `Row`, `Card`, `TextField`, `Button`): the bound `Text` and `TextField` nodes are refreshed in place, so DOM nodes, focus and selection (with its direction) are kept and no element is created. An edit typed into a `TextField` still rebuilds the surface, so the elements of the previous render can no longer write. A surface that renders any custom component, or an update that changes the components, is rebuilt as before. Text that is being composed with an input method is never overwritten by an update to another path; the data catches up when composition ends. `node scripts/bench-renderer.mjs` compares the two paths on a 1,000-component surface.

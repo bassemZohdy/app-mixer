@@ -3,6 +3,15 @@
   {"message":{"version":"v0.9.1","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Text","text":{"path":"/form/a~1b"}}]}},"text":""},
   {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":"Ada"}},"text":"Ada"},
   {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":"Grace"}},"text":"Grace"},
-  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":42}},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":42}},"text":"42"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":true}},"text":"true"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":false}},"text":"false"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":2.5}},"text":"2.5"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":4.0}},"text":"4"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":-0.5}},"text":"-0.5"},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":null}},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":{"a":1}}},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":[1,2]}},"text":""},
+  {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b","value":"Grace"}},"text":"Grace"},
   {"message":{"version":"v0.9.1","updateDataModel":{"surfaceId":"main","path":"/form/a~1b"}},"text":""}
 ]
