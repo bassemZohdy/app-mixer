@@ -203,3 +203,28 @@ test('incremental missing layout references retain their web flex slot until res
     assert.equal(row.children[1].textContent,'Middle');
   }
 });
+
+// TASK-002.2.2
+test('every rendered component carries its ID and variant as stable hooks',()=>{
+ const {host,renderer}=setup();
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{form:{name:'Ada'}}}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+  {id:'root',component:'Column',children:['title','field','buy']},{id:'title',component:'Text',text:'Hi',variant:'h2'},
+  {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'},variant:'longText'},
+  {id:'buy',component:'Button',variant:'primary',child:'buyLabel',action:{event:{name:'buy'}}},{id:'buyLabel',component:'Text',text:'Buy'}]}});
+ const surface=host.children[0],root=surface.children[0],[title,field,buy]=root.children;
+ assert.equal(root.dataset.componentId,'root');assert.equal(root.dataset.variant,undefined);
+ assert.deepEqual([title.dataset.componentId,title.dataset.variant],['title','h2']);
+ assert.deepEqual([field.dataset.componentId,field.dataset.variant],['field','longText']);
+ assert.deepEqual([buy.dataset.componentId,buy.dataset.variant],['buy','primary']);assert.equal(buy.children[0].dataset.componentId,'buyLabel');
+});
+
+test('Text bound to a finite number or a boolean shows its JSON spelling; anything else shows nothing',()=>{
+ const {host,renderer}=setup();
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{count:3,ratio:2.5,off:false,on:true,none:null,list:[1],nested:{a:1},text:'plain'}}});
+ const paths=['/count','/ratio','/off','/on','/none','/list','/nested','/text','/missing'];
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:paths.map((_,index)=>'t'+index)},...paths.map((path,index)=>({id:'t'+index,component:'Text',text:{path}}))]}});
+ assert.deepEqual([...host.children[0].children[0].children].map(node=>node.textContent),['3','2.5','false','true','','','','plain','']);
+});

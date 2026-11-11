@@ -177,13 +177,15 @@ export class NativeSurfaceStore {
       const boundText=c.component==='Text'?(typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined):undefined;
       const fieldValue=c.component==='TextField'&&obj(c.value)?read(data,c.value.path as string):undefined;
       const extensionProps=this.extensions.has(c.component as string)?Object.fromEntries(Object.entries(cloneData(c) as Obj).filter(([name])=>name!=='id'&&name!=='component')):undefined;
-      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next,inButton||c.component==='Button')).filter((child):child is NativeNode=>child!==undefined)};
+      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:(typeof boundText==='number'&&Number.isFinite(boundText))||typeof boundText==='boolean'?String(boundText):''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next,inButton||c.component==='Button')).filter((child):child is NativeNode=>child!==undefined)};
     };
     return visit('root',new Set());
   }
 }
 type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;useRef:<T>(value:T)=>{current:T};useState:<T>(value:T)=>[T,(value:T)=>void];useEffect:(effect:()=>void|(()=>void),deps:unknown[])=>void};
-export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void};
+export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void;
+  /** Host theme: styles per component and variant (`Button`: default, primary, borderless; `TextField`: shortText, longText). The renderer sets no colors or borders of its own. */
+  variantStyles?:{Button?:Record<string,unknown>;TextField?:Record<string,unknown>}|undefined};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
 export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any;Platform?:{OS:string}},registry?:NativeComponentRegistry):(props:NativeA2UIProps)=>any {
   const installed=registry?.snapshot()??new Map<string,NativeExtension>();
@@ -197,7 +199,7 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
   };
   const justify:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
   const align:Record<string,string>={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch'};
-  return function NativeA2UI({subscribe,onError,onAction}:NativeA2UIProps):any{
+  return function NativeA2UI({subscribe,onError,onAction,variantStyles}:NativeA2UIProps):any{
     const [surfaces,setSurfaces]=React.useState<Array<{surface:NativeSurface;key:number;renderRoot?:NativeNode}>>([]),errors=React.useRef(onError),actions=React.useRef(onAction),storeRef=React.useRef<NativeSurfaceStore|null>(null),publishRef=React.useRef<(()=>void)|null>(null),nextKey=React.useRef(0);
     React.useEffect(()=>{errors.current=onError;actions.current=onAction;},[onError,onAction]);
     React.useEffect(()=>{
@@ -219,19 +221,19 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
       const renderChildren=(insideButton:boolean,insideRow:boolean)=>{const occurrences=new Map<string,number>();return node.children.map(child=>{const occurrence=occurrences.get(child.id)??0;occurrences.set(child.id,occurrence+1);return render(child,surface,insideButton,insideRow,JSON.stringify([child.id,occurrence]));});};
       if(node.kind==='Missing')return React.createElement(primitives.View,{key,collapsable:false,pointerEvents:'none'});
       if(extension)return React.createElement(extension.render,{...node.extensionProps,key});
-      if(node.kind==='Text')return React.createElement(primitives.Text,{key,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:inRow?{...textStyles[node.variant??'body'],flexShrink:1}:textStyles[node.variant??'body']},node.text);
-      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key,accessibilityRole:'button',...(inRow?{style:{flexShrink:1,minWidth:0}}:{}),disabled:!onAction,onPress:()=>{
+      if(node.kind==='Text')return React.createElement(primitives.Text,{key,testID:node.id,...(node.variant?.startsWith('h')&&!inButton?{accessibilityRole:'header',accessible:true,...(primitives.Platform?.OS==='web'?{'aria-level':Number(node.variant.slice(1))}:{})}:{}),style:inRow?{...textStyles[node.variant??'body'],flexShrink:1}:textStyles[node.variant??'body']},node.text);
+      if(node.kind==='Button')return React.createElement(primitives.Pressable,{key,testID:node.id,accessibilityRole:'button',...(()=>{const themed=variantStyles?.Button?.[node.variant??'default'];const row={flexShrink:1,minWidth:0};return themed?{style:inRow?[themed,row]:themed}:inRow?{style:row}:{};})(),disabled:!onAction,onPress:()=>{
         if(!store||storeRef.current!==store||!actions.current)return;
         try{actions.current(store.action(surface.id,node.id,surface.revision));}catch(error){errors.current(error);}
       }},...renderChildren(true,false));
-      if(node.kind==='TextField')return React.createElement(primitives.View,{key,...(inRow?{style:{flexShrink:1,flexGrow:1,minWidth:0}}:{})},
+      if(node.kind==='TextField')return React.createElement(primitives.View,{key,testID:node.id,...(inRow?{style:{flexShrink:1,flexGrow:1,minWidth:0}}:{})},
         React.createElement(primitives.Text,null,node.label),
-        React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,multiline:node.variant==='longText',onChangeText:(value:string)=>{
+        React.createElement(primitives.TextInput,{accessibilityLabel:node.label,value:node.value,...(variantStyles?.TextField?.[node.variant??'shortText']?{style:variantStyles.TextField[node.variant??'shortText']}:{}),multiline:node.variant==='longText',onChangeText:(value:string)=>{
           if(!store||storeRef.current!==store)return;
           try{store.writeField(surface.id,node.id,surface.revision,value);publishRef.current?.();}catch(error){errors.current(error);}
         }}));
       const style={...(inRow?{flexShrink:1,minWidth:0}:{}),...(node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:{})};
-      return React.createElement(primitives.View,{key,style},...renderChildren(inButton,node.kind==='Row'));
+      return React.createElement(primitives.View,{key,testID:node.id,style},...renderChildren(inButton,node.kind==='Row'));
     };
     return React.createElement(primitives.View,null,...surfaces.map(({surface,key,renderRoot:root})=>React.createElement(primitives.View,{key},...(root?[render(root,surface)]:[]))));
   };
