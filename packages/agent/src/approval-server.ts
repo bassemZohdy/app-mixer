@@ -7,6 +7,7 @@ import {type AgentRunScope} from './durable-runs.js';
 import {inlineHashes} from './csp.js';
 import {isIdentifier} from './validation.js';
 import {agentErrorStatus} from './errors.js';
+import {limitServer,guard} from './server-limits.js';
 
 type ApprovalStore=SqliteAgentApprovals|PostgresAgentApprovalsFoundation;
 type NoticeStore=SqliteAgentNotices|PostgresAgentNoticesFoundation;
@@ -45,7 +46,7 @@ export function createAgentApprovalServer(options:Options):Server{
  if(!options||typeof options.authenticate!=='function'||typeof options.resolve!=='function'||(options.resolveNotices!==undefined&&typeof options.resolveNotices!=='function')||(options.abortOnDisconnect!==undefined&&typeof options.abortOnDisconnect!=='boolean'))throw Error('Invalid approval server');
  if((options.hostTimeoutMs===undefined)!==(options.hostMaxPending===undefined)||(options.hostTimeoutMs!==undefined&&(!Number.isInteger(options.hostTimeoutMs)||options.hostTimeoutMs<100||options.hostTimeoutMs>30000))||(options.hostMaxPending!==undefined&&(!Number.isInteger(options.hostMaxPending)||options.hostMaxPending<1||options.hostMaxPending>100)))throw Error('Invalid approval server');
  const abortOnDisconnect=options.abortOnDisconnect===true,runHostCallback=hostCallbacks(options.hostTimeoutMs,options.hostMaxPending);
- return createServer(async(req,res)=>{
+ return limitServer(createServer(guard(async(req,res)=>{
   const host=req.headers.host,port=req.socket.localPort;if(host!==`127.0.0.1:${port}`&&host!==`localhost:${port}`){reply(res,400,{error:'Invalid host'});return}
   let url:URL;try{url=new URL(req.url??'',`http://${host}`)}catch{reply(res,400,{error:'Invalid request'});return}
   if(req.method==='GET'&&url.pathname==='/review'&&!url.search){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; "+CSP,'referrer-policy':'no-referrer'});res.end(html);return}
@@ -76,7 +77,7 @@ export function createAgentApprovalServer(options:Options):Server{
     if([...url.searchParams.keys()].some(k=>k!=='after')||url.searchParams.getAll('after').length>1){reply(res,400,{error:'Invalid request'});return}const after=url.searchParams.get('after');if(after!==null&&!valid(after)){reply(res,400,{error:'Invalid request'});return}reply(res,200,await store.list(actor,after===null?{}:{after},cancellation?.signal));
    }catch(error){if(cancellation?.signal.aborted)return;const mapped=agentErrorStatus(error),status=error instanceof ReviewHostUnavailable?503:mapped===403||mapped===404||mapped===409||mapped===503?mapped:500;reply(res,status,{error:status===403?'Forbidden':status===404?'Not found':status===409?'Decision unavailable':'Review unavailable'})}
   }finally{if(cancellation)res.off('close',disconnect);}
- });
+ })));
 }
 export type {Options as AgentApprovalServerOptions};
 

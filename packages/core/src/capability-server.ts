@@ -3,6 +3,7 @@ import { createServer as createHttpsServer, type Server as HttpsServer } from 'n
 import { CapabilityRegistry,CapabilityOutcomeUncertainError } from './capabilities.js';
 import {traceHttp,type HttpServerTracingOptions} from './http-tracing.js';
 import {refusalStatus} from './errors.js';
+import { limitServer, TLS_POLICY } from './server-limits.js';
 
 type Actor = {tenantId:string; principalId:string};
 type Authenticate = (request:IncomingMessage) => Actor | undefined | Promise<Actor | undefined>;
@@ -62,7 +63,7 @@ function createCapabilityHandler(registry:CapabilityRegistry, authenticate:Authe
 
 /** Host-authenticated HTTP endpoint for local use or a trusted TLS-terminating proxy. */
 export function createCapabilityServer(registry:CapabilityRegistry,authenticate:Authenticate,auditFailure:AuditFailure,tracing?:CapabilityServerTracingOptions,limits?:CapabilityServerLimits):Server {
- return createServer(createCapabilityHandler(registry,authenticate,auditFailure,tracing,limits));
+ return limitServer(createServer(createCapabilityHandler(registry,authenticate,auditFailure,tracing,limits)));
 }
 
 /** Direct TLS transport; optional client CA requires a verified client certificate. */
@@ -70,5 +71,5 @@ export function createCapabilityHttpsServer(registry:CapabilityRegistry,authenti
  const pem=(value:unknown):value is string|Buffer=>(typeof value==='string'&&value.trim().length>0)||(Buffer.isBuffer(value)&&value.length>0);
  if(!tls||typeof tls!=='object'||Array.isArray(tls)||Object.keys(tls).some(key=>!['cert','key','clientCa'].includes(key))||!pem(tls.cert)||!pem(tls.key)||(tls.clientCa!==undefined&&!pem(tls.clientCa)))throw Error('Invalid capability TLS configuration');
  const handler=createCapabilityHandler(registry,authenticate,auditFailure,tracing,limits);
- return createHttpsServer({cert:tls.cert,key:tls.key,minVersion:'TLSv1.2',...(tls.clientCa!==undefined?{ca:tls.clientCa,requestCert:true,rejectUnauthorized:true}:{})},handler);
+ return limitServer(createHttpsServer({cert:tls.cert,key:tls.key,...TLS_POLICY,...(tls.clientCa!==undefined?{ca:tls.clientCa,requestCert:true,rejectUnauthorized:true}:{})},handler));
 }

@@ -4,6 +4,7 @@ import type {AgentNoticeMessage} from './agent-notice-delivery.js';
 import type {AgentRunScope} from './durable-runs.js';
 import {openDatabase} from './sqlite-open.js';
 import {isIdentifier,isNonNegativeInteger} from './validation.js';
+import {limitServer,guard} from './server-limits.js';
 
 type Actor={tenantId:string;principalId:string};
 type Access='receive'|'verify'|'list'|'read'|'acknowledge';
@@ -61,12 +62,12 @@ const reply=(res:ServerResponse,status:number)=>{res.writeHead(status,{'cache-co
 /** Host supplies TLS, authentication, authorization, network limits and lifecycle. */
 export function createAgentNoticeReceiverServer(options:ServerOptions):Server{
  if(!options||!(options.receiver instanceof SqliteAgentNoticeReceiver)||typeof options.authenticate!=='function')throw Error('Invalid notice receiver server');const {receiver,authenticate}=options;
- return createServer(async(req,res)=>{
+ return limitServer(createServer(guard(async(req,res)=>{
   if(req.method!=='POST'||!['/notice','/notice/status'].includes(req.url??'')){reply(res,404);return;}let actor:Actor|undefined;try{actor=await authenticate(req);}catch{}if(!actor){reply(res,401);return;}
   let contentType:string|undefined,deliveryKey:string|undefined;for(let i=0;i<req.rawHeaders.length;i+=2){const name=req.rawHeaders[i].toLowerCase();if(name==='content-type'){if(contentType!==undefined){reply(res,400);return;}contentType=req.rawHeaders[i+1];}if(name==='idempotency-key'){if(deliveryKey!==undefined){reply(res,400);return;}deliveryKey=req.rawHeaders[i+1];}}
   if(!contentType||!/^application\/json(?:\s*;|$)/i.test(contentType)||!key(deliveryKey)){reply(res,400);return;}
   let payload:unknown;try{const parts:Buffer[]=[];let size=0;for await(const chunk of req){const part=Buffer.from(chunk);size+=part.length;if(size>8192)throw Error('large');parts.push(part);}payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}catch{reply(res,400);return;}
   try{if(req.url==='/notice/status'){reply(res,await receiver.verify(actor,deliveryKey,payload)?204:404);}else{await receiver.receive(actor,deliveryKey,payload);reply(res,204);}}catch(error){const text=error instanceof Error?error.message:'';reply(res,text==='Notice receiver access denied'||text==='Invalid notice receiver actor'?403:text==='Notice delivery conflict'?409:text==='Notice receiver backlog full'?503:text==='Invalid notice message'||text==='Invalid notice delivery key'?400:500);}
- });
+ })));
 }
 export type {Options as AgentNoticeReceiverOptions,Actor as AgentNoticeReceiverActor,Access as AgentNoticeReceiverAccess,ServerOptions as AgentNoticeReceiverServerOptions};

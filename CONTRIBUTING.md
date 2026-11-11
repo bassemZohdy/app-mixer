@@ -1,6 +1,6 @@
 # Contributing
 
-App Mixer is a Node.js workspace (`packages/*`, `adapters/*`). Use Node 22.13 or later (`.nvmrc` pins 22; CI also runs 22.13.0 and 24).
+App Mixer is a Node.js workspace (`packages/*`, `adapters/*`). Use Node 22.22.2 or later (`.nvmrc` pins 22; CI also runs 22.22.2 and 24).
 
 ## Build and test
 
@@ -8,6 +8,7 @@ App Mixer is a Node.js workspace (`packages/*`, `adapters/*`). Use Node 22.13 or
 npm ci
 npm run build          # web bundle first, then every workspace
 npm test               # builds, then runs every default test with node --test
+npm run lint           # typescript-eslint: floating and misused promises, awaiting non-promises, unused variables (eslint.config.mjs); CI runs it on Node 22
 npm run docs           # regenerates docs/README.md after adding, renaming or retitling a document
 ```
 
