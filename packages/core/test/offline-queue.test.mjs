@@ -179,3 +179,27 @@ test('a queue keeps accepting work after 1,000 settled operations and retention 
   assert.equal(queue.purge(scope,'other',{statuses:['succeeded'],limit:10}),0,'another principal is untouched');
  }finally{queue.close();}
 });
+
+// TASK-002.3.1
+test('a submission whose state moved on while it ran reports the real error, not a state error',async()=>{
+ // recoverAbandoned (run by an operator who believed the submitter had died) moves the operation to uncertain while the capability is still running;
+ // when the capability then fails, the failed state change in the error path must not replace the capability's own error.
+ const staged=new SqliteStagedOperations(':memory:');
+ try{
+  const registry=new CapabilityRegistry(()=>{});let id;registry.register(candidate,{authorize:()=>true,validate:()=>true,execute:()=>{staged.recoverAbandoned(scope,id);throw Error('provider rejected the request');}});
+  const item=staged.stage(scope,'update',{v:1});id=item.id;
+  await assert.rejects(staged.submit(scope,item.id,registry,actor),/provider rejected the request/,'the capability error is what the caller sees');
+  assert.equal(staged.get(scope,item.id).status,'uncertain','the operation stays uncertain for reconciliation');
+ }finally{staged.close?.();}
+});
+
+test('a shared idempotency key already used by another request is a conflict, not a raw constraint error',()=>{
+ const queue=new SqliteOfflineQueue(':memory:',policy);
+ try{
+  queue.enqueue(scope,'p','update','first',{value:1},{idempotencyKey:'shared-key'});
+  for(const [other,principal,request] of [[scope,'p','second'],[{tenantId:'other',applicationId:'a'},'p','first'],[scope,'q','first']]){
+   assert.throws(()=>queue.enqueue(other,principal,'update',request,{value:1},{idempotencyKey:'shared-key'}),error=>/Offline request conflict/.test(error.message)&&!/UNIQUE|constraint|offline_operations/i.test(error.message),JSON.stringify([other.tenantId,principal,request]));
+  }
+  assert.equal(queue.enqueue(scope,'p','update','first',{value:1},{idempotencyKey:'shared-key'}).requestKey,'first','the same request still deduplicates');
+ }finally{queue.close?.();}
+});

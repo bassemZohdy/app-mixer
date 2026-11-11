@@ -106,8 +106,8 @@ export class EncryptedBrowserQueue {
     const local=(await this.readCounter())?.counter??0;if(local<floor)throw Error('Offline queue rollback detected');await this.ensureCurrent();if(local>floor)await this.anchor.advance(local);await this.ensureCurrent();if(this.anchorPending!==undefined&&this.anchorPending<=local)this.anchorPending=undefined;
   }
   /** Read and seal the next counter before a write transaction; returns undefined when no anchor is configured. */
-  private async prepareCounter(updates:Envelope[],key:CryptoKey=this.key,replaceAll=false):Promise<PreparedCounter|undefined>{
-    if(!this.anchor)return undefined;const {counter:current,entries}=await this.snapshot(),value=(current?.counter??0)+1;if(!Number.isSafeInteger(value))throw Error('Invalid offline queue counter');const nextEntries=replaceAll?updates:[...entries.filter(entry=>!updates.some(update=>update.id===entry.id)),...updates];return {current,entries,next:await this.sealCounter(value,key,nextEntries)};
+  private async prepareCounter(updates:Envelope[],key:CryptoKey=this.key,replaceAll=false,removals:string[]=[]):Promise<PreparedCounter|undefined>{
+    if(!this.anchor)return undefined;const {counter:current,entries}=await this.snapshot(),value=(current?.counter??0)+1;if(!Number.isSafeInteger(value))throw Error('Invalid offline queue counter');const nextEntries=(replaceAll?updates:[...entries.filter(entry=>!updates.some(update=>update.id===entry.id)),...updates]).filter(entry=>!removals.includes(entry.id));return {current,entries,next:await this.sealCounter(value,key,nextEntries)};
   }
   /** Compare the observed partition and counter in the same transaction as the mutation. */
   private async applyCounter(store:IDBObjectStore,tx:IDBTransaction,done:Promise<void>,prepared:PreparedCounter|undefined):Promise<void>{
@@ -231,6 +231,24 @@ export class EncryptedBrowserQueue {
     await this.checkRollback();const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);const latest=await req(store.get(id)) as Envelope|undefined;
     if(!latest||latest.partition!==this.partition||latest.version!==expectedVersion){tx.abort();try{await done;}catch{}throw Error('Offline version conflict');}
     await this.applyCounter(store,tx,done,prepared);store.put(envelope);await done;await this.advanceAnchor(prepared);return structuredClone(updated);
+  }
+  /**
+   * Host-authorized retention: delete at most `limit` (1 to 1,000) settled items (`succeeded`, `discarded` or `exhausted`), lowest id first (ids are hashes of the
+   * request key, so the order is arbitrary but stable), and return the count. The queue cap counts every stored item and a status is only visible after decryption,
+   * so a full queue ("Offline queue too large") is freed by purging settled items. Deletion advances the authenticated counter and digest like any other write, so
+   * the rollback anchor and the tamper checks stay valid. A purged item's request key is forgotten: purge only history the client can no longer resubmit.
+   */
+  async purge(options:{statuses:('succeeded'|'discarded'|'exhausted')[];limit:number}):Promise<number>{
+    if(!record(options)||!Array.isArray(options.statuses)||options.statuses.length<1||options.statuses.length>3||new Set(options.statuses).size!==options.statuses.length||!options.statuses.every(status=>['succeeded','discarded','exhausted'].includes(status))||!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw Error('Invalid offline retention query');
+    return this.retry(()=>this.purgeOnce(options.statuses,options.limit));
+  }
+  private async purgeOnce(statuses:string[],limit:number):Promise<number>{
+    const selected=(await this.list()).filter(item=>statuses.includes(item.status)).sort((a,b)=>a.id<b.id?-1:1).slice(0,limit);
+    if(!selected.length)return 0;
+    const prepared=await this.prepareCounter([],this.key,false,selected.map(item=>item.id));
+    await this.checkRollback();const tx=this.db.transaction('offline','readwrite'),done=complete(tx),store=tx.objectStore('offline');await this.guard(store,tx,done);
+    for(const item of selected){const latest=await req(store.get(item.id)) as Envelope|undefined;if(!latest||latest.partition!==this.partition||latest.version!==item.version){tx.abort();try{await done;}catch{}throw Error(COUNTER_CHANGED);}}
+    await this.applyCounter(store,tx,done,prepared);for(const item of selected)store.delete(item.id);await done;await this.advanceAnchor(prepared);return selected.length;
   }
 }
 
