@@ -45,6 +45,8 @@ Open alerts after the first review (2026-11-08), all judged not to need a code c
 - `js/insecure-temporary-file` in `deploy/kubernetes/test-support/agent-recovery/run-supervisor.mjs`: a test-support script that runs only in the kind test pod.
 - `js/file-access-to-http` in `scripts/check-provider-idempotency.mjs` (two alerts): reading a credential from the environment and sending it to the provider under test is the purpose of the script, and it refuses production endpoints.
 
+Workflows pin every action to a 40-character commit SHA, with the release tag in a trailing comment (`uses: actions/checkout@<sha> # v4`); a test fails for a `uses` line without one, and Dependabot updates the SHA and the comment together.
+
 ## Pull requests
 
 Keep commits focused, explain the reason for a change, and do not weaken a check to make a test pass. Report security problems privately as described in `SECURITY.md`.

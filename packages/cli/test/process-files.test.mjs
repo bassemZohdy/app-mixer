@@ -127,7 +127,7 @@ test('TASK-002.6.7 CI caches the pinned Docker images the container tests start'
  assert.ok(images.length>=5,'found '+images.length+' images');
  for(const image of images)assert.match(image,/@sha256:[a-f0-9]{64}$|:[0-9][A-Za-z0-9._-]*$/,image+' is pinned to a version or digest');
  for(const name of ['hydra','grafana','opentelemetry-collector','prometheus','alertmanager','pgvector'])assert.ok(images.some(image=>image.includes(name)),name+' is cached');
- const workflow=read('.github/workflows/ci.yml').replaceAll('\r\n','\n');assert.match(workflow,/uses: actions\/cache@v4\s*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
+ const workflow=read('.github/workflows/ci.yml').replaceAll('\r\n','\n');assert.match(workflow,/uses: actions\/cache@[a-f0-9]{40}[^\n]*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
 });
 
 test('TASK-002.7.2 the Data Plane image installs only its workspaces, has a healthcheck and CI bounds its size',()=>{
@@ -158,4 +158,13 @@ test('TASK-013 no Markdown file repeats a line of more than 120 characters',()=>
   });
  }
  assert.deepEqual(repeats,[],'repeated passages');
+});
+
+test('TASK-015 every action a workflow uses is pinned to a 40-character commit SHA',()=>{
+ const directory=join(root,'.github/workflows'),unpinned=[];
+ for(const name of readdirSync(directory).filter(file=>file.endsWith('.yml')))readFileSync(join(directory,name),'utf8').replaceAll('\r\n','\n').split('\n').forEach((line,index)=>{
+  const match=/^\s*(?:-\s+)?uses:\s*(\S+)/.exec(line);
+  if(match&&!match[1].startsWith('./')&&!/^[\w.-]+\/[\w./-]+@[a-f0-9]{40}$/.test(match[1]))unpinned.push(name+':'+(index+1)+' '+match[1]);
+ });
+ assert.deepEqual(unpinned,[],'uses lines without a commit SHA');
 });
