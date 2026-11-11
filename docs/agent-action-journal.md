@@ -58,3 +58,16 @@ If the initial or fresh-key dispatch fails, an effect counter fails, or another 
 
 A passing report is evidence about that target, input and timing only. It does not establish key retention across the recovery horizon, behavior after provider failover, or production configuration. Run it against isolated test accounts, since it creates real effects, and repeat it when the provider or binding changes.
 
+## Verifying an outbound provider
+
+On 2026-11-07 the product owner chose the supported outbound contract: a provider the agents call must be an HTTP API that honours an idempotency key. Replaying a request with the same key and input returns the same result with one effect, concurrent replays produce one effect, reusing a key with different input is refused, and a fresh key is a fresh effect. These are the four checks of `checkIdempotencyContract`.
+
+Before agents may call a provider, an operator runs the check against that provider's sandbox (never production) and keeps the report:
+
+```
+PROVIDER_HEADERS='{"authorization":"Bearer <sandbox key>"}' node scripts/check-provider-idempotency.mjs provider-sandbox.json
+```
+
+`provider-sandbox.json` names the sandbox endpoint and the header that carries the key, a sample input and a conflicting input, and an independent read that returns how many effects the provider recorded for a key (the script's header comment shows every field). Credentials come from the environment, not the file. The script accepts only `sandbox`, `test`, `staging`, `development`, `local` or `emulator` as the environment (so `prod` and `live` are refused as well as `production`), and refuses plain `http` except for a local emulator, URLs that carry credentials and redirects. A key header supplied through `PROVIDER_HEADERS` in another letter case is replaced by the check's own, so the provider sees exactly one key. Exit status 0 means all four checks passed; 1 means a finding or an error, and the JSON report says which check failed. Run it again whenever the provider changes its API version, and treat a failure as a reason not to let agents call that provider with side effects. A pass shows the sandbox honoured keys at that moment; it does not prove production behaviour, other endpoints of the same provider, or how long the provider remembers a key (check its documented retention against your retry windows).
+
+The script's own tests run it against a local provider that honours keys and one that does not (`packages/cli/test/provider-idempotency-script.test.mjs`).
