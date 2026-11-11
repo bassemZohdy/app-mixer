@@ -204,3 +204,17 @@ What the figures mean for sizing:
 - The Deployment requests 50m CPU and 96Mi and limits memory to 256Mi. Memory was 83 to 113 MB under sustained load for these sizes, so the limit has room for publications up to the 1 MB the script accepts; revisit it if publications grow. CPU is the resource that scales with traffic, so set the request from your own request rate (about 0.04 to 0.09 ms of CPU per request here) and let the HorizontalPodAutoscaler, if you use one, follow CPU.
 - These are single-machine figures over loopback. They exclude TLS, the PostgreSQL revocation check, the network and the readiness probes; measure with your own mix before fixing limits.
 
+## Rollback anchors
+
+A restored database looks internally consistent, so a store cannot tell by itself that it went back in time. Each PostgreSQL store that decides access can take a host-held anchor, kept outside the database, that records the highest position it has reached; the store compares its own position with the anchor and refuses to answer when it is lower.
+
+| Store | Option | Position that only grows |
+| --- | --- | --- |
+| `PostgresPublicationReleaseRegistry` | `floorAnchor` | the release floor of an application and environment |
+| `PostgresCapabilityAudit` and the authentication-failure audit | `sequenceAnchor` | the audit sequence |
+| `PostgresJwtRevocations` | `epochAnchor` | an epoch advanced by each revocation (table `app_mixer_jwt_revocation_epoch`) |
+| `PostgresExtensionApprovals` | `epochAnchor` | the sum of all approval revisions of a tenant and application, which only grows because every decision adds one and approvals are never deleted |
+
+The audit and epoch anchors have the shape `{read(key), advance(key, value)}` (`AuditSequenceAnchor`) and the release floor anchor `{read, advance}`. Key helpers name what each protects (`capabilityAuditAnchorKey`, `authenticationFailureAnchorKey`, `jwtRevocationAnchorKey`, `extensionApprovalAnchorKey`, `releaseFloorAnchorKey`). `createFileSequenceAnchor(directory)` and `createFileReleaseFloorAnchor(directory)` are ready-made durable implementations on the shared `createFileCounters` helper: each counter is one small file, read as a whole, and written under a lock file with a temporary file, fsync, rename and a directory fsync, so concurrent writers cannot lower a value and a lock left by a crashed writer is broken once stale. Names are hashes of the protected identifiers, so identifiers with separators, differing case or long lengths cannot collide.
+
+Every anchored store fails closed when its anchor cannot be read. An anchor that cannot be advanced after a change committed does not fail that change, because it is already durable; protection is degraded until a later advance succeeds, and each store takes an `onAnchorError` callback so the host sees it. A refusal is not recovery: after a restore the operator still re-applies what was lost (revocations and approval revocations recorded elsewhere, the release floor) and then raises or resets the anchors deliberately. Anchoring the authentication-failure audit adds an anchor read and a durable write per failed request, so rate-limit unauthenticated traffic upstream before enabling it.
