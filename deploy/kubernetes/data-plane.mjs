@@ -29,6 +29,9 @@ if(metricsPort!==undefined&&(!/^[1-9][0-9]{0,4}$/.test(metricsPort)||Number(metr
 const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,authenticateMetrics,revocationPool,releaseTenant,keyHealth=()=>true,stopJwksReload=()=>{};
 const jwksReloadText=process.env.APP_MIXER_JWKS_RELOAD_MS;if(jwksReloadText!==undefined&&(!/^[1-9][0-9]{3,6}$/.test(jwksReloadText)||Number(jwksReloadText)>3600000||accessMode!=='jwt'))throw Error('Invalid JWKS reload configuration');
 if(metricsPort!==undefined&&accessMode!=='jwt')throw Error('Metrics require JWT access');
+// The metrics listener stays on loopback (a same-pod collector) unless APP_MIXER_METRICS_BIND=0.0.0.0 opens it to the pod network for a scraper that a NetworkPolicy admits.
+const metricsBind=process.env.APP_MIXER_METRICS_BIND??'127.0.0.1';
+if(!['127.0.0.1','0.0.0.0'].includes(metricsBind)||(process.env.APP_MIXER_METRICS_BIND!==undefined&&metricsPort===undefined))throw Error('Invalid metrics configuration');
 if(accessMode==='jwt'){
  const keyPath=process.env.APP_MIXER_JWKS_PATH,issuer=process.env.APP_MIXER_JWT_ISSUER,audience=process.env.APP_MIXER_JWT_AUDIENCE,tenant=process.env.APP_MIXER_TENANT_ID,requiredScope=process.env.APP_MIXER_JWT_SCOPE??'app-mixer:publication.read',maxAge=process.env.APP_MIXER_JWT_MAX_AGE_SECONDS??'600';
  if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400)throw Error('Invalid publication access configuration');
@@ -77,7 +80,7 @@ if(transport==='tls'){
  if(reloadText!==undefined){tlsReloader=createTlsCredentialReloader(server,{load:loadTls,intervalMs:Number(reloadText),clientCa:!!caPath,onReload:info=>console.log(`TLS credentials active: ${[info.subject.replaceAll('\n',', '),info.altNames].filter(Boolean).join(', ')} until ${new Date(info.validTo).toISOString()}`),onError:error=>console.error(`TLS reload rejected: ${error.message}`)});}
 }else if(transport==='http')server=createDataPlane(repository,planeOptions);else throw Error('Invalid data plane transport configuration');server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
 const metricsServer=metrics?createMetricsServer({metrics,authorize:async req=>!!await authenticateMetrics(req),timeoutMs:2500,maxPending:20}):undefined;
-metricsServer?.listen(Number(metricsPort),'127.0.0.1');
+metricsServer?.listen(Number(metricsPort),metricsBind);
 server.on('close',()=>{stopJwksReload();tlsReloader?.stop();metricsServer?.close();authenticate?.close();authenticateMetrics?.close();if(revocationPool)void revocationPool.end().catch(()=>{});});
 server.listen(Number(portText),'0.0.0.0');
 server.once('listening',()=>console.log('Data Plane ready'));

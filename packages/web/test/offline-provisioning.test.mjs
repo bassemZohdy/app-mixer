@@ -81,3 +81,10 @@ test('the server signs only verifiable, bounded grants and checks the device whe
  assert.throws(()=>check({deviceId:'tablet-8'}),/another device/);assert.throws(()=>check({now:issuedAt+14*DAY}),/not current/);
  const altered=structuredClone(good);altered.grant.tenantId='other';assert.throws(()=>verifyOfflineProvisioning(altered,{environment:'production',applicationId:'demo',deviceId:device,...serverKeys,now:issuedAt+DAY}),/Invalid offline provisioning/);
 });
+
+test('a browser without WebCrypto Ed25519 is told so instead of failing with a raw crypto error',async()=>{
+ const unsupported={subtle:{importKey:async()=>{throw new DOMException("Algorithm: Unrecognized name",'NotSupportedError');},verify:async()=>false}};
+ await assert.rejects(open(bundle(),{crypto:unsupported}),/requires WebCrypto Ed25519/);
+ // A malformed pinned key is still a configuration error, not an unsupported browser.
+ await assert.rejects(open(bundle(),{keys:[{keyId:'prov-1',publicKey:'not-a-key'}]}),error=>!/requires WebCrypto/.test(error.message));
+});
