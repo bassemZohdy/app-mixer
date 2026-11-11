@@ -1,11 +1,11 @@
-FROM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS build
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS build
 WORKDIR /app
 COPY package*.json tsconfig.base.json ./
 COPY packages ./packages
 # Install and build only the workspaces the Data Plane loads, so the agent package's dependencies (LangChain, provider SDKs, ...) stay out of the image.
 RUN npm ci --workspace @app-mixer/core --workspace @app-mixer/web  && npm run build --workspace @app-mixer/web && npm run build --workspace @app-mixer/core  && npm prune --omit=dev --workspace @app-mixer/core --workspace @app-mixer/web
 
-FROM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
