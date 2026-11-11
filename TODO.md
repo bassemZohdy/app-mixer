@@ -2,10 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [/] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
-  - Done when: both Dockerfiles share one digest-pinned base image newer than 22.13.0, and a tag without a digest fails the test; `node --test packages/cli/test/process-files.test.mjs`
-  - Links: Ref: docs/kubernetes-data-plane.md · Depends: TASK-002
-  - State: attempts 0/3; baseline 1927 passing; branch todo/FIX-003-pin-node-base-image-digest from harden-on-main; next: read docs
 - [ ] **FEAT-004** · P1 · high · Serve the generated app's pages with a hash-based Content-Security-Policy, frame-ancestors none and a Referrer-Policy, as the review pages already do
   - Done when: the generated index page is served with a policy without unsafe-inline that covers each of its inline blocks, and a page with an extra inline script fails the hash check; `npm run build && node --test packages/cli/test/csp.test.mjs`
 - [ ] **FIX-005** · P1 · mid · Stop copying agent-only dependencies (twilio, LangChain, openai, about 80 MB) into the Data Plane image; install only what core and web need
