@@ -4,10 +4,10 @@
 
 - [ ] **FEAT-004** · P1 · high · Serve the generated app's pages with a hash-based Content-Security-Policy, frame-ancestors none and a Referrer-Policy, as the review pages already do
   - Done when: the generated index page is served with a policy without unsafe-inline that covers each of its inline blocks, and a page with an extra inline script fails the hash check; `npm run build && node --test packages/cli/test/csp.test.mjs`
-- [ ] **FIX-005** · P1 · mid · Stop copying agent-only dependencies (twilio, LangChain, openai, about 80 MB) into the Data Plane image; install only what core and web need
+- [/] **FIX-005** · P1 · mid · Stop copying agent-only dependencies (twilio, LangChain, openai, about 80 MB) into the Data Plane image; install only what core and web need
   - Done when: the image's dependency set contains pg, jose and ajv but no twilio, @langchain or openai package, and adding one fails the test; `node --test packages/cli/test/data-plane-image.test.mjs`
   - Links: Ref: docs/kubernetes-data-plane.md
-  - State: branch todo/FIX-005-keep-agent-deps-out-of-data-plane-image from harden-on-main; next: start FIX-005
+  - State: attempts 0/3; baseline 1928 passing; branch todo/FIX-005-keep-agent-deps-out-of-data-plane-image from harden-on-main; next: read docs
 - [ ] **TASK-006** · P1 · mid · Replace the error-message string lists that choose the HTTP status (94 literals in capability-server.ts, 19 in planes.ts) with typed errors that carry their status
   - Done when: every existing message keeps its status, and an unknown error still returns 500 without leaking its message; `npm run build && node --test packages/core/test/capability-server.test.mjs packages/core/test/planes.test.mjs`
   - Links: Depends: TASK-002
