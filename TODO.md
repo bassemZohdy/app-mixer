@@ -2,9 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [/] **FIX-025** · P0 · low · Make the pod recovery checks wait for a lock that a force-deleted worker still holds: they open the database with a raw connection that has no busy timeout, so the step fails at once with database is locked whenever the dead worker's lock lingers (the workflow has failed on 5 of the last 8 runs with no related code change)
-  - Done when: every raw database open in the pod recovery scripts sets a busy timeout before its first statement; `node --test packages/cli/test/process-files.test.mjs`
-  - State: attempts 0/3; baseline 1867 passing; branch todo/FIX-025-pod-recovery-busy-timeout from harden-on-main; next: build
 - [ ] **TASK-002** · P1 · mid · Port the remaining local-acceptance-hardening commits (216, with over 100 files found only there: ESLint setup, shared validators, editor-preview sync, provider idempotency check) onto this branch, leaving out the progress script written for the legacy TODO format
   - Done when: npm run lint exists and passes, and no file named by this branch's docs is found only on that branch; `npm run lint`
   - State: branch todo/TASK-002-port-remaining-local-acceptance from harden-on-main; next: build children
