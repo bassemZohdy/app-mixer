@@ -136,3 +136,13 @@ test('TASK-002.7.2 the Data Plane image installs only its workspaces, has a heal
  assert.doesNotMatch(dockerfile,/npm run build\s*&&|npm run build --workspaces/,'only core and web are built');
  assert.match(dockerfile,/^HEALTHCHECK /m);assert.match(workflow,/docker image inspect app-mixer-data-plane:test[^\n]*\.Size/);assert.match(workflow,/test "\$size" -le \d+/);
 });
+
+test('FIX-003 every Dockerfile builds from the same Node base image, newer than 22.13.0 and pinned by digest',()=>{
+ const dockerfiles=['Dockerfile.data-plane','Dockerfile.local','deploy/kubernetes/test-support/agent-recovery/Dockerfile'],images=new Set();
+ for(const path of dockerfiles){
+  const from=read(path).replaceAll('\r\n','\n').split('\n').filter(line=>/^FROM /.test(line));
+  assert.ok(from.length>0,path+' has a FROM line');
+  for(const line of from){const match=/^FROM (node:(\d+)\.(\d+)\.(\d+)-bookworm-slim@sha256:[a-f0-9]{64})(?: AS \w+)?$/.exec(line);assert.ok(match,path+': the base image is a Node tag pinned by digest: '+line);images.add(match[1]);const [major,minor,patch]=match.slice(2).map(Number);assert.ok(major>22||(major===22&&(minor>13||(minor===13&&patch>0))),path+': Node is newer than 22.13.0');}
+ }
+ assert.equal(images.size,1,'every Dockerfile uses the same pinned image: '+[...images].join(', '));
+});
