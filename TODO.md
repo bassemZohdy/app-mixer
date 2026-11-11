@@ -22,9 +22,6 @@
 - [ ] **TASK-012** · P2 · mid · Verify Twilio signatures with node:crypto like the other webhook adapters, and keep the 20 MB twilio SDK only as a dev dependency used as a test oracle
   - Done when: valid signatures pass, tampered bodies and URLs are refused, and results match the SDK; `npm run build && node --test packages/agent/test/twilio-webhook.test.mjs`
   - Links: Ref: docs/agent-event-ingress.md · Depends: TASK-002
-- [/] **TASK-015** · P2 · low · Pin the 30 tag-pinned GitHub Actions references (checkout, setup-node, setup-java, codeql-action) to commit SHAs
-  - Done when: a test fails on any uses line without a 40-character commit SHA; `node --test packages/cli/test/process-files.test.mjs`
-  - State: attempts 0/3; baseline 1936 passing; branch todo/TASK-015-pin-github-actions-to-shas from harden-on-main; next: read docs
 - [ ] **TASK-016** · P2 · low · Guard the 33 PostgreSQL test files hand-listed in ci.yml so a new database test cannot be left out of CI
   - Done when: a test fails when a test file that reads APP_MIXER_TEST_POSTGRES_URL is matched by no workflow; `node --test packages/cli/test/process-files.test.mjs`
 - [ ] **FEAT-017** · P2 · mid · Add a coverage report with a minimum threshold to CI; nothing measures coverage today and the mutation script is run by hand
