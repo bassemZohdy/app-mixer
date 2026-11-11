@@ -104,7 +104,9 @@ export class SqliteStagedOperations {
       this.transition(snapshotScope,id,'submitting','succeeded');return result;
     } catch(error) {
       // Even an error can follow an external effect or failed outcome audit; never retry automatically.
-      this.transition(snapshotScope,id,'submitting','uncertain');throw error;
+      // If the state has already moved on (an operator recovered the submission as uncertain meanwhile), that change stands and the capability's own error is still the one reported.
+      try{this.transition(snapshotScope,id,'submitting','uncertain');}catch{}
+      throw error;
     }
   }
   /** Call only after confirming that the process which submitted the operation is no longer running. */

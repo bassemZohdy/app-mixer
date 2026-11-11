@@ -222,3 +222,50 @@ test('contended queue retries preserve the original payload and shared request k
  const factory=new IDBFactory(),secret=await key();let floor=0,armed=false,started,release;const anchor={async read(){return floor;},async advance(value){floor=Math.max(floor,value);}},slow={subtle:{digest:webcrypto.subtle.digest.bind(webcrypto.subtle),decrypt:webcrypto.subtle.decrypt.bind(webcrypto.subtle),encrypt:async(...args)=>{if(armed&&new TextDecoder().decode(args[2]).startsWith('queue-counter-v2:')){armed=false;started();await new Promise(resolve=>release=resolve);}return webcrypto.subtle.encrypt(...args);}},getRandomValues:webcrypto.getRandomValues.bind(webcrypto),randomUUID:webcrypto.randomUUID.bind(webcrypto)},first=await EncryptedBrowserQueue.open({...options(factory,secret),crypto:slow,rollbackAnchor:anchor}),second=await EncryptedBrowserQueue.open({...options(factory,secret),rollbackAnchor:anchor});try{let ready=new Promise(resolve=>started=resolve);armed=true;const payload={nested:{value:'original'}},shared={idempotencyKey:'original-key'},pending=first.enqueue('save','first',payload,shared);await ready;await second.enqueue('save','competitor',{});payload.nested.value='changed';shared.idempotencyKey='changed-key';release();const item=await pending;assert.equal(item.payload.nested.value,'original');assert.equal(item.idempotencyKey,'original-key');const running=await first.transition(item.id,item.version,'claim'),conflict=await first.transition(item.id,running.version,'conflict');ready=new Promise(resolve=>started=resolve);armed=true;const replacementPayload={nested:{value:'before'}},resolving=first.resolveConflict(item.id,conflict.version,'replacement',replacementPayload);await ready;await second.enqueue('save','competitor-2',{});replacementPayload.nested.value='after';release();const replacement=await resolving;assert.equal(replacement.payload.nested.value,'before');assert.equal((await first.get(replacement.id)).payload.nested.value,'before');
  }finally{release?.();first.close();second.close();}
 });
+
+// TASK-002.3.1
+test('rollback anchor detects selective substitution and deletion of item envelopes',async()=>{
+ const factory=new IDBFactory(),queueKey=await key(),floor={value:0},anchor={read:async()=>floor.value,advance:async n=>{floor.value=Math.max(floor.value,n);}},open=(k=queueKey)=>EncryptedBrowserQueue.open({...options(factory,k),rollbackAnchor:anchor});
+ const snapshot=async()=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readonly'),all=request(tx.objectStore('offline').getAll());await done(tx);return await all;}finally{db.close();}};
+ const write=async(put,remove=[])=>{const db=await request(factory.open('offline-test'));try{const tx=db.transaction('offline','readwrite'),store=tx.objectStore('offline');for(const value of put)store.put(value);for(const id of remove)store.delete(id);await done(tx);}finally{db.close();}};
+ let queue=await open();const first=await queue.enqueue('save','one',{n:1}),second=await queue.enqueue('save','two',{n:2});
+ const oldFirst=(await snapshot()).find(value=>value.id===first.id);
+ await queue.transition(first.id,1,'claim');await queue.transition(first.id,2,'succeed');queue.close();
+ const current=await snapshot(),currentFirst=current.find(value=>value.id===first.id);
+ // An older envelope for one item, kept beside the current counter record, decrypts and authenticates on its own; the state digest exposes it.
+ await write([oldFirst]);await assert.rejects(open(),/integrity mismatch/);
+ await write([currentFirst],[second.id]);await assert.rejects(open(),/integrity mismatch/);
+ await write(current);queue=await open();assert.equal((await queue.list()).length,2);
+ // Substitution while a queue is open is caught by the next list or write.
+ await write([oldFirst]);await assert.rejects(queue.list(),/integrity mismatch/);await assert.rejects(queue.enqueue('save','three',{n:3}),/integrity mismatch/);await assert.rejects(queue.transition(second.id,1,'claim'),/integrity mismatch/);
+ await write([currentFirst]);assert.equal((await queue.enqueue('save','three',{n:3})).status,'pending');
+ // Rotation reseals the digest with the new key, and the protection still holds afterwards.
+ const nextKey=await key();assert.equal(await queue.rotateKey(nextKey),3);queue=await open(nextKey);const rotated=await snapshot();assert.equal((await queue.list()).length,3);queue.close();
+ const rotatedSecond=rotated.find(value=>value.id===second.id);await write([{...rotatedSecond,iv:new Uint8Array(12)}]);await assert.rejects(open(nextKey),/integrity mismatch/);await write([rotatedSecond]);(await open(nextKey)).close();
+});
+
+test('purge removes settled items only, bounded by the limit, and stays consistent with the rollback anchor',{timeout:60000},async()=>{
+ const factory=new IDBFactory(),secret=await key();let floor=0;const anchor={read:async()=>floor,advance:async value=>{floor=Math.max(floor,value);}};
+ const open=()=>EncryptedBrowserQueue.open({...options(factory,secret),rollbackAnchor:anchor});
+ let queue=await open();
+ try{
+  const items=[];for(let n=0;n<8;n++)items.push(await queue.enqueue('orders.create','request-'+n,{n}));
+  // Settle three: two succeed, one is discarded while still pending. Five items stay live.
+  for(const item of items.slice(0,2)){const claimed=await queue.transition(item.id,1,'claim');await queue.transition(item.id,claimed.version,'succeed');}
+  await queue.transition(items[2].id,1,'discard');
+  for(const bad of [{statuses:[],limit:1},{statuses:['pending'],limit:1},{statuses:['succeeded','succeeded'],limit:1},{statuses:['succeeded'],limit:0},{statuses:['succeeded'],limit:1001},{statuses:'succeeded',limit:1},null])await assert.rejects(queue.purge(bad),/Invalid offline retention query/);
+  const rawStore=async mode=>{const db=await new Promise((resolve,reject)=>{const open=factory.open('offline-test');open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});const tx=db.transaction('offline',mode);return {store:tx.objectStore('offline'),tx,db};};
+  const saved=await (async()=>{const {store,tx,db}=await rawStore('readonly');const value=await request(store.get(items[0].id));await done(tx);db.close();return value;})();
+  const before=floor;
+  assert.equal(await queue.purge({statuses:['succeeded','discarded'],limit:2}),2,'the limit bounds one pass');
+  assert.ok(floor>before,'a purge advances the host floor like any other write');
+  assert.equal(await queue.purge({statuses:['succeeded','discarded','exhausted'],limit:1000}),1,'the remaining settled item');assert.equal(await queue.purge({statuses:['succeeded'],limit:1000}),0);
+  assert.equal((await queue.list()).length,5,'live items are never removed');
+  assert.equal((await queue.enqueue('orders.create','after-purge',{})).status,'pending','a purged queue accepts work');
+  // The counter and the digest describe the purged queue, so a reopen succeeds.
+  queue.close();queue=await open();assert.equal((await queue.list()).length,6);
+  // Putting a purged envelope back (an attacker restoring old state) no longer matches the authenticated digest.
+  {const {store,tx,db}=await rawStore('readwrite');store.put(saved);await done(tx);db.close();}
+  await assert.rejects(queue.list(),/tampering|integrity|counter|rollback/i);
+ }finally{queue.close();}
+});
