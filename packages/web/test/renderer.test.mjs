@@ -203,3 +203,61 @@ test('incremental missing layout references retain their web flex slot until res
     assert.equal(row.children[1].textContent,'Middle');
   }
 });
+
+// TASK-002.2.2
+test('every rendered component carries its ID and variant as stable hooks',()=>{
+ const {host,renderer}=setup();
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{form:{name:'Ada'}}}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+  {id:'root',component:'Column',children:['title','field','buy']},{id:'title',component:'Text',text:'Hi',variant:'h2'},
+  {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'},variant:'longText'},
+  {id:'buy',component:'Button',variant:'primary',child:'buyLabel',action:{event:{name:'buy'}}},{id:'buyLabel',component:'Text',text:'Buy'}]}});
+ const surface=host.children[0],root=surface.children[0],[title,field,buy]=root.children;
+ assert.equal(root.dataset.componentId,'root');assert.equal(root.dataset.variant,undefined);
+ assert.deepEqual([title.dataset.componentId,title.dataset.variant],['title','h2']);
+ assert.deepEqual([field.dataset.componentId,field.dataset.variant],['field','longText']);
+ assert.deepEqual([buy.dataset.componentId,buy.dataset.variant],['buy','primary']);assert.equal(buy.children[0].dataset.componentId,'buyLabel');
+});
+
+test('Text bound to a finite number or a boolean shows its JSON spelling; anything else shows nothing',()=>{
+ const {host,renderer}=setup();
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{count:3,ratio:2.5,off:false,on:true,none:null,list:[1],nested:{a:1},text:'plain'}}});
+ const paths=['/count','/ratio','/off','/on','/none','/list','/nested','/text','/missing'];
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:paths.map((_,index)=>'t'+index)},...paths.map((path,index)=>({id:'t'+index,component:'Text',text:{path}}))]}});
+ assert.deepEqual([...host.children[0].children[0].children].map(node=>node.textContent),['3','2.5','false','true','','','','plain','']);
+});
+
+const shape=element=>({tag:element.tagName,text:element.textContent,value:element.value,data:{...element.dataset},children:element.children.map(shape)});
+const counting=()=>{const doc={created:0,createElement(tag){doc.created++;return new Element(tag,doc);}};return doc;};
+const surfaceMessages=(data)=>[{version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}},{version:'v0.9.1',updateDataModel:{surfaceId:'main',value:data}},{version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+ {id:'root',component:'Column',children:['title','count','field','save']},{id:'title',component:'Text',text:{path:'/form/name'},variant:'h2'},{id:'count',component:'Text',text:{path:'/stats/count'}},
+ {id:'field',component:'TextField',label:'Name',value:{path:'/form/name'}},{id:'save',component:'Button',child:'saveLabel',action:{event:{name:'save',context:{name:{path:'/form/name'}}}}},{id:'saveLabel',component:'Text',text:'Save'}]}}];
+test('a data-only update patches bound nodes in place and matches a full render',()=>{
+ const doc=counting(),host=doc.createElement('main'),renderer=new A2UIRenderer(host);
+ const messages=surfaceMessages({form:{name:'Ada'},stats:{count:1}});for(const message of messages)renderer.apply(message);
+ const root=host.children[0].children[0],input=root.children[2].children[1],created=doc.created;
+ let data={form:{name:'Ada'},stats:{count:1}};
+ for(const [path,value] of [['/form/name','Grace'],['/stats/count',2],['/stats/count',true],['/form/name','Lin'],['/stats/count',null],['/form/name',undefined]]){
+  renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path,value}});
+  const [section,key]=path.slice(1).split('/');data={...data,[section]:{...data[section]}};if(value===undefined)delete data[section][key];else data[section][key]=value;
+  const fresh=counting(),freshHost=fresh.createElement('main'),freshRenderer=new A2UIRenderer(freshHost);for(const message of surfaceMessages(data))freshRenderer.apply(message);
+  assert.deepEqual(shape(host),shape(freshHost),`after ${path}=${String(value)}`);
+ }
+ assert.equal(doc.created,created,'no element was created by data-only updates');assert.equal(host.children[0].children[0],root,'the surface keeps its root');assert.equal(root.children[2].children[1],input,'the field keeps its input node');
+});
+test('a surface with a custom component is rebuilt on data updates',()=>{
+ const registry=basicRegistry().register('Badge',(c,_child,data,doc)=>{const element=doc.createElement('span');element.textContent='badge:'+JSON.stringify(data);return element;});
+ const doc=counting(),host=doc.createElement('main'),renderer=new A2UIRenderer(host,registry);
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{n:1}}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['badge']},{id:'badge',component:'Badge'}]}});
+ const created=doc.created;renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/n',value:2}});
+ assert.ok(doc.created>created,'the custom component may read any data, so the surface is rebuilt');assert.equal(host.children[0].children[0].children[0].textContent,'badge:{"n":2}');
+});
+test('the renderer benchmark shows the incremental path beating a rebuild on a 1,000-component surface',async()=>{
+ const {spawnSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url'),script=fileURLToPath(new URL('../../../scripts/bench-renderer.mjs',import.meta.url));
+ const run=spawnSync(process.execPath,['--no-warnings',script,'20'],{encoding:'utf8',timeout:120000});assert.equal(run.status,0,run.stderr);
+ const [incremental,rebuild]=run.stdout.trim().split('\n').map(line=>JSON.parse(line));assert.deepEqual([incremental.mode,rebuild.mode],['incremental','rebuild']);assert.ok(incremental.components>=998);
+ assert.ok(incremental.perUpdateMs*3<rebuild.perUpdateMs,`incremental ${incremental.perUpdateMs} ms against rebuild ${rebuild.perUpdateMs} ms per update`);
+});
