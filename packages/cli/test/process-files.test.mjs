@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,readdirSync,statSync} from 'node:fs';
-import {join,sep} from 'node:path';
+import {join,relative,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),read=path=>readFileSync(join(root,path),'utf8');
 function files(directory){return readdirSync(directory).flatMap(name=>{if(['node_modules','dist','.git'].includes(name))return[];const path=join(directory,name);return statSync(path).isDirectory()?files(path):[path];});}
@@ -96,4 +96,36 @@ test('FIX-025 every raw database open in the pod recovery scripts sets a busy ti
  }
  assert.ok(opens>=2,'the scripts open the database directly ('+opens+' opens)');
  assert.deepEqual(offenders,[],'scripts that open the database without a busy timeout');
+});
+
+test('TASK-002.6.1 every ADR file is listed in the ADR table with its status and the core dependency decision is recorded',()=>{
+ const table=read('docs/adr/README.md');
+ for(const name of readdirSync(join(root,'docs/adr')).filter(file=>/^d{4}-.+.md$/.test(file)))assert.ok(table.includes('('+name+')'),name+' is listed in docs/adr/README.md');
+ assert.ok(existsSync(join(root,'docs/adr/0011-core-depends-on-the-web-renderer.md')),'ADR 0011 records why core depends on the web renderer');
+});
+
+test('TASK-002.6.3 every repository path that the guides and the CHANGELOG name in code spans exists',()=>{
+ const missing=[];
+ const pages=[join(root,'README.md'),join(root,'CONTRIBUTING.md'),join(root,'CHANGELOG.md'),...files(join(root,'docs')).filter(path=>path.endsWith('.md')&&!path.includes(sep+'plans'+sep))];
+ for(const page of pages)for(const match of readFileSync(page,'utf8').matchAll(/`((?:packages|deploy|scripts|\.github|adapters)\/[A-Za-z0-9_.\/-]+\.(?:mjs|cjs|js|ts|sh|ya?ml|json|md))`/g))if(!existsSync(join(root,match[1])))missing.push(match[1]+' (named in '+relative(root,page)+')');
+ assert.deepEqual(missing,[],'paths named in the guides that are not in the repository');
+});
+
+test('TASK-002.6.5 each acceptance checklist section states what is verified once and lists no item twice',()=>{
+ const sections=read('docs/acceptance-checklists.md').replaceAll('\r\n','\n').split(/^### /m).slice(1);
+ assert.ok(sections.length>10);
+ for(const section of sections){
+  const lines=section.split('\n'),title=lines[0],items=lines.filter(line=>/^(- \*\*|  - \[)/.test(line));
+  assert.ok(items.filter(line=>line.startsWith('- **Verified locally:**')).length<=1,title+' has more than one Verified locally line');
+  const seen=new Set();for(const line of items){const opening=line.slice(0,90);assert.equal(seen.has(opening),false,title+' repeats: '+opening);seen.add(opening);}
+ }
+});
+
+test('TASK-002.6.7 CI caches the pinned Docker images the container tests start',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const images=execFileSync(process.execPath,[join(root,'.github/scripts/docker-images.mjs')],{encoding:'utf8'}).trim().split('\n');
+ assert.ok(images.length>=5,'found '+images.length+' images');
+ for(const image of images)assert.match(image,/@sha256:[a-f0-9]{64}$|:[0-9][A-Za-z0-9._-]*$/,image+' is pinned to a version or digest');
+ for(const name of ['hydra','grafana','opentelemetry-collector','prometheus','alertmanager','pgvector'])assert.ok(images.some(image=>image.includes(name)),name+' is cached');
+ const workflow=read('.github/workflows/ci.yml').replaceAll('\r\n','\n');assert.match(workflow,/uses: actions\/cache@v4\s*\n\s+with:\s*\n\s+path: ~\/docker-images/);assert.match(workflow,/docker load -i/);assert.match(workflow,/docker save -o/);
 });

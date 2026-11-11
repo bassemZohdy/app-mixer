@@ -68,8 +68,29 @@
       - Done when: the manifests parse and the workflow steps that exercise them exist; `node --test packages/cli/test/process-files.test.mjs`
     - [x] **TASK-002.5.3** · mid · Port the test that exports one cross-service trace to a real OpenTelemetry Collector (56cdcd23), which needs Docker and so runs in CI
       - Done when: one trace crosses the services and reaches the collector with the expected spans; `npm run build && node --test packages/cli/test/otel-collector-trace.test.mjs`
-  - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
+  - [x] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
     - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
+    - [x] **TASK-002.6.1** · low · Port ADR 0011 (core keeps its dependency on the web renderer, 373bfb3a) and its entries in the ADR table and the docs index
+      - Done when: the ADR file exists, the ADR table lists it and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
+    - [x] **TASK-002.6.2** · mid · Port the store schema versions (246c6d57): an app_mixer_schema table, a refusal of databases from newer releases in the agent run and staged operation stores, and docs/schema-versions.md
+      - Done when: a database recorded at a newer version is refused with the documented message and an older layout migrates; `npm run build && node --test packages/core/test/schema-version.test.mjs packages/agent/test/durable-runs.test.mjs`
+    - [x] **TASK-002.6.3** · high · Port the shared run failover test and the kind recovery scripts that docs/durable-agent-runs.md names (78057dab, 6f4f1188, 67c66619, 057d8276 and their review fixes); the kind and PostgreSQL parts run in CI
+      - Done when: every script and test that docs/durable-agent-runs.md names exists and a static test checks the list; `node --test packages/cli/test/process-files.test.mjs`
+      - Links: Depends: TASK-002.6.2
+    - [x] **TASK-002.6.4** · low · Port the sandbox idempotency check for outbound providers (986e967e, 378148f2 part) with its script test and its CONTRIBUTING entry
+      - Done when: the script refuses a provider that repeats a side effect on a retried key; `npm run build && node --test packages/cli/test/provider-idempotency-script.test.mjs`
+    - [x] **TASK-002.6.5** · low · Reconcile docs/acceptance-checklists.md (the five repeated P3-02 lines, the collector and recovery items) and CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
+      - Done when: P3-02 has one verified line, CONTRIBUTING repeats no sentence and names every script that exists; `node --test packages/cli/test/process-files.test.mjs`
+      - Links: Depends: TASK-002.6.3, TASK-002.6.4
+    - [x] **TASK-002.6.6** · mid · Port the audited operator tool that lists, reads and raises the file rollback anchors, and the recovery procedure for a rollback refusal (417ddc62, 378148f2)
+      - Done when: the tool lists and raises an anchor, lowers one only with a reason, and logs every change; `npm run build && node --test packages/cli/test/anchor-admin.test.mjs`
+    - [x] **TASK-002.6.7** · low · Port the script that derives the pinned container images from the tests and the CI cache steps that use it (48ff2e26)
+      - Done when: the derived image list equals the images the opt-in tests pin and the workflow caches them; `node --test packages/cli/test/process-files.test.mjs`
+    - [x] **TASK-002.6.8** · high · Port the offline provisioning scenario on an Android emulator and in Safari on an iOS Simulator (70186874, 6476fc36, 0b0ca9ce, f1980080), with the shared fixture the headless-browser test then uses; the emulator runs only in CI
+      - Done when: the headless-browser test uses the shared provisioning fixture and both device workflows run the scenario; `npm run build && node --test packages/web/test/browser-offline-provisioning.test.mjs packages/cli/test/process-files.test.mjs`
+    - [x] **TASK-002.6.9** · low · Make the guides and the CHANGELOG name only files that exist: add the CHANGELOG to the path check and unquote the dropped progress script
+      - Done when: every repository path in a code span of the CHANGELOG exists; `node --test packages/cli/test/process-files.test.mjs`
+      - Links: Depends: TASK-002.6.6, TASK-002.6.7, TASK-002.6.8
 - [ ] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
   - Done when: both Dockerfiles share one digest-pinned base image newer than 22.13.0, and a tag without a digest fails the test; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/kubernetes-data-plane.md · Depends: TASK-002

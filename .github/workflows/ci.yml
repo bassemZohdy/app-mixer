@@ -75,6 +75,25 @@ jobs:
         if: matrix.node == '22'
       - run: npm test
       - run: npm run build
+      # The container tests pull pinned images; cache them keyed by the image list so registry limits and pull time stay out of the run.
+      - name: Docker image cache key
+        if: matrix.node == '22'
+        id: docker-key
+        run: echo "key=$(node .github/scripts/docker-images.mjs | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Restore Docker images
+        if: matrix.node == '22'
+        uses: actions/cache@v4
+        with:
+          path: ~/docker-images
+          key: docker-images-${{ steps.docker-key.outputs.key }}
+      - name: Load or pull Docker images
+        if: matrix.node == '22'
+        run: |
+          mkdir -p ~/docker-images
+          for image in $(node .github/scripts/docker-images.mjs); do
+            file=~/docker-images/$(printf '%s' "$image" | sha256sum | cut -c1-16).tar
+            if [ -f "$file" ]; then docker load -i "$file"; else docker pull -q "$image" && docker save -o "$file" "$image"; fi
+          done
       - name: Real React lifecycle smoke test
         if: matrix.node == '22'
         run: |
@@ -101,11 +120,11 @@ jobs:
         env:
           APP_MIXER_TEST_PROMETHEUS: docker
         run: node --test packages/cli/test/alert-rules.test.mjs
-      - name: Revocation store failover drill
+      - name: PostgreSQL failover drills
         if: matrix.node == '22'
         env:
           APP_MIXER_TEST_POSTGRES_FAILOVER: docker
-        run: node --test packages/core/test/postgres-revocation-failover.test.mjs
+        run: node --test packages/core/test/postgres-revocation-failover.test.mjs packages/agent/test/postgres-run-failover.test.mjs
       - name: A second real OIDC provider (Ory Hydra)
         if: matrix.node == '22'
         env:
