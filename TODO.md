@@ -62,7 +62,12 @@
       - Links: Depends: TASK-002.4.3
   - [ ] **TASK-002.5** · mid · Port the deploy, CI and observability changes (admission rules, alert rules, collector trace test, new workflows, agent metrics) the same way
     - Done when: every workflow keeps its job timeouts and the new agent metrics report their backlog; `npm run build && node --test packages/cli/test/process-files.test.mjs packages/agent/test/agent-run-metrics-backlog.test.mjs`
-    - State: next: decompose
+    - [ ] **TASK-002.5.1** · mid · Port the agent metrics: schedule backlog and journaled action states (0b50338e) and the opt-in approvals, notice deliveries, token reservations, stored memories and cost series (9ef55463, 4982db66, 902ea79f, 9ac867ec, d9b31b0f)
+      - Done when: each metric reports its counts without identifier labels and refuses an unauthorized scrape; `npm run build && node --test packages/agent/test/agent-run-metrics-backlog.test.mjs packages/agent/test/agent-approval-metrics.test.mjs packages/agent/test/agent-notice-delivery-metrics.test.mjs packages/agent/test/agent-token-metrics.test.mjs packages/agent/test/agent-memory-metrics.test.mjs packages/agent/test/agent-cost-metrics.test.mjs`
+    - [ ] **TASK-002.5.2** · mid · Port the Kubernetes manifests that let a labelled pod scrape the Data Plane metrics and enforce namespace-wide admission rules around the Data Plane (543dd7b5, f498b6e9, 0e0d2be0, b303af44); only the kind workflows in CI run them
+      - Done when: the manifests parse and the workflow steps that exercise them exist; `node --test packages/cli/test/process-files.test.mjs`
+    - [ ] **TASK-002.5.3** · mid · Port the test that exports one cross-service trace to a real OpenTelemetry Collector (56cdcd23), which needs Docker and so runs in CI
+      - Done when: one trace crosses the services and reaches the collector with the expected spans; `npm run build && node --test packages/cli/test/otel-collector-trace.test.mjs`
   - [ ] **TASK-002.6** · low · Port the remaining docs (checklists, ADR 0011, schema versions), then reconcile CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
     - Done when: CONTRIBUTING.md still passes its three consistency tests and the docs index is current; `node --test packages/cli/test/process-files.test.mjs`
 - [ ] **FIX-003** · P1 · low · Update Dockerfile.data-plane and Dockerfile.local from node:22.13.0-bookworm-slim (January 2025, older than later Node 22 security releases) to the current 22.x patch, pinned by digest
