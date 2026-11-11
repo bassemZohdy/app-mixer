@@ -32,10 +32,9 @@
     - [x] **TASK-002.2.2** · mid · Port rendering of numbers and booleans bound to Text and the stable component and variant hooks on every renderer (1fb6579a, 8e7739f2)
       - Done when: a bound number and a bound boolean render as text and every component exposes its hook, while an unsupported bound value is still rejected; `npm run build && node --test packages/web/test/renderer.test.mjs packages/native/test/parity.test.mjs`
       - Links: Depends: TASK-002.2.1
-    - [/] **TASK-002.2.3** · mid · Port in-place patching of bound nodes on data-only updates and keeping text that is being composed with an input method (6bec636d, 216f6164)
+    - [x] **TASK-002.2.3** · mid · Port in-place patching of bound nodes on data-only updates and keeping text that is being composed with an input method (6bec636d, 216f6164)
       - Done when: a data-only update keeps node identity and focus, and composing text survives an update to another path; `npm run build && node --test packages/web/test/renderer.test.mjs packages/web/test/conformance.test.mjs`
       - Links: Depends: TASK-002.2.2
-      - State: attempts 0/3; baseline 1844 passing; branch todo/TASK-002.2.3-port-in-place-patching from todo/TASK-002.2-port-web-react-native; next: read docs
     - [ ] **TASK-002.2.4** · mid · Port generation of the editor preview's shared schema parser from the CLI template (2f9d4e0e), replacing the hand copy
       - Done when: the preview parser equals the generated one and a hand edit to it fails the sync check; `npm run build && node --test packages/cli/test/process-files.test.mjs`
   - [ ] **TASK-002.3** · high · Port offline provisioning, legacy-client migration, rollback anchors and disconnected promotion the same way
