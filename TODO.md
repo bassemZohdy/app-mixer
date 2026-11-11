@@ -91,9 +91,8 @@
     - [x] **TASK-002.6.9** · low · Make the guides and the CHANGELOG name only files that exist: add the CHANGELOG to the path check and unquote the dropped progress script
       - Done when: every repository path in a code span of the CHANGELOG exists; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.6, TASK-002.6.7, TASK-002.6.8
-  - [ ] **TASK-002.7** · mid · Port the remaining Kubernetes Data Plane changes that the CHANGELOG already describes: the release floor and revocation epoch anchor volume, and the slimmer image with a healthcheck
+  - [x] **TASK-002.7** · mid · Port the remaining Kubernetes Data Plane changes that the CHANGELOG already describes: the release floor and revocation epoch anchor volume, and the slimmer image with a healthcheck
     - Done when: the Data Plane validates its anchor settings, the admission example allows only the approved anchor claim and the image test passes; `node --test packages/core/test/kubernetes-data-plane.test.mjs packages/cli/test/process-files.test.mjs`
-    - State: branch todo/TASK-002.7-port-data-plane-anchors-image from todo/TASK-002-port-remaining-local-acceptance; next: build children
     - [x] **TASK-002.7.1** · high · Port the anchor volume for the release floor and the revocation epoch in the Kubernetes Data Plane (15002e2d, 65a47d76, 1be7a619, 56b1a8a4, 4f0b8aec, fcba1ef3, 378148f2 part): the overlay, the admission rules, the start-up validation and the kind step that lowers the database floor; the kind step runs in CI
       - Done when: a restored database whose floor or epoch went back makes readiness fail and the admission example allows only the approved claim; `node --test packages/core/test/kubernetes-data-plane.test.mjs`
     - [x] **TASK-002.7.2** · mid · Port the slimmer Data Plane image with a healthcheck and the size limit CI enforces (7ea347d1)
