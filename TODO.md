@@ -78,9 +78,8 @@
     - [x] **TASK-002.6.3** · high · Port the shared run failover test and the kind recovery scripts that docs/durable-agent-runs.md names (78057dab, 6f4f1188, 67c66619, 057d8276 and their review fixes); the kind and PostgreSQL parts run in CI
       - Done when: every script and test that docs/durable-agent-runs.md names exists and a static test checks the list; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.2
-    - [/] **TASK-002.6.4** · low · Port the sandbox idempotency check for outbound providers (986e967e, 378148f2 part) with its script test and its CONTRIBUTING entry
+    - [x] **TASK-002.6.4** · low · Port the sandbox idempotency check for outbound providers (986e967e, 378148f2 part) with its script test and its CONTRIBUTING entry
       - Done when: the script refuses a provider that repeats a side effect on a retried key; `npm run build && node --test packages/cli/test/provider-idempotency-script.test.mjs`
-      - State: attempts 0/3; baseline 1917 passing; branch todo/TASK-002.6.4-port-provider-idempotency-check from todo/TASK-002.6-port-remaining-docs; next: read docs
     - [ ] **TASK-002.6.5** · low · Reconcile docs/acceptance-checklists.md (the five repeated P3-02 lines, the collector and recovery items) and CONTRIBUTING.md and CHANGELOG.md with the ported scripts and the Node floor
       - Done when: P3-02 has one verified line, CONTRIBUTING repeats no sentence and names every script that exists; `node --test packages/cli/test/process-files.test.mjs`
       - Links: Depends: TASK-002.6.3, TASK-002.6.4
