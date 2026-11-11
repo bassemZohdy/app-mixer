@@ -1,0 +1,30 @@
+name: Web storage on iOS
+on:
+  pull_request:
+    paths:
+      - 'packages/web/**'
+      - 'packages/core/src/offline-provisioning.ts'
+      - '.github/workflows/web-ios.yml'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '47 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  ios-browser-storage:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+      - name: Safari in an iOS Simulator
+        run: node packages/web/device-test/ios-browser-storage.mjs
