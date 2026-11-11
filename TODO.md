@@ -43,7 +43,7 @@
       - Done when: a swapped envelope is detected, a full queue accepts a purge of settled items only, and queue limits hold; `npm run build && node --test packages/web/test/offline.test.mjs packages/core/test/offline-queue.test.mjs`
     - [x] **TASK-002.3.2** · high · Port offline provisioning of a device that has never been online from a signed grant (7ce2b9e2)
       - Done when: a valid signed grant provisions the device and a forged, expired or replayed grant is refused; `npm run build && node --test packages/web/test/offline-provisioning.test.mjs`
-    - [ ] **TASK-002.3.3** · mid · Port migration of data from retained builds of older offline clients (a43b1ec3)
+    - [x] **TASK-002.3.3** · mid · Port migration of data from retained builds of older offline clients (a43b1ec3)
       - Done when: data written by each retained client build opens in the current one and an unknown format is refused; `npm run build && node --test packages/web/test/offline-legacy-clients.test.mjs`
     - [ ] **TASK-002.3.4** · high · Port the rollback anchors for the promotion floor and the offline identity stores, and replication of promotions to a disconnected target (edbdc8ff, 278a7b96, 73eeb8ad)
       - Done when: a restored older snapshot and a stale anchor are rejected and a carried promotion document replicates once; `npm run build && node --test packages/core/test/remote-promotion-floor-anchor.test.mjs packages/core/test/disconnected-promotion.test.mjs packages/cli/test/offline-identity-anchor.test.mjs`
