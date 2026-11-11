@@ -48,3 +48,7 @@ The renderers do not impose a theme: colors, borders and fonts belong to the hos
 | Variant | `data-variant` (`h1`-`h5`, `body`, `caption`, `shortText`, `longText`, `default`, `primary`, `borderless`) | `variantStyles={{Button:{primary:...},TextField:{longText:...}}}` prop, applied as `style` |
 
 Example (web): `button[data-variant="primary"] { background: #1a56db; color: white }`, or select a component in a test with `[data-component-id="save"]`. Text variants also keep their element or text-theme mapping. The Flutter renderer does not expose these hooks yet.
+
+## Data updates
+
+A data-only update that arrives from outside the surface (`updateDataModel` from the host or the stream) no longer rebuilds it when every rendered component is built in (`Text`, `Column`, `Row`, `Card`, `TextField`, `Button`): the bound `Text` and `TextField` nodes are refreshed in place, so DOM nodes, focus and selection (with its direction) are kept and no element is created. An edit typed into a `TextField` still rebuilds the surface, so the elements of the previous render can no longer write. A surface that renders any custom component, or an update that changes the components, is rebuilt as before. Text that is being composed with an input method is never overwritten by an update to another path; the data catches up when composition ends. `node scripts/bench-renderer.mjs` compares the two paths on a 1,000-component surface.
