@@ -2,12 +2,24 @@
 
 ## 🌳 Task Tree
 
+- [ ] **FIX-039** · P0 · low · List the documents under docs/plans in the documentation index (a Plans section in scripts/docs-index.mjs) and regenerate docs/README.md; docs/plans/PROJECT.md is not reachable from the README, so the docs test fails
+  - Done when: the index lists docs/plans/PROJECT.md under Plans, has no Plans section when the folder holds no document, and every document under docs is reachable from the README; `node --test packages/cli/test/process-files.test.mjs`
+  - State: branch todo/FIX-039-list-documents-under-docs from harden-on-main; next: start FIX-039
 - [ ] **FEAT-004** · P1 · high · Serve the generated app's pages with a hash-based Content-Security-Policy, frame-ancestors none and a Referrer-Policy, as the review pages already do
   - Done when: the generated index page is served with a policy without unsafe-inline that covers each of its inline blocks, and a page with an extra inline script fails the hash check; `npm run build && node --test packages/cli/test/csp.test.mjs`
 - [ ] **TASK-007** · P1 · low · Adopt a formatter with a CI check and reformat packages, templates, deploy and scripts; source lines now reach 5,687 characters and average 141
   - Done when: the format check passes, and a test fails on any source line over 200 characters; `node --test packages/cli/test/source-format.test.mjs`
   - Links: Depends: TASK-002
   - State: next: decompose
+- [ ] **FEAT-026** · P1 · mid · Add removeComponent, setComponentProps and removePage patches, with their proposal validation; the six patches only add today, so a wrong component can never be corrected in a draft
+  - Done when: each patch changes only its target, an unknown page or component returns 400, and a proposal carrying them previews and approves; `npm run build && node --test packages/core/test/draft-repair-patches.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: definitions
+- [ ] **FIX-027** · P1 · high · Refuse in core validation the component properties the renderers reject, naming the component and property, and refuse a Table at publish; a patch, a proposal approval and a publish accept them today and the published workspace shows only an error
+  - Done when: an Input with a relative path, a Text with both text and path and a Card with an unknown property each return 400 on all three routes, a Table is refused at publish, and a store whose saved draft holds one still opens and accepts removeComponent; `npm run build && node --test packages/core/test/component-validation.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md#decisions · Depends: FEAT-026 · Lane: definitions
+- [ ] **FIX-028** · P1 · mid · Keep the pages already rendered when a refreshed publication cannot be rendered; the cache's compatible check runs prepareWorkspace only, so a definition the renderer rejects replaces a working workspace with an error
+  - Done when: after such a refresh the earlier pages stay in the DOM and the status line says the new version was not applied, and a first load of one still shows the error; `npm run build && node --test packages/cli/test/workspace-refresh-fallback.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
 - [ ] **TASK-008** · P2 · mid · Move the generated server, page, chat and workspace sources out of String.raw literals in packages/cli/src/index.ts into packages/cli/templates so they can be linted and syntax-checked
   - Done when: createProject writes the same files byte for byte as before, and each template passes a syntax check; `npm run build && node --test packages/cli/test/create.test.mjs`
   - State: next: decompose
@@ -40,3 +52,33 @@
   - Done when: the package's public exports are unchanged; `npm run build && node --test packages/agent/test/package-entries.test.mjs`
   - Links: Depends: TASK-011
   - State: next: decompose
+- [ ] **FIX-029** · P2 · mid · Return the latest publication instead of creating a version when the draft equals it; each POST /publish of an unchanged draft adds an identical version today
+  - Done when: a repeated publish returns the same version in the in-memory and SQLite stores and adds none, and publishing the same draft after a rollback still creates one; `npm run build && node --test packages/core/test/publish-unchanged.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md#decisions · Lane: definitions
+- [ ] **FIX-030** · P2 · mid · Make the generated server exit with one line naming the setting for a port in use, an invalid PORT, and a DATA_PLANE_URL, AGENT_URL or CAPABILITY_URL that is set but invalid or has a token under 32 characters; these give a stack trace or are silently treated as unset today
+  - Done when: each bad setting exits non-zero with one line and no stack trace, and unset values still start; `npm run build && node --test packages/cli/test/server-startup-errors.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+- [ ] **FEAT-031** · P2 · low · Load .env in the generated app: the dev script passes --env-file-if-exists=.env and the project gets a .gitignore naming .env; .env.example is generated today but nothing reads it
+  - Done when: an app started through its dev script with AGENT_URL and AGENT_TOKEN only in .env reports chat enabled, and it starts without a .env; `npm run build && node --test packages/cli/test/generated-env-file.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+- [ ] **FIX-032** · P2 · mid · Stop long unbroken text widening the generated page (scrollWidth 1392 in a 950 px viewport), and space labels from fields and outline cards in its stylesheet
+  - Done when: in headless Chrome a page with a 300-character unbroken Text has scrollWidth equal to clientWidth at 950 and 400 px, and a label and its field do not touch; `npm run build && APP_MIXER_TEST_BROWSER=1 node --test packages/cli/test/browser-page-layout.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+- [ ] **FIX-033** · P2 · mid · Render no heading element in the web renderer for a heading-variant Text whose bound value is empty or missing; it leaves an h1 to h5 with no name in the accessibility tree today
+  - Done when: an h3 Text bound to a missing, null or empty value adds no heading and one appears when the value is set, in a full render and in an in-place data update; `npm run build && node --test packages/web/test/empty-heading.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+- [ ] **FEAT-034** · P2 · low · Keep a chat message whose send failed: put the text back in the input and mark its logged line as not sent; the input is cleared and the message dropped today
+  - Done when: with the agent stopped the input holds the text again and the line reads not sent, and a second submit after the agent returns is answered; `npm run build && node --test packages/cli/test/chat-send-failure.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+- [ ] **FEAT-035** · P2 · mid · Show one workspace page at a time, chosen by its route through hash navigation with a list of page titles; every page is stacked in one column today and route is unused
+  - Done when: with two pages only the page of the current hash is rendered, the list marks it with aria-current, an unknown hash shows the first page, and field values survive switching; `npm run build && node --test packages/cli/test/workspace-navigation.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md#decisions · Lane: workspace
+- [ ] **FEAT-036** · P2 · mid · Add GET /proposals to the developer control server and a pick list to the review page, and show action results beside the Approve, Reject and Publish buttons; a reviewer needs the proposal UUID from elsewhere today
+  - Done when: the list returns id, base revision and status for the developer token, the agent token and a missing token get 401, and the page loads a proposal chosen from the list; `npm run build && node --test packages/core/test/proposal-list.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: definitions
+- [ ] **FEAT-037** · P2 · mid · Add npm run local, which starts the workspace, Data Plane, Control Plane and demo agent on loopback without Docker, and document APP_MIXER_MANIFEST and APP_MIXER_DATABASE; deploy/local/service.mjs fails with ENOENT outside the image today
+  - Done when: the started stack serves a published page and answers a chat message, and every process stops on SIGINT; `npm run build && node --test packages/cli/test/local-stack.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md
+- [ ] **FIX-038** · P2 · low · Make app-mixer --help and -h print one command per line and exit 0, add --version, and refuse Windows device names (con, nul, aux, prn, com1 to com9, lpt1 to lpt9) in create
+  - Done when: help exits 0 with a line per command, --version prints the package version, and create con exits 1 and writes nothing; `npm run build && node --test packages/cli/test/cli-usage.test.mjs`
+  - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
