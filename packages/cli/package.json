@@ -20,13 +20,13 @@
     "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@opentelemetry/context-async-hooks": "3.1.0",
-    "@opentelemetry/core": "3.1.0",
-    "@opentelemetry/exporter-trace-otlp-http": "0.301.0",
-    "@opentelemetry/resources": "3.1.0",
-    "@opentelemetry/sdk-trace": "3.1.0",
+    "@opentelemetry/context-async-hooks": "3.1.1",
+    "@opentelemetry/core": "3.1.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.301.1",
+    "@opentelemetry/resources": "3.1.1",
+    "@opentelemetry/sdk-trace": "3.1.1",
     "@types/node": "^22.15.0",
-    "fake-indexeddb": "^6.2.4",
+    "fake-indexeddb": "^6.2.8",
     "jsdom": "^31.0.0",
     "typescript": "^5.9.3"
   },
