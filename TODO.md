@@ -11,6 +11,7 @@
 - [ ] **FEAT-026** · P1 · mid · Add removeComponent, setComponentProps and removePage patches, with their proposal validation; the six patches only add today, so a wrong component can never be corrected in a draft
   - Done when: each patch changes only its target, an unknown page or component returns 400, and a proposal carrying them previews and approves; `npm run build && node --test packages/core/test/draft-repair-patches.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md · Lane: definitions
+  - State: branch todo/FEAT-026-add-removecomponent-setcomponentprops-removepage from harden-on-main; next: start FEAT-026
 - [ ] **FIX-027** · P1 · high · Refuse in core validation the component properties the renderers reject, naming the component and property, and refuse a Table at publish; a patch, a proposal approval and a publish accept them today and the published workspace shows only an error
   - Done when: an Input with a relative path, a Text with both text and path and a Card with an unknown property each return 400 on all three routes, a Table is refused at publish, and a store whose saved draft holds one still opens and accepts removeComponent; `npm run build && node --test packages/core/test/component-validation.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md#decisions · Depends: FEAT-026 · Lane: definitions
