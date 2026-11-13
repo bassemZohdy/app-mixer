@@ -57,40 +57,42 @@ try {
 import {readFile} from 'node:fs/promises';
 import {once} from 'node:events';
 import {createPublicationTracing} from './publication-tracing.mjs';
-const flag=name=>{const value=process.env[name]??'false';if(value!=='true'&&value!=='false')throw Error('Invalid '+name);return value==='true';};
-const tracingEnabled=flag('WORKSPACE_TRACING_ENABLED'),capabilityPropagation=flag('WORKSPACE_TRACING_PROPAGATE_CAPABILITIES'),agentPropagation=flag('WORKSPACE_TRACING_PROPAGATE_AGENT');if((capabilityPropagation||agentPropagation)&&!tracingEnabled)throw Error('Invalid workspace tracing configuration');
+const fail=message=>{console.error('server.mjs: '+message);process.exit(1);};
+const flag=name=>{const value=process.env[name]??'false';if(value!=='true'&&value!=='false')fail('Invalid '+name);return value==='true';};
+const tracingEnabled=flag('WORKSPACE_TRACING_ENABLED'),capabilityPropagation=flag('WORKSPACE_TRACING_PROPAGATE_CAPABILITIES'),agentPropagation=flag('WORKSPACE_TRACING_PROPAGATE_AGENT');if((capabilityPropagation||agentPropagation)&&!tracingEnabled)fail('Invalid workspace tracing configuration');
 const tracing=await createPublicationTracing({enabled:tracingEnabled,trustIncoming:flag('WORKSPACE_TRACING_TRUST_INCOMING'),propagate:flag('WORKSPACE_TRACING_PROPAGATE')});
-const port=Number(process.env.PORT||3000);
+const portText=process.env.PORT||'3000';
+if(!/^\d{1,5}$/.test(portText)||Number(portText)>65535)fail('PORT must be an integer from 0 to 65535');
+const port=Number(portText);
 const publicationSchemaVersion=/^[12]$/.test(process.env.PUBLICATION_SCHEMA_VERSION||'1')?Number(process.env.PUBLICATION_SCHEMA_VERSION||'1'):null;
 const bind=process.env.APP_MIXER_BIND||'127.0.0.1';
-if(!['127.0.0.1','0.0.0.0'].includes(bind))throw Error('Invalid bind address');
-let dataURL;
-try {const candidate=new URL(process.env.DATA_PLANE_URL||'');if(candidate.protocol==='http:'&&['127.0.0.1','localhost'].includes(candidate.hostname)&&candidate.pathname==='/application'&&!candidate.search&&!candidate.hash&&!candidate.username&&!candidate.password)dataURL=candidate;}catch{}
+if(!['127.0.0.1','0.0.0.0'].includes(bind))fail('Invalid bind address');
+const endpoint=(urlName,path,tokenName)=>{
+  const text=process.env[urlName];if(!text)return undefined;
+  const expected=urlName+' must be an http URL on 127.0.0.1 or localhost with the path '+path;
+  let candidate;try{candidate=new URL(text);}catch{fail(expected);}
+  if(!(candidate.protocol==='http:'&&['127.0.0.1','localhost'].includes(candidate.hostname)&&candidate.pathname===path&&!candidate.search&&!candidate.hash&&!candidate.username&&!candidate.password))fail(expected);
+  if(tokenName&&(process.env[tokenName]||'').length<32)fail(tokenName+' must contain at least 32 characters when '+urlName+' is set');
+  return candidate;
+};
+const dataURL=endpoint('DATA_PLANE_URL','/application');
 const capabilityTimeoutText=process.env.CAPABILITY_TIMEOUT_MS??'5000';
-if(!/^[1-9]\d{0,4}$/.test(capabilityTimeoutText)||Number(capabilityTimeoutText)<100||Number(capabilityTimeoutText)>30000)throw Error('Invalid CAPABILITY_TIMEOUT_MS');
+if(!/^[1-9]\d{0,4}$/.test(capabilityTimeoutText)||Number(capabilityTimeoutText)<100||Number(capabilityTimeoutText)>30000)fail('Invalid CAPABILITY_TIMEOUT_MS');
 const capabilityTimeoutMs=Number(capabilityTimeoutText);
 const capabilityResponseLimitText=process.env.CAPABILITY_RESPONSE_MAX_BYTES??'1048576';
-if(!/^[1-9]\d{0,7}$/.test(capabilityResponseLimitText)||Number(capabilityResponseLimitText)<1048576||Number(capabilityResponseLimitText)>8388608)throw Error('Invalid CAPABILITY_RESPONSE_MAX_BYTES');
+if(!/^[1-9]\d{0,7}$/.test(capabilityResponseLimitText)||Number(capabilityResponseLimitText)<1048576||Number(capabilityResponseLimitText)>8388608)fail('Invalid CAPABILITY_RESPONSE_MAX_BYTES');
 const capabilityResponseLimit=Number(capabilityResponseLimitText);
 const capabilityRequestLimitText=process.env.CAPABILITY_REQUEST_MAX_BYTES??'1048576';
-if(!/^[1-9]\d{0,7}$/.test(capabilityRequestLimitText)||Number(capabilityRequestLimitText)<1048576||Number(capabilityRequestLimitText)>8388608)throw Error('Invalid CAPABILITY_REQUEST_MAX_BYTES');
+if(!/^[1-9]\d{0,7}$/.test(capabilityRequestLimitText)||Number(capabilityRequestLimitText)<1048576||Number(capabilityRequestLimitText)>8388608)fail('Invalid CAPABILITY_REQUEST_MAX_BYTES');
 const capabilityRequestLimit=Number(capabilityRequestLimitText);
 const capabilityConcurrencyText=process.env.CAPABILITY_MAX_IN_FLIGHT;
-if(capabilityConcurrencyText!==undefined&&(!/^[1-9]\d{0,2}$/.test(capabilityConcurrencyText)||Number(capabilityConcurrencyText)>100))throw Error('Invalid CAPABILITY_MAX_IN_FLIGHT');
+if(capabilityConcurrencyText!==undefined&&(!/^[1-9]\d{0,2}$/.test(capabilityConcurrencyText)||Number(capabilityConcurrencyText)>100))fail('Invalid CAPABILITY_MAX_IN_FLIGHT');
 const capabilityConcurrency=capabilityConcurrencyText===undefined?undefined:Number(capabilityConcurrencyText);let capabilityInFlight=0;
 const capabilityUploadTimeoutText=process.env.CAPABILITY_UPLOAD_TIMEOUT_MS;
-if(capabilityUploadTimeoutText!==undefined&&(!/^[1-9]\d{0,4}$/.test(capabilityUploadTimeoutText)||Number(capabilityUploadTimeoutText)<100||Number(capabilityUploadTimeoutText)>30000))throw Error('Invalid CAPABILITY_UPLOAD_TIMEOUT_MS');
+if(capabilityUploadTimeoutText!==undefined&&(!/^[1-9]\d{0,4}$/.test(capabilityUploadTimeoutText)||Number(capabilityUploadTimeoutText)<100||Number(capabilityUploadTimeoutText)>30000))fail('Invalid CAPABILITY_UPLOAD_TIMEOUT_MS');
 const capabilityUploadTimeout=capabilityUploadTimeoutText===undefined?undefined:Number(capabilityUploadTimeoutText);
-let capabilityURL;
-try {
-  const candidate=new URL(process.env.CAPABILITY_URL||'');
-  if(candidate.protocol==='http:'&&['127.0.0.1','localhost'].includes(candidate.hostname)&&candidate.pathname==='/capabilities/'&&!candidate.search&&!candidate.hash&&!candidate.username&&!candidate.password&&(process.env.CAPABILITY_TOKEN||'').length>=32)capabilityURL=candidate;
-} catch {}
-let agentURL;
-try {
-  const candidate=new URL(process.env.AGENT_URL || '');
-  if(candidate.protocol==='http:' && ['127.0.0.1','localhost'].includes(candidate.hostname) && candidate.pathname==='/agent' && !candidate.search && !candidate.hash && !candidate.username && !candidate.password && (process.env.AGENT_TOKEN||'').length>=32) agentURL=candidate;
-} catch {}
+const capabilityURL=endpoint('CAPABILITY_URL','/capabilities/','CAPABILITY_TOKEN');
+const agentURL=endpoint('AGENT_URL','/agent','AGENT_TOKEN');
 const json=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));};
 const readCapabilityBody=(req,maxBytes,timeoutMs)=>new Promise((resolve,reject)=>{
   const parts=[];let size=0,finished=false;
@@ -167,6 +169,7 @@ const server=createServer(async(req,res)=>{
 });
 // Bound slow or stalled clients; Node's defaults wait 60 s for headers and 300 s for a request.
 server.headersTimeout=10000;server.requestTimeout=30000;server.keepAliveTimeout=5000;server.setTimeout(30000);
+server.once('error',error=>fail(error.code==='EADDRINUSE'?'PORT '+port+' is already in use on '+bind:'Cannot listen on '+bind+':'+port+': '+error.message));
 server.listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
 `;
  const capabilities=String.raw`// Trusted application code invokes only host-registered capabilities.
