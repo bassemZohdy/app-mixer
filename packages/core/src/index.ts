@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {checkPromotionPackage,validEnvironment} from './promotion.js';
 import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
 import {AppMixerError} from './errors.js';
+import {validateDraftChange,validatePublishable} from './component-validation.js';
 type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
 export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
 export type Page = {id:string;title:string;route:string;components:Component[];description?:string};
@@ -69,7 +70,7 @@ export class ApplicationStore {
    case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw new AppMixerError('invalid','Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
    default: throw new AppMixerError('invalid',"Unknown patch operation");
   }}
-  candidate.revision++;validate(candidate);this.draft=candidate;return copy(candidate);
+  candidate.revision++;validate(candidate);validateDraftChange(this.draft,candidate);this.draft=candidate;return copy(candidate);
  }
  migrateDraft(expectedRevision:number,targetVersion:number):ApplicationDefinition{
   const candidate=this.previewDraftMigration(expectedRevision,targetVersion);this.draft=candidate;return copy(candidate);
@@ -84,7 +85,7 @@ export class ApplicationStore {
   else{if(candidate.pages.some(page=>page.description!==''))throw new AppMixerError('conflict','Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:_description,...page})=>page);}
   validate(candidate);return copy(candidate);
  }
- publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
+ publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");validatePublishable(this.draft);enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  promote(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){
   return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,false);
  }

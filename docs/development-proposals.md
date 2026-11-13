@@ -1,6 +1,6 @@
 # Development proposals: local foundation
 
-`DevelopmentProposals` accepts a base revision and a bounded list of supported typed patches. It validates the patch shape, applies the patches to a cloned in-memory draft to create an isolated preview, and retains the proposal as pending. Neither proposal nor preview modifies the draft or publishes anything.
+`DevelopmentProposals` accepts a base revision and a bounded list of supported typed patches. It validates the patch shape and refuses component properties no renderer accepts (see [plane APIs](plane-apis.md)), applies the patches to a cloned in-memory draft to create an isolated preview, and retains the proposal as pending. Neither proposal nor preview modifies the draft or publishes anything.
 
 A trusted host can explicitly approve a pending proposal, applying its stored patches to the draft through the repository's revision check. If the draft changed since the proposal was made, approval fails without applying the proposal. Rejecting a proposal does not modify the draft. Publication is a separate explicit repository operation, and still requires the expected draft revision. Returned proposals are copies; mutating them cannot alter the stored proposal.
 
