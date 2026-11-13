@@ -30,6 +30,8 @@ Control requests require `Authorization: Bearer <token>`. JSON mutations require
 | Data | `GET /application` | Latest published version and definition; 404 before publication. |
 | Data | `GET /application/versions/:version` | A specific published version. |
 
+Patch operations: `addPage` (`page`), `setPageTitle` (`pageId`, `title`), `setPageDescription` (`pageId`, `description`; schema version 2), `addComponent` (`pageId`, `component`), `removeComponent` (`pageId`, `componentId`), `setComponentProps` (`pageId`, `componentId`, `props`; replaces all of the component's properties), `removePage` (`pageId`), `setExtensions` and `setExtensionOperations`. `removeComponent`, `setComponentProps` and `removePage` correct a draft. A patch that names an unknown page or component returns 400 and leaves the draft unchanged. Development proposals accept the same operations.
+
 A stale revision returns 409. Bad requests return 400; unauthorized requests return 401. No Data Plane route reads drafts or changes definitions. Optional local proposal endpoints and a review UI provide separate agent and developer tokens; see [development proposals](development-proposals.md). Complete schema, capability and permission validation and production authorization remain separate roadmap items.
 
 ## Error codes

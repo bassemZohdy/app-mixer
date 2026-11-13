@@ -17,7 +17,7 @@ export function enforcePublicationGuard(guard:PublicationGuard | undefined, draf
  if(result instanceof Promise) result.catch(()=>{});
  if(result!==true)throw Error("Publication guard must synchronously return true");
 }
-export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"setPageDescription";pageId:string;description:string}|{op:"addComponent";pageId:string;component:Component}|{op:'setExtensions';extensions:ExtensionReference[]}|{op:'setExtensionOperations';operations:ExtensionOperation[]};
+export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"setPageDescription";pageId:string;description:string}|{op:"addComponent";pageId:string;component:Component}|{op:'removeComponent';pageId:string;componentId:string}|{op:'setComponentProps';pageId:string;componentId:string;props:Record<string,string|number|boolean>}|{op:'removePage';pageId:string}|{op:'setExtensions';extensions:ExtensionReference[]}|{op:'setExtensionOperations';operations:ExtensionOperation[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function isValidExtensionReferences(value:unknown):value is ExtensionReference[] {
  if(!Array.isArray(value)||value.length>256)return false;
@@ -61,6 +61,10 @@ export class ApplicationStore {
    case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid',"Unknown page");page.title=p.title;break;}
    case "setPageDescription":{if(candidate.schemaVersion!==2||typeof p.description!=='string'||p.description.length>10000)throw new AppMixerError('invalid','Invalid page description');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');page.description=p.description;break;}
    case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid',"Unknown page");page.components.push(copy(p.component));break;}
+   // Repair patches: each changes one existing target, so a wrong component or page in a draft can be corrected.
+   case 'removeComponent':{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');const index=page.components.findIndex(x=>x.id===p.componentId);if(index<0)throw new AppMixerError('invalid','Unknown component');page.components.splice(index,1);break;}
+   case 'setComponentProps':{if(!p.props||typeof p.props!=='object'||Array.isArray(p.props))throw new AppMixerError('invalid','Invalid component');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');const component=page.components.find(x=>x.id===p.componentId);if(!component)throw new AppMixerError('invalid','Unknown component');component.props=copy(p.props);break;}
+   case 'removePage':{const index=candidate.pages.findIndex(x=>x.id===p.pageId);if(index<0)throw new AppMixerError('invalid','Unknown page');candidate.pages.splice(index,1);break;}
    case 'setExtensions':if(!isValidExtensionReferences(p.extensions))throw new AppMixerError('invalid','Invalid manifest');candidate.extensions=copy(p.extensions);break;
    case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw new AppMixerError('invalid','Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
    default: throw new AppMixerError('invalid',"Unknown patch operation");
