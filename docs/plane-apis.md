@@ -26,7 +26,7 @@ Control requests require `Authorization: Bearer <token>`. JSON mutations require
 | Control | `GET /draft` | Current draft. |
 | Control | `GET /preview` | Current draft definition for a preview client; it does not render a preview. |
 | Control | `POST /draft/patches` | JSON `{ "baseRevision": 0, "patches": [...] }`; patches are atomic. |
-| Control | `POST /publish` | JSON `{ "expectedRevision": 0 }`; creates an immutable version. |
+| Control | `POST /publish` | JSON `{ "expectedRevision": 0 }`; creates an immutable version and returns 201. When the draft is already the latest publication, it returns that publication with 200 and creates no version. |
 | Data | `GET /application` | Latest published version and definition; 404 before publication. |
 | Data | `GET /application/versions/:version` | A specific published version. |
 

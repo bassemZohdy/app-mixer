@@ -176,7 +176,9 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
     if (req.method === 'POST' && req.url === '/publish') {
       const input = await body(req);
       if (!record(input) || !exact(input, ['expectedRevision']) || !revision(input.expectedRevision)) throw new RequestError(400, 'Invalid publish request');
-      respond(res, 201, repository.publish(input.expectedRevision)); return;
+      // 201 for a new version; 200 when the draft was already the latest publication and the repository returned it.
+      const before = repository.getPublished()?.version, publication = repository.publish(input.expectedRevision);
+      respond(res, publication.version === before ? 200 : 201, publication); return;
     }
     if (req.method === 'GET' && req.url === '/publications/latest') {
       const publication=repository.getPublished();if(!publication)throw new AppMixerError('not_found','Publication not found');
