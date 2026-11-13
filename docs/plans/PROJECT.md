@@ -20,7 +20,7 @@ Table rendering, the React Native, Flutter and Angular adapters, Kubernetes, pro
 
 ## Decisions
 
-- Text, Input and Card properties are validated on every draft change; a Table stays a valid draft type but is refused at publish until a renderer maps it.
+- Text, Input and Card properties are validated when a draft changes, except that a change leaving an already-stored bad component alone is accepted so it can be repaired; a Table stays a valid draft type but is refused at publish until a renderer maps it.
 - Publishing a draft equal to the latest publication returns that publication and creates no version.
 - Page navigation uses the URL hash, because the generated server serves only /.
 

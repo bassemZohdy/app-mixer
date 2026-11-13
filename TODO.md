@@ -11,6 +11,7 @@
 - [ ] **FIX-028** · P1 · mid · Keep the pages already rendered when a refreshed publication cannot be rendered; the cache's compatible check runs prepareWorkspace only, so a definition the renderer rejects replaces a working workspace with an error
   - Done when: after such a refresh the earlier pages stay in the DOM and the status line says the new version was not applied, and a first load of one still shows the error; `npm run build && node --test packages/cli/test/workspace-refresh-fallback.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+  - State: branch todo/FIX-028-keep-pages-already-rendered from harden-on-main; next: start FIX-028
 - [ ] **TASK-008** · P2 · mid · Move the generated server, page, chat and workspace sources out of String.raw literals in packages/cli/src/index.ts into packages/cli/templates so they can be linted and syntax-checked
   - Done when: createProject writes the same files byte for byte as before, and each template passes a syntax check; `npm run build && node --test packages/cli/test/create.test.mjs`
   - State: next: decompose
