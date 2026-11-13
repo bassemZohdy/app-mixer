@@ -147,6 +147,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (!proposal || proposal.status !== 'pending') throw new AppMixerError('not_found','Proposal not found');
       respond(res,201,proposal); return;
     }
+    if (proposals && req.method === 'GET' && req.url === '/proposals') { respond(res,200,{proposals:proposals.list()}); return; }
     const proposalRoute = /^\/proposals\/([0-9a-f-]{36})(?:\/(approve|reject))?$/.exec(req.url ?? '');
     if (proposals && proposalRoute) {
       const [,proposalId,action] = proposalRoute;

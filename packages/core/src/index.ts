@@ -140,7 +140,7 @@ export { createControlPlane, createDataPlane, createDataPlaneHttps, createPropos
 export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationRepository, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
-export type { Proposal } from './proposals.js';
+export type { Proposal, ProposalSummary } from './proposals.js';
 export { importOpenAPI, CapabilityRegistry, CapabilityOutcomeUncertainError, CAPABILITY_EFFECT, markNoEffect, hadNoEffect } from './capabilities.js';
 export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';
 export { createCapabilityServer, createCapabilityHttpsServer } from './capability-server.js';

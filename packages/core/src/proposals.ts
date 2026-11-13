@@ -8,6 +8,8 @@ export type Proposal = {
   status:'pending'|'approved'|'rejected'; approvedRevision?:number;
 };
 
+export type ProposalSummary = Pick<Proposal,'id'|'baseRevision'|'status'>;
+
 /**
  * Local, in-memory proposal workflow. Proposal authority must be separated from approval authority by the host.
  * Only pending proposals count toward `limit`; the newest `settledLimit` approved or rejected proposals stay readable and older ones are evicted.
@@ -30,6 +32,10 @@ export class DevelopmentProposals {
   get(id: string): Proposal | undefined {
     const proposal = this.proposals.get(id);
     return proposal ? structuredClone(proposal) : undefined;
+  }
+  /** Summaries of the stored proposals, pending and settled, in storage order (a settled proposal moves to the end); the patches and preview stay behind `get`. */
+  list(): ProposalSummary[] {
+    return [...this.proposals.values()].map(({id,baseRevision,status}) => ({id,baseRevision,status}));
   }
   approve(id: string): Proposal {
     const proposal = this.pending(id);

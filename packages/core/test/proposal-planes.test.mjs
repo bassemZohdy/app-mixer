@@ -63,7 +63,7 @@ test('review UI loads preview, approves draft, and publishes only on separate cl
     const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
     const executable=script.replace(/^\s*import [^;]+;\s*/gm,'');
     const {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry}=await import('../../web/dist/index.js');
-    const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
+    const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish','proposal-list','refresh-proposals','action-result'];
     const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
     elements.token.value=developer;elements['proposal-id'].value=proposal.id;
     const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};
@@ -104,7 +104,7 @@ test('review UI enables extension approval only when a trusted matching renderer
   const html=await (await fetch(`${cp}/development`)).text();
   const executable=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm,'');
   async function load(installedExtensions){
-   const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
+   const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish','proposal-list','refresh-proposals','action-result'];
    const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
    elements.token.value=developer;elements['proposal-id'].value=proposal.id;
    const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};
