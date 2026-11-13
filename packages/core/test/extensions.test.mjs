@@ -48,7 +48,8 @@ test('publication guards enforce compatibility atomically in memory and SQLite',
    assert.equal(store.getPublished().version,1);
    assert.equal(store.getPublished(2),undefined);
    assert.throws(()=>store.publish(1),/Revision conflict/);
-   needed=['chart']; assert.equal(store.publish(0).version,2);
+   needed=['chart']; assert.equal(store.publish(0).version,1); // FIX-029: an unchanged draft is already the latest publication
+   store.apply(0,[{op:'setPageTitle',pageId:'home',title:'Next'}]); assert.equal(store.publish(1).version,2);
   } finally {store.close?.();}
  }
 });

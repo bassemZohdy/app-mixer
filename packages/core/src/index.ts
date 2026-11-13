@@ -85,7 +85,7 @@ export class ApplicationStore {
   else{if(candidate.pages.some(page=>page.description!==''))throw new AppMixerError('conflict','Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:_description,...page})=>page);}
   validate(candidate);return copy(candidate);
  }
- publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");validatePublishable(this.draft);enforcePublicationGuard(this.publicationGuard,this.draft);const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
+ publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");validatePublishable(this.draft);enforcePublicationGuard(this.publicationGuard,this.draft);const latest=this.published.at(-1);if(latest&&definitionSha256(latest.definition)===definitionSha256(this.draft))return copy(latest);/* an unchanged draft is already the latest publication: no new version */const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
  promote(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){
   return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,false);
  }

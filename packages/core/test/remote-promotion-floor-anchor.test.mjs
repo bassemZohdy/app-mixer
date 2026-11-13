@@ -12,8 +12,10 @@ async function close(server){server.closeAllConnections();await new Promise(reso
 const files=path=>[path,path+'-wal',path+'-shm'];
 const copyDb=(from,to)=>{for(const [a,b] of files(from).map((f,i)=>[f,files(to)[i]])){if(existsSync(a))copyFileSync(a,b);else rmSync(b,{force:true});}};
 
+// FIX-029: an unchanged draft publishes no new version, so every further version in these tests follows a draft change.
+const publishNext=store=>{const draft=store.getDraft();store.apply(draft.revision,[{op:'addPage',page:{id:`page-${draft.revision}`,route:`/page-${draft.revision}`,title:`Page ${draft.revision}`,components:[]}}]);return store.publish(draft.revision+1);};
 test('a host-held promotion floor detects a restored target database before fetching',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'remote-floor-anchor-')),path=join(dir,'target.sqlite'),saved=join(dir,'saved.sqlite'),source=new ApplicationStore(definition);for(let i=0;i<4;i++)source.publish(0);
+ const dir=mkdtempSync(join(tmpdir(),'remote-floor-anchor-')),path=join(dir,'target.sqlite'),saved=join(dir,'saved.sqlite'),source=new ApplicationStore(definition);source.publish(0);for(let i=1;i<4;i++)publishNext(source);
  let exports=0;const remote=createControlPlane(source,token);remote.prependListener('request',req=>{if(req.url.startsWith('/promotion/export'))exports++;});const url=await listen(remote);
  const anchor={value:0,fail:false,readFail:false,read:async()=>{if(anchor.readFail)throw Error('anchor down');return anchor.value;},advance:async n=>{if(anchor.fail)throw Error('anchor down');anchor.value=Math.max(anchor.value,n);}};
  const events=[];let target=new SqliteApplicationStore(path,definition);
@@ -36,7 +38,7 @@ test('a host-held promotion floor detects a restored target database before fetc
 });
 
 test('the promotion floor anchor catches up after a failed advance and fails closed when unreadable',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'remote-floor-anchor-')),path=join(dir,'target.sqlite'),source=new ApplicationStore(definition);for(let i=0;i<3;i++)source.publish(0);
+ const dir=mkdtempSync(join(tmpdir(),'remote-floor-anchor-')),path=join(dir,'target.sqlite'),source=new ApplicationStore(definition);source.publish(0);for(let i=1;i<3;i++)publishNext(source);
  const remote=createControlPlane(source,token),url=await listen(remote),target=new SqliteApplicationStore(path,definition);
  const anchor={value:0,fail:false,readValue:undefined,readFail:false,read:async()=>{if(anchor.readFail)throw Error('anchor down');return anchor.readValue??anchor.value;},advance:async n=>{if(anchor.fail)throw Error('anchor down');anchor.value=Math.max(anchor.value,n);}};
  const base={sourceOrigin:url,sourceToken:token,sourceEnvironment:'development',targetEnvironment:'production',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{}};

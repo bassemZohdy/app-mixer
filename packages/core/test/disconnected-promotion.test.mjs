@@ -14,11 +14,13 @@ const signing=generateKeyPairSync('ed25519'),stranger=generateKeyPairSync('ed255
 const signer=keys=>(pkg,environment,expectedVersion)=>signPromotionPackage(pkg,environment,'key',keys.privateKey,expectedVersion);
 const verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey:signing.publicKey}],'prod',{requireVersionBound:true});
 
+// FIX-029: an unchanged draft publishes no new version, so every further version in these tests follows a draft change.
+const publishNext=store=>{const draft=store.getDraft();store.apply(draft.revision,[{op:'addPage',page:{id:`page-${draft.revision}`,route:`/page-${draft.revision}`,title:`Page ${draft.revision}`,components:[]}}]);return store.publish(draft.revision+1);};
 test('signed promotions carried to a disconnected target apply in order once and refuse replays and tampering',async()=>{
  const media=await mkdtemp(join(tmpdir(),'disconnected-')),realFetch=globalThis.fetch;let network=0,carried=0;
  try{
   // Source side (connected to nothing but the media): five published versions, each exported for the version it must follow.
-  const source=new ApplicationStore(definition);for(let i=0;i<5;i++)source.publish(0);
+  const source=new ApplicationStore(definition);source.publish(0);for(let i=1;i<5;i++)publishNext(source);
   const carry=async(sourceVersion,expectedVersion,options={})=>{const document=exportDisconnectedPromotion(source,{applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod',sourceVersion,expectedVersion,sign:signer(signing),...options});const path=join(media,`demo-v${sourceVersion}-after-${expectedVersion}-${++carried}.json`);await writeFile(path,JSON.stringify(document));return path;};
   const files=[];for(let v=1;v<=4;v++)files[v]=await carry(v,v-1);
   // Target side: no network at all.
