@@ -64,6 +64,7 @@
 - [ ] **FEAT-036** · P2 · mid · Add GET /proposals to the developer control server and a pick list to the review page, and show action results beside the Approve, Reject and Publish buttons; a reviewer needs the proposal UUID from elsewhere today
   - Done when: the list returns id, base revision and status for the developer token, the agent token and a missing token get 401, and the page loads a proposal chosen from the list; `npm run build && node --test packages/core/test/proposal-list.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md · Lane: definitions
+  - State: branch todo/FEAT-036-add-get-proposals-developer from harden-on-main; next: start FEAT-036
 - [ ] **FEAT-037** · P2 · mid · Add npm run local, which starts the workspace, Data Plane, Control Plane and demo agent on loopback without Docker, and document APP_MIXER_MANIFEST and APP_MIXER_DATABASE; deploy/local/service.mjs fails with ENOENT outside the image today
   - Done when: the started stack serves a published page and answers a chat message, and every process stops on SIGINT; `npm run build && node --test packages/cli/test/local-stack.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md
