@@ -2,9 +2,9 @@
 
 ## 🌳 Task Tree
 
-- [ ] **FIX-039** · P0 · low · List the documents under docs/plans in the documentation index (a Plans section in scripts/docs-index.mjs) and regenerate docs/README.md; docs/plans/PROJECT.md is not reachable from the README, so the docs test fails
+- [/] **FIX-039** · P0 · low · List the documents under docs/plans in the documentation index (a Plans section in scripts/docs-index.mjs) and regenerate docs/README.md; docs/plans/PROJECT.md is not reachable from the README, so the docs test fails
   - Done when: the index lists docs/plans/PROJECT.md under Plans, has no Plans section when the folder holds no document, and every document under docs is reachable from the README; `node --test packages/cli/test/process-files.test.mjs`
-  - State: branch todo/FIX-039-list-documents-under-docs from harden-on-main; next: start FIX-039
+  - State: attempts 0/3; baseline red: every document under docs is reachable from the README and the generated index is current; branch todo/FIX-039-list-documents-under-docs from harden-on-main; next: read docs
 - [ ] **FEAT-004** · P1 · high · Serve the generated app's pages with a hash-based Content-Security-Policy, frame-ancestors none and a Referrer-Policy, as the review pages already do
   - Done when: the generated index page is served with a policy without unsafe-inline that covers each of its inline blocks, and a page with an extra inline script fails the hash check; `npm run build && node --test packages/cli/test/csp.test.mjs`
 - [ ] **TASK-007** · P1 · low · Adopt a formatter with a CI check and reformat packages, templates, deploy and scripts; source lines now reach 5,687 characters and average 141
