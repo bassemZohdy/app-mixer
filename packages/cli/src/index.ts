@@ -23,18 +23,18 @@ const showPage=state=>{
   if(nav){const list=document.createElement('ul');for(const item of state.pages){const entry=document.createElement('li'),link=document.createElement('a');link.href='#'+item.route;link.textContent=item.title;if(item===page)link.setAttribute('aria-current','page');entry.appendChild(link);list.appendChild(entry);}nav.replaceChildren(list);nav.hidden=state.pages.length<2;}
 };
 win?.addEventListener('hashchange',()=>{if(!view)return;try{showPage(view);}catch(error){document.getElementById('publication-status').textContent='The page could not be shown: '+error.message;}});
-const render=async()=>{const generation=++renderGeneration;let previous=[];try {
+const render=async()=>{const generation=++renderGeneration;let previous=[],fetched=false;try {
   let app;
   if(offlineRuntime){const result=await offlineRuntime.refresh();if(generation!==renderGeneration)return;app=result.publication.definition;document.getElementById('publication-status').textContent=result.offline?'Showing saved offline publication.':'';}
   else if(cache) app=(await cache.refresh()).definition;
   else {const response=await fetch('/api/application');if(!response.ok)throw new Error('Could not load application');app=await response.json();}
-  previous=[...host.children];host.replaceChildren();
+  fetched=true;previous=[...host.children];host.replaceChildren();
   const {registry,components,pages}=prepareWorkspace(app);
   const renderer=new A2UIRenderer(host,registry);
   renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'workspace',catalogId:APP_MIXER_CATALOG}});
   const next={renderer,components,pages};showPage(next);view=next;
   shown=true;{const note=document.getElementById('publication-status');if(note.textContent.startsWith('The new version was not applied'))note.textContent='';}
-} catch(error) { if(generation===renderGeneration){if(shown){if(previous.length)host.replaceChildren(...previous);document.getElementById('publication-status').textContent='The new version was not applied: '+error.message;}else{document.getElementById('publication-status').textContent='';host.textContent='Unable to render application: '+error.message;}} }};
+} catch(error) { if(generation===renderGeneration){if(shown&&fetched){if(previous.length)host.replaceChildren(...previous);document.getElementById('publication-status').textContent='The new version was not applied: '+error.message;}else{document.getElementById('publication-status').textContent='';shown=false;host.textContent='Unable to render application: '+error.message;}} }};
 try {
   const offlineOptions=await initializeOfflinePublication();
   if(offlineOptions){

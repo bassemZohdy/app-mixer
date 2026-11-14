@@ -23,7 +23,7 @@ async function open(responses){
  let served=0;
  const fetch=async path=>{
   if(path==='/api/publication/status')return new Response(JSON.stringify({configured:true,schemaVersion:1}),{status:200});
-  if(path==='/api/publication'){const value=responses[Math.min(served++,responses.length-1)];return new Response(JSON.stringify(value),{status:200,headers:{etag:etag(value)}});}
+  if(path==='/api/publication'){const value=responses[Math.min(served++,responses.length-1)];if(value.denied)return new Response('',{status:403});return new Response(JSON.stringify(value),{status:200,headers:{etag:etag(value)}});}
   throw Error('unexpected fetch '+path);
  };
  await new AsyncFunction('document','fetch','A2UIRenderer','APP_MIXER_CATALOG','ClientPublishedCache','prepareWorkspace','createOfflinePublicationRuntime','initializeOfflinePublication',script)(document,fetch,renderer.A2UIRenderer,renderer.APP_MIXER_CATALOG,renderer.ClientPublishedCache,workspace.prepareWorkspace,undefined,async()=>undefined);
@@ -58,5 +58,16 @@ test('FIX-028 a later valid publication replaces the page again after a rejected
   button.click();await wait(()=>/Third/.test(pages.textContent));
   assert.doesNotMatch(pages.textContent,/First/);
   assert.equal(status.textContent,'');
+ }finally{await app.close();}
+});
+
+test('FIX-028 a refresh the server refuses (access denied) does not keep the earlier pages on screen',async()=>{
+ const app=await open([publication(1,good('Working page')),{denied:true}]);
+ try{
+  const pages=app.document.getElementById('pages');
+  assert.match(pages.textContent,/Working page/);
+  app.document.getElementById('refresh-publication').click();
+  await wait(()=>/Unable to render/.test(pages.textContent));
+  assert.doesNotMatch(pages.textContent,/Working page/);
  }finally{await app.close();}
 });
