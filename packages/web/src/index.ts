@@ -133,8 +133,25 @@ export function basicRegistry(): ComponentRegistry {
     if (!(typeof c.text === 'string' || (obj(c.text) && typeof c.text.path === 'string'))) throw Error('Invalid Text');
     const variants: Record<string,string> = {h1:'h1', h2:'h2', h3:'h3', h4:'h4', h5:'h5', caption:'small', body:'p'};
     const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant] : 'p';
-    const element = doc.createElement(tag); element.textContent = displayText(c.text, data);
-    interaction.bind(next => { const text = displayText(c.text, next); if (element.textContent !== text) element.textContent = text; });
+    // A heading with no text has no accessible name, so an empty one is a hidden span until the value is set.
+    // Both elements exist from the start, so a data update only swaps them and never creates one.
+    const heading = tag !== 'p' && tag !== 'small';
+    const text0 = displayText(c.text, data);
+    const real = doc.createElement(tag), blank = heading ? doc.createElement('span') : real;
+    if (heading) blank.hidden = true;
+    real.textContent = text0;
+    let element = heading && text0 === '' ? blank : real;
+    interaction.bind(next => {
+      const text = displayText(c.text, next), wanted = heading && text === '' ? blank : real;
+      if (wanted !== element) {
+        for (const [key, value] of Object.entries(element.dataset)) wanted.dataset[key] = value as string;
+        if (wanted === real && element.closest?.('button')) real.setAttribute('role', 'presentation');
+        if (typeof element.replaceWith === 'function') element.replaceWith(wanted);
+        else element.parentNode?.replaceChild(wanted, element);
+        element = wanted;
+      }
+      if (element.textContent !== text) element.textContent = text;
+    });
     return element;
   }, validateBasic);
   for (const type of ['Column', 'Row']) registry.register(type, (c, child, _data, doc) => {
