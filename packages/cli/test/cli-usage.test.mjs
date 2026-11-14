@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createProject} from '../dist/index.js';
 const cli=fileURLToPath(new URL('../dist/index.js',import.meta.url));
-const run=(args,cwd)=>new Promise(resolve=>execFile(process.execPath,[cli,...args],{cwd},(error,stdout,stderr)=>resolve({code:error?error.code:0,stdout,stderr})));
+const run=(args,cwd)=>new Promise(resolve=>execFile(process.execPath,[cli,...args],{cwd,env:{...process.env,NODE_NO_WARNINGS:'1'}},(error,stdout,stderr)=>resolve({code:error?error.code:0,stdout,stderr})));
 const COMMANDS=['create','extension-sign','extension-verify','extension-check','extension-check-set'];
 
 test('FIX-038 --help and -h print one command per line and exit 0',async()=>{

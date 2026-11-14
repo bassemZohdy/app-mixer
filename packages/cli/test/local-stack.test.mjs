@@ -64,7 +64,7 @@ test('FEAT-037 the local service names APP_MIXER_MANIFEST when its default manif
  try{
   const env={...process.env};for(const name of SETTINGS)delete env[name];
   let failure;
-  try{execFileSync(process.execPath,['deploy/local/service.mjs','init'],{cwd:root,env:{...env,APP_MIXER_DATABASE:join(dir,'app.sqlite')},stdio:'pipe'});}catch(error){failure=error;}
+  try{execFileSync(process.execPath,['deploy/local/service.mjs','init'],{cwd:root,env:{...env,NODE_NO_WARNINGS:'1',APP_MIXER_DATABASE:join(dir,'app.sqlite')},stdio:'pipe'});}catch(error){failure=error;}
   assert.ok(failure,'init fails without a manifest');
   const lines=String(failure.stderr).split(/\r?\n/).filter(line=>line.trim());
   assert.equal(lines.length,1,String(failure.stderr));
