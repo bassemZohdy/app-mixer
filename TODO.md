@@ -43,6 +43,7 @@
 - [ ] **FEAT-034** · P2 · low · Keep a chat message whose send failed: put the text back in the input and mark its logged line as not sent; the input is cleared and the message dropped today
   - Done when: with the agent stopped the input holds the text again and the line reads not sent, and a second submit after the agent returns is answered; `npm run build && node --test packages/cli/test/chat-send-failure.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+  - State: branch todo/FEAT-034-keep-chat-message-send-failed from harden-on-main; next: start FEAT-034
 - [ ] **FEAT-035** · P2 · mid · Show one workspace page at a time, chosen by its route through hash navigation with a list of page titles; every page is stacked in one column today and route is unused
   - Done when: with two pages only the page of the current hash is rendered, the list marks it with aria-current, an unknown hash shows the first page, and field values survive switching; `npm run build && node --test packages/cli/test/workspace-navigation.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md#decisions · Lane: workspace
