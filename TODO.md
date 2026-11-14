@@ -46,3 +46,4 @@
 - [ ] **FIX-038** · P2 · low · Make app-mixer --help and -h print one command per line and exit 0, add --version, and refuse Windows device names (con, nul, aux, prn, com1 to com9, lpt1 to lpt9) in create
   - Done when: help exits 0 with a line per command, --version prints the package version, and create con exits 1 and writes nothing; `npm run build && node --test packages/cli/test/cli-usage.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
+  - State: branch todo/FIX-038-make-app-mixer-help-print-one from harden-on-main; next: start FIX-038
