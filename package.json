@@ -10,6 +10,7 @@
     "build": "npm run build --workspace @app-mixer/web && npm run build --workspace @app-mixer/core && npm run build --workspaces",
     "test": "npm run build && node scripts/run-tests.mjs",
     "docs": "node scripts/docs-index.mjs",
+    "local": "npm run build && node scripts/local-stack.mjs",
     "lint": "eslint \"packages/*/src/**/*.ts\"",
     "previews": "node scripts/sync-editor-previews.mjs"
   },

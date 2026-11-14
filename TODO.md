@@ -40,7 +40,3 @@
   - Done when: the package's public exports are unchanged; `npm run build && node --test packages/agent/test/package-entries.test.mjs`
   - Links: Depends: TASK-011
   - State: next: decompose
-- [ ] **FEAT-037** · P2 · mid · Add npm run local, which starts the workspace, Data Plane, Control Plane and demo agent on loopback without Docker, and document APP_MIXER_MANIFEST and APP_MIXER_DATABASE; deploy/local/service.mjs fails with ENOENT outside the image today
-  - Done when: the started stack serves a published page and answers a chat message, and every process stops on SIGINT; `npm run build && node --test packages/cli/test/local-stack.test.mjs`
-  - Links: Ref: docs/plans/PROJECT.md
-  - State: branch todo/FEAT-037-add-npm-run-local from harden-on-main; next: start FEAT-037
