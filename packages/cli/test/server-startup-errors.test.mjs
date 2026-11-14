@@ -6,7 +6,7 @@ import {createServer} from 'node:net';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createProject} from '../dist/index.js';
-const SETTINGS=['PORT','DATA_PLANE_URL','AGENT_URL','AGENT_TOKEN','CAPABILITY_URL','CAPABILITY_TOKEN'];
+const SETTINGS=['PORT','DATA_PLANE_URL','AGENT_URL','AGENT_TOKEN','CAPABILITY_URL','CAPABILITY_TOKEN','CONNECT_ORIGINS'];
 const token='t'.repeat(32);
 
 function run(target,env,{killOnListen=false}={}){
@@ -37,7 +37,8 @@ test('FIX-030 a bad setting makes the generated server exit with one line naming
    ['PORT',{PORT:'abc'}],['PORT',{PORT:'70000'}],['PORT',{PORT:'-1'}],['PORT',{PORT:'1.5'}],
    ['DATA_PLANE_URL',{DATA_PLANE_URL:'not a url'}],['DATA_PLANE_URL',{DATA_PLANE_URL:'https://127.0.0.1:9/application'}],['DATA_PLANE_URL',{DATA_PLANE_URL:'http://example.com:9/application'}],['DATA_PLANE_URL',{DATA_PLANE_URL:'http://127.0.0.1:9/other'}],
    ['AGENT_URL',{AGENT_URL:'not a url',AGENT_TOKEN:token}],['AGENT_URL',{AGENT_URL:'http://127.0.0.1:9/other',AGENT_TOKEN:token}],['AGENT_TOKEN',{AGENT_URL:'http://127.0.0.1:9/agent',AGENT_TOKEN:'short'}],['AGENT_TOKEN',{AGENT_URL:'http://127.0.0.1:9/agent'}],
-   ['CAPABILITY_URL',{CAPABILITY_URL:'not a url',CAPABILITY_TOKEN:token}],['CAPABILITY_URL',{CAPABILITY_URL:'http://127.0.0.1:9/other/',CAPABILITY_TOKEN:token}],['CAPABILITY_TOKEN',{CAPABILITY_URL:'http://127.0.0.1:9/capabilities/',CAPABILITY_TOKEN:'short'}],['CAPABILITY_TOKEN',{CAPABILITY_URL:'http://127.0.0.1:9/capabilities/'}]
+   ['CAPABILITY_URL',{CAPABILITY_URL:'not a url',CAPABILITY_TOKEN:token}],['CAPABILITY_URL',{CAPABILITY_URL:'http://127.0.0.1:9/other/',CAPABILITY_TOKEN:token}],['CAPABILITY_TOKEN',{CAPABILITY_URL:'http://127.0.0.1:9/capabilities/',CAPABILITY_TOKEN:'short'}],['CAPABILITY_TOKEN',{CAPABILITY_URL:'http://127.0.0.1:9/capabilities/'}],
+   ['CONNECT_ORIGINS',{CONNECT_ORIGINS:'not a url'}],['CONNECT_ORIGINS',{CONNECT_ORIGINS:'https://api.example.com/path'}],['CONNECT_ORIGINS',{CONNECT_ORIGINS:'https://api.example.com/'}],['CONNECT_ORIGINS',{CONNECT_ORIGINS:'ftp://api.example.com'}],['CONNECT_ORIGINS',{CONNECT_ORIGINS:'https://user:pass@api.example.com'}],['CONNECT_ORIGINS',{CONNECT_ORIGINS:'https://ok.example.com bad'}]
   ];
   for(const [setting,env] of cases)oneLine(await run(target,env),setting);
  }finally{await rm(dir,{recursive:true,force:true});}

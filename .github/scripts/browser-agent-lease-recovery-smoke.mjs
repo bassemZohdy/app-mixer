@@ -40,7 +40,7 @@ try{
  }catch(error){await report('fail:'+String(error));}
  </script></body>`;
  await writeFile(join(target,'index.html'),fixture);
- app=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});
+ app=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CONNECT_ORIGINS:`http://127.0.0.1:${results.address().port}`,CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});
  const url=await new Promise((resolve,reject)=>{let output='',errors='';app.stderr.on('data',chunk=>errors+=chunk);app.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});app.once('error',reject);app.once('exit',code=>reject(Error(`Server exited ${code}: ${errors}`)));});
  browser=spawn(process.env.CHROME_BIN||'google-chrome',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',`--user-data-dir=${join(dir,'profile')}`,url],{stdio:['ignore','ignore','pipe']});browser.stderr.resume();browser.once('error',rejectResult);browser.once('exit',code=>rejectResult(Error(`Browser exited before reporting: ${code}`)));timer=setTimeout(()=>rejectResult(Error('Lease recovery browser test timed out')),30000);
  assert.equal(await result,'pass');assert.equal(runs.get(scope,'run').status,'uncertain');assert.equal(runs.get(scope,'run').attempts,1);assert.equal(runs.get({...scope,tenantId:'other'},'run').status,'running');assert.equal((await history.list({tenantId:'tenant',principalId:'auditor'})).items.length,1);
