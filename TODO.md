@@ -40,7 +40,3 @@
   - Done when: the package's public exports are unchanged; `npm run build && node --test packages/agent/test/package-entries.test.mjs`
   - Links: Depends: TASK-011
   - State: next: decompose
-- [/] **FEAT-040** · P2 · low · Name removeComponent, setComponentProps and removePage in the development agent's prompt so a proposal can repair a draft; it lists only add operations today
-  - Done when: the prompt sent to the model names the three repair operations with their fields; `npm run build && node --test packages/agent/test/development-prompt.test.mjs`
-  - Links: Ref: docs/plans/PROJECT.md · From: FEAT-026
-  - State: attempts 0/3; baseline 1992 passing; branch todo/FEAT-040-name-removecomponent-setcomponentprops-removepage from harden-on-main; next: build
