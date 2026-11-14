@@ -45,9 +45,11 @@ function component(value: unknown): value is Component {
   if (value.type === 'Extension') {
     if (!exact(value, ['id','type','props','extensionId','name']) || typeof value.extensionId !== 'string' || !/^[a-z][a-z0-9.-]{0,127}$/.test(value.extensionId) || typeof value.name !== 'string' || !/^[a-z][a-z0-9.-]{0,127}$/.test(value.name)) return false;
   } else if (!exact(value, ['id', 'type', 'props']) || !['Text','Card','Table','Input'].includes(value.type as string)) return false;
-  if (value.props === undefined) return true;
-  return record(value.props) && Object.keys(value.props).length <= 100 &&
-    Object.entries(value.props).every(([key, prop]) => string(key) &&
+  return value.props === undefined || props(value.props);
+}
+function props(value: unknown): value is Record<string, string|number|boolean> {
+  return record(value) && Object.keys(value).length <= 100 &&
+    Object.entries(value).every(([key, prop]) => string(key) &&
       (typeof prop === 'boolean' || (typeof prop === 'number' && Number.isFinite(prop)) ||
        (typeof prop === 'string' && prop.length <= 10000)));
 }
@@ -62,6 +64,9 @@ export function isValidPatch(value: unknown): value is Patch {
   if (value.op === 'setPageTitle') return exact(value, ['op','pageId','title']) && string(value.pageId) && string(value.title);
   if (value.op === 'setPageDescription') return exact(value,['op','pageId','description']) && string(value.pageId) && typeof value.description === 'string' && value.description.length <= 10000;
   if (value.op === 'addComponent') return exact(value, ['op','pageId','component']) && string(value.pageId) && component(value.component);
+  if (value.op === 'removeComponent') return exact(value, ['op','pageId','componentId']) && string(value.pageId) && string(value.componentId);
+  if (value.op === 'setComponentProps') return exact(value, ['op','pageId','componentId','props']) && string(value.pageId) && string(value.componentId) && props(value.props);
+  if (value.op === 'removePage') return exact(value, ['op','pageId']) && string(value.pageId);
   if (value.op === 'setExtensions') return exact(value, ['op','extensions']) && isValidExtensionReferences(value.extensions);
   if (value.op === 'setExtensionOperations') return exact(value, ['op','operations']) && isValidExtensionOperations(value.operations);
   return false;
@@ -142,6 +147,7 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
       if (!proposal || proposal.status !== 'pending') throw new AppMixerError('not_found','Proposal not found');
       respond(res,201,proposal); return;
     }
+    if (proposals && req.method === 'GET' && req.url === '/proposals') { respond(res,200,{proposals:proposals.list()}); return; }
     const proposalRoute = /^\/proposals\/([0-9a-f-]{36})(?:\/(approve|reject))?$/.exec(req.url ?? '');
     if (proposals && proposalRoute) {
       const [,proposalId,action] = proposalRoute;
@@ -171,7 +177,9 @@ export function createControlPlane(repository: DefinitionRepository, token: stri
     if (req.method === 'POST' && req.url === '/publish') {
       const input = await body(req);
       if (!record(input) || !exact(input, ['expectedRevision']) || !revision(input.expectedRevision)) throw new RequestError(400, 'Invalid publish request');
-      respond(res, 201, repository.publish(input.expectedRevision)); return;
+      // 201 for a new version; 200 when the draft was already the latest publication and the repository returned it.
+      const before = repository.getPublished()?.version, publication = repository.publish(input.expectedRevision);
+      respond(res, publication.version === before ? 200 : 201, publication); return;
     }
     if (req.method === 'GET' && req.url === '/publications/latest') {
       const publication=repository.getPublished();if(!publication)throw new AppMixerError('not_found','Publication not found');

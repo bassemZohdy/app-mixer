@@ -10,6 +10,7 @@ class Element {
   appendChild(child) { child.parent=this; this.children.push(child); return child; }
   replaceChildren(...children) { this.children=[]; for(const child of children) this.appendChild(child); }
   remove() { if(this.parent) this.parent.children=this.parent.children.filter(child => child !== this); }
+  replaceWith(next) { const parent=this.parent; if(!parent) return; parent.children[parent.children.indexOf(this)]=next; next.parent=parent; this.parent=null; }
   addEventListener(type, fn) { this.listeners[type]=fn; }
   dispatch(type) { this.listeners[type]?.(); }
   focus() { this.focused=true; this.ownerDocument.activeElement=this; }

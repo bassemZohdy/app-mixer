@@ -50,7 +50,7 @@ test('developer UI requests a model proposal, reviews it, approves and publishes
     const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];assert.ok(script);
     const executable=script.replace(/^\s*import [^;]+;\s*/gm,'');
     const {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry}=await import('../../web/dist/index.js');
-    const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish'];
+    const ids=['instruction','generate','token','proposal-id','status','patch','preview','rendered-preview','load','approve','reject','publish','proposal-list','refresh-proposals','action-result'];
     const elements=Object.fromEntries(ids.map(id=>[id,{value:'',textContent:'',disabled:false,listeners:{},addEventListener(event,handler){this.listeners[event]=handler;}}]));
     elements.token.value=developer;elements.instruction.value='Create a page';
     const document={body:{dataset:{}},getElementById:id=>elements[id],createElement:()=>element()};

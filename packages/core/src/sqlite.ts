@@ -4,6 +4,7 @@ import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-p
 import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
 import {openDatabase} from './sqlite-open.js';
 import {AppMixerError} from './errors.js';
+import {validatePublishable} from './component-validation.js';
 
 type Published = { version: number; definition: ApplicationDefinition };
 
@@ -156,7 +157,11 @@ export class SqliteApplicationStore {
     return this.transaction(() => {
       const draft = this.getDraft();
       if (draft.revision !== expectedRevision) throw new AppMixerError('conflict','Revision conflict');
+      validatePublishable(draft);
       enforcePublicationGuard(this.publicationGuard, draft);
+      // An unchanged draft is already the latest publication: return it and add no version.
+      const latest = this.getPublished();
+      if (latest && definitionSha256(latest.definition) === definitionSha256(draft)) return latest;
       const row = this.db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM application_publications WHERE app_id = ?').get(this.id);
       const version = Number(row!.version) + 1;
       this.db.prepare('INSERT INTO application_publications (app_id, version, definition) VALUES (?, ?, ?)')

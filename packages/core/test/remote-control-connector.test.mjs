@@ -13,8 +13,10 @@ async function listen(server){server.listen(0,'127.0.0.1');await once(server,'li
 async function close(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 function config(sourceOrigin,repository,extra={}){return {sourceOrigin,sourceToken:token,sourceEnvironment:'development',targetEnvironment:'production',applicationId:'demo',repository,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},...extra};}
 
+// FIX-029: an unchanged draft publishes no new version, so every further version in these tests follows a draft change.
+const publishNext=store=>{const draft=store.getDraft();store.apply(draft.revision,[{op:'addPage',page:{id:`page-${draft.revision}`,route:`/page-${draft.revision}`,title:`Page ${draft.revision}`,components:[]}}]);return store.publish(draft.revision+1);};
 test('advancing imports reject replay and older sources after reopening while preserving signed evidence',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'remote-advance-')),path=join(dir,'app.sqlite'),source=new ApplicationStore(definition);source.publish(0);source.publish(0);source.publish(0);
+ const dir=mkdtempSync(join(tmpdir(),'remote-advance-')),path=join(dir,'app.sqlite'),source=new ApplicationStore(definition);source.publish(0);publishNext(source);publishNext(source);
  const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,env,version)=>signPromotionPackage(pkg,env,'release',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'release',sourceEnvironment:'development',publicKey}],'production',{requireVersionBound:true}),remote=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer),url=await listen(remote);let target=new SqliteApplicationStore(path,definition);
  const options={requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence};
  try{
@@ -91,7 +93,7 @@ test('signed mode rejects package tampering and replay at another target version
 });
 
 test('authorized discovery returns the latest exact application without importing it',async()=>{
- const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);source.publish(0);const remote=createControlPlane(source,token),url=await listen(remote),events=[];
+ const source=new ApplicationStore(definition),target=new ApplicationStore(definition);source.publish(0);publishNext(source);const remote=createControlPlane(source,token),url=await listen(remote),events=[];
  try{const actor={tenantId:'t',principalId:'admin'},discovery={authorize:details=>{assert.equal(details.actor.principalId,'admin');details.actor.principalId='mutated';return true;},audit:event=>events.push(event)};const connector=createRemoteControlConnector(config(url,target,{discovery}));assert.deepEqual(await connector.discoverLatest(actor),{applicationId:'demo',sourceVersion:2});assert.equal(actor.principalId,'admin');assert.deepEqual(events.map(e=>e.phase),['attempt','completed']);assert.equal(events[1].details.actor.principalId,'admin');assert.equal(events[1].details.sourceVersion,2);assert.equal(target.getPublished(),undefined);assert.equal((await connector.importPublication({...request,sourceVersion:2})).version,1);}finally{await close(remote);}
 });
 
