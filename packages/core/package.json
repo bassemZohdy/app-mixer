@@ -22,7 +22,7 @@
     "@opentelemetry/core": "3.1.0",
     "@opentelemetry/sdk-trace": "3.1.0",
     "@types/node": "^22.15.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@app-mixer/web": "0.1.0",
