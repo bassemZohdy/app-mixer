@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- **FEAT-037** (feat): Add npm run local, which starts the workspace, Data Plane, Control Plane and demo agent on loopback without Docker, and document APP_MIXER_MANIFEST and APP_MIXER_DATABASE; the local service names APP_MIXER_MANIFEST when its manifest is missing. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/cli/test/local-stack.test.mjs`. Docs: updated docs/local-compose.md.
 - **FEAT-035** (feat): Show one workspace page at a time, chosen by its route through hash navigation with a list of page titles; field values survive switching. Ref: docs/plans/PROJECT.md#decisions. Validated: `npm run build && node --test packages/cli/test/workspace-navigation.test.mjs`. Docs: updated docs/published-cache.md.
 - **FEAT-034** (feat): Keep a chat message whose send failed: put the text back in the input and mark its logged line as not sent. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/cli/test/chat-send-failure.test.mjs`. Docs: updated docs/agent-adapter.md.
 - **FEAT-031** (feat): Load .env in the generated app: the dev script passes --env-file-if-exists=.env and the project gets a .gitignore naming .env. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/cli/test/generated-env-file.test.mjs`. Docs: updated docs/agent-adapter.md.
