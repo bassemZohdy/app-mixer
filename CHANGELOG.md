@@ -4,6 +4,7 @@ All notable changes to App Mixer are tracked here. Version numbers describe repo
 
 ## [Unreleased] — 2026-10-28
 ### Added
+- **FEAT-034** (feat): Keep a chat message whose send failed: put the text back in the input and mark its logged line as not sent. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/cli/test/chat-send-failure.test.mjs`. Docs: updated docs/agent-adapter.md.
 - **FEAT-031** (feat): Load .env in the generated app: the dev script passes --env-file-if-exists=.env and the project gets a .gitignore naming .env. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/cli/test/generated-env-file.test.mjs`. Docs: updated docs/agent-adapter.md.
 - **FEAT-036** (feat): Add GET /proposals to the developer control server and a pick list to the review page, and show action results beside the Approve, Reject and Publish buttons. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/core/test/proposal-list.test.mjs`. Docs: updated docs/development-proposals.md, docs/plane-apis.md.
 - **FEAT-026** (feat): Add removeComponent, setComponentProps and removePage patches, with their proposal validation, so a wrong component or page in a draft can be corrected; an unknown page or component returns 400 and leaves the draft unchanged. Ref: docs/plans/PROJECT.md. Validated: `npm run build && node --test packages/core/test/draft-repair-patches.test.mjs`. Docs: updated docs/plane-apis.md.
