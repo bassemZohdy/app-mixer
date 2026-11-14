@@ -43,6 +43,7 @@
 - [ ] **FEAT-035** · P2 · mid · Show one workspace page at a time, chosen by its route through hash navigation with a list of page titles; every page is stacked in one column today and route is unused
   - Done when: with two pages only the page of the current hash is rendered, the list marks it with aria-current, an unknown hash shows the first page, and field values survive switching; `npm run build && node --test packages/cli/test/workspace-navigation.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md#decisions · Lane: workspace
+  - State: branch todo/FEAT-035-show-one-workspace-page from harden-on-main; next: start FEAT-035
 - [ ] **FEAT-037** · P2 · mid · Add npm run local, which starts the workspace, Data Plane, Control Plane and demo agent on loopback without Docker, and document APP_MIXER_MANIFEST and APP_MIXER_DATABASE; deploy/local/service.mjs fails with ENOENT outside the image today
   - Done when: the started stack serves a published page and answers a chat message, and every process stops on SIGINT; `npm run build && node --test packages/cli/test/local-stack.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md
