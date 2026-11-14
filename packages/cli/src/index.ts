@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import {mkdir,writeFile,access,readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {realpathSync} from 'node:fs';
+import {realpathSync,readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {signExtensionFiles,verifyExtensionFiles,checkExtensionFiles,checkExtensionSetFiles} from './extension-sign.js';
 export async function createProject(name:string,parent=process.cwd()):Promise<string>{
- if(!/^[a-z][a-z0-9-]{1,48}$/.test(name))throw Error("Invalid project name");
+ if(!/^[a-z][a-z0-9-]{1,48}$/.test(name)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name))throw Error("Invalid project name");
  const target=resolve(parent,name);
  try{await access(target);throw Error("Target exists");}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;}
  await mkdir(target);
@@ -272,4 +272,6 @@ export function prepareWorkspace(app){
  return target;
 }
 let isMain=false;try{isMain=!!process.argv[1]&&realpathSync(resolve(process.argv[1]))===fileURLToPath(import.meta.url);}catch{}
-if(isMain){const [, , command,...args]=process.argv;const fail=(e:Error)=>{console.error(e.message);process.exitCode=1;};if(command==='create'&&args.length===1)createProject(args[0]).then(p=>console.log('Created '+p),fail);else if(command==='extension-sign'&&args.length===5)signExtensionFiles(args[0],args[1],args[2],args[3],args[4]).then(()=>console.log('Signed extension manifest written'),fail);else if(command==='extension-verify'&&args.length===4)verifyExtensionFiles(args[0],args[1],args[2],args[3]).then(m=>console.log(`Verified ${m.id}@${m.version} (${m.scope})`),fail);else if(command==='extension-check'&&args.length===6)checkExtensionFiles(args[0],args[1],args[2],args[3],args[4],args[5]).then(m=>console.log(`Compatible ${m.id}@${m.version} (${m.scope})`),fail);else if(command==='extension-check-set'&&args.length===3)checkExtensionSetFiles(args[0],args[1],args[2]).then(m=>console.log(`Compatible extensions: ${m.length}`),fail);else{console.error('Usage: app-mixer create <name> | app-mixer extension-sign <manifest.json> <package-file> <private-key.pem> <key-id> <output.json> | app-mixer extension-verify <signed.json> <package-file> <public-key.pem> <key-id> | app-mixer extension-check <signed.json> <package-file> <public-key.pem> <key-id> <host.json> <requirements.json> | app-mixer extension-check-set <set.json> <host.json> <requirements.json>');process.exitCode=1;}}
+const USAGE=['create <name>','extension-sign <manifest.json> <package-file> <private-key.pem> <key-id> <output.json>','extension-verify <signed.json> <package-file> <public-key.pem> <key-id>','extension-check <signed.json> <package-file> <public-key.pem> <key-id> <host.json> <requirements.json>','extension-check-set <set.json> <host.json> <requirements.json>'];
+const usageText='Usage: app-mixer <command> [arguments]\n'+USAGE.map(line=>'  '+line).join('\n')+'\n  --version\n  --help';
+if(isMain){const [, , command,...args]=process.argv;const fail=(e:Error)=>{console.error(e.message);process.exitCode=1;};if((command==='--help'||command==='-h')&&args.length===0)console.log(usageText);else if(command==='--version'&&args.length===0)console.log(JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version);else if(command==='create'&&args.length===1)createProject(args[0]).then(p=>console.log('Created '+p),fail);else if(command==='extension-sign'&&args.length===5)signExtensionFiles(args[0],args[1],args[2],args[3],args[4]).then(()=>console.log('Signed extension manifest written'),fail);else if(command==='extension-verify'&&args.length===4)verifyExtensionFiles(args[0],args[1],args[2],args[3]).then(m=>console.log(`Verified ${m.id}@${m.version} (${m.scope})`),fail);else if(command==='extension-check'&&args.length===6)checkExtensionFiles(args[0],args[1],args[2],args[3],args[4],args[5]).then(m=>console.log(`Compatible ${m.id}@${m.version} (${m.scope})`),fail);else if(command==='extension-check-set'&&args.length===3)checkExtensionSetFiles(args[0],args[1],args[2]).then(m=>console.log(`Compatible extensions: ${m.length}`),fail);else{console.error(usageText);process.exitCode=1;}}
