@@ -1,6 +1,6 @@
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, isAIMessage, type BaseMessage } from '@langchain/core/messages';
 import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
-import { ChatOpenAI } from '@langchain/openai';
+import { openAIChat } from './openai-chat.js';
 import {type BaseCheckpointSaver} from '@langchain/langgraph-checkpoint';
 import type { ChatMessage, OpenAIModelConfig, StreamingModel } from './index.js';
 import type { createCapabilityTool } from './capability-tool.js';
@@ -24,8 +24,8 @@ const State=Annotation.Root({
 /** Bind only tools supplied by trusted host code. The model cannot supply identities or register tools. */
 export function createOpenAIToolModel(config:OpenAIModelConfig, tools:CapabilityTool[]):ToolModel {
   if(!config.model||!config.apiKey) throw Error('Model and API key are required');
-  const model=new ChatOpenAI({model:config.model,apiKey:config.apiKey,...(config.baseURL?{configuration:{baseURL:config.baseURL}}:{})}).bindTools(tools);
-  return {invoke:async(messages,options)=>model.invoke(config.systemPrompt?[new SystemMessage(config.systemPrompt),...messages]:messages,{signal:options?.signal})};
+  const fields={model:config.model,apiKey:config.apiKey,...(config.baseURL?{configuration:{baseURL:config.baseURL}}:{})};
+  return {invoke:async(messages,options)=>(await openAIChat(fields)).bindTools(tools).invoke(config.systemPrompt?[new SystemMessage(config.systemPrompt),...messages]:messages,{signal:options?.signal})};
 }
 export type OpenAIPricing={currency:string;inputMicrosPerMillionTokens:number;outputMicrosPerMillionTokens:number};
 export type OpenAILimitedOptions={
@@ -66,11 +66,11 @@ export function createOpenAILimitedToolModel(config:OpenAIModelConfig, tools:Cap
   const overhead=options.promptOverheadTokens??64,pricing=options.pricing;
   if(!Number.isSafeInteger(overhead)||overhead<0)throw Error('Invalid prompt overhead');
   if(pricing!==undefined&&(!/^[A-Z]{3}$/.test(pricing.currency)||!Number.isSafeInteger(pricing.inputMicrosPerMillionTokens)||pricing.inputMicrosPerMillionTokens<0||!Number.isSafeInteger(pricing.outputMicrosPerMillionTokens)||pricing.outputMicrosPerMillionTokens<1))throw Error('Invalid pricing');
-  const build=(maxTokens?:number)=>new ChatOpenAI({model:config.model,apiKey:config.apiKey,maxRetries:0,...(maxTokens===undefined?{}:{maxTokens}),...(config.baseURL?{configuration:{baseURL:config.baseURL}}:{})}).bindTools(tools);
+  const build=async(maxTokens?:number)=>(await openAIChat({model:config.model,apiKey:config.apiKey,maxRetries:0,...(maxTokens===undefined?{}:{maxTokens}),...(config.baseURL?{configuration:{baseURL:config.baseURL}}:{})})).bindTools(tools);
   const withSystem=(messages:BaseMessage[])=>config.systemPrompt?[new SystemMessage(config.systemPrompt),...messages]:messages;
   const refuse=(reason:string)=>markNoEffect(Error(reason));
   const run=async(messages:BaseMessage[], maxOutput:number, signal:AbortSignal|undefined)=>{
-    const message=await build(maxOutput).invoke(withSystem(messages),signal?{signal}:{});
+    const message=await (await build(maxOutput)).invoke(withSystem(messages),signal?{signal}:{});
     return {message,usage:usageOf(message)};
   };
   const outputAllowance=(messages:BaseMessage[], maxTotalTokens:number)=>{
@@ -80,7 +80,7 @@ export function createOpenAILimitedToolModel(config:OpenAIModelConfig, tools:Cap
     return {bound,allowance};
   };
   const model:ToolModel&LimitedToolModel&Partial<CostLimitedToolModel>={
-    invoke:async(messages,callOptions)=>build().invoke(withSystem(messages),callOptions?.signal?{signal:callOptions.signal}:{}),
+    invoke:async(messages,callOptions)=>(await build()).invoke(withSystem(messages),callOptions?.signal?{signal:callOptions.signal}:{}),
     invokeLimited:async(messages,{signal,maxTotalTokens})=>{
       const {allowance}=outputAllowance(messages,maxTotalTokens),{message,usage}=await run(messages,allowance,signal);
       return {message,usedTokens:usage.total};

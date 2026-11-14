@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { EventType, type Event } from '@ag-ui/core';
 import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
 import { Annotation, StateGraph, START, END, getWriter } from '@langchain/langgraph';
-import { ChatOpenAI } from '@langchain/openai';
+import { openAIChat } from './openai-chat.js';
 
 export type ChatMessage = {role:'user'|'assistant'; content:string};
 export type RunInput = {threadId:string; runId:string; messages:ChatMessage[]};
@@ -16,14 +16,13 @@ export type OpenAIModelConfig = {model:string; apiKey:string; baseURL?:string; s
 /** The provider and credentials are configured by the host, never by a conversation message. */
 export function createOpenAIModel(config: OpenAIModelConfig): StreamingModel {
   if (!config.model || !config.apiKey) throw Error('Model and API key are required');
-  const model = new ChatOpenAI({model:config.model, apiKey:config.apiKey,
-    ...(config.baseURL ? {configuration:{baseURL:config.baseURL}} : {})});
+  const fields = {model:config.model, apiKey:config.apiKey, ...(config.baseURL ? {configuration:{baseURL:config.baseURL}} : {})};
   return {
     async *stream(messages, signal) {
       const input: BaseMessage[] = [];
       if (config.systemPrompt) input.push(new SystemMessage(config.systemPrompt));
       for (const message of messages) input.push(message.role === 'user' ? new HumanMessage(message.content) : new AIMessage(message.content));
-      const chunks = await model.stream(input, {signal});
+      const chunks = await (await openAIChat(fields)).stream(input, {signal});
       for await (const chunk of chunks) {
         if (typeof chunk.content === 'string') yield chunk.content;
         else for (const part of chunk.content) if (part.type === 'text' && typeof part.text === 'string') yield part.text;
