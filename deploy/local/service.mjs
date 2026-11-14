@@ -5,7 +5,9 @@ import {createAGUIServer,LangGraphAGUIAdapter} from '../../packages/agent/dist/i
 
 const role=process.argv[2];
 const database=process.env.APP_MIXER_DATABASE||'/data/app.sqlite';
-const initial=JSON.parse(await readFile(process.env.APP_MIXER_MANIFEST || new URL('../../demo-app/application.json',import.meta.url),'utf8'));
+let initial;
+try{initial=JSON.parse(await readFile(process.env.APP_MIXER_MANIFEST || new URL('../../demo-app/application.json',import.meta.url),'utf8'));}
+catch(error){console.error('service.mjs: cannot read the application manifest ('+(error.code??error.message)+'); set APP_MIXER_MANIFEST to an application.json file');process.exit(1);}
 const port=(name,defaultPort)=>{const value=Number(process.env[name]||defaultPort);if(!Number.isInteger(value)||value<1||value>65535)throw Error(`Invalid ${name}`);return value;};
 if(role==='init'){
   const store=new SqliteApplicationStore(database,initial);
