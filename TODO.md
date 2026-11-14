@@ -43,7 +43,7 @@
 - [ ] **FEAT-037** · P2 · mid · Add npm run local, which starts the workspace, Data Plane, Control Plane and demo agent on loopback without Docker, and document APP_MIXER_MANIFEST and APP_MIXER_DATABASE; deploy/local/service.mjs fails with ENOENT outside the image today
   - Done when: the started stack serves a published page and answers a chat message, and every process stops on SIGINT; `npm run build && node --test packages/cli/test/local-stack.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md
-- [ ] **FIX-038** · P2 · low · Make app-mixer --help and -h print one command per line and exit 0, add --version, and refuse Windows device names (con, nul, aux, prn, com1 to com9, lpt1 to lpt9) in create
+- [/] **FIX-038** · P2 · low · Make app-mixer --help and -h print one command per line and exit 0, add --version, and refuse Windows device names (con, nul, aux, prn, com1 to com9, lpt1 to lpt9) in create
   - Done when: help exits 0 with a line per command, --version prints the package version, and create con exits 1 and writes nothing; `npm run build && node --test packages/cli/test/cli-usage.test.mjs`
   - Links: Ref: docs/plans/PROJECT.md · Lane: workspace
-  - State: branch todo/FIX-038-make-app-mixer-help-print-one from harden-on-main; next: start FIX-038
+  - State: attempts 0/3; baseline 1986 passing; branch todo/FIX-038-make-app-mixer-help-print-one from harden-on-main; next: build
