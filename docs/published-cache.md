@@ -49,3 +49,10 @@ Enable the static shell separately with `enableOfflineShell(revision)` and chang
 ## Pages in the generated workspace
 
 The generated workspace shows one page at a time, chosen by the URL hash: `#/about` shows the page whose `route` is `/about`, and an empty or unknown hash shows the first page. With two or more pages it lists their titles above the page as links, and the current one carries `aria-current="page"`. Switching pages keeps the values typed into fields, because the pages share one data model for the life of the loaded publication. A refreshed publication starts a new model. A page without a `route` is reached at `#/page-<index>`.
+
+## Page security headers
+
+The generated server sends the page with a `Content-Security-Policy` that has no `'unsafe-inline'`: the page's inline script and style are allowed by SHA-256 hash, computed from the bytes being served, so an inline block added to `index.html` is allowed only because it is part of that file, and one injected into the page at run time is blocked. The policy also sets `default-src 'none'`, `connect-src 'self'`, `img-src 'self' data:`, `worker-src 'self'`, `base-uri 'none'`, `form-action 'none'` and `frame-ancestors 'none'`, and the page is sent with `Referrer-Policy: no-referrer`. Only the page carries the policy; the scripts it loads do not.
+
+If your extensions call another service from the browser, list its origins in `CONNECT_ORIGINS`, separated by spaces or commas (for example `CONNECT_ORIGINS=https://api.example.com`). Each must be a bare `http` or `https` origin without a path, user name or trailing slash; anything else stops the server at startup with one line naming `CONNECT_ORIGINS`. The origins are added to `connect-src` and nothing else changes. Images from another origin, other fonts and frames are not allowed.
+
