@@ -24,6 +24,7 @@ void main() {
   testWidgets('column cross-axis alignment places children consistently', verifyColumnAlignment);
   testWidgets('narrow nested row remains usable', verifyNarrowNestedRowParity);
   testWidgets('card does not add layout margins or decoration', verifyCardLayoutParity);
+  testWidgets('progress bars follow bound values and reject invalid definitions', verifyProgressBarParity);
   test('verifies signed plans and rejects tampering, wrong targets and expiry', () async {
     final widget=FlutterExtensionComponent((context,props)=>const Text('Chart'),(component)=>true), components={'chart':widget};
     final installed=[FlutterInstalledExtension(id:'example.chart',version:'1.0.0',scope:'application',components:components)];

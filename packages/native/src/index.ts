@@ -2,7 +2,7 @@
 export const APP_MIXER_CATALOG='https://raw.githubusercontent.com/bassemZohdy/app-mixer/main/packages/web/catalog/v1/catalog.json';
 export const BASIC_CATALOG='https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json';
 type Obj=Record<string,unknown>;
-export type NativeNode={id:string;kind:string;text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;extensionProps?:Record<string,unknown>;children:NativeNode[]};
+export type NativeNode={id:string;kind:string;text?:string;variant?:string;justify?:string;align?:string;label?:string;value?:string;progress?:number;max?:number;extensionProps?:Record<string,unknown>;children:NativeNode[]};
 export type NativeSurface={id:string;revision:number;root?:NativeNode};
 export type ActionMessage={version:'v0.9.1';action:{name:string;surfaceId:string;sourceComponentId:string;timestamp:string;context:Record<string,unknown>}};
 const obj=(value:unknown):value is Obj=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -92,6 +92,8 @@ function validate(c:unknown,extensions:Map<string,NativeExtension>):asserts c is
     if(!only(c,['id','component','children','justify','align'])||!Array.isArray(c.children)||c.children.length>1000||!Array.from(c.children).every(id)||(c.justify!==undefined&&!justifies.includes(c.justify as string))||(c.align!==undefined&&!aligns.includes(c.align as string)))throw Error('Unsupported layout');
   }else if(c.component==='TextField'){
     if(!only(c,['id','component','label','value','variant'])||typeof c.label!=='string'||!obj(c.value)||!only(c.value,['path'])||typeof c.value.path!=='string'||pointer(c.value.path).length===0||(c.variant!==undefined&&c.variant!=='shortText'&&c.variant!=='longText'))throw Error('Unsupported TextField');
+  }else if(c.component==='Progress'){
+    if(!only(c,['id','component','label','value','max'])||typeof c.label!=='string'||!obj(c.value)||!only(c.value,['path'])||typeof c.value.path!=='string'||pointer(c.value.path).length===0||(c.max!==undefined&&(typeof c.max!=='number'||!Number.isFinite(c.max)||(c.max as number)<=0)))throw Error('Unsupported Progress');
   }else if(c.component==='Button'){
     if(!only(c,['id','component','child','action','variant'])||!id(c.child)||(c.variant!==undefined&&!['default','primary','borderless'].includes(c.variant as string))||!obj(c.action)||!only(c.action,['event'])||!obj(c.action.event)||!only(c.action.event,['name','context'])||!id(c.action.event.name)||(c.action.event.context!==undefined&&!obj(c.action.event.context)))throw Error('Unsupported Button');
     for(const [key,value] of Object.entries((c.action.event.context??{}) as Obj)){
@@ -176,16 +178,17 @@ export class NativeSurfaceStore {
       const childIds=c.component==='Card'||c.component==='Button'?[c.child as string]:c.component==='Column'||c.component==='Row'?c.children as string[]:[];
       const boundText=c.component==='Text'?(typeof c.text==='string'?c.text:obj(c.text)?read(data,c.text.path as string):undefined):undefined;
       const fieldValue=c.component==='TextField'&&obj(c.value)?read(data,c.value.path as string):undefined;
+      const boundProgress=c.component==='Progress'&&obj(c.value)?read(data,c.value.path as string):undefined;
       const extensionProps=this.extensions.has(c.component as string)?Object.fromEntries(Object.entries(cloneData(c) as Obj).filter(([name])=>name!=='id'&&name!=='component')):undefined;
-      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:(typeof boundText==='number'&&Number.isFinite(boundText))||typeof boundText==='boolean'?String(boundText):''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next,inButton||c.component==='Button')).filter((child):child is NativeNode=>child!==undefined)};
+      return {id:key,kind:c.component as string,...(extensionProps?{extensionProps}:{}),...(c.component==='Text'?{text:typeof boundText==='string'?boundText:(typeof boundText==='number'&&Number.isFinite(boundText))||typeof boundText==='boolean'?String(boundText):''}:{}),...(c.component==='TextField'?{label:c.label as string,value:typeof fieldValue==='string'?fieldValue:''}:{}),...(c.component==='Progress'?{label:c.label as string,...(typeof c.max==='number'?{max:c.max}:{}),...(typeof boundProgress==='number'&&Number.isFinite(boundProgress)?{progress:Math.min(Math.max(boundProgress,0),typeof c.max==='number'?c.max:100)}:{})}:{}),...(typeof c.variant==='string'?{variant:c.variant}:{}),...(typeof c.justify==='string'?{justify:c.justify}:{}),...(typeof c.align==='string'?{align:c.align}:{}),children:childIds.map(child=>visit(child,next,inButton||c.component==='Button')).filter((child):child is NativeNode=>child!==undefined)};
     };
     return visit('root',new Set());
   }
 }
 type ReactRuntime={createElement:(type:any,props:any,...children:any[])=>any;useRef:<T>(value:T)=>{current:T};useState:<T>(value:T)=>[T,(value:T)=>void];useEffect:(effect:()=>void|(()=>void),deps:unknown[])=>void};
 export type NativeA2UIProps={subscribe:(receive:(message:unknown)=>void)=>void|(()=>void);onError:(error:unknown)=>void;onAction?:(message:ActionMessage)=>void;
-  /** Host theme: styles per component and variant (`Button`: default, primary, borderless; `TextField`: shortText, longText). The renderer sets no colors or borders of its own. */
-  variantStyles?:{Button?:Record<string,unknown>;TextField?:Record<string,unknown>}|undefined};
+  /** Host theme: styles per component and variant (`Button`: default, primary, borderless; `TextField`: shortText, longText; `Progress`: track and fill). The renderer sets no theme colors except the neutral Progress defaults. */
+  variantStyles?:{Button?:Record<string,unknown>;TextField?:Record<string,unknown>;Progress?:{track?:Record<string,unknown>;fill?:Record<string,unknown>}}|undefined};
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */
 export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{View:any;Text:any;TextInput?:any;Pressable?:any;Platform?:{OS:string}},registry?:NativeComponentRegistry):(props:NativeA2UIProps)=>any {
   const installed=registry?.snapshot()??new Map<string,NativeExtension>();
@@ -232,6 +235,14 @@ export function createReactNativeA2UIComponent(React:ReactRuntime,primitives:{Vi
           if(!store||storeRef.current!==store)return;
           try{store.writeField(surface.id,node.id,surface.revision,value);publishRef.current?.();}catch(error){errors.current(error);}
         }}));
+      if(node.kind==='Progress'){
+        const max=node.max!==undefined&&node.max>0?node.max:100;
+        const clamped=node.progress===undefined?undefined:Math.min(Math.max(node.progress,0),max);
+        const themed=variantStyles?.Progress;
+        return React.createElement(primitives.View,{key,testID:node.id,accessibilityRole:'progressbar',accessible:true,accessibilityLabel:node.label,accessibilityValue:{min:0,max,...(clamped!==undefined?{now:clamped}:{})},...(inRow?{style:{flexShrink:1,minWidth:0}}:{})},
+          React.createElement(primitives.View,{style:{height:4,borderRadius:2,overflow:'hidden',backgroundColor:'rgba(127,127,127,0.35)',...(themed?.track??{})}},
+            React.createElement(primitives.View,{style:{height:4,borderRadius:2,width:(clamped??0)/max*100+'%',backgroundColor:'#767676',...(themed?.fill??{})}})));
+      }
       const style={...(inRow?{flexShrink:1,minWidth:0}:{}),...(node.kind==='Column'||node.kind==='Row'?{flexDirection:node.kind==='Column'?'column':'row',...(node.justify?{justifyContent:justify[node.justify]}:{}),...(node.align?{alignItems:align[node.align]}:{})}:{})};
       return React.createElement(primitives.View,{key,testID:node.id,style},...renderChildren(inButton,node.kind==='Row'));
     };

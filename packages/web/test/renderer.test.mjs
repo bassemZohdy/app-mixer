@@ -7,6 +7,7 @@ class Element {
   constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.attributes={}; this.textContent=''; this.parent=null; this.listeners={}; this.value=''; this.selectionStart=0; this.selectionEnd=0; }
   setAttribute(name,value) { this.attributes[name]=String(value); }
   getAttribute(name) { return this.attributes[name]??null; }
+  removeAttribute(name) { delete this.attributes[name]; }
   appendChild(child) { child.parent=this; this.children.push(child); return child; }
   replaceChildren(...children) { this.children=[]; for(const child of children) this.appendChild(child); }
   remove() { if(this.parent) this.parent.children=this.parent.children.filter(child => child !== this); }
@@ -182,7 +183,7 @@ test('versioned catalog identifies exactly the built-in registered components', 
   const catalog=JSON.parse(await readFile(new URL('../catalog/v1/catalog.json',import.meta.url),'utf8'));
   assert.equal(catalog.catalogId,APP_MIXER_CATALOG);
   assert.equal(catalog.$id,APP_MIXER_CATALOG);
-  assert.deepEqual(Object.keys(catalog.components).sort(),['Button','Card','Column','Row','Text','TextField']);
+  assert.deepEqual(Object.keys(catalog.components).sort(),['Button','Card','Column','Progress','Row','Text','TextField']);
   const registry=basicRegistry();
   for(const name of Object.keys(catalog.components)) assert.ok(registry.get(name));
   const {renderer}=setup();
@@ -228,6 +229,45 @@ test('Text bound to a finite number or a boolean shows its JSON spelling; anythi
  const paths=['/count','/ratio','/off','/on','/none','/list','/nested','/text','/missing'];
  renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:paths.map((_,index)=>'t'+index)},...paths.map((path,index)=>({id:'t'+index,component:'Text',text:{path}}))]}});
  assert.deepEqual([...host.children[0].children[0].children].map(node=>node.textContent),['3','2.5','false','true','','','','plain','']);
+});
+
+test('Progress shows a clamped bound number, falls back to indeterminate, and patches in place',()=>{
+ const doc=counting(),host=doc.createElement('main'),renderer=new A2UIRenderer(host);
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',value:{upload:{percent:50},other:'x'}}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[
+  {id:'root',component:'Column',children:['bar']},{id:'bar',component:'Progress',label:'Uploading',value:{path:'/upload/percent'},max:80}]}});
+ const wrapper=host.children[0].children[0].children[0],bar=wrapper.children[1];
+ assert.equal(bar.tagName,'progress');assert.equal(bar.value,50);assert.equal(bar.attributes.value,'50');assert.equal(bar.max,80);
+ assert.equal(wrapper.children[0].textContent,'Uploading');
+ assert.equal(wrapper.dataset.componentId,'bar');
+ const created=doc.created,identity=bar;
+ for(const [value,wanted] of [[79,'79'],[-4,'0'],[120,'80'],[true,undefined],['30',undefined],[null,undefined],[undefined,undefined]]){
+  renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/upload/percent',value}});
+  assert.equal(wrapper.children[1],identity,'the bar keeps its node');
+  assert.equal(identity.attributes.value,wanted,`bound ${String(value)} renders ${wanted===undefined?'indeterminate':wanted}`);
+ }
+ renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/upload/percent'}});
+ assert.equal(wrapper.children[1],identity);
+ assert.equal(identity.attributes.value,undefined,'no value attribute means indeterminate');
+ assert.equal(doc.created,created,'data-only updates create no elements');
+});
+
+test('Progress rejects invalid definitions without replacing the surface',()=>{
+ const {host,renderer}=setup();
+ renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});
+ renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[{id:'root',component:'Progress',label:'Safe',value:{path:'/p'}}]}});
+ const safe=host.children[0].children[0];
+ for(const invalid of [
+  {id:'root',component:'Progress',value:{path:'/p'}},
+  {id:'root',component:'Progress',label:'x',value:{path:'/'}},
+  {id:'root',component:'Progress',label:'x',value:{path:'relative'}},
+  {id:'root',component:'Progress',label:'x',value:{path:'/p'},max:0},
+  {id:'root',component:'Progress',label:'x',value:{path:'/p'},max:'80'},
+  {id:'root',component:'Progress',label:'x',value:{path:'/p'},extra:true},
+  {id:'root',component:'Progress',label:'x'}
+ ]){assert.throws(()=>renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:[invalid]}}),/Progress|absolute JSON pointers/);}
+ assert.equal(host.children[0].children[0],safe);
 });
 
 const shape=element=>({tag:element.tagName,text:element.textContent,value:element.value,data:{...element.dataset},children:element.children.map(shape)});

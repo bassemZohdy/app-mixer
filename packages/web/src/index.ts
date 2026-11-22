@@ -114,6 +114,8 @@ function validateBasic(c: Obj): void {
     if (!only(c,['id','component','child']) || !id(c.child)) throw Error('Unsupported Card');
   } else if (type === 'TextField') {
     if (!only(c,['id','component','label','value','variant']) || typeof c.label !== 'string' || !obj(c.value) || !only(c.value,['path']) || typeof c.value.path !== 'string' || pointer(c.value.path).length === 0 || (c.variant !== undefined && !['shortText','longText'].includes(c.variant as string))) throw Error('Unsupported TextField');
+  } else if (type === 'Progress') {
+    if (!only(c,['id','component','label','value','max']) || typeof c.label !== 'string' || !obj(c.value) || !only(c.value,['path']) || typeof c.value.path !== 'string' || pointer(c.value.path).length === 0 || (c.max !== undefined && (typeof c.max !== 'number' || !Number.isFinite(c.max) || (c.max as number) <= 0))) throw Error('Unsupported Progress');
   } else if (type === 'Button') {
     if (!only(c,['id','component','child','action','variant']) || !id(c.child) || (c.variant !== undefined && !['default','primary','borderless'].includes(c.variant as string)) || !obj(c.action) || !only(c.action,['event']) || !obj(c.action.event) || !only(c.action.event,['name','context']) || !id(c.action.event.name) || (c.action.event.context !== undefined && !obj(c.action.event.context))) throw Error('Unsupported Button');
     for (const [key,value] of Object.entries((c.action.event.context ?? {}) as Obj)) {
@@ -198,6 +200,30 @@ export function basicRegistry(): ComponentRegistry {
     interaction.controls.set(interaction.controlKey, input);
     wrapper.appendChild(input); return wrapper;
   }, validateBasic);
+  registry.register('Progress', (c, _child, data, doc, interaction) => {
+    if (!only(c, ['id','component','label','value','max']) || typeof c.label !== 'string' || !obj(c.value) || !only(c.value, ['path']) || typeof c.value.path !== 'string') throw Error('Invalid Progress');
+    const path = c.value.path;
+    if (pointer(path).length === 0) throw Error('Progress requires a non-root path');
+    if (c.max !== undefined && (typeof c.max !== 'number' || !Number.isFinite(c.max) || (c.max as number) <= 0)) throw Error('Unsupported Progress max');
+    const max = typeof c.max === 'number' ? c.max : 100;
+    const wrapper = doc.createElement('label');
+    const label = doc.createElement('span'); label.textContent = c.label; wrapper.appendChild(label);
+    const progress = doc.createElement('progress'); progress.max = max;
+    // A bound finite number is determinate and clamped to [0, max]; anything else leaves the bar indeterminate.
+    const paint = (next: unknown) => {
+      const value = read(next, path);
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        const clamped = Math.min(Math.max(value, 0), max);
+        progress.value = clamped; progress.setAttribute('value', String(clamped));
+      } else {
+        progress.value = 0;
+        if (typeof progress.removeAttribute === 'function') progress.removeAttribute('value'); else progress.setAttribute('value', '');
+      }
+    };
+    paint(data);
+    interaction.bind(paint);
+    wrapper.appendChild(progress); return wrapper;
+  }, validateBasic);
   registry.register('Button', (c, child, _data, doc, interaction) => {
     if (!only(c, ['id','component','child','action','variant']) || !id(c.child)) throw Error('Invalid Button');
     if (c.variant !== undefined && !['default','primary','borderless'].includes(c.variant as string)) throw Error('Unsupported Button variant');
@@ -215,7 +241,7 @@ export function basicRegistry(): ComponentRegistry {
     button.addEventListener('click', () => interaction.action(event.name as string, context));
     return button;
   }, validateBasic);
-  for (const name of ['Text','Column','Row','Card','TextField','Button']) BUILTIN.add(registry.get(name)!);
+  for (const name of ['Text','Column','Row','Card','TextField','Button','Progress']) BUILTIN.add(registry.get(name)!);
   return registry;
 }
 type Surface = { element: HTMLElement; components: Map<string, Obj>; data: unknown; controls: Map<string, HTMLInputElement | HTMLTextAreaElement>; controlComponents: Map<string, Obj>; composing: Set<HTMLInputElement | HTMLTextAreaElement>; componentRevision: object;

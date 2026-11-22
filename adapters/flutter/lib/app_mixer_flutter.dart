@@ -190,12 +190,13 @@ class FlutterComponentRegistry {
 }
 
 class NativeNode {
-  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.bindingPath, this.extensionProps}) : _renderChildren=null;
-  const NativeNode._(this.id,this.kind,this.children,{this.text,this.variant,this.justify,this.align,this.label,this.value,this.bindingPath,this.extensionProps,List<NativeNode>? renderChildren}) : _renderChildren=renderChildren;
+  const NativeNode(this.id, this.kind, this.children, {this.text, this.variant, this.justify, this.align, this.label, this.value, this.bindingPath, this.progress, this.max, this.extensionProps}) : _renderChildren=null;
+  const NativeNode._(this.id,this.kind,this.children,{this.text,this.variant,this.justify,this.align,this.label,this.value,this.bindingPath,this.progress,this.max,this.extensionProps,List<NativeNode>? renderChildren}) : _renderChildren=renderChildren;
   final String id, kind;
   final List<NativeNode> children;
   final List<NativeNode>? _renderChildren;
   final String? text, variant, justify, align, label, value, bindingPath;
+  final double? progress, max;
   final Map<String, dynamic>? extensionProps;
 }
 class _Surface {
@@ -288,6 +289,9 @@ class FlutterSurfaceStore {
     } else if (type == 'TextField') {
       final value=c['value'];
       if (!_only(c,['id','component','label','value','variant']) || c['label'] is! String || value is! Map || !_only(_object(value),['path']) || value['path'] is! String || _pointer(value['path'] as String).isEmpty || (c.containsKey('variant') && !['shortText','longText'].contains(c['variant']))) throw FormatException('Unsupported TextField');
+    } else if (type == 'Progress') {
+      final value=c['value'];
+      if (!_only(c,['id','component','label','value','max']) || c['label'] is! String || value is! Map || !_only(_object(value),['path']) || value['path'] is! String || _pointer(value['path'] as String).isEmpty || (c.containsKey('max') && (c['max'] is! num || !(c['max'] as num).isFinite || (c['max'] as num) <= 0))) throw FormatException('Unsupported Progress');
     } else if (type == 'Button') {
       final action=c['action'];
       if (!_only(c,['id','component','child','action','variant']) || !_id(c['child']) || (c.containsKey('variant') && !['default','primary','borderless'].contains(c['variant'])) || action is! Map || !_only(_object(action),['event']) || action['event'] is! Map) throw FormatException('Unsupported Button');
@@ -327,10 +331,13 @@ class FlutterSurfaceStore {
       final ids = c['component'] == 'Card' || c['component'] == 'Button' ? [c['child'] as String] : c['component'] == 'Column' || c['component'] == 'Row' ? List<String>.from(c['children'] as List) : <String>[];
       final rawText=c['component']=='Text' ? c['text'] : null; final bound = rawText is String ? rawText : rawText is Map ? _read(data, rawText['path'] as String) : null;
       final field=c['component']=='TextField' ? _read(data,(c['value'] as Map)['path'] as String) : null;
+      final definedMax=c['max'] is num && (c['max'] as num).isFinite && (c['max'] as num) > 0 ? (c['max'] as num).toDouble() : null;
+      final progressMax=definedMax ?? 100.0;
+      final rawProgress=c['component']=='Progress'&&c['value'] is Map ? _read(data,(c['value'] as Map)['path'] as String) : null;
       final isExtension=_extensions.containsKey(c['component']);
       final props=isExtension ? (_object(_copy(c))..remove('id')..remove('component')) : null;
       final renderChildren=ids.map((child) => visit(child, next, nextIntrinsicDepth, childTightWidth, childTightHeight, inButton || type=='Button')).whereType<NativeNode>().toList();
-      return NativeNode._(id, c['component'] as String, renderChildren.where((child)=>child.kind!='__placeholder').toList(), text: c['component']=='Text' ? _displayText(bound) : null, label: c['component']=='TextField' ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props,renderChildren:renderChildren);
+      return NativeNode._(id, c['component'] as String, renderChildren.where((child)=>child.kind!='__placeholder').toList(), text: c['component']=='Text' ? _displayText(bound) : null, label: (c['component']=='TextField'||c['component']=='Progress') ? c['label'] as String : null, value: c['component']=='TextField' ? (field is String ? field : '') : null, bindingPath:c['component']=='TextField' ? (c['value'] as Map)['path'] as String : null, progress: rawProgress is num && rawProgress.isFinite ? rawProgress.toDouble().clamp(0.0,progressMax).toDouble() : null, max: definedMax, variant: isExtension ? null : c['variant'] as String?, justify: isExtension ? null : c['justify'] as String?, align: isExtension ? null : c['align'] as String?, extensionProps:props,renderChildren:renderChildren);
     }
     return visit('root', {}, 0, true, false, false);
   }
@@ -412,7 +419,7 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       final rendered=_widget(child,surface,store,generation,childPath,childTightWidth,childTightHeight,inButton || node.kind=='Button');
       // Keep standalone row text separate from nearby control labels.
       final accessibleChild=node.kind=='Row' && child.kind=='Text' && !inButton ? Semantics(container:true,child:rendered) : rendered;
-      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:accessibleChild) : child.kind=='__placeholder'&&node.kind=='Row' ? SizedBox(width:0,child:accessibleChild) : child.kind=='__placeholder'&&node.kind=='Column' ? SizedBox(height:0,child:accessibleChild) : accessibleChild;
+      final layoutChild=node.kind=='Row' && ['Text','Button','TextField','Progress','Column','Row','Card'].contains(child.kind) ? Flexible(fit:FlexFit.loose,child:accessibleChild) : child.kind=='__placeholder'&&node.kind=='Row' ? SizedBox(width:0,child:accessibleChild) : child.kind=='__placeholder'&&node.kind=='Column' ? SizedBox(height:0,child:accessibleChild) : accessibleChild;
       // Preserve child state when another referenced component arrives or the order changes.
       children.add(KeyedSubtree(key:ValueKey((child.id,occurrence)),child:layoutChild));
     }
@@ -420,6 +427,11 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
       if (!mounted || generation!=_generation || !identical(store,_store)) return;
       try {store.writeField(surface.id,node.id,surface.revision,value);setState(() {});} catch(error){widget.onError(error);}
     });
+    if (node.kind == 'Progress') {
+      final max = node.max ?? 100.0;
+      final value = node.progress == null ? null : node.progress!.clamp(0.0, max).toDouble();
+      return LinearProgressIndicator(value: value, minHeight: 4, semanticsLabel: node.label);
+    }
     if (node.kind == 'Button') return TextButton(onPressed:widget.onAction==null ? null : (){
       if (!mounted || generation!=_generation || !identical(store,_store) || widget.onAction==null) return;
       try {widget.onAction!(store.action(surface.id,node.id,surface.revision));} catch(error){widget.onError(error);}

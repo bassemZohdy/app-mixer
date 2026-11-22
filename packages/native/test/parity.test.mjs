@@ -5,7 +5,10 @@ import {NativeSurfaceStore,APP_MIXER_CATALOG} from '../dist/index.js';
 import {A2UIRenderer} from '../../web/dist/index.js';
 
 class Element {
- constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.style={};this.dataset={};this.textContent='';this.parent=null;this.listeners={};this.value='';}
+ constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.style={};this.dataset={};this.attributes={};this.textContent='';this.parent=null;this.listeners={};this.value='';}
+ setAttribute(name,value){this.attributes[name]=String(value);}
+ getAttribute(name){return this.attributes[name]??null;}
+ removeAttribute(name){delete this.attributes[name];}
  appendChild(child){child.parent=this;this.children.push(child);return child;}
  replaceChildren(...children){this.children=[];for(const child of children)this.appendChild(child);}
  remove(){if(this.parent)this.parent.children=this.parent.children.filter(x=>x!==this);}
@@ -55,6 +58,22 @@ test('web and native text fields update the same bound data',()=>{
  apply(message('updateComponents',{surfaceId:'main',components:[{id:'field',component:'TextField',label:'Name',value:{path:'/form/other'}}]}));
  assert.throws(()=>native.writeField('main','field',snapshot.revision,'stale'),/Stale/);
  assert.equal(native.snapshot()[0].root.children[1].text,'Grace');
+});
+
+test('web and native agree on progress bar values across data updates',()=>{
+ const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
+ const apply=value=>{web.apply(value);native.apply(value);};
+ apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
+ apply(message('updateDataModel',{surfaceId:'main',value:{upload:{percent:40}}}));
+ apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Progress',label:'Upload',value:{path:'/upload/percent'},max:50}]}));
+ const bar=host.children[0].children[0].children[1];
+ const compare=wanted=>{const node=native.snapshot()[0].root;assert.equal(node.label,'Upload');assert.equal(node.max,50);assert.equal(node.progress,wanted);assert.equal(bar.attributes.value,wanted===undefined?undefined:String(wanted));};
+ compare(40);
+ apply(message('updateDataModel',{surfaceId:'main',path:'/upload/percent',value:50}));compare(50);
+ apply(message('updateDataModel',{surfaceId:'main',path:'/upload/percent',value:60}));compare(50);
+ apply(message('updateDataModel',{surfaceId:'main',path:'/upload/percent',value:'half'}));compare(undefined);
+ assert.throws(()=>apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Progress',label:'Upload',value:{path:'/upload/percent'},max:0}]})),/Progress/);
+ compare(undefined);
 });
 
 test('web and native emit matching button action context',()=>{

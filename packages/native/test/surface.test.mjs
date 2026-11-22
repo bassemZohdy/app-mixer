@@ -49,6 +49,26 @@ test('rejects expanded trees over the resource limit',()=>{
  const components=[{id:'root',component:'Column',children:Array(1000).fill('branch')},{id:'branch',component:'Column',children:Array(6).fill('leaf')},{id:'leaf',component:'Text',text:'x'}];
  assert.throws(()=>store.apply(update('a',components)),/tree too large/);assert.equal(store.snapshot()[0].root,undefined);
 });
+test('progress bars validate their definition and resolve clamped bound values',()=>{
+ const store=new NativeSurfaceStore();store.apply(create('a'));
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{upload:{percent:40}}}});
+ store.apply(update('a',[{id:'root',component:'Progress',label:'Upload',value:{path:'/upload/percent'},max:50}]));
+ assert.deepEqual(store.snapshot()[0].root,{id:'root',kind:'Progress',label:'Upload',max:50,progress:40,children:[]});
+ for(const invalid of [
+  update('a',[{id:'root',component:'Progress',value:{path:'/p'}}]),
+  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/'}}]),
+  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'relative'}}]),
+  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/p'},max:0}]),
+  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/p'},max:'80'}]),
+  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/p'},extra:true}])
+ ]){assert.throws(()=>store.apply(invalid),/Progress|absolute JSON pointers/);assert.equal(store.snapshot()[0].root.label,'Upload');}
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/upload/percent',value:80}});
+ assert.equal(store.snapshot()[0].root.progress,50,'bound values clamp to max');
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/upload/percent',value:'half'}});
+ assert.equal(store.snapshot()[0].root.progress,undefined,'a non-number leaves the bar indeterminate');
+ store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/upload/percent'}});
+ assert.equal(store.snapshot()[0].root.progress,undefined);
+});
 
 test('bound text follows data updates while unsafe paths leave state unchanged',()=>{
  const store=new NativeSurfaceStore();store.apply(create('a'));

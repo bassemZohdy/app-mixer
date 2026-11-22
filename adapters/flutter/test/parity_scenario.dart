@@ -406,3 +406,38 @@ Future<void> verifyCardLayoutParity(WidgetTester tester) async {
   expect(inside.left,outside.left);expect(inside.top,outside.bottom);
   expect(find.byType(Card),findsNothing);expect(errors,isEmpty);
 }
+
+Future<void> verifyProgressBarParity(WidgetTester tester) async {
+  Map<String,Object?> message(String kind,Object payload)=>{'version':'v0.9.1',kind:payload};
+  late void Function(Object?) receive;
+  VoidCallback? subscribe(void Function(Object?) callback) {receive=callback;return null;}
+  final errors=<Object>[];
+  await tester.pumpWidget(MaterialApp(home:Scaffold(body:Align(alignment:Alignment.topLeft,child:SizedBox(width:300,child:AppMixerA2UI(subscribe:subscribe,onError:errors.add))))));
+  receive(message('createSurface',{'surfaceId':'main','catalogId':appMixerCatalog}));
+  receive(message('updateDataModel',{'surfaceId':'main','value':{'upload':{'percent':40}}}));
+  receive(message('updateComponents',{'surfaceId':'main','components':[
+    {'id':'root','component':'Column','children':['bar']},
+    {'id':'bar','component':'Progress','label':'Upload','value':{'path':'/upload/percent'},'max':80},
+  ]}));
+  await tester.pump();
+  LinearProgressIndicator indicator(String reason){
+    final matcher=find.byType(LinearProgressIndicator);
+    expect(matcher,findsOneWidget,reason:reason);
+    return tester.widget<LinearProgressIndicator>(matcher);
+  }
+  expect(find.text('Upload'),findsOneWidget);
+  expect(indicator('initial').value,closeTo(0.5,0.0001));
+  receive(message('updateDataModel',{'surfaceId':'main','path':'/upload/percent','value':80}));
+  await tester.pump();
+  expect(indicator('clamped to max').value,1.0);
+  receive(message('updateDataModel',{'surfaceId':'main','path':'/upload/percent','value':'half'}));
+  await tester.pump();
+  expect(indicator('a non-number leaves the bar indeterminate').value,isNull);
+  receive(message('updateComponents',{'surfaceId':'main','components':[
+    {'id':'bar','component':'Progress','label':'Upload','value':{'path':'/upload/percent'},'max':0},
+  ]}));
+  await tester.pump();
+  expect(errors,isNotEmpty,reason:'invalid definitions are rejected and reported');
+  expect(find.byType(LinearProgressIndicator),findsOneWidget,reason:'the rejected update keeps the surface');
+  expect(errors.last,isA<FormatException>());
+}
