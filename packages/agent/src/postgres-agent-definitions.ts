@@ -57,15 +57,96 @@ export class PostgresAgentDefinitions {
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_tenants (tenant_id TEXT PRIMARY KEY)', []);
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_scopes (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definitions (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,manifest TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definitions (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,manifest TEXT NOT NULL,PRIMARY KEY(tenant_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'agent_id,version))',
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,principal_id TEXT NOT NULL,' +
+        'observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_control_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_control_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,action TEXT NOT NULL,' +
+        'principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'version))',
       []
     );
     await this.query(
@@ -74,7 +155,8 @@ export class PostgresAgentDefinitions {
     );
     for (const table of ['app_mixer_agent_definitions', 'app_mixer_agent_definition_audit', 'app_mixer_agent_definition_control_audit'])
       await this.query(
-        `DO $$ BEGIN CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_definition_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+        `DO $$ BEGIN CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_definition_immutable(); EXCEPTION WHEN 
+          duplicate_object THEN NULL; END $$`,
         []
       );
   }

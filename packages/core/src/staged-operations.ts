@@ -38,7 +38,8 @@ export class SqliteStagedOperations {
         if (!columns.some(column => column.name === 'request_key')) this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN request_key TEXT');
         if (!columns.some(column => column.name === 'state_revision')) this.db.exec('ALTER TABLE staged_business_operations ADD COLUMN state_revision INTEGER NOT NULL DEFAULT 0');
         this.db.exec(
-          `CREATE TABLE IF NOT EXISTS staged_reconciliation_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN ('applied','not_applied')),recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));`
+          `CREATE TABLE IF NOT EXISTS staged_reconciliation_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT 
+            NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN ('applied','not_applied')),recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));`
         );
         this.db.exec(`CREATE TRIGGER IF NOT EXISTS staged_evidence_no_update BEFORE UPDATE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_evidence_no_delete BEFORE DELETE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
@@ -258,7 +259,47 @@ export class SqliteStagedOperations {
     if (!options || !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid reconciliation query');
     return this.db
       .prepare(
-        'SELECT revision,principal_id,reference,outcome,recorded_at FROM staged_reconciliation_evidence WHERE tenant_id=? AND application_id=? AND operation_id=? AND revision>? ORDER BY revision LIMIT ?'
+        'SELECT revision,principal_id,reference,outcome,recorded_at FROM staged_reconciliation_evidence WHERE tenant_id=? AND application_id=? AND operation_id=? AND revision>? ORDER BY revision ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'LIMIT ?'
       )
       .all(scope.tenantId, scope.applicationId, id, after, limit)
       .map(row => ({

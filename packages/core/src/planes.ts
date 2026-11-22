@@ -433,7 +433,8 @@ export type DataPlaneOptions = {
   authorizePublication?: DataPlanePublicationAuthorization;
   publicationAuthorizationLimits?: { timeoutMs: number; maxPending: number };
   publicationReadLimits?: { timeoutMs: number; maxPending: number };
-  /** The host promises that a publication object returned by the repository never changes, so its serialized body and ETag are kept and reused for as long as that object is returned. */ immutablePublications?: boolean;
+  /** The host promises that a publication object returned by the repository never changes, so its serialized body and ETag are kept and reused for as long as that object is returned. */
+  immutablePublications?: boolean;
 };
 export type DataPlanePublicationRepository = {
   getPublished: (version?: number) => { version: number; definition: ApplicationDefinition } | undefined | Promise<{ version: number; definition: ApplicationDefinition } | undefined>;

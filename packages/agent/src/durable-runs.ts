@@ -143,7 +143,47 @@ export function resumeAgentRunWithTriggerInTransaction(
   const args = [scope.tenantId, scope.agentId, event.sourceId, event.eventId],
     existing = db
       .prepare(
-        'SELECT w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,r.wakeup_id AS redacted FROM agent_run_wakeups w LEFT JOIN agent_run_wakeup_redactions r ON r.wakeup_id=w.id AND r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id WHERE w.tenant_id=? AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
+        'SELECT w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,' +
+          'r.wakeup_id AS redacted FROM agent_run_wakeups w LEFT JOIN agent_run_wakeup_redactions r ON r.wakeup_id=w.id AND r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id WHERE w.tenant_id=? ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
       )
       .get(...args);
   if (existing) {
@@ -192,33 +232,48 @@ export class SqliteAgentRuns {
   CREATE INDEX IF NOT EXISTS agent_runs_queued ON agent_runs(tenant_id,agent_id,status,archived,run_id);
   CREATE INDEX IF NOT EXISTS agent_runs_expired ON agent_runs(tenant_id,agent_id,deadline,run_id) WHERE archived=0 AND status IN ('queued','paused');
   CREATE INDEX IF NOT EXISTS agent_runs_expired_lease ON agent_runs(tenant_id,agent_id,lease_until,run_id) WHERE archived=0 AND status IN ('running','pause_requested','cancel_requested');
-  CREATE TABLE IF NOT EXISTS agent_run_expiry_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,previous_status TEXT NOT NULL,deadline INTEGER NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision));
+  CREATE TABLE IF NOT EXISTS agent_run_expiry_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,previous_status 
+    TEXT NOT NULL,deadline INTEGER NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision));
   CREATE INDEX IF NOT EXISTS agent_run_expiry_audit_scope ON agent_run_expiry_audit(tenant_id,agent_id,id);
-  CREATE TABLE IF NOT EXISTS agent_run_lease_recovery_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq INTEGER NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,previous_status TEXT NOT NULL,lease_until INTEGER NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision),UNIQUE(tenant_id,agent_id,scope_seq));
+  CREATE TABLE IF NOT EXISTS agent_run_lease_recovery_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq INTEGER NOT NULL,run_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,previous_status TEXT NOT NULL,lease_until INTEGER NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,
+      revision),UNIQUE(tenant_id,agent_id,scope_seq));
   CREATE INDEX IF NOT EXISTS agent_run_lease_recovery_audit_scope ON agent_run_lease_recovery_audit(tenant_id,agent_id,scope_seq);
-  CREATE TRIGGER IF NOT EXISTS agent_run_lease_recovery_audit_no_replace BEFORE INSERT ON agent_run_lease_recovery_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_lease_recovery_audit WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_lease_recovery_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND (scope_seq=NEW.scope_seq OR (run_id=NEW.run_id AND revision=NEW.revision))) BEGIN SELECT RAISE(ABORT,'Lease recovery audit is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_lease_recovery_audit_no_replace BEFORE INSERT ON agent_run_lease_recovery_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_lease_recovery_audit WHERE 
+    id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_lease_recovery_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND (scope_seq=NEW.scope_seq OR (run_id=NEW.run_id AND 
+      revision=NEW.revision))) BEGIN SELECT RAISE(ABORT,'Lease recovery audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_lease_recovery_audit_no_update BEFORE UPDATE ON agent_run_lease_recovery_audit BEGIN SELECT RAISE(ABORT,'Lease recovery audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_lease_recovery_audit_no_delete BEFORE DELETE ON agent_run_lease_recovery_audit BEGIN SELECT RAISE(ABORT,'Lease recovery audit is immutable'); END;
-  CREATE TABLE IF NOT EXISTS agent_run_control_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq INTEGER NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,action TEXT NOT NULL,previous_status TEXT NOT NULL,status TEXT NOT NULL,actor_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision),UNIQUE(tenant_id,agent_id,scope_seq));
+  CREATE TABLE IF NOT EXISTS agent_run_control_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq INTEGER NOT NULL,run_id TEXT NOT NULL,revision 
+    INTEGER NOT NULL,action TEXT NOT NULL,previous_status TEXT NOT NULL,status TEXT NOT NULL,actor_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision),
+      UNIQUE(tenant_id,agent_id,scope_seq));
   CREATE INDEX IF NOT EXISTS agent_run_control_audit_scope ON agent_run_control_audit(tenant_id,agent_id,scope_seq);
-  CREATE TRIGGER IF NOT EXISTS agent_run_control_audit_no_replace BEFORE INSERT ON agent_run_control_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_control_audit WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_control_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND (scope_seq=NEW.scope_seq OR (run_id=NEW.run_id AND revision=NEW.revision))) BEGIN SELECT RAISE(ABORT,'Run control audit is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_control_audit_no_replace BEFORE INSERT ON agent_run_control_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_control_audit WHERE id=NEW.id)) OR 
+    EXISTS(SELECT 1 FROM agent_run_control_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND (scope_seq=NEW.scope_seq OR (run_id=NEW.run_id AND revision=NEW.revision))) BEGIN SELECT 
+      RAISE(ABORT,'Run control audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_control_audit_no_update BEFORE UPDATE ON agent_run_control_audit BEGIN SELECT RAISE(ABORT,'Run control audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_control_audit_no_delete BEFORE DELETE ON agent_run_control_audit BEGIN SELECT RAISE(ABORT,'Run control audit is immutable'); END;
-  CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_replace BEFORE INSERT ON agent_run_expiry_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_replace BEFORE INSERT ON agent_run_expiry_audit WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE id=NEW.id)) OR 
+    EXISTS(SELECT 1 FROM agent_run_expiry_audit WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Expiry audit is 
+      immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_update BEFORE UPDATE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_delete BEFORE DELETE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
-  CREATE TABLE IF NOT EXISTS agent_run_wakeups (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,source_id,event_id));
+  CREATE TABLE IF NOT EXISTS agent_run_wakeups (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT 
+    NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,source_id,event_id));
   CREATE INDEX IF NOT EXISTS agent_run_wakeups_by_run ON agent_run_wakeups(tenant_id,agent_id,run_id,id);
-  CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_replace BEFORE INSERT ON agent_run_wakeups WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_wakeups WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_run_wakeups WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND source_id=NEW.source_id AND event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_replace BEFORE INSERT ON agent_run_wakeups WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_wakeups WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM 
+    agent_run_wakeups WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND source_id=NEW.source_id AND event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
   CREATE TABLE IF NOT EXISTS agent_run_wakeup_redactions (wakeup_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at INTEGER NOT NULL);
-  CREATE TRIGGER IF NOT EXISTS agent_run_wakeup_redactions_no_replace BEFORE INSERT ON agent_run_wakeup_redactions WHEN EXISTS(SELECT 1 FROM agent_run_wakeup_redactions WHERE wakeup_id=NEW.wakeup_id) BEGIN SELECT RAISE(ABORT,'Wakeup redactions are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_run_wakeup_redactions_no_replace BEFORE INSERT ON agent_run_wakeup_redactions WHEN EXISTS(SELECT 1 FROM agent_run_wakeup_redactions WHERE wakeup_id=NEW.wakeup_id) 
+    BEGIN SELECT RAISE(ABORT,'Wakeup redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_wakeup_redactions_no_update BEFORE UPDATE ON agent_run_wakeup_redactions BEGIN SELECT RAISE(ABORT,'Wakeup redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_wakeup_redactions_no_delete BEFORE DELETE ON agent_run_wakeup_redactions BEGIN SELECT RAISE(ABORT,'Wakeup redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_delete BEFORE DELETE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;
   CREATE TABLE IF NOT EXISTS agent_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE INDEX IF NOT EXISTS agent_run_starts_by_day ON agent_run_starts(tenant_id,agent_id,started_at);
-  CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
+  CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT 
+    NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);
       this.ensureCreationOrder();
       ensureAgentNoticeSchema(this.db);
@@ -252,7 +307,47 @@ export class SqliteAgentRuns {
       )
         this.db.exec('ALTER TABLE agent_runs ADD COLUMN created_seq INTEGER NOT NULL DEFAULT 0;UPDATE agent_runs SET created_seq=rowid;');
       this.db.exec(
-        'CREATE INDEX IF NOT EXISTS agent_runs_created ON agent_runs(created_seq);CREATE INDEX IF NOT EXISTS agent_runs_queued_order ON agent_runs(tenant_id,agent_id,status,archived,created_seq,run_id);CREATE TRIGGER IF NOT EXISTS agent_runs_sequence AFTER INSERT ON agent_runs WHEN NEW.created_seq=0 BEGIN UPDATE agent_runs SET created_seq=(SELECT COALESCE(MAX(created_seq),0)+1 FROM agent_runs) WHERE rowid=NEW.rowid; END;'
+        'CREATE INDEX IF NOT EXISTS agent_runs_created ON agent_runs(created_seq);CREATE INDEX IF NOT EXISTS agent_runs_queued_order ON agent_runs(tenant_id,agent_id,status,archived,created_seq,' +
+          'run_id);CREATE TRIGGER IF NOT EXISTS agent_runs_sequence AFTER INSERT ON agent_runs WHEN NEW.created_seq=0 BEGIN UPDATE agent_runs SET created_seq=(SELECT COALESCE(MAX(created_seq),' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '0)+1 FROM agent_runs) WHERE rowid=NEW.rowid; END;'
       );
       recordSchemaVersion(this.db, 'agent_runs', 2);
       this.db.exec('COMMIT');
@@ -594,7 +689,47 @@ export class SqliteAgentRuns {
       throw Error('Invalid run wakeup query');
     const rows = this.db
         .prepare(
-          'SELECT w.id,w.source_id,w.event_id,w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,w.observed_at,r.wakeup_id AS redacted FROM agent_run_wakeups w LEFT JOIN agent_run_wakeup_redactions r ON r.wakeup_id=w.id AND r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id WHERE w.tenant_id=? AND w.agent_id=? AND w.run_id=? AND w.id>? ORDER BY w.id LIMIT ?'
+          'SELECT w.id,w.source_id,w.event_id,w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,w.observed_at,' +
+            'r.wakeup_id AS redacted FROM agent_run_wakeups w LEFT JOIN agent_run_wakeup_redactions r ON r.wakeup_id=w.id AND r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id WHERE w.tenant_id=? ' +
+            'AND w.agent_id=? AND w.run_id=? AND w.id>? ORDER BY w.id LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '?'
         )
         .all(scope.tenantId, scope.agentId, runId, after, limit + 1),
       items = rows.slice(0, limit).map(row => {
@@ -613,7 +748,47 @@ export class SqliteAgentRuns {
     if (!id(sourceId) || !id(eventId)) throw Error('Invalid run wakeup');
     const row = this.db
       .prepare(
-        'SELECT w.id,w.source_id,w.event_id,w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,w.observed_at,r.wakeup_id AS redacted FROM agent_run_wakeups w LEFT JOIN agent_run_wakeup_redactions r ON r.wakeup_id=w.id AND r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id WHERE w.tenant_id=? AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
+        'SELECT w.id,w.source_id,w.event_id,w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,w.observed_at,' +
+          'r.wakeup_id AS redacted FROM agent_run_wakeups w LEFT JOIN agent_run_wakeup_redactions r ON r.wakeup_id=w.id AND r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id WHERE w.tenant_id=? ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
       )
       .get(scope.tenantId, scope.agentId, sourceId, eventId);
     if (!row) return undefined;

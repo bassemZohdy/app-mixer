@@ -78,7 +78,47 @@ class SharedDiscovery {
       const sql =
         this.kind === 'action'
           ? "SELECT a.run_id,r.status AS run_status,count(*) FILTER (WHERE a.status='dispatching')::bigint AS dispatching,count(*) FILTER (WHERE a.status='uncertain')::bigint AS uncertain FROM app_mixer_shared_actions a LEFT JOIN app_mixer_shared_runs r ON r.tenant_id=a.tenant_id AND r.agent_id=a.agent_id AND r.run_id=a.run_id WHERE a.tenant_id=$1 AND a.agent_id=$2 AND a.run_id COLLATE \"C\">$3 AND a.status IN ('dispatching','uncertain') GROUP BY a.run_id,r.status ORDER BY a.run_id COLLATE \"C\" LIMIT $4"
-          : 'SELECT c.run_id,r.status AS run_status,count(*)::bigint AS reserved FROM app_mixer_shared_token_calls c LEFT JOIN app_mixer_shared_runs r ON r.tenant_id=c.tenant_id AND r.agent_id=c.agent_id AND r.run_id=c.run_id WHERE c.tenant_id=$1 AND c.agent_id=$2 AND c.run_id COLLATE "C">$3 AND c.status=\'reserved\' GROUP BY c.run_id,r.status ORDER BY c.run_id COLLATE "C" LIMIT $4';
+          : 'SELECT c.run_id,r.status AS run_status,count(*)::bigint AS reserved FROM app_mixer_shared_token_calls c LEFT JOIN app_mixer_shared_runs r ON r.tenant_id=c.tenant_id AND ' +
+            'r.agent_id=c.agent_id AND r.run_id=c.run_id WHERE c.tenant_id=$1 AND c.agent_id=$2 AND c.run_id COLLATE "C">$3 AND c.status=\'reserved\' GROUP BY c.run_id,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'r.status ORDER BY c.run_id COLLATE "C" LIMIT $4';
       const rows = (await this.query(sql, [this.scope.tenantId, this.scope.agentId, after, limit + 1])).rows;
       if (signal.aborted) throw this.unavailable();
       const items = rows.map(row => {

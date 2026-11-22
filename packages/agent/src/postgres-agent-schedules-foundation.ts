@@ -35,12 +35,54 @@ export class PostgresAgentSchedulesFoundation {
   async initialize(): Promise<void> {
     await this.transaction(async q => {
       await q(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,next_at BIGINT NOT NULL,enabled BOOLEAN NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id),FOREIGN KEY(tenant_id,agent_id) REFERENCES app_mixer_shared_run_scopes(tenant_id,agent_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,' +
+          'next_at BIGINT NOT NULL,enabled BOOLEAN NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id),FOREIGN KEY(tenant_id,' +
+          'agent_id) REFERENCES app_mixer_shared_run_scopes(tenant_id,agent_id))',
         []
       );
       await q('CREATE INDEX IF NOT EXISTS app_mixer_shared_schedules_due ON app_mixer_shared_schedules(tenant_id,agent_id,next_at,(schedule_id COLLATE "C")) WHERE enabled=true', []);
       await q(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_schedule_events (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,kind TEXT NOT NULL,next_at BIGINT NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at BIGINT,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id,revision),FOREIGN KEY(tenant_id,agent_id,schedule_id) REFERENCES app_mixer_shared_schedules(tenant_id,agent_id,schedule_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_schedule_events (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,' +
+          'kind TEXT NOT NULL,next_at BIGINT NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at BIGINT,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id,' +
+          'revision),FOREIGN KEY(tenant_id,agent_id,schedule_id) REFERENCES app_mixer_shared_schedules(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'schedule_id))',
         []
       );
       await q(
@@ -48,7 +90,47 @@ export class PostgresAgentSchedulesFoundation {
         []
       );
       await q(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_schedule_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_schedule_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_schedule_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_schedule_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_schedule_events FOR EACH STATEMENT EXECUTE FUNCTION ' +
+          'app_mixer_shared_schedule_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });
@@ -95,7 +177,47 @@ export class PostgresAgentSchedulesFoundation {
     if (!integer(limit) || limit < 1 || limit > 100 || (after !== undefined && (!after || !integer(after.nextAt) || !id(after.scheduleId)))) throw Error('Invalid schedule query');
     const rows = (
         await this.query(
-          'SELECT * FROM app_mixer_shared_schedules WHERE tenant_id=$1 AND agent_id=$2 AND enabled=true AND next_at<=(extract(epoch from clock_timestamp())*1000)::bigint AND (next_at>$3 OR (next_at=$3 AND schedule_id COLLATE "C">$4)) ORDER BY next_at,schedule_id COLLATE "C" LIMIT $5',
+          'SELECT * FROM app_mixer_shared_schedules WHERE tenant_id=$1 AND agent_id=$2 AND enabled=true AND next_at<=(extract(epoch from clock_timestamp())*1000)::bigint AND (next_at>$3 OR ' +
+            '(next_at=$3 AND schedule_id COLLATE "C">$4)) ORDER BY next_at,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'schedule_id COLLATE "C" LIMIT $5',
           [scope.tenantId, scope.agentId, after?.nextAt ?? 0, after?.scheduleId ?? '', limit + 1]
         )
       ).rows,
@@ -123,7 +245,47 @@ export class PostgresAgentSchedulesFoundation {
       if (!Number.isSafeInteger(generation)) throw Error('Invalid schedule');
       const json = JSON.stringify(safe),
         result = await q(
-          'INSERT INTO app_mixer_shared_schedules VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config RETURNING *',
+          'INSERT INTO app_mixer_shared_schedules VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,' +
+            'generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'config=excluded.config RETURNING *',
           [s.tenantId, s.agentId, scheduleId, revision, generation, nextAt, safe.enabled, json]
         );
       await q('INSERT INTO app_mixer_shared_schedule_events VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,NULL,$10)', [

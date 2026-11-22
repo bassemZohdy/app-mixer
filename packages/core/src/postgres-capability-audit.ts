@@ -50,7 +50,47 @@ export class PostgresCapabilityAudit {
   async initialize(): Promise<void> {
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_capability_audit_counters (tenant_id TEXT PRIMARY KEY,sequence BIGINT NOT NULL)', []);
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_capability_audit (tenant_id TEXT NOT NULL,sequence BIGINT NOT NULL,recorded_at BIGINT NOT NULL,invocation_id TEXT NOT NULL,operation_id TEXT NOT NULL,principal_id TEXT NOT NULL,outcome TEXT NOT NULL,PRIMARY KEY(tenant_id,sequence))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_capability_audit (tenant_id TEXT NOT NULL,sequence BIGINT NOT NULL,recorded_at BIGINT NOT NULL,invocation_id TEXT NOT NULL,operation_id TEXT NOT NULL,' +
+        'principal_id TEXT NOT NULL,outcome TEXT NOT NULL,PRIMARY KEY(tenant_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'sequence))',
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_capability_audit_retention ON app_mixer_capability_audit (tenant_id,recorded_at,sequence)', []);
@@ -64,7 +104,47 @@ export class PostgresCapabilityAudit {
     const snapshot = { ...event };
     if (this.anchor) await this.checkAnchor(snapshot.tenantId);
     const result = await this.query(
-      'WITH assigned AS (INSERT INTO app_mixer_capability_audit_counters (tenant_id,sequence) VALUES ($1,1) ON CONFLICT (tenant_id) DO UPDATE SET sequence=app_mixer_capability_audit_counters.sequence+1 RETURNING sequence) INSERT INTO app_mixer_capability_audit (tenant_id,sequence,recorded_at,invocation_id,operation_id,principal_id,outcome) SELECT $1,sequence,$2,$3,$4,$5,$6 FROM assigned RETURNING sequence',
+      'WITH assigned AS (INSERT INTO app_mixer_capability_audit_counters (tenant_id,sequence) VALUES ($1,' +
+        '1) ON CONFLICT (tenant_id) DO UPDATE SET sequence=app_mixer_capability_audit_counters.sequence+1 RETURNING sequence) INSERT INTO app_mixer_capability_audit (tenant_id,sequence,recorded_at,' +
+        'invocation_id,operation_id,principal_id,outcome) SELECT $1,sequence,$2,$3,$4,$5,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$6 FROM assigned RETURNING sequence',
       [snapshot.tenantId, recordedAt, snapshot.invocationId, snapshot.operationId, snapshot.principalId, snapshot.outcome]
     );
     const sequence = Number(result.rows?.[0]?.sequence);
@@ -89,7 +169,47 @@ export class PostgresCapabilityAudit {
     )
       throw Error('Invalid capability audit retention query');
     const result = await this.query(
-      'WITH selected AS (SELECT tenant_id,sequence FROM app_mixer_capability_audit WHERE tenant_id=$1 AND recorded_at<$2 AND sequence<=$3 ORDER BY recorded_at,sequence LIMIT $4 FOR UPDATE SKIP LOCKED) DELETE FROM app_mixer_capability_audit AS audit USING selected WHERE audit.tenant_id=selected.tenant_id AND audit.sequence=selected.sequence RETURNING audit.sequence',
+      'WITH selected AS (SELECT tenant_id,sequence FROM app_mixer_capability_audit WHERE tenant_id=$1 AND recorded_at<$2 AND sequence<=$3 ORDER BY recorded_at,' +
+        'sequence LIMIT $4 FOR UPDATE SKIP LOCKED) DELETE FROM app_mixer_capability_audit AS audit USING selected WHERE audit.tenant_id=selected.tenant_id AND audit.sequence=selected.sequence ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'RETURNING audit.sequence',
       [tenantId, options.before, options.through, options.limit]
     );
     if (

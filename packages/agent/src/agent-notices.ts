@@ -30,12 +30,16 @@ const valid = isIdentifier;
 const integer = isNonNegativeInteger;
 export function ensureAgentNoticeSchema(db: DatabaseSync): void {
   db.exec(`
- CREATE TABLE IF NOT EXISTS agent_notices (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,subject_id TEXT NOT NULL,subject_revision INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,kind,subject_id,subject_revision));
- CREATE TABLE IF NOT EXISTS agent_notice_receipts (notice_id INTEGER NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,principal_id TEXT NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(notice_id,tenant_id,agent_id,principal_id));
- CREATE TRIGGER IF NOT EXISTS agent_notices_no_replace BEFORE INSERT ON agent_notices WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_notices WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Notices are immutable'); END;
+ CREATE TABLE IF NOT EXISTS agent_notices (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,subject_id TEXT NOT NULL,
+   subject_revision INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,run_id,kind,subject_id,subject_revision));
+ CREATE TABLE IF NOT EXISTS agent_notice_receipts (notice_id INTEGER NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,principal_id TEXT NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY 
+   KEY(notice_id,tenant_id,agent_id,principal_id));
+ CREATE TRIGGER IF NOT EXISTS agent_notices_no_replace BEFORE INSERT ON agent_notices WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_notices WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Notices are 
+   immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_notices_no_update BEFORE UPDATE ON agent_notices BEGIN SELECT RAISE(ABORT,'Notices are immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_notices_no_delete BEFORE DELETE ON agent_notices BEGIN SELECT RAISE(ABORT,'Notices are immutable'); END;
- CREATE TRIGGER IF NOT EXISTS agent_receipts_no_replace BEFORE INSERT ON agent_notice_receipts WHEN EXISTS(SELECT 1 FROM agent_notice_receipts WHERE notice_id=NEW.notice_id AND tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND principal_id=NEW.principal_id) BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
+ CREATE TRIGGER IF NOT EXISTS agent_receipts_no_replace BEFORE INSERT ON agent_notice_receipts WHEN EXISTS(SELECT 1 FROM agent_notice_receipts WHERE notice_id=NEW.notice_id AND tenant_id=NEW.tenant_id 
+   AND agent_id=NEW.agent_id AND principal_id=NEW.principal_id) BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_receipts_no_update BEFORE UPDATE ON agent_notice_receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_receipts_no_delete BEFORE DELETE ON agent_notice_receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;`);
 }
@@ -151,7 +155,47 @@ export class SqliteAgentNotices {
   private row(id: number, actor: Actor): AgentNotice | undefined {
     const row = this.db
       .prepare(
-        'SELECT n.*,r.acknowledged_at FROM agent_notices n LEFT JOIN agent_notice_receipts r ON r.notice_id=n.id AND r.tenant_id=n.tenant_id AND r.agent_id=n.agent_id AND r.principal_id=? WHERE n.tenant_id=? AND n.agent_id=? AND n.id=?'
+        'SELECT n.*,r.acknowledged_at FROM agent_notices n LEFT JOIN agent_notice_receipts r ON r.notice_id=n.id AND r.tenant_id=n.tenant_id AND r.agent_id=n.agent_id AND r.principal_id=? WHERE ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'n.tenant_id=? AND n.agent_id=? AND n.id=?'
       )
       .get(actor.principalId, this.scope.tenantId, this.scope.agentId, id);
     if (!row) return undefined;

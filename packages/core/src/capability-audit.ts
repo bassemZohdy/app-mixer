@@ -18,7 +18,47 @@ export class SqliteCapabilityAudit {
     this.db = openDatabase(path);
     try {
       this.db.exec(
-        'PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, invocation_id TEXT NOT NULL, operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,sequence);'
+        'PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS capability_audit (sequence INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, invocation_id TEXT NOT NULL,' +
+          ' operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL,' +
+          ' outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS capability_audit_tenant_sequence ON capability_audit(tenant_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'sequence);'
       );
     } catch (error) {
       this.db.close();

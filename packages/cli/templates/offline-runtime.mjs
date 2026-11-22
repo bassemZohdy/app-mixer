@@ -2775,7 +2775,47 @@ export function mountAgentDefinitionControl(root, { statusOperation, controlOper
     heading = node('h2', 'Agent controls: ' + agentId),
     warning = node(
       'p',
-      'Suspending an agent does not prove that already dispatched external actions have stopped. General audit entries show versions and operators, not the changed fields; control evidence does not cover general edits or older control actions.'
+      'Suspending an agent does not prove that already dispatched external actions have stopped. General audit entries show versions and operators,' +
+        ' not the changed fields; control evidence does not cover general edits or older control ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'actions.'
     ),
     message = node('p', 'Inspect the agent before taking action.'),
     details = node('p', 'No agent status selected.'),
@@ -3357,7 +3397,47 @@ export function mountAgentDelegationControl(root, { issueOperation, readOperatio
     heading = node('h2', 'Delegation: ' + grantId),
     warning = node(
       'p',
-      'Grant administration changes user authority. Confirm consent and expiry. Not revoked does not establish that a grant is valid: it may be expired or its run unavailable. History is not a cross-page snapshot; review state resets on reload.'
+      'Grant administration changes user authority. Confirm consent and expiry. Not revoked does not establish that a grant is valid: it may be expired or its run unavailable. History is not a ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'cross-page snapshot; review state resets on reload.'
     ),
     status = node('p', 'Inspect the grant before taking action.'),
     detail = node('p', 'No grant selected.'),

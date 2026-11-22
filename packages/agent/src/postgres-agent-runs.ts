@@ -72,7 +72,47 @@ export class PostgresAgentRuns {
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_status ON app_mixer_agent_runs(tenant_id,agent_id,status,archived,run_id)', []);
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_run_first_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_run_first_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'run_id))',
       []
     );
     await this.query(

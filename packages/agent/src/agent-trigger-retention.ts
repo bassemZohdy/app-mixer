@@ -150,7 +150,47 @@ export class SqliteAgentTriggerRetention {
     try {
       const row = this.db
         .prepare(
-          'SELECT r.status,d.run_id AS redacted,t.received_at,c.completed_at FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id=?'
+          'SELECT r.status,d.run_id AS redacted,t.received_at,c.completed_at FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND ' +
+            'r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON ' +
+            't.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id=?'
         )
         .get(tenantId, agentId, runId);
       if (!row) throw Error('Trigger not found');

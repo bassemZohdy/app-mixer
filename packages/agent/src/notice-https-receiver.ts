@@ -68,12 +68,15 @@ export class SqliteAgentNoticeReceiver {
     this.db = openDatabase(path);
     try {
       this.db.exec(`PRAGMA busy_timeout=5000;
-   CREATE TABLE IF NOT EXISTS received_agent_notices (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_key TEXT NOT NULL,sender_id TEXT NOT NULL,message TEXT NOT NULL,received_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,delivery_key));
+   CREATE TABLE IF NOT EXISTS received_agent_notices (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_key TEXT NOT NULL,sender_id TEXT NOT NULL,message 
+     TEXT NOT NULL,received_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,delivery_key));
    CREATE INDEX IF NOT EXISTS received_agent_notices_scope ON received_agent_notices(tenant_id,agent_id,id);
    CREATE TABLE IF NOT EXISTS received_agent_notice_acks (notice_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,principal_id TEXT NOT NULL,acknowledged_at INTEGER NOT NULL);
    CREATE TRIGGER IF NOT EXISTS received_agent_notices_no_update BEFORE UPDATE ON received_agent_notices BEGIN SELECT RAISE(ABORT,'Received notices are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS received_agent_notices_no_delete BEFORE DELETE ON received_agent_notices BEGIN SELECT RAISE(ABORT,'Received notices are immutable'); END;
-   CREATE TRIGGER IF NOT EXISTS received_agent_notices_no_replace BEFORE INSERT ON received_agent_notices WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM received_agent_notices WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM received_agent_notices WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND delivery_key=NEW.delivery_key) BEGIN SELECT RAISE(ABORT,'Received notices are immutable'); END;
+   CREATE TRIGGER IF NOT EXISTS received_agent_notices_no_replace BEFORE INSERT ON received_agent_notices WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM received_agent_notices WHERE id=NEW.id)) OR 
+     EXISTS(SELECT 1 FROM received_agent_notices WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND delivery_key=NEW.delivery_key) BEGIN SELECT RAISE(ABORT,'Received notices are immutable'); 
+       END;
    CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_update BEFORE UPDATE ON received_agent_notice_acks BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_delete BEFORE DELETE ON received_agent_notice_acks BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_replace BEFORE INSERT ON received_agent_notice_acks WHEN EXISTS(SELECT 1 FROM received_agent_notice_acks WHERE notice_id=NEW.notice_id) BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;`);
@@ -97,7 +100,47 @@ export class SqliteAgentNoticeReceiver {
   private row(noticeId: number): ReceivedAgentNotice | undefined {
     const row = this.db
       .prepare(
-        'SELECT n.*,a.principal_id AS acknowledged_by,a.acknowledged_at FROM received_agent_notices n LEFT JOIN received_agent_notice_acks a ON a.notice_id=n.id AND a.tenant_id=n.tenant_id AND a.agent_id=n.agent_id WHERE n.tenant_id=? AND n.agent_id=? AND n.id=?'
+        'SELECT n.*,a.principal_id AS acknowledged_by,a.acknowledged_at FROM received_agent_notices n LEFT JOIN received_agent_notice_acks a ON a.notice_id=n.id AND a.tenant_id=n.tenant_id AND ' +
+          'a.agent_id=n.agent_id WHERE n.tenant_id=? AND n.agent_id=? AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'n.id=?'
       )
       .get(this.scope.tenantId, this.scope.agentId, noticeId);
     if (!row) return;

@@ -87,7 +87,47 @@ export class PostgresAuthenticationFailureAudit {
     )
       throw Error('Invalid authentication audit retention query');
     const result = await this.query(
-      'WITH selected AS (SELECT sequence FROM app_mixer_auth_failure_audit WHERE recorded_at<$1 AND sequence<=$2 ORDER BY recorded_at,sequence LIMIT $3 FOR UPDATE SKIP LOCKED) DELETE FROM app_mixer_auth_failure_audit AS audit USING selected WHERE audit.sequence=selected.sequence RETURNING audit.sequence',
+      'WITH selected AS (SELECT sequence FROM app_mixer_auth_failure_audit WHERE recorded_at<$1 AND sequence<=$2 ORDER BY recorded_at,' +
+        'sequence LIMIT $3 FOR UPDATE SKIP LOCKED) DELETE FROM app_mixer_auth_failure_audit AS audit USING selected WHERE audit.sequence=selected.sequence RETURNING ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'audit.sequence',
       [options.before, options.through, options.limit]
     );
     if (

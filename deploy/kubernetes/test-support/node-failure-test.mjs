@@ -115,7 +115,8 @@ async function prepareSignedFixture() {
   mkdirSync(overlay);
   writeFileSync(
     join(overlay, 'kustomization.yaml'),
-    `apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../signed-jwt-tls-example\ncomponents:\n  - ../strict-placement\n${placement === 'zone' ? '  - ../zone-placement\n' : ''}`
+    `apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../signed-jwt-tls-example\ncomponents:\n  - 
+      ../strict-placement\n${placement === 'zone' ? '  - ../zone-placement\n' : ''}`
   );
   return overlay;
 }

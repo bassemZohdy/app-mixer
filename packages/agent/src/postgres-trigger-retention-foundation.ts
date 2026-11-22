@@ -127,7 +127,47 @@ export class PostgresAgentTriggerRetentionFoundation {
       this.check(signal);
       const row = (
           await q(
-            'SELECT r.status,i.received_at,t.completed_at,d.run_id AS redacted FROM app_mixer_shared_trigger_inbox i JOIN app_mixer_shared_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN app_mixer_shared_run_terminal_times t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.run_id=$3 FOR UPDATE OF r,i',
+            'SELECT r.status,i.received_at,t.completed_at,d.run_id AS redacted FROM app_mixer_shared_trigger_inbox i JOIN app_mixer_shared_runs r ON r.tenant_id=i.tenant_id AND ' +
+              'r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN ' +
+              'app_mixer_shared_run_terminal_times t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.run_id=$3 FOR UPDATE OF ' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'r,i',
             [this.scope.tenantId, this.scope.agentId, runId]
           )
         ).rows[0],

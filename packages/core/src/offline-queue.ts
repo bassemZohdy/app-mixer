@@ -70,12 +70,20 @@ export class SqliteOfflineQueue {
       );
       CREATE INDEX IF NOT EXISTS offline_operations_recovery ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('running','uncertain');
       CREATE INDEX IF NOT EXISTS offline_operations_archive_candidates ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('succeeded','discarded');
-      CREATE TABLE IF NOT EXISTS offline_terminal_times (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,id TEXT NOT NULL,completed_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,principal_id,id));
-      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert AFTER INSERT ON offline_operations WHEN NEW.status IN ('succeeded','discarded') BEGIN INSERT INTO offline_terminal_times VALUES(NEW.tenant_id,NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO UPDATE SET completed_at=excluded.completed_at; END;
-      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert_clear AFTER INSERT ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND id=NEW.id; END;
-      CREATE TRIGGER IF NOT EXISTS offline_terminal_enter AFTER UPDATE OF status ON offline_operations WHEN NEW.status IN ('succeeded','discarded') AND OLD.status<>NEW.status BEGIN INSERT INTO offline_terminal_times VALUES(NEW.tenant_id,NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO UPDATE SET completed_at=excluded.completed_at; END;
-      CREATE TRIGGER IF NOT EXISTS offline_terminal_leave AFTER UPDATE OF status ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') AND OLD.status IN ('succeeded','discarded') BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=OLD.tenant_id AND application_id=OLD.application_id AND principal_id=OLD.principal_id AND id=OLD.id; END;
-      CREATE TRIGGER IF NOT EXISTS offline_terminal_delete AFTER DELETE ON offline_operations BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=OLD.tenant_id AND application_id=OLD.application_id AND principal_id=OLD.principal_id AND id=OLD.id; END;
+      CREATE TABLE IF NOT EXISTS offline_terminal_times (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,id TEXT NOT NULL,completed_at INTEGER NOT NULL,PRIMARY 
+        KEY(tenant_id,application_id,principal_id,id));
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert AFTER INSERT ON offline_operations WHEN NEW.status IN ('succeeded','discarded') BEGIN INSERT INTO offline_terminal_times VALUES(NEW.tenant_id,
+        NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO UPDATE SET completed_at=excluded.completed_at; 
+          END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert_clear AFTER INSERT ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') BEGIN DELETE FROM offline_terminal_times WHERE 
+        tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND id=NEW.id; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_enter AFTER UPDATE OF status ON offline_operations WHEN NEW.status IN ('succeeded','discarded') AND OLD.status<>NEW.status BEGIN INSERT INTO 
+        offline_terminal_times VALUES(NEW.tenant_id,NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO 
+          UPDATE SET completed_at=excluded.completed_at; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_leave AFTER UPDATE OF status ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') AND OLD.status IN ('succeeded','discarded') 
+        BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=OLD.tenant_id AND application_id=OLD.application_id AND principal_id=OLD.principal_id AND id=OLD.id; END;
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_delete AFTER DELETE ON offline_operations BEGIN DELETE FROM offline_terminal_times WHERE tenant_id=OLD.tenant_id AND 
+        application_id=OLD.application_id AND principal_id=OLD.principal_id AND id=OLD.id; END;
       CREATE TABLE IF NOT EXISTS offline_archived_operations (
         tenant_id TEXT NOT NULL, application_id TEXT NOT NULL, principal_id TEXT NOT NULL,
         id TEXT NOT NULL, operation_id TEXT NOT NULL, request_key TEXT NOT NULL,
@@ -85,13 +93,19 @@ export class SqliteOfflineQueue {
         UNIQUE(tenant_id,application_id,principal_id,request_key)
       );
       CREATE INDEX IF NOT EXISTS offline_archived_scope ON offline_archived_operations(tenant_id,application_id,principal_id,operation_id,id);
-      CREATE TRIGGER IF NOT EXISTS offline_archived_no_replace BEFORE INSERT ON offline_archived_operations WHEN EXISTS(SELECT 1 FROM offline_archived_operations WHERE (tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND (id=NEW.id OR request_key=NEW.request_key)) OR idempotency_key=NEW.idempotency_key) BEGIN SELECT RAISE(ABORT,'Offline archive is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_archived_no_replace BEFORE INSERT ON offline_archived_operations WHEN EXISTS(SELECT 1 FROM offline_archived_operations WHERE (tenant_id=NEW.tenant_id AND 
+        application_id=NEW.application_id AND principal_id=NEW.principal_id AND (id=NEW.id OR request_key=NEW.request_key)) OR idempotency_key=NEW.idempotency_key) BEGIN SELECT RAISE(ABORT,'Offline 
+          archive is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS offline_archived_no_update BEFORE UPDATE ON offline_archived_operations BEGIN SELECT RAISE(ABORT,'Offline archive is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS offline_archived_no_delete BEFORE DELETE ON offline_archived_operations BEGIN SELECT RAISE(ABORT,'Offline archive is immutable'); END;
-      CREATE TRIGGER IF NOT EXISTS offline_operations_no_archived_insert BEFORE INSERT ON offline_operations WHEN EXISTS(SELECT 1 FROM offline_archived_operations WHERE (tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND principal_id=NEW.principal_id AND (id=NEW.id OR request_key=NEW.request_key)) OR idempotency_key=NEW.idempotency_key) BEGIN SELECT RAISE(ABORT,'Offline request archived'); END;
-      CREATE TABLE IF NOT EXISTS offline_recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,queue_id TEXT NOT NULL,operator_id TEXT NOT NULL,reference TEXT NOT NULL,action TEXT NOT NULL,recorded_at INTEGER NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS offline_operations_no_archived_insert BEFORE INSERT ON offline_operations WHEN EXISTS(SELECT 1 FROM offline_archived_operations WHERE (tenant_id=NEW.tenant_id AND 
+        application_id=NEW.application_id AND principal_id=NEW.principal_id AND (id=NEW.id OR request_key=NEW.request_key)) OR idempotency_key=NEW.idempotency_key) BEGIN SELECT RAISE(ABORT,'Offline 
+          request archived'); END;
+      CREATE TABLE IF NOT EXISTS offline_recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,queue_id TEXT NOT NULL,
+        operator_id TEXT NOT NULL,reference TEXT NOT NULL,action TEXT NOT NULL,recorded_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS offline_recovery_events_scope ON offline_recovery_events(tenant_id,application_id,principal_id,queue_id,id);
-      CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_replace BEFORE INSERT ON offline_recovery_events WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM offline_recovery_events WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_replace BEFORE INSERT ON offline_recovery_events WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM offline_recovery_events WHERE id=NEW.id) BEGIN 
+        SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_update BEFORE UPDATE ON offline_recovery_events BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS offline_recovery_events_no_delete BEFORE DELETE ON offline_recovery_events BEGIN SELECT RAISE(ABORT,'Offline recovery evidence is immutable'); END;`);
     } catch (error) {
@@ -152,7 +166,47 @@ export class SqliteOfflineQueue {
     checkKey(scope, 'offline', id);
     const row = this.db
       .prepare(
-        'SELECT o.*,t.completed_at FROM offline_operations o LEFT JOIN offline_terminal_times t ON t.tenant_id=o.tenant_id AND t.application_id=o.application_id AND t.principal_id=o.principal_id AND t.id=o.id WHERE o.tenant_id=? AND o.application_id=? AND o.principal_id=? AND o.id=?'
+        'SELECT o.*,t.completed_at FROM offline_operations o LEFT JOIN offline_terminal_times t ON t.tenant_id=o.tenant_id AND t.application_id=o.application_id AND t.principal_id=o.principal_id ' +
+          'AND t.id=o.id WHERE o.tenant_id=? AND o.application_id=? AND o.principal_id=? AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'o.id=?'
       )
       .get(scope.tenantId, scope.applicationId, principalId, id);
     if (!row) return undefined;
@@ -342,7 +396,8 @@ export class SqliteOfflineQueue {
     return Number(
       this.db
         .prepare(
-          `DELETE FROM offline_operations WHERE rowid IN (SELECT rowid FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND status IN (${marks}) ORDER BY rowid LIMIT ?)`
+          `DELETE FROM offline_operations WHERE rowid IN (SELECT rowid FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND status IN (${marks}) ORDER BY rowid LIMIT 
+            ?)`
         )
         .run(scope.tenantId, scope.applicationId, principalId, ...options.statuses, options.limit).changes
     );

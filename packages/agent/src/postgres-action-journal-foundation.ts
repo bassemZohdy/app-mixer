@@ -71,7 +71,47 @@ export class PostgresAgentActionJournalFoundation {
   async initialize(): Promise<void> {
     await this.transaction(async query => {
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_actions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,authority TEXT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_actions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,' +
+          'input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,' +
+          'authority TEXT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
@@ -79,7 +119,47 @@ export class PostgresAgentActionJournalFoundation {
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_action_reconciliations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL,method TEXT NOT NULL,recorded_at BIGINT NOT NULL,FOREIGN KEY(tenant_id,agent_id,run_id,action_id) REFERENCES app_mixer_shared_actions(tenant_id,agent_id,run_id,action_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_action_reconciliations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,' +
+          'run_id TEXT NOT NULL,action_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL,method TEXT NOT NULL,recorded_at BIGINT NOT NULL,' +
+          'FOREIGN KEY(tenant_id,agent_id,run_id,action_id) REFERENCES app_mixer_shared_actions(tenant_id,agent_id,run_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'action_id))',
         []
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_action_reconciliation_scope ON app_mixer_shared_action_reconciliations(tenant_id,agent_id,run_id,id)', []);
@@ -88,7 +168,47 @@ export class PostgresAgentActionJournalFoundation {
         []
       );
       await query(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_action_reconciliation_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_action_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_action_reconciliation_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_action_reconciliation_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_action_reconciliations FOR EACH STATEMENT EXECUTE ' +
+          'FUNCTION app_mixer_shared_action_reconciliation_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });
@@ -131,7 +251,47 @@ export class PostgresAgentActionJournalFoundation {
     const limit = options.limit ?? 50,
       rows = (
         await this.query(
-          'SELECT action_id,operation_id,idempotency_key,status,attempts,max_attempts FROM app_mixer_shared_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id COLLATE "C">$4 AND ($5::text IS NULL OR status=$5) ORDER BY action_id COLLATE "C" LIMIT $6',
+          'SELECT action_id,operation_id,idempotency_key,status,attempts,' +
+            'max_attempts FROM app_mixer_shared_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id COLLATE "C">$4 AND ($5::text IS NULL OR status=$5) ORDER BY action_id COLLATE ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '"C" LIMIT $6',
           [...this.args(), options.after ?? '', options.status ?? null, limit + 1]
         )
       ).rows,
@@ -181,7 +341,47 @@ export class PostgresAgentActionJournalFoundation {
       if (requiresApproval) {
         const approval = (
           await query(
-            'SELECT operation_id,input_hash,input_json,definition_version,status,expires_at,authority FROM app_mixer_shared_approvals WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4',
+            'SELECT operation_id,input_hash,input_json,definition_version,status,expires_at,' +
+              'authority FROM app_mixer_shared_approvals WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND ' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'action_id=$4',
             [...this.args(), actionId]
           )
         ).rows[0];

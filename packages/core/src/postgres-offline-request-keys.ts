@@ -31,7 +31,47 @@ export class PostgresOfflineRequestKeys {
   }
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_offline_request_keys (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,request_key TEXT NOT NULL,operation_id TEXT NOT NULL,payload_digest TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,PRIMARY KEY(tenant_id,application_id,principal_id,request_key))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_offline_request_keys (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,request_key TEXT NOT NULL,' +
+        'operation_id TEXT NOT NULL,payload_digest TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,PRIMARY KEY(tenant_id,application_id,principal_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'request_key))',
       []
     );
   }
@@ -43,7 +83,47 @@ export class PostgresOfflineRequestKeys {
       digest = offlineRequestDigest(payload),
       candidate = randomUUID();
     const result = await this.query(
-      'INSERT INTO app_mixer_offline_request_keys (tenant_id,application_id,principal_id,request_key,operation_id,payload_digest,idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (tenant_id,application_id,principal_id,request_key) DO UPDATE SET idempotency_key=app_mixer_offline_request_keys.idempotency_key WHERE app_mixer_offline_request_keys.operation_id=EXCLUDED.operation_id AND app_mixer_offline_request_keys.payload_digest=EXCLUDED.payload_digest RETURNING idempotency_key',
+      'INSERT INTO app_mixer_offline_request_keys (tenant_id,application_id,principal_id,request_key,operation_id,payload_digest,idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,' +
+        '$7) ON CONFLICT (tenant_id,application_id,principal_id,request_key) DO UPDATE SET idempotency_key=app_mixer_offline_request_keys.idempotency_key WHERE ' +
+        'app_mixer_offline_request_keys.operation_id=EXCLUDED.operation_id AND app_mixer_offline_request_keys.payload_digest=EXCLUDED.payload_digest RETURNING ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'idempotency_key',
       [tenantId, applicationId, principalId, requestKey, operationId, digest, candidate]
     );
     if (!Array.isArray(result.rows)) throw Error('Invalid shared offline key result');

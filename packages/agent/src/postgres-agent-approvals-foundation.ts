@@ -103,15 +103,135 @@ export class PostgresAgentApprovalsFoundation {
   async initialize(): Promise<void> {
     await this.transaction(async query => {
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_approvals (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,definition_version BIGINT NOT NULL,status TEXT NOT NULL,expires_at BIGINT NOT NULL,requested_by TEXT NOT NULL,authority TEXT,decided_by TEXT,decided_at BIGINT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_approvals (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,' +
+          'input_json TEXT NOT NULL,input_hash TEXT NOT NULL,definition_version BIGINT NOT NULL,status TEXT NOT NULL,expires_at BIGINT NOT NULL,requested_by TEXT NOT NULL,authority TEXT,' +
+          'decided_by TEXT,decided_at BIGINT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_approval_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,event_at BIGINT NOT NULL,FOREIGN KEY(tenant_id,agent_id,run_id,action_id) REFERENCES app_mixer_shared_approvals(tenant_id,agent_id,run_id,action_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_approval_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,' +
+          'action_id TEXT NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,event_at BIGINT NOT NULL,FOREIGN KEY(tenant_id,agent_id,run_id,' +
+          'action_id) REFERENCES app_mixer_shared_approvals(tenant_id,agent_id,run_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'action_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id,action_id) REFERENCES app_mixer_shared_approvals(tenant_id,agent_id,run_id,action_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,' +
+          'run_id),FOREIGN KEY(tenant_id,agent_id,run_id,action_id) REFERENCES app_mixer_shared_approvals(tenant_id,agent_id,run_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'action_id))',
         []
       );
       await query(
@@ -119,7 +239,47 @@ export class PostgresAgentApprovalsFoundation {
         []
       );
       await query(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_approval_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_approval_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_approval_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_approval_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_approval_events FOR EACH STATEMENT EXECUTE FUNCTION ' +
+          'app_mixer_shared_approval_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });

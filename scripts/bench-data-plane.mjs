@@ -202,7 +202,8 @@ try {
   console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const r of rows)
     console.log(
-      `| ${r.name} | ${Math.round(r.rps)} | ${r.p50.toFixed(1)} | ${r.p95.toFixed(1)} | ${r.p99.toFixed(1)} | ${r.max.toFixed(0)} | ${r.errors} | ${r.cpuMsPerRequest.toFixed(3)} | ${r.serverCpuCores.toFixed(2)} | ${r.rssMb.toFixed(0)} (${r.peakMb.toFixed(0)}) |`
+      `| ${r.name} | ${Math.round(r.rps)} | ${r.p50.toFixed(1)} | ${r.p95.toFixed(1)} | ${r.p99.toFixed(1)} | ${r.max.toFixed(0)} | ${r.errors} | ${r.cpuMsPerRequest.toFixed(3)} | 
+        ${r.serverCpuCores.toFixed(2)} | ${r.rssMb.toFixed(0)} (${r.peakMb.toFixed(0)}) |`
     );
   console.log('\nStatus codes: ' + rows.map(r => `${r.name}: ${JSON.stringify(r.statuses)}`).join('; '));
   void pad;

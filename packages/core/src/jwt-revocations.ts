@@ -44,7 +44,47 @@ export class SqliteJwtRevocations {
     this.db = openDatabase(path);
     try {
       this.db.exec(
-        `PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS jwt_revocations (issuer TEXT NOT NULL,token_hash TEXT NOT NULL,retain_until INTEGER NOT NULL,PRIMARY KEY(issuer,token_hash));CREATE INDEX IF NOT EXISTS jwt_revocations_expiry ON jwt_revocations(issuer,retain_until);`
+        `PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS jwt_revocations (issuer TEXT NOT NULL,token_hash TEXT NOT NULL,retain_until INTEGER NOT NULL,PRIMARY KEY(issuer,` +
+          `token_hash));CREATE INDEX IF NOT EXISTS jwt_revocations_expiry ON jwt_revocations(issuer,` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `retain_until);`
       );
     } catch (error) {
       this.db.close();

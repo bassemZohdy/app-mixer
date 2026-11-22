@@ -92,7 +92,47 @@ export class PostgresAgentLeaseRecoveryHistoryFoundation {
     if ((await this.permit(who, 'list', null, signal)) !== true) throw Error('Lease recovery history access denied');
     const rows = (
       await this.query(
-        'SELECT scope_seq AS id,run_id,revision,previous_status,lease_until,actor_id,reference,observed_at FROM app_mixer_shared_run_recovery_audit WHERE tenant_id=$1 AND agent_id=$2 AND scope_seq>$3 ORDER BY scope_seq LIMIT $4',
+        'SELECT scope_seq AS id,run_id,revision,previous_status,lease_until,actor_id,reference,' +
+          'observed_at FROM app_mixer_shared_run_recovery_audit WHERE tenant_id=$1 AND agent_id=$2 AND scope_seq>$3 ORDER BY scope_seq LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$4',
         [this.scope.tenantId, this.scope.agentId, after, limit + 1]
       )
     ).rows;

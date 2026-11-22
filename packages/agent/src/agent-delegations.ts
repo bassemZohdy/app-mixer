@@ -50,10 +50,13 @@ export class SqliteAgentDelegations {
     this.db = openDatabase(path);
     try {
       this.db.exec(`PRAGMA busy_timeout=5000;
-   CREATE TABLE IF NOT EXISTS agent_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,revoked INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id));
-   CREATE TABLE IF NOT EXISTS agent_delegation_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision INTEGER NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,event_at INTEGER NOT NULL);
+   CREATE TABLE IF NOT EXISTS agent_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,
+     expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,revoked INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id));
+   CREATE TABLE IF NOT EXISTS agent_delegation_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision INTEGER NOT NULL,
+     event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,event_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS delegation_events_scope_page ON agent_delegation_events(tenant_id,agent_id,run_id,grant_id,event_id);
-   CREATE TRIGGER IF NOT EXISTS delegation_events_no_replace BEFORE INSERT ON agent_delegation_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_delegation_events WHERE event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Delegation events are immutable'); END;
+   CREATE TRIGGER IF NOT EXISTS delegation_events_no_replace BEFORE INSERT ON agent_delegation_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_delegation_events WHERE event_id=NEW.event_id) 
+     BEGIN SELECT RAISE(ABORT,'Delegation events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS delegation_events_no_update BEFORE UPDATE ON agent_delegation_events BEGIN SELECT RAISE(ABORT,'Delegation events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS delegation_events_no_delete BEFORE DELETE ON agent_delegation_events BEGIN SELECT RAISE(ABORT,'Delegation events are immutable'); END;`);
     } catch (error) {
@@ -303,7 +306,47 @@ export class SqliteAgentDelegations {
       if (!current || current.revision !== before.revision || current.revoked !== before.revoked) throw Error('Delegation changed');
       return this.db
         .prepare(
-          'SELECT revision,event,actor_id,principal_id,permission_version,expires_at,event_at FROM agent_delegation_events WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=? ORDER BY event_id'
+          'SELECT revision,event,actor_id,principal_id,permission_version,expires_at,' +
+            'event_at FROM agent_delegation_events WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=? ORDER BY ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'event_id'
         )
         .all(...this.args(), grantId)
         .map(r => ({
@@ -336,25 +379,63 @@ export class SqliteAgentDelegations {
       if (!current || current.revision !== before.revision || current.revoked !== before.revoked) throw Error('Delegation changed');
       return this.db
         .prepare(
-          'SELECT event_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at FROM agent_delegation_events INDEXED BY delegation_events_scope_page WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=? AND event_id>? ORDER BY event_id LIMIT ?'
+          'SELECT event_id,revision,event,actor_id,principal_id,permission_version,expires_at,' +
+            'event_at FROM agent_delegation_events INDEXED BY delegation_events_scope_page WHERE tenant_id=? AND agent_id=? AND run_id=? AND grant_id=? AND event_id>? ORDER BY event_id LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '?'
         )
         .all(...this.args(), grantId, after, limit + 1);
     }, true);
     await this.permit(who, 'history', before.grant, signal);
     const current = this.row(grantId);
     if (!current || current.revision !== before.revision || current.revoked !== before.revoked) throw Error('Delegation changed');
-    const items = rows
-      .slice(0, limit)
-      .map(r => ({
-        id: Number(r.event_id),
-        revision: Number(r.revision),
-        event: String(r.event),
-        actorId: String(r.actor_id),
-        principalId: String(r.principal_id),
-        permissionVersion: String(r.permission_version),
-        expiresAt: Number(r.expires_at),
-        at: Number(r.event_at)
-      }));
+    const items = rows.slice(0, limit).map(r => ({
+      id: Number(r.event_id),
+      revision: Number(r.revision),
+      event: String(r.event),
+      actorId: String(r.actor_id),
+      principalId: String(r.principal_id),
+      permissionVersion: String(r.permission_version),
+      expiresAt: Number(r.expires_at),
+      at: Number(r.event_at)
+    }));
     let previous = after;
     for (const item of items) {
       if (

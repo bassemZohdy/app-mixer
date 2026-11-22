@@ -24,8 +24,10 @@ export class SqliteAgentTriggers {
    event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,
    PRIMARY KEY(tenant_id,agent_id,source_id,event_id), UNIQUE(tenant_id,agent_id,run_id)
   );
-  CREATE TABLE IF NOT EXISTS agent_trigger_redactions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_replace BEFORE INSERT ON agent_trigger_redactions WHEN EXISTS(SELECT 1 FROM agent_trigger_redactions WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;
+  CREATE TABLE IF NOT EXISTS agent_trigger_redactions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,
+    agent_id,run_id));
+  CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_replace BEFORE INSERT ON agent_trigger_redactions WHEN EXISTS(SELECT 1 FROM agent_trigger_redactions WHERE tenant_id=NEW.tenant_id AND 
+    agent_id=NEW.agent_id AND run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_update BEFORE UPDATE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_trigger_redactions_no_delete BEFORE DELETE ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'Trigger redactions are immutable'); END;`);
       if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_runs'").get()) throw Error('Run registry unavailable');
@@ -52,7 +54,47 @@ export class SqliteAgentTriggers {
     if (!scope || !id(scope.tenantId) || !id(scope.agentId) || !id(runId)) throw Error('Invalid trigger');
     const row = this.db
       .prepare(
-        'SELECT i.source_id,i.principal_id,i.event_id,i.event_type,i.payload,i.run_id,r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id=?'
+        'SELECT i.source_id,i.principal_id,i.event_id,i.event_type,i.payload,i.run_id,' +
+          'r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'i.agent_id=? AND i.run_id=?'
       )
       .get(scope.tenantId, scope.agentId, runId);
     if (!row) return undefined;
@@ -104,7 +146,47 @@ export class SqliteAgentTriggers {
         throw new AgentError('conflict', 'Trigger identity conflict');
       const existing = this.db
         .prepare(
-          'SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.source_id=? AND i.event_id=?'
+          'SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,' +
+            'r.run_id AS redacted FROM agent_trigger_inbox i LEFT JOIN agent_trigger_redactions r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id WHERE i.tenant_id=? AND ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'i.agent_id=? AND i.source_id=? AND i.event_id=?'
         )
         .get(scope.tenantId, scope.agentId, event.sourceId, event.eventId);
       if (existing) {

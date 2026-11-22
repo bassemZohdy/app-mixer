@@ -52,11 +52,91 @@ export class PostgresJwtRevocations {
   async revoke(tokenId: string, retainUntil: number): Promise<number> {
     if (!valid(tokenId) || !integer(retainUntil) || retainUntil <= this.now()) throw Error('Invalid JWT revocation');
     const upsert =
-      'INSERT INTO app_mixer_jwt_revocations (issuer,token_hash,retain_until) VALUES ($1,$2,$3) ON CONFLICT (issuer,token_hash) DO UPDATE SET retain_until=GREATEST(app_mixer_jwt_revocations.retain_until,EXCLUDED.retain_until) RETURNING retain_until';
+      'INSERT INTO app_mixer_jwt_revocations (issuer,token_hash,retain_until) VALUES ($1,$2,$3) ON CONFLICT (issuer,' +
+      'token_hash) DO UPDATE SET retain_until=GREATEST(app_mixer_jwt_revocations.retain_until,' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      '' +
+      'EXCLUDED.retain_until) RETURNING retain_until';
     // With an epoch anchor, every revocation also advances a per-issuer epoch in the same statement, so a restored database can be told apart by its lower epoch.
     const result = await this.query(
       this.anchor
-        ? 'WITH bumped AS (INSERT INTO app_mixer_jwt_revocation_epoch (issuer,epoch) VALUES ($1,1) ON CONFLICT (issuer) DO UPDATE SET epoch=app_mixer_jwt_revocation_epoch.epoch+1 RETURNING epoch), revoked AS (' +
+        ? 'WITH bumped AS (INSERT INTO app_mixer_jwt_revocation_epoch (issuer,epoch) VALUES ($1,1) ON CONFLICT (issuer) DO UPDATE SET epoch=app_mixer_jwt_revocation_epoch.epoch+1 RETURNING epoch),' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            ' revoked AS (' +
             upsert +
             ') SELECT revoked.retain_until,(SELECT epoch FROM bumped) AS epoch FROM revoked'
         : upsert,
@@ -107,7 +187,47 @@ export class PostgresJwtRevocations {
   async prune(cutoff: number, limit = 100): Promise<number> {
     if (!integer(cutoff) || cutoff > this.now() || !integer(limit) || limit < 1 || limit > 1000) throw Error('Invalid JWT revocation pruning');
     const result = await this.query(
-      'WITH expired AS (SELECT issuer,token_hash FROM app_mixer_jwt_revocations WHERE issuer=$1 AND retain_until<=$2 ORDER BY retain_until,token_hash LIMIT $3 FOR UPDATE SKIP LOCKED) DELETE FROM app_mixer_jwt_revocations AS r USING expired AS e WHERE r.issuer=e.issuer AND r.token_hash=e.token_hash',
+      'WITH expired AS (SELECT issuer,token_hash FROM app_mixer_jwt_revocations WHERE issuer=$1 AND retain_until<=$2 ORDER BY retain_until,' +
+        'token_hash LIMIT $3 FOR UPDATE SKIP LOCKED) DELETE FROM app_mixer_jwt_revocations AS r USING expired AS e WHERE r.issuer=e.issuer AND ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'r.token_hash=e.token_hash',
       [this.issuer, cutoff, limit]
     );
     if (!integer(result.rowCount) || result.rowCount > limit) throw Error('Invalid JWT revocation result');

@@ -21,7 +21,8 @@ export class PostgresAgentRunSlots {
   async initialize(): Promise<void> {
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_slot_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_run_slots (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,token TEXT NOT NULL UNIQUE,worker_id TEXT NOT NULL,lease_until BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_run_slots (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,token TEXT NOT NULL UNIQUE,worker_id TEXT NOT NULL,' +
+        'lease_until BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id))',
       []
     );
     await this.query(

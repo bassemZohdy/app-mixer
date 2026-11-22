@@ -46,7 +46,8 @@ export class SqliteApplicationStore {
           PRIMARY KEY (app_id,version)
         );
         CREATE TABLE IF NOT EXISTS application_promotion_signatures (app_id TEXT NOT NULL,version INTEGER NOT NULL,evidence TEXT NOT NULL,PRIMARY KEY(app_id,version));
-        CREATE TRIGGER IF NOT EXISTS promotion_signature_no_replace BEFORE INSERT ON application_promotion_signatures WHEN EXISTS (SELECT 1 FROM application_promotion_signatures WHERE app_id=NEW.app_id AND version=NEW.version) BEGIN SELECT RAISE(ABORT,'Promotion signature is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS promotion_signature_no_replace BEFORE INSERT ON application_promotion_signatures WHEN EXISTS (SELECT 1 FROM application_promotion_signatures WHERE 
+          app_id=NEW.app_id AND version=NEW.version) BEGIN SELECT RAISE(ABORT,'Promotion signature is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS promotion_signature_no_update BEFORE UPDATE ON application_promotion_signatures BEGIN SELECT RAISE(ABORT,'Promotion signature is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS promotion_signature_no_delete BEFORE DELETE ON application_promotion_signatures BEGIN SELECT RAISE(ABORT,'Promotion signature is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS promotion_no_replace BEFORE INSERT ON application_promotions

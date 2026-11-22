@@ -121,7 +121,47 @@ export class SqliteAgentRunControlHistory {
     if ((await permit('list', null)) !== true) throw Error('Run control history access denied');
     const rows = this.db
         .prepare(
-          'SELECT scope_seq AS id,run_id,revision,action,previous_status,status,actor_id,observed_at FROM agent_run_control_audit WHERE tenant_id=? AND agent_id=? AND scope_seq>? ORDER BY scope_seq LIMIT ?'
+          'SELECT scope_seq AS id,run_id,revision,action,previous_status,status,actor_id,' +
+            'observed_at FROM agent_run_control_audit WHERE tenant_id=? AND agent_id=? AND scope_seq>? ORDER BY scope_seq LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '?'
         )
         .all(this.scope.tenantId, this.scope.agentId, after, limit + 1),
       items: AgentRunControlEvent[] = [];

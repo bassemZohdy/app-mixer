@@ -79,15 +79,96 @@ export class PostgresAgentMemory {
   }
   async initialize(): Promise<void> {
     await this.options.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,' +
+        'PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind))',
       []
     );
     await this.options.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_memories (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,memory_id TEXT COLLATE "C" NOT NULL,revision BIGINT NOT NULL,value TEXT,provenance TEXT,expires_at BIGINT NOT NULL,deleted BOOLEAN NOT NULL DEFAULT FALSE,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_memories (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,' +
+        'memory_id TEXT COLLATE "C" NOT NULL,revision BIGINT NOT NULL,value TEXT,provenance TEXT,expires_at BIGINT NOT NULL,deleted BOOLEAN NOT NULL DEFAULT FALSE,PRIMARY KEY(tenant_id,agent_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'owner_kind,owner_id,memory_kind,memory_id))',
       []
     );
     await this.options.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_memory_erasure_requests (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,request_id TEXT NOT NULL,actor_id TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,request_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_memory_erasure_requests (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,' +
+        'request_id TEXT NOT NULL,actor_id TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'request_id))',
       []
     );
     await this.options.query(
@@ -95,7 +176,47 @@ export class PostgresAgentMemory {
       []
     );
     await this.options.query(
-      'DO $$ BEGIN CREATE TRIGGER app_mixer_memory_erasure_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_memory_erasure_requests FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_memory_erasure_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_memory_erasure_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_memory_erasure_requests FOR EACH STATEMENT EXECUTE FUNCTION ' +
+        'app_mixer_memory_erasure_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$$',
       []
     );
     if (this.options.vectorIndex) {
@@ -109,7 +230,8 @@ export class PostgresAgentMemory {
         expression = vectorExpression(dimensions, scope),
         filter = scope ? ' AND ' + scopedPredicate(scope) : '';
       await this.options.query(
-        `CREATE INDEX IF NOT EXISTS ${index} ON app_mixer_agent_memories USING hnsw (${expression} public.vector_cosine_ops) WHERE memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter}`,
+        `CREATE INDEX IF NOT EXISTS ${index} ON app_mixer_agent_memories USING hnsw (${expression} public.vector_cosine_ops) WHERE memory_kind='semantic' AND NOT deleted AND 
+          value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter}`,
         []
       );
     }
@@ -120,7 +242,47 @@ export class PostgresAgentMemory {
       );
     if (this.options.audit) {
       await this.options.query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,memory_id TEXT,revision BIGINT,count INTEGER NOT NULL,observed_at BIGINT NOT NULL)',
+        'CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,' +
+          'owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,memory_id TEXT,revision BIGINT,count INTEGER NOT NULL,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'observed_at BIGINT NOT NULL)',
         []
       );
       await this.options.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_audit_scope ON app_mixer_agent_memory_audit(tenant_id,agent_id,owner_kind,owner_id,memory_kind,id)', []);
@@ -129,7 +291,47 @@ export class PostgresAgentMemory {
         []
       );
       await this.options.query(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_agent_memory_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_agent_memory_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_memory_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_agent_memory_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_agent_memory_audit FOR EACH STATEMENT EXECUTE FUNCTION ' +
+          'app_mixer_agent_memory_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     }
@@ -183,7 +385,47 @@ export class PostgresAgentMemory {
   private async audit(query: Query, actor: Actor, scope: Scope, action: AuditEvent['action'], id: string | null, revision: number | null, count: number, now: number): Promise<void> {
     if (this.options.audit)
       await query(
-        'INSERT INTO app_mixer_agent_memory_audit (tenant_id,agent_id,owner_kind,owner_id,memory_kind,actor_id,action,memory_id,revision,count,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+        'INSERT INTO app_mixer_agent_memory_audit (tenant_id,agent_id,owner_kind,owner_id,memory_kind,actor_id,action,memory_id,revision,count,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$11)',
         [...this.args(scope), actor.principalId, action, id, revision, count, now]
       );
   }
@@ -276,7 +518,47 @@ export class PostgresAgentMemory {
       const revision = (prior ? Number(prior.revision) : 0) + 1;
       if (!Number.isSafeInteger(revision) || revision < 1) throw Error('Invalid memory revision');
       await query(
-        'INSERT INTO app_mixer_agent_memories VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE) ON CONFLICT (tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id) DO UPDATE SET revision=EXCLUDED.revision,value=EXCLUDED.value,provenance=EXCLUDED.provenance,expires_at=EXCLUDED.expires_at,deleted=FALSE',
+        'INSERT INTO app_mixer_agent_memories VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE) ON CONFLICT (tenant_id,agent_id,owner_kind,owner_id,memory_kind,' +
+          'memory_id) DO UPDATE SET revision=EXCLUDED.revision,value=EXCLUDED.value,provenance=EXCLUDED.provenance,expires_at=EXCLUDED.expires_at,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'deleted=FALSE',
         [...args, id, revision, serialized, provenance, expires]
       );
       await this.audit(query, c.actor, c.scope, 'write', id, revision, 1, now);
@@ -291,7 +573,8 @@ export class PostgresAgentMemory {
       await this.permit(c.actor, c.scope, 'delete', id);
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND memory_id=$6 AND revision=$7 AND NOT deleted AND expires_at>$8 RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND memory_id=$6 AND revision=$7 AND NOT deleted AND 
+            expires_at>$8 RETURNING memory_id`,
           [...this.args(c.scope), id, expectedRevision, now]
         );
       if (result.rows.length !== 1) throw Error('Memory revision conflict');
@@ -354,7 +637,8 @@ export class PostgresAgentMemory {
     await this.permit(c.actor, c.scope, 'list');
     const rows = (
       await this.options.query(
-        `SELECT memory_id,revision,ts_rank(to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')),plainto_tsquery('simple'::regconfig,$7)) AS score FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=$8 AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$7) ORDER BY score DESC,memory_id LIMIT $9`,
+        `SELECT memory_id,revision,ts_rank(to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')),plainto_tsquery('simple'::regconfig,$7)) AS score FROM app_mixer_agent_memories WHERE 
+          ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=$8 AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$7) ORDER BY score DESC,memory_id LIMIT $9`,
         [...this.args(c.scope), this.now(), text, modelId, maxCandidates]
       )
     ).rows;
@@ -420,7 +704,8 @@ export class PostgresAgentMemory {
         await query("SET LOCAL hnsw.iterative_scan = 'strict_order'", []);
         return (
           await query(
-            `SELECT memory_id,revision,${distance} AS distance FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter} AND ${expression} IS NOT NULL ORDER BY ${distance} LIMIT $8`,
+            `SELECT memory_id,revision,${distance} AS distance FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND 
+              value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter} AND ${expression} IS NOT NULL ORDER BY ${distance} LIMIT $8`,
             [...this.args(c.scope), this.now(), encoded, maxCandidates]
           )
         ).rows;
@@ -476,7 +761,8 @@ export class PostgresAgentMemory {
       check();
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted AND expires_at<=$6 RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} 
+            AND NOT deleted AND expires_at<=$6 RETURNING memory_id`,
           [...this.args(c.scope), now]
         );
       check();
@@ -501,7 +787,8 @@ export class PostgresAgentMemory {
       check();
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} 
+            AND NOT deleted RETURNING memory_id`,
           [...this.args(c.scope)]
         );
       check();
@@ -542,7 +829,8 @@ export class PostgresAgentMemory {
       if (!Array.isArray(totals) || totals.length !== 1 || !Number.isSafeInteger(total) || total < 0 || total >= 10000) throw Error('Memory erasure request limit reached');
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} 
+            AND NOT deleted RETURNING memory_id`,
           args
         );
       check();

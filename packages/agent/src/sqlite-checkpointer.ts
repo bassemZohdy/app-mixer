@@ -43,7 +43,8 @@ export class SqliteAgentCheckpointer extends BaseCheckpointSaver {
     this.db = openDatabase(path);
     try {
       this.db.exec(`PRAGMA busy_timeout=5000;
-   CREATE TABLE IF NOT EXISTS agent_checkpoints (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT NOT NULL,checkpoint_id TEXT NOT NULL,parent_id TEXT,checkpoint_type TEXT NOT NULL,checkpoint BLOB NOT NULL,metadata_type TEXT NOT NULL,metadata BLOB NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id));
+   CREATE TABLE IF NOT EXISTS agent_checkpoints (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT NOT NULL,checkpoint_id TEXT NOT NULL,parent_id TEXT,checkpoint_type TEXT 
+     NOT NULL,checkpoint BLOB NOT NULL,metadata_type TEXT NOT NULL,metadata BLOB NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id));
    CREATE TABLE IF NOT EXISTS agent_checkpoint_writes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT NOT NULL,checkpoint_id TEXT NOT NULL,task_id TEXT NOT NULL,idx INTEGER NOT NULL,task_path TEXT NOT NULL,channel TEXT NOT NULL,value_type TEXT NOT NULL,value BLOB NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id,task_id,idx));`);
     } catch (error) {
       this.db.close();

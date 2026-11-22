@@ -60,13 +60,19 @@ export class SqliteAgentTokenBudget {
     try {
       this.db.exec(`PRAGMA busy_timeout=5000;
   CREATE TABLE IF NOT EXISTS agent_token_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,max_tokens INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TABLE IF NOT EXISTS agent_token_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved INTEGER NOT NULL,used INTEGER,status TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,call_id));
-  CREATE TABLE IF NOT EXISTS agent_cost_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TABLE IF NOT EXISTS agent_shared_cost_binding (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,budget_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
-  CREATE TABLE IF NOT EXISTS agent_cost_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved INTEGER NOT NULL,used INTEGER,status TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,call_id));
-  CREATE TABLE IF NOT EXISTS agent_budget_reconciliations (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_tokens INTEGER NOT NULL,used_cost_micros INTEGER,currency TEXT,recorded_at INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS agent_token_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved INTEGER NOT NULL,used INTEGER,status TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,agent_id,run_id,call_id));
+  CREATE TABLE IF NOT EXISTS agent_cost_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,
+    run_id));
+  CREATE TABLE IF NOT EXISTS agent_shared_cost_binding (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,budget_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros INTEGER NOT NULL,
+    PRIMARY KEY(tenant_id,agent_id,run_id));
+  CREATE TABLE IF NOT EXISTS agent_cost_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved INTEGER NOT NULL,used INTEGER,status TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,agent_id,run_id,call_id));
+  CREATE TABLE IF NOT EXISTS agent_budget_reconciliations (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id 
+    TEXT NOT NULL,reference TEXT NOT NULL,used_tokens INTEGER NOT NULL,used_cost_micros INTEGER,currency TEXT,recorded_at INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS agent_budget_reconciliations_scope ON agent_budget_reconciliations (tenant_id,agent_id,run_id,id);
-  CREATE TRIGGER IF NOT EXISTS agent_budget_reconciliations_no_replace BEFORE INSERT ON agent_budget_reconciliations WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_budget_reconciliations WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Budget reconciliation records are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS agent_budget_reconciliations_no_replace BEFORE INSERT ON agent_budget_reconciliations WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_budget_reconciliations WHERE 
+    id=NEW.id) BEGIN SELECT RAISE(ABORT,'Budget reconciliation records are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_budget_reconciliations_no_update BEFORE UPDATE ON agent_budget_reconciliations BEGIN SELECT RAISE(ABORT,'Budget reconciliation records are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_budget_reconciliations_no_delete BEFORE DELETE ON agent_budget_reconciliations BEGIN SELECT RAISE(ABORT,'Budget reconciliation records are immutable'); END;`);
     } catch (error) {
@@ -306,7 +312,47 @@ export class SqliteAgentTokenBudget {
     if (!options || !integer(after) || !integer(limit) || limit < 1 || limit > 100) throw Error('Invalid budget reconciliation listing');
     return this.db
       .prepare(
-        'SELECT id,call_id,principal_id,reference,used_tokens,used_cost_micros,currency,recorded_at FROM agent_budget_reconciliations WHERE tenant_id=? AND agent_id=? AND run_id=? AND id>? ORDER BY id LIMIT ?'
+        'SELECT id,call_id,principal_id,reference,used_tokens,used_cost_micros,currency,' +
+          'recorded_at FROM agent_budget_reconciliations WHERE tenant_id=? AND agent_id=? AND run_id=? AND id>? ORDER BY id LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '?'
       )
       .all(...this.args(), after, limit)
       .map(row => ({

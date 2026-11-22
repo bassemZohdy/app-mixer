@@ -27,15 +27,135 @@ export class PostgresAgentTriggerFoundation {
     await this.transaction(async query => {
       await query('CREATE TABLE IF NOT EXISTS app_mixer_shared_run_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version BIGINT NOT NULL,revision BIGINT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT FALSE,trace_parent TEXT,PRIMARY KEY(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version BIGINT NOT NULL,revision BIGINT NOT NULL,' +
+          'status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,' +
+          'archived BOOLEAN NOT NULL DEFAULT FALSE,trace_parent TEXT,PRIMARY KEY(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_trigger_inbox (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,received_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,source_id,event_id),UNIQUE(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_trigger_inbox (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT NULL,' +
+          'event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,received_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,source_id,event_id),' +
+          'UNIQUE(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_trigger_redactions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_trigger_redactions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at BIGINT NOT NULL,' +
+          'PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
@@ -43,7 +163,47 @@ export class PostgresAgentTriggerFoundation {
         []
       );
       await query(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_trigger_redaction_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_trigger_redactions FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_trigger_redaction_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_trigger_redaction_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_trigger_redactions FOR EACH STATEMENT EXECUTE FUNCTION ' +
+          'app_mixer_shared_trigger_redaction_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });
@@ -54,7 +214,47 @@ export class PostgresAgentTriggerFoundation {
     signal?.throwIfAborted();
     const row = (
       await this.query(
-        'SELECT i.source_id,i.principal_id,i.event_id,i.event_type,i.payload,i.payload_hash,i.run_id,d.run_id AS redacted FROM app_mixer_shared_trigger_inbox i LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.run_id=$3',
+        'SELECT i.source_id,i.principal_id,i.event_id,i.event_type,i.payload,i.payload_hash,i.run_id,' +
+          'd.run_id AS redacted FROM app_mixer_shared_trigger_inbox i LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.run_id=$3',
         [scope.tenantId, scope.agentId, runId]
       )
     ).rows[0];
@@ -139,7 +339,47 @@ export class PostgresAgentTriggerFoundation {
       if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(deadline) || deadline <= now) throw Error('Invalid trigger');
       const prior = (
         await query(
-          'SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,d.run_id AS redacted FROM app_mixer_shared_trigger_inbox i LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.source_id=$3 AND i.event_id=$4',
+          'SELECT i.principal_id,i.event_type,i.payload,i.payload_hash,i.run_id,' +
+            'd.run_id AS redacted FROM app_mixer_shared_trigger_inbox i LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id ' +
+            'WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.source_id=$3 AND ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'i.event_id=$4',
           [tenant, agent, source, eventId]
         )
       ).rows[0];

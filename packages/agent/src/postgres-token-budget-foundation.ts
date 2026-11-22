@@ -71,16 +71,98 @@ export class PostgresAgentTokenBudgetFoundation {
   async initialize(): Promise<void> {
     await this.transaction(async query => {
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_token_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,max_tokens BIGINT NOT NULL,currency TEXT,max_micros BIGINT,budget_id TEXT,shared_max_micros BIGINT,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_token_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,max_tokens BIGINT NOT NULL,currency TEXT,max_micros BIGINT,' +
+          'budget_id TEXT,shared_max_micros BIGINT,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_token_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved BIGINT NOT NULL,used BIGINT,status TEXT NOT NULL,cost_reserved BIGINT,cost_used BIGINT,PRIMARY KEY(tenant_id,agent_id,run_id,call_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_token_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved BIGINT NOT NULL,used BIGINT,' +
+          'status TEXT NOT NULL,cost_reserved BIGINT,cost_used BIGINT,PRIMARY KEY(tenant_id,agent_id,run_id,call_id),FOREIGN KEY(tenant_id,agent_id,' +
+          'run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
         []
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_token_calls_recovery ON app_mixer_shared_token_calls(tenant_id,agent_id,(run_id COLLATE "C")) WHERE status=\'reserved\'', []);
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_budget_reconciliations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_tokens BIGINT NOT NULL,used_cost_micros BIGINT,currency TEXT,recorded_at BIGINT NOT NULL,FOREIGN KEY(tenant_id,agent_id,run_id,call_id) REFERENCES app_mixer_shared_token_calls(tenant_id,agent_id,run_id,call_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_budget_reconciliations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,' +
+          'run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_tokens BIGINT NOT NULL,used_cost_micros BIGINT,currency TEXT,' +
+          'recorded_at BIGINT NOT NULL,FOREIGN KEY(tenant_id,agent_id,run_id,call_id) REFERENCES app_mixer_shared_token_calls(tenant_id,agent_id,run_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'call_id))',
         []
       );
       await query(
@@ -88,7 +170,47 @@ export class PostgresAgentTokenBudgetFoundation {
         []
       );
       await query(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_budget_reconciliation_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_budget_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_budget_reconciliation_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_budget_reconciliation_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_budget_reconciliations FOR EACH STATEMENT EXECUTE ' +
+          'FUNCTION app_mixer_shared_budget_reconciliation_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });
@@ -150,7 +272,47 @@ export class PostgresAgentTokenBudgetFoundation {
     await this.checkConfig(this.query);
     const rows = (
       await this.query(
-        'SELECT call_id,reserved,used,status FROM app_mixer_shared_token_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id COLLATE "C">$4 AND status=\'reserved\' ORDER BY call_id COLLATE "C" LIMIT $5',
+        'SELECT call_id,reserved,used,status FROM app_mixer_shared_token_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id COLLATE "C">$4 AND status=\'reserved\' ORDER BY ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'call_id COLLATE "C" LIMIT $5',
         [...this.args(), options.after ?? '', options.limit ?? 100]
       )
     ).rows;
@@ -162,7 +324,47 @@ export class PostgresAgentTokenBudgetFoundation {
     if (!options || !integer(after) || !integer(limit) || limit < 1 || limit > 100) throw Error('Invalid budget reconciliation listing');
     const rows = (
       await this.query(
-        'SELECT id,call_id,principal_id,reference,used_tokens,used_cost_micros,currency,recorded_at FROM app_mixer_shared_budget_reconciliations WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND id>$4 ORDER BY id LIMIT $5',
+        'SELECT id,call_id,principal_id,reference,used_tokens,used_cost_micros,currency,' +
+          'recorded_at FROM app_mixer_shared_budget_reconciliations WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND id>$4 ORDER BY id LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$5',
         [...this.args(), after, limit]
       )
     ).rows;
@@ -322,7 +524,47 @@ export class PostgresAgentTokenBudgetFoundation {
       ]);
       if (evidence)
         await query(
-          'INSERT INTO app_mixer_shared_budget_reconciliations (tenant_id,agent_id,run_id,call_id,principal_id,reference,used_tokens,used_cost_micros,currency,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+          'INSERT INTO app_mixer_shared_budget_reconciliations (tenant_id,agent_id,run_id,call_id,principal_id,reference,used_tokens,used_cost_micros,currency,recorded_at) VALUES ($1,$2,$3,$4,$5,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '$6,$7,$8,$9,$10)',
           [...this.args(), callId, evidence.principalId, evidence.reference, used, usedMicros ?? null, this.cost?.currency ?? null, time]
         );
       signal?.throwIfAborted();

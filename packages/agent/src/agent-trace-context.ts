@@ -12,7 +12,8 @@ export function parseAgentTraceParent(value: unknown): SpanContext | undefined {
 export function ensureAgentTraceSchema(db: DatabaseSync): void {
   db.exec(`
  CREATE TABLE IF NOT EXISTS agent_run_trace_context (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,trace_parent TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
- CREATE TRIGGER IF NOT EXISTS agent_trace_no_replace BEFORE INSERT ON agent_run_trace_context WHEN EXISTS(SELECT 1 FROM agent_run_trace_context WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT,'Agent trace context is immutable'); END;
+ CREATE TRIGGER IF NOT EXISTS agent_trace_no_replace BEFORE INSERT ON agent_run_trace_context WHEN EXISTS(SELECT 1 FROM agent_run_trace_context WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id 
+   AND run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT,'Agent trace context is immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_trace_no_update BEFORE UPDATE ON agent_run_trace_context BEGIN SELECT RAISE(ABORT,'Agent trace context is immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_trace_no_delete BEFORE DELETE ON agent_run_trace_context BEGIN SELECT RAISE(ABORT,'Agent trace context is immutable'); END;
 `);

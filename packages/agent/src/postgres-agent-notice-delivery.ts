@@ -48,7 +48,47 @@ export class PostgresAgentNoticeDelivery {
         []
       );
       await q(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notice_delivery_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_id BIGINT NOT NULL REFERENCES app_mixer_shared_notice_deliveries(id),revision BIGINT NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,delivery_id,revision))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notice_delivery_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,' +
+          'delivery_id BIGINT NOT NULL REFERENCES app_mixer_shared_notice_deliveries(id),revision BIGINT NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'UNIQUE(tenant_id,agent_id,delivery_id,revision))',
         []
       );
       await q(
@@ -56,7 +96,47 @@ export class PostgresAgentNoticeDelivery {
         []
       );
       await q(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_notice_delivery_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_notice_delivery_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_notice_delivery_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_notice_delivery_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_notice_delivery_events FOR EACH STATEMENT EXECUTE ' +
+          'FUNCTION app_mixer_shared_notice_delivery_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });
@@ -120,7 +200,47 @@ export class PostgresAgentNoticeDelivery {
   }
   private async event(q: Query, delivery: AgentNoticeDelivery, action: string, actor: AgentNoticeDeliveryActor): Promise<void> {
     await q(
-      'INSERT INTO app_mixer_shared_notice_delivery_events (tenant_id,agent_id,delivery_id,revision,action,principal_id,observed_at) VALUES ($1,$2,$3,$4,$5,$6,(extract(epoch from clock_timestamp())*1000)::bigint)',
+      'INSERT INTO app_mixer_shared_notice_delivery_events (tenant_id,agent_id,delivery_id,revision,action,principal_id,observed_at) VALUES ($1,$2,$3,$4,$5,$6,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '(extract(epoch from clock_timestamp())*1000)::bigint)',
       [...this.args(), delivery.id, delivery.revision, action, actor.principalId]
     );
   }
@@ -274,7 +394,47 @@ export class PostgresAgentNoticeDelivery {
     await this.permit(who, 'read', before);
     const rows = (
         await this.query(
-          'SELECT id,delivery_id,revision,action,principal_id,observed_at FROM app_mixer_shared_notice_delivery_events WHERE tenant_id=$1 AND agent_id=$2 AND delivery_id=$3 AND id>$4 ORDER BY id LIMIT $5',
+          'SELECT id,delivery_id,revision,action,principal_id,observed_at FROM app_mixer_shared_notice_delivery_events WHERE tenant_id=$1 AND agent_id=$2 AND delivery_id=$3 AND id>$4 ORDER BY id ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'LIMIT $5',
           [...this.args(), id, after, limit]
         )
       ).rows,

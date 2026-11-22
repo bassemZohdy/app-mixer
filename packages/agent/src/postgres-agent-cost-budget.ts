@@ -31,7 +31,47 @@ export class PostgresAgentCostBudget {
   /** Requires PostgresAgentRuns.initialize(), which creates the call ledger. */
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_cost_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros_per_day BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_cost_budgets (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros_per_day BIGINT NOT NULL,PRIMARY KEY(tenant_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'agent_id))',
       []
     );
   }

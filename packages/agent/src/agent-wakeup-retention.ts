@@ -233,7 +233,47 @@ export class SqliteAgentWakeupRetention {
     try {
       const row = this.db
         .prepare(
-          'SELECT w.id,w.run_id,w.observed_at,t.completed_at,r.status,d.wakeup_id AS redacted FROM agent_run_wakeups w JOIN agent_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN agent_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN agent_run_terminal_times t ON t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=? AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
+          'SELECT w.id,w.run_id,w.observed_at,t.completed_at,r.status,d.wakeup_id AS redacted FROM agent_run_wakeups w JOIN agent_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND ' +
+            'r.run_id=w.run_id LEFT JOIN agent_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN agent_run_terminal_times t ON ' +
+            't.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=? AND w.agent_id=? AND w.source_id=? AND ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'w.event_id=?'
         )
         .get(this.scope.tenantId, this.scope.agentId, sourceId, eventId);
       if (!row || row.run_id !== target.runId || !Number.isSafeInteger(row.id) || Number(row.id) < 1) throw Error('Wakeup changed during redaction');
@@ -265,7 +305,47 @@ export class SqliteAgentWakeupRetention {
     await this.targetPermit(who, 'read', target, signal);
     const row = this.db
       .prepare(
-        'SELECT d.actor_id,d.redacted_at FROM agent_run_wakeups w JOIN agent_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id WHERE w.tenant_id=? AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
+        'SELECT d.actor_id,d.redacted_at FROM agent_run_wakeups w JOIN agent_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id WHERE w.tenant_id=? ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'AND w.agent_id=? AND w.source_id=? AND w.event_id=?'
       )
       .get(this.scope.tenantId, this.scope.agentId, sourceId, eventId);
     await this.scopePermit(who, signal);

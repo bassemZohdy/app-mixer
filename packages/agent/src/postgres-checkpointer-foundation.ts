@@ -54,11 +54,91 @@ export class PostgresAgentCheckpointerFoundation extends BaseCheckpointSaver {
   async initialize(): Promise<void> {
     await this.transaction(async query => {
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_checkpoints (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT COLLATE "C" NOT NULL,checkpoint_id TEXT COLLATE "C" NOT NULL,parent_id TEXT,checkpoint_type TEXT NOT NULL,checkpoint BYTEA NOT NULL,metadata_type TEXT NOT NULL,metadata BYTEA NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_checkpoints (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT COLLATE "C" NOT NULL,' +
+          'checkpoint_id TEXT COLLATE "C" NOT NULL,parent_id TEXT,checkpoint_type TEXT NOT NULL,checkpoint BYTEA NOT NULL,metadata_type TEXT NOT NULL,metadata BYTEA NOT NULL,PRIMARY KEY(tenant_id,' +
+          'agent_id,run_id,ns,checkpoint_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_checkpoint_writes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT COLLATE "C" NOT NULL,checkpoint_id TEXT COLLATE "C" NOT NULL,task_id TEXT NOT NULL,idx INTEGER NOT NULL,task_path TEXT NOT NULL,channel TEXT NOT NULL,value_type TEXT NOT NULL,value BYTEA NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id,task_id,idx),FOREIGN KEY(tenant_id,agent_id,run_id,ns,checkpoint_id) REFERENCES app_mixer_shared_checkpoints(tenant_id,agent_id,run_id,ns,checkpoint_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_checkpoint_writes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,ns TEXT COLLATE "C" NOT NULL,' +
+          'checkpoint_id TEXT COLLATE "C" NOT NULL,task_id TEXT NOT NULL,idx INTEGER NOT NULL,task_path TEXT NOT NULL,channel TEXT NOT NULL,value_type TEXT NOT NULL,value BYTEA NOT NULL,' +
+          'PRIMARY KEY(tenant_id,agent_id,run_id,ns,checkpoint_id,task_id,idx),FOREIGN KEY(tenant_id,agent_id,run_id,ns,checkpoint_id) REFERENCES app_mixer_shared_checkpoints(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id,ns,checkpoint_id))',
         []
       );
     });
@@ -161,7 +241,47 @@ export class PostgresAgentCheckpointerFoundation extends BaseCheckpointSaver {
     while (count < limit) {
       const rows = (
         await this.query(
-          'SELECT * FROM app_mixer_shared_checkpoints WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND ns=$4 AND ($5::text IS NULL OR checkpoint_id=$5) AND ($6::text IS NULL OR checkpoint_id<$6) ORDER BY checkpoint_id DESC LIMIT $7',
+          'SELECT * FROM app_mixer_shared_checkpoints WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND ns=$4 AND ($5::text IS NULL OR checkpoint_id=$5) AND ($6::text IS NULL OR ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'checkpoint_id<$6) ORDER BY checkpoint_id DESC LIMIT $7',
           [...this.args(ns), checkpointId ?? null, cursor ?? null, Math.min(100, filter ? 100 : limit - count)]
         )
       ).rows;
@@ -229,7 +349,52 @@ export class PostgresAgentCheckpointerFoundation extends BaseCheckpointSaver {
         if (!exists.rows.length) throw Error('Checkpoint not found');
         for (const entry of entries)
           await query(
-            `INSERT INTO app_mixer_shared_checkpoint_writes VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (tenant_id,agent_id,run_id,ns,checkpoint_id,task_id,idx) ${entry.idx < 0 ? 'DO UPDATE SET task_path=EXCLUDED.task_path,channel=EXCLUDED.channel,value_type=EXCLUDED.value_type,value=EXCLUDED.value' : 'DO NOTHING'}`,
+            `INSERT INTO app_mixer_shared_checkpoint_writes VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (tenant_id,agent_id,run_id,ns,checkpoint_id,task_id,idx) 
+              ${
+                entry.idx < 0
+                  ? 'DO UPDATE SET task_path=EXCLUDED.task_path,channel=EXCLUDED.channel,value_type=EXCLUDED.value_type,' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    '' +
+                    'value=EXCLUDED.value'
+                  : 'DO NOTHING'
+              }`,
             [...this.args(ns), checkpointId, taskId, entry.idx, taskPath, entry.channel, entry.type, Buffer.from(entry.bytes)]
           );
       });

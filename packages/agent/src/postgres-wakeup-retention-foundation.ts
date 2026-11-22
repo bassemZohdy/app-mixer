@@ -205,7 +205,47 @@ export class PostgresAgentWakeupRetentionFoundation {
       this.check(signal);
       const row = (
           await q(
-            'SELECT w.id,w.run_id,w.observed_at,r.status,t.completed_at,d.wakeup_id AS redacted FROM app_mixer_shared_run_wakeups w JOIN app_mixer_shared_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN app_mixer_shared_run_terminal_times t ON t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.source_id=$3 AND w.event_id=$4 FOR UPDATE OF r,w',
+            'SELECT w.id,w.run_id,w.observed_at,r.status,t.completed_at,d.wakeup_id AS redacted FROM app_mixer_shared_run_wakeups w JOIN app_mixer_shared_runs r ON r.tenant_id=w.tenant_id AND ' +
+              'r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN ' +
+              'app_mixer_shared_run_terminal_times t ON t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.source_id=$3 AND ' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'w.event_id=$4 FOR UPDATE OF r,w',
             [this.scope.tenantId, this.scope.agentId, sourceId, eventId]
           )
         ).rows[0],
@@ -233,7 +273,47 @@ export class PostgresAgentWakeupRetentionFoundation {
     await this.targetPermit(who, 'read', target, signal);
     const row = (
       await this.query(
-        'SELECT d.actor_id,d.redacted_at FROM app_mixer_shared_run_wakeups w JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.source_id=$3 AND w.event_id=$4',
+        'SELECT d.actor_id,d.redacted_at FROM app_mixer_shared_run_wakeups w JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND ' +
+          'd.agent_id=w.agent_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.source_id=$3 AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'w.event_id=$4',
         [this.scope.tenantId, this.scope.agentId, sourceId, eventId]
       )
     ).rows[0];

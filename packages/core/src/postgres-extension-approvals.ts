@@ -158,15 +158,135 @@ export class PostgresExtensionApprovals {
   }
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_extension_approvals (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_extension_approvals (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,' +
+        'extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,' +
+        'application_id,extension_id,extension_version,extension_scope,operation_kind,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'operation_name))',
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_extension_approval_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,actor_id TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_extension_approval_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,' +
+        'extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,actor_id TEXT NOT NULL,' +
+        'revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,application_id,extension_id,extension_version,extension_scope,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'operation_kind,operation_name,revision))',
       []
     );
     await this.query(
-      'CREATE INDEX IF NOT EXISTS app_mixer_extension_approval_audit_scope ON app_mixer_extension_approval_audit(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,id)',
+      'CREATE INDEX IF NOT EXISTS app_mixer_extension_approval_audit_scope ON app_mixer_extension_approval_audit(tenant_id,application_id,extension_id,extension_version,extension_scope,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'operation_kind,operation_name,id)',
       []
     );
     await this.query(
@@ -174,7 +294,47 @@ export class PostgresExtensionApprovals {
       []
     );
     await this.query(
-      'DO $$ BEGIN CREATE TRIGGER app_mixer_extension_approval_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_extension_approval_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_extension_approval_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_extension_approval_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_extension_approval_audit FOR EACH STATEMENT EXECUTE FUNCTION ' +
+        'app_mixer_extension_approval_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$$',
       []
     );
   }
@@ -224,9 +384,50 @@ export class PostgresExtensionApprovals {
     if (allowed && (expiresAt <= now || expiresAt - now > 365 * 86400000)) throw Error('Invalid extension approval expiration');
     const change =
       expected === 0
-        ? 'INSERT INTO app_mixer_extension_approvals (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision,allowed,expires_at) SELECT $1,$2,$3,$4,$5,$6,$7,1,$8,$9 WHERE $10::bigint=0 ON CONFLICT DO NOTHING RETURNING revision'
+        ? 'INSERT INTO app_mixer_extension_approvals (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision,allowed,expires_at) SELECT $1,' +
+          '$2,$3,$4,$5,$6,$7,1,$8,$9 WHERE $10::bigint=0 ON CONFLICT DO NOTHING RETURNING ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'revision'
         : 'UPDATE app_mixer_extension_approvals SET revision=revision+1,allowed=$8,expires_at=$9 WHERE ' + where + ' AND revision=$10' + (terminal ? ' AND allowed=TRUE' : '') + ' RETURNING revision';
-    const sql = `WITH changed AS (${change}) INSERT INTO app_mixer_extension_approval_audit (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,actor_id,revision,allowed,expires_at,observed_at) SELECT $1,$2,$3,$4,$5,$6,$7,$11,revision,$8,$9,$12 FROM changed RETURNING revision`,
+    const sql = `WITH changed AS (${change}) INSERT INTO app_mixer_extension_approval_audit (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,
+      actor_id,revision,allowed,expires_at,observed_at) SELECT $1,$2,$3,$4,$5,$6,$7,$11,revision,$8,$9,$12 FROM changed RETURNING revision`,
       args = [...this.args(c.scope, c.reference, c.operation), allowed, expiresAt, expected, c.actor.principalId, now];
     let result;
     try {

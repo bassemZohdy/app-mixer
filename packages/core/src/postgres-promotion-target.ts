@@ -59,7 +59,47 @@ export class PostgresPromotionTarget {
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_promoted_publications (tenant_id TEXT NOT NULL,app_id TEXT NOT NULL,target_environment TEXT NOT NULL,version BIGINT NOT NULL,source_environment TEXT NOT NULL,source_version BIGINT NOT NULL,package_digest TEXT NOT NULL,definition TEXT NOT NULL,signature TEXT NOT NULL,PRIMARY KEY(tenant_id,app_id,target_environment,version))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_promoted_publications (tenant_id TEXT NOT NULL,app_id TEXT NOT NULL,target_environment TEXT NOT NULL,version BIGINT NOT NULL,' +
+        'source_environment TEXT NOT NULL,source_version BIGINT NOT NULL,package_digest TEXT NOT NULL,definition TEXT NOT NULL,signature TEXT NOT NULL,PRIMARY KEY(tenant_id,app_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'target_environment,version))',
       []
     );
     await this.query(
@@ -67,7 +107,47 @@ export class PostgresPromotionTarget {
       []
     );
     await this.query(
-      'DO $$ BEGIN CREATE TRIGGER app_mixer_promoted_publications_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_promoted_publications FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_promoted_publication_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_promoted_publications_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_promoted_publications FOR EACH STATEMENT EXECUTE FUNCTION ' +
+        'app_mixer_promoted_publication_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$$',
       []
     );
     await this.query('INSERT INTO app_mixer_promotion_scopes (tenant_id,app_id,target_environment) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [...this.scope]);
@@ -118,7 +198,47 @@ export class PostgresPromotionTarget {
   }
   private async read(query: PostgresJwtRevocationQuery, version?: number): Promise<{ publication: Published; provenance: PublicationProvenance } | undefined> {
     const result = await query(
-      'SELECT version,source_environment,source_version,package_digest,definition,signature FROM app_mixer_promoted_publications WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 AND ($4::bigint IS NULL OR version=$4) ORDER BY version DESC LIMIT 1',
+      'SELECT version,source_environment,source_version,package_digest,definition,' +
+        'signature FROM app_mixer_promoted_publications WHERE tenant_id=$1 AND app_id=$2 AND target_environment=$3 AND ($4::bigint IS NULL OR version=$4) ORDER BY version DESC LIMIT ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '1',
       [...this.scope, version ?? null]
     );
     if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid stored publication');
@@ -186,7 +306,47 @@ export class PostgresPromotionTarget {
       const version = latest + 1;
       if (!validVersion(version, 1)) throw Error('Invalid version');
       await query(
-        'INSERT INTO app_mixer_promoted_publications (tenant_id,app_id,target_environment,version,source_environment,source_version,package_digest,definition,signature) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        'INSERT INTO app_mixer_promoted_publications (tenant_id,app_id,target_environment,version,source_environment,source_version,package_digest,definition,signature) VALUES ($1,$2,$3,$4,$5,$6,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$7,$8,$9)',
         [...this.scope, version, this.source, pkg.sourceVersion, pkg.digest, JSON.stringify(pkg.definition), JSON.stringify(signature)]
       );
       return { version, definition: structuredClone(pkg.definition) };

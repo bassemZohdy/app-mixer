@@ -33,7 +33,47 @@ export class PostgresOfflineRecovery {
   }
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_offline_recovery_events (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,attempt_token TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,reference TEXT NOT NULL,recorded_at BIGINT NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS app_mixer_offline_recovery_events (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,' +
+        'idempotency_key TEXT NOT NULL,attempt_token TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,reference TEXT NOT NULL,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'recorded_at BIGINT NOT NULL)',
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_offline_recovery_scope ON app_mixer_offline_recovery_events (tenant_id,application_id,principal_id,idempotency_key,id)', []);
@@ -95,7 +135,47 @@ export class PostgresOfflineRecovery {
     if (!options || !integer(after) || !integer(limit) || limit < 1 || limit > 100) throw Error('Invalid offline recovery history');
     await this.permit(c.actor, c.target, 'history');
     const result = await this.query(
-      'SELECT id,actor_id,attempt_token,action,reference,recorded_at FROM app_mixer_offline_recovery_events WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND id>$5 ORDER BY id LIMIT $6',
+      'SELECT id,actor_id,attempt_token,action,reference,recorded_at FROM app_mixer_offline_recovery_events WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'AND id>$5 ORDER BY id LIMIT $6',
       [...c.args, after, limit + 1]
     );
     if (!Array.isArray(result.rows) || result.rows.length > limit + 1) throw Error('Invalid offline recovery history');

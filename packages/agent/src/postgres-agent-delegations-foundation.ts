@@ -51,11 +51,91 @@ export class PostgresAgentDelegationsFoundation {
   async initialize(): Promise<void> {
     await this.transaction(async q => {
       await q(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at BIGINT NOT NULL,revision BIGINT NOT NULL,revoked BOOLEAN NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,' +
+          'permission_version TEXT NOT NULL,expires_at BIGINT NOT NULL,revision BIGINT NOT NULL,revoked BOOLEAN NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id),FOREIGN KEY(tenant_id,' +
+          'agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await q(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_delegation_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision BIGINT NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at BIGINT NOT NULL,event_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,grant_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id,grant_id) REFERENCES app_mixer_shared_delegations(tenant_id,agent_id,run_id,grant_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_delegation_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,' +
+          'grant_id TEXT NOT NULL,revision BIGINT NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at BIGINT NOT NULL,' +
+          'event_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,grant_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id,grant_id) REFERENCES app_mixer_shared_delegations(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id,grant_id))',
         []
       );
       await q('CREATE INDEX IF NOT EXISTS app_mixer_shared_delegation_event_scope ON app_mixer_shared_delegation_events(tenant_id,agent_id,run_id,grant_id,id)', []);
@@ -64,7 +144,47 @@ export class PostgresAgentDelegationsFoundation {
         []
       );
       await q(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_delegation_event_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_delegation_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_delegation_event_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_delegation_event_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_delegation_events FOR EACH STATEMENT EXECUTE FUNCTION ' +
+          'app_mixer_shared_delegation_event_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
     });
@@ -159,7 +279,47 @@ export class PostgresAgentDelegationsFoundation {
   private async event(q: Query, actor: AgentDelegationActor, record: AgentDelegationRecord, event: string, now: number): Promise<void> {
     const g = record.grant;
     await q(
-      'INSERT INTO app_mixer_shared_delegation_events (tenant_id,agent_id,run_id,grant_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      'INSERT INTO app_mixer_shared_delegation_events (tenant_id,agent_id,run_id,grant_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at) VALUES ($1,$2,$3,$4,$5,$6,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$7,$8,$9,$10,$11)',
       [...this.args(), g.grantId, record.revision, event, actor.principalId, g.principalId, g.permissionVersion, g.expiresAt, now]
     );
   }
@@ -301,7 +461,47 @@ export class PostgresAgentDelegationsFoundation {
     if (!before) throw Error('Delegation not found');
     const rows = (
       await this.query(
-        'SELECT id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at FROM app_mixer_shared_delegation_events WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND grant_id=$4 AND id>$5 ORDER BY id LIMIT $6',
+        'SELECT id,revision,event,actor_id,principal_id,permission_version,expires_at,' +
+          'event_at FROM app_mixer_shared_delegation_events WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND grant_id=$4 AND id>$5 ORDER BY id LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$6',
         [...this.args(), grantId, after, limit + 1]
       )
     ).rows;

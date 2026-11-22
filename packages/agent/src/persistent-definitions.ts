@@ -105,7 +105,47 @@ export class SqliteAgentDefinitions {
       throw Error('Invalid agent listing');
     const rows = this.db
       .prepare(
-        `SELECT a.agent_id,a.version,a.manifest FROM agent_definitions a WHERE a.tenant_id=? AND a.agent_id>? AND a.version=(SELECT MAX(b.version) FROM agent_definitions b WHERE b.tenant_id=a.tenant_id AND b.agent_id=a.agent_id) ORDER BY a.agent_id LIMIT ?`
+        `SELECT a.agent_id,a.version,a.manifest FROM agent_definitions a WHERE a.tenant_id=? AND a.agent_id>? AND a.version=(SELECT MAX(b.version) FROM agent_definitions b WHERE ` +
+          `b.tenant_id=a.tenant_id AND b.agent_id=a.agent_id) ORDER BY a.agent_id LIMIT ` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `` +
+          `?`
       )
       .all(tenantId, options.after ?? '', options.limit ?? 100);
     return rows.map(row => this.parse(row, tenantId, String(row.agent_id)));

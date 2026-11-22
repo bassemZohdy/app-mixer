@@ -27,7 +27,47 @@ export class PostgresAgentExpiryHistoryFoundation {
     if (!(await permit('list', null))) throw Error('Expiry history access denied');
     const rows = (
         await this.query(
-          'SELECT scope_seq AS id,run_id,revision,previous_status,deadline,actor_id,reference,observed_at FROM app_mixer_shared_run_expiry_audit WHERE tenant_id=$1 AND agent_id=$2 AND scope_seq>$3 ORDER BY scope_seq LIMIT $4',
+          'SELECT scope_seq AS id,run_id,revision,previous_status,deadline,actor_id,reference,' +
+            'observed_at FROM app_mixer_shared_run_expiry_audit WHERE tenant_id=$1 AND agent_id=$2 AND scope_seq>$3 ORDER BY scope_seq LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '$4',
           [this.scope.tenantId, this.scope.agentId, after, limit + 1]
         )
       ).rows,

@@ -502,7 +502,8 @@ export type NativeA2UIProps = {
   subscribe: (receive: (message: unknown) => void) => void | (() => void);
   onError: (error: unknown) => void;
   onAction?: (message: ActionMessage) => void;
-  /** Host theme: styles per component and variant (`Button`: default, primary, borderless; `TextField`: shortText, longText; `Progress`: track and fill). The renderer sets no theme colors except the neutral Progress defaults. */
+  /** Host theme: styles per component and variant (`Button`: default, primary, borderless; `TextField`: shortText, longText; `Progress`: track and fill). The renderer sets no theme colors except the
+  // neutral Progress defaults. */
   variantStyles?: { Button?: Record<string, unknown>; TextField?: Record<string, unknown>; Progress?: { track?: Record<string, unknown>; fill?: Record<string, unknown> } } | undefined;
 };
 /** The host supplies its React and React Native primitives so no framework runtime is bundled. */

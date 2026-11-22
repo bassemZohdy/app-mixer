@@ -31,11 +31,91 @@ export class PostgresPublicationReleaseRegistry {
   /** Provision with a trusted migration identity before accepting traffic. */
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_release_authorizations (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,version BIGINT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(tenant_id,application_id,environment,version))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_release_authorizations (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,version BIGINT NOT NULL,' +
+        'definition_digest TEXT NOT NULL,PRIMARY KEY(tenant_id,application_id,environment,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'version))',
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_release_floors (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,minimum_version BIGINT NOT NULL,PRIMARY KEY(tenant_id,application_id,environment))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_release_floors (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,environment TEXT NOT NULL,minimum_version BIGINT NOT NULL,PRIMARY KEY(tenant_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'application_id,environment))',
       []
     );
   }
@@ -44,7 +124,47 @@ export class PostgresPublicationReleaseRegistry {
     const identity = args(scope);
     if (!version(releaseVersion) || !digest(definitionDigest)) throw Error('Invalid publication release');
     const result = await this.query(
-      'INSERT INTO app_mixer_release_authorizations (tenant_id,application_id,environment,version,definition_digest) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,application_id,environment,version) DO UPDATE SET definition_digest=app_mixer_release_authorizations.definition_digest WHERE app_mixer_release_authorizations.definition_digest=EXCLUDED.definition_digest RETURNING definition_digest',
+      'INSERT INTO app_mixer_release_authorizations (tenant_id,application_id,environment,version,definition_digest) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,application_id,environment,' +
+        'version) DO UPDATE SET definition_digest=app_mixer_release_authorizations.definition_digest WHERE app_mixer_release_authorizations.definition_digest=EXCLUDED.definition_digest RETURNING ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'definition_digest',
       [...identity, releaseVersion, definitionDigest]
     );
     if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].definition_digest !== definitionDigest) throw Error('Publication release conflict');
@@ -54,7 +174,47 @@ export class PostgresPublicationReleaseRegistry {
     const identity = args(scope);
     if (!version(minimumVersion)) throw Error('Invalid publication release floor');
     const result = await this.query(
-      'INSERT INTO app_mixer_release_floors (tenant_id,application_id,environment,minimum_version) SELECT $1,$2,$3,$4 WHERE EXISTS (SELECT 1 FROM app_mixer_release_authorizations WHERE tenant_id=$1 AND application_id=$2 AND environment=$3 AND version=$4) ON CONFLICT (tenant_id,application_id,environment) DO UPDATE SET minimum_version=GREATEST(app_mixer_release_floors.minimum_version,EXCLUDED.minimum_version) RETURNING minimum_version',
+      'INSERT INTO app_mixer_release_floors (tenant_id,application_id,environment,minimum_version) SELECT $1,$2,$3,' +
+        '$4 WHERE EXISTS (SELECT 1 FROM app_mixer_release_authorizations WHERE tenant_id=$1 AND application_id=$2 AND environment=$3 AND version=$4) ON CONFLICT (tenant_id,application_id,' +
+        'environment) DO UPDATE SET minimum_version=GREATEST(app_mixer_release_floors.minimum_version,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'EXCLUDED.minimum_version) RETURNING minimum_version',
       [...identity, minimumVersion]
     );
     const value = Number(result.rows?.[0]?.minimum_version);
@@ -96,7 +256,47 @@ export class PostgresPublicationReleaseRegistry {
     if (!version(releaseVersion) || !digest(definitionDigest)) throw Error('Invalid publication release');
     if (this.anchor) await this.checkAnchor(scope, identity);
     const result = await this.query(
-      'SELECT 1 AS allowed FROM app_mixer_release_floors AS f JOIN app_mixer_release_authorizations AS a ON a.tenant_id=f.tenant_id AND a.application_id=f.application_id AND a.environment=f.environment WHERE f.tenant_id=$1 AND f.application_id=$2 AND f.environment=$3 AND a.version=$4 AND a.definition_digest=$5 AND a.version>=f.minimum_version',
+      'SELECT 1 AS allowed FROM app_mixer_release_floors AS f JOIN app_mixer_release_authorizations AS a ON a.tenant_id=f.tenant_id AND a.application_id=f.application_id AND ' +
+        'a.environment=f.environment WHERE f.tenant_id=$1 AND f.application_id=$2 AND f.environment=$3 AND a.version=$4 AND a.definition_digest=$5 AND ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'a.version>=f.minimum_version',
       [...identity, releaseVersion, definitionDigest]
     );
     if (!Array.isArray(result.rows) || result.rows.length > 1 || (result.rows.length === 1 && result.rows[0].allowed !== 1)) throw Error('Invalid publication release result');

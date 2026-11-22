@@ -48,13 +48,93 @@ export class PostgresRemoteRollout {
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_remote_rollout_recovery_events (event_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT NULL,source_version BIGINT,expected_version BIGINT,observed_at BIGINT NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS app_mixer_remote_rollout_recovery_events (event_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,' +
+        'reference TEXT NOT NULL,phase TEXT NOT NULL,source_version BIGINT,expected_version BIGINT,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'observed_at BIGINT NOT NULL)',
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_rollout_recovery_scope ON app_mixer_remote_rollout_recovery_events(rollout_id,event_id)', []);
     await this.query("CREATE OR REPLACE FUNCTION app_mixer_rollout_recovery_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Recovery evidence is immutable'; END $$", []);
     await this.query(
-      'DO $$ BEGIN CREATE TRIGGER app_mixer_rollout_recovery_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_remote_rollout_recovery_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_rollout_recovery_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_rollout_recovery_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_remote_rollout_recovery_events FOR EACH STATEMENT EXECUTE FUNCTION ' +
+        'app_mixer_rollout_recovery_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$$',
       []
     );
     await this.query("INSERT INTO app_mixer_remote_rollouts(id,phase) VALUES ($1,'idle') ON CONFLICT (id) DO NOTHING", [this.key]);
@@ -185,7 +265,47 @@ export class PostgresRemoteRollout {
     if (!options || !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid rollout recovery listing');
     const rows = (
       await this.query(
-        'SELECT event_id,principal_id,reference,phase,source_version,expected_version,observed_at FROM app_mixer_remote_rollout_recovery_events WHERE rollout_id=$1 AND event_id>$2 ORDER BY event_id LIMIT $3',
+        'SELECT event_id,principal_id,reference,phase,source_version,expected_version,' +
+          'observed_at FROM app_mixer_remote_rollout_recovery_events WHERE rollout_id=$1 AND event_id>$2 ORDER BY event_id LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$3',
         [this.key, after, limit + 1]
       )
     ).rows;

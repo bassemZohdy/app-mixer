@@ -101,16 +101,98 @@ export class PostgresAgentRunLifecycleFoundation {
       await query('ALTER TABLE app_mixer_shared_runs ADD COLUMN IF NOT EXISTS delegation_revision BIGINT', []);
       await query('ALTER TABLE app_mixer_shared_runs ADD COLUMN IF NOT EXISTS delegation_principal_id TEXT', []);
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision BIGINT NOT NULL,principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision BIGINT NOT NULL,' +
+          'principal_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notices (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,subject_id TEXT NOT NULL,subject_revision BIGINT NOT NULL,created_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,kind,subject_id,subject_revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notices (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,' +
+          'kind TEXT NOT NULL,subject_id TEXT NOT NULL,subject_revision BIGINT NOT NULL,created_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,kind,subject_id,subject_revision),' +
+          'FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_notices_scope ON app_mixer_shared_notices(tenant_id,agent_id,id)', []);
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notice_receipts (notice_id BIGINT NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,principal_id TEXT NOT NULL,acknowledged_at BIGINT NOT NULL,PRIMARY KEY(notice_id,tenant_id,agent_id,principal_id),FOREIGN KEY(notice_id) REFERENCES app_mixer_shared_notices(id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notice_receipts (notice_id BIGINT NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,principal_id TEXT NOT NULL,' +
+          'acknowledged_at BIGINT NOT NULL,PRIMARY KEY(notice_id,tenant_id,agent_id,principal_id),' +
+          'FOREIGN KEY(notice_id) REFERENCES app_mixer_shared_notices(id))',
         []
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_runs_queued ON app_mixer_shared_runs(tenant_id,agent_id,(run_id COLLATE "C")) WHERE status=\'queued\' AND archived=false', []);
@@ -123,20 +205,142 @@ export class PostgresAgentRunLifecycleFoundation {
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_wakeups (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,source_id,event_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_wakeups (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,' +
+          'event_id TEXT NOT NULL,principal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,observed_at BIGINT NOT NULL,' +
+          'UNIQUE(tenant_id,agent_id,source_id,event_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_run_wakeups_scope ON app_mixer_shared_run_wakeups(tenant_id,agent_id,run_id,id)', []);
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_wakeup_redactions (wakeup_id BIGINT NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,actor_id TEXT NOT NULL,redacted_at BIGINT NOT NULL,PRIMARY KEY(wakeup_id,tenant_id,agent_id),FOREIGN KEY(wakeup_id) REFERENCES app_mixer_shared_run_wakeups(id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_wakeup_redactions (wakeup_id BIGINT NOT NULL,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,actor_id TEXT NOT NULL,' +
+          'redacted_at BIGINT NOT NULL,PRIMARY KEY(wakeup_id,tenant_id,agent_id),' +
+          'FOREIGN KEY(wakeup_id) REFERENCES app_mixer_shared_run_wakeups(id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,' +
+          'run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_recovery_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq BIGINT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,previous_status TEXT NOT NULL,lease_until BIGINT NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_recovery_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,' +
+          'scope_seq BIGINT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,previous_status TEXT NOT NULL,lease_until BIGINT NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,' +
+          'observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query('ALTER TABLE app_mixer_shared_run_recovery_audit ADD COLUMN IF NOT EXISTS scope_seq BIGINT', []);
@@ -151,7 +355,47 @@ export class PostgresAgentRunLifecycleFoundation {
         if (trigger && trigger.tgenabled !== 'O') throw Error('Invalid recovery history trigger');
         if (trigger) await query('ALTER TABLE app_mixer_shared_run_recovery_audit DISABLE TRIGGER app_mixer_shared_run_recovery_audit_immutable', []);
         await query(
-          'WITH ordered AS (SELECT id,row_number() OVER (PARTITION BY tenant_id,agent_id ORDER BY id) AS seq FROM app_mixer_shared_run_recovery_audit) UPDATE app_mixer_shared_run_recovery_audit a SET scope_seq=ordered.seq FROM ordered WHERE a.id=ordered.id',
+          'WITH ordered AS (SELECT id,row_number() OVER (PARTITION BY tenant_id,' +
+            'agent_id ORDER BY id) AS seq FROM app_mixer_shared_run_recovery_audit) UPDATE app_mixer_shared_run_recovery_audit a SET scope_seq=ordered.seq FROM ordered WHERE ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'a.id=ordered.id',
           []
         );
         if (trigger) await query('ALTER TABLE app_mixer_shared_run_recovery_audit ENABLE TRIGGER app_mixer_shared_run_recovery_audit_immutable', []);
@@ -164,23 +408,185 @@ export class PostgresAgentRunLifecycleFoundation {
         []
       );
       await query(
-        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_run_recovery_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_run_recovery_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_run_recovery_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_run_recovery_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_run_recovery_audit FOR EACH STATEMENT EXECUTE FUNCTION ' +
+          'app_mixer_shared_run_recovery_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$$',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_terminal_times (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,completed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_terminal_times (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,completed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,' +
+          'agent_id,run_id),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_expiry_audit (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq BIGINT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,previous_status TEXT NOT NULL,deadline BIGINT NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,scope_seq),UNIQUE(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_expiry_audit (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,scope_seq BIGINT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,' +
+          'previous_status TEXT NOT NULL,deadline BIGINT NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,scope_seq),' +
+          'UNIQUE(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_reconciliations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,outcome TEXT NOT NULL,actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_reconciliations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,outcome TEXT NOT NULL,' +
+          'actor_id TEXT NOT NULL,reference TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,' +
+          'run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
         []
       );
       await query(
-        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_control_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,revision BIGINT NOT NULL,action TEXT NOT NULL,previous_status TEXT NOT NULL,status TEXT NOT NULL,actor_id TEXT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,run_id))',
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_run_control_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,' +
+          'revision BIGINT NOT NULL,action TEXT NOT NULL,previous_status TEXT NOT NULL,status TEXT NOT NULL,actor_id TEXT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,run_id,' +
+          'revision),FOREIGN KEY(tenant_id,agent_id,run_id) REFERENCES app_mixer_shared_runs(tenant_id,agent_id,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id))',
         []
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_run_control_audit_scope ON app_mixer_shared_run_control_audit(tenant_id,agent_id,run_id,id)', []);
@@ -198,7 +604,8 @@ export class PostgresAgentRunLifecycleFoundation {
         'app_mixer_shared_run_wakeup_redactions'
       ])
         await query(
-          `DO $$ BEGIN CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_run_control_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+          `DO $$ BEGIN CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_run_control_immutable(); EXCEPTION WHEN 
+            duplicate_object THEN NULL; END $$`,
           []
         );
     });
@@ -227,7 +634,47 @@ export class PostgresAgentRunLifecycleFoundation {
     if (!options || !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid run wakeup query');
     const rows = (
         await this.query(
-          'SELECT w.id,w.source_id,w.event_id,w.principal_id,w.event_type,w.payload,w.payload_hash,w.observed_at,d.wakeup_id AS redacted FROM app_mixer_shared_run_wakeups w LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3 AND w.id>$4 ORDER BY w.id LIMIT $5',
+          'SELECT w.id,w.source_id,w.event_id,w.principal_id,w.event_type,w.payload,w.payload_hash,w.observed_at,' +
+            'd.wakeup_id AS redacted FROM app_mixer_shared_run_wakeups w LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND ' +
+            'd.agent_id=w.agent_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3 AND w.id>$4 ORDER BY w.id LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '$5',
           [scope.tenantId, scope.agentId, runId, after, limit + 1]
         )
       ).rows,
@@ -312,7 +759,47 @@ export class PostgresAgentRunLifecycleFoundation {
     if (locked.rows.length !== 1) throw Error('Run not found');
     const prior = (
       await query(
-        'SELECT w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,d.wakeup_id AS redacted FROM app_mixer_shared_run_wakeups w LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.source_id=$3 AND w.event_id=$4',
+        'SELECT w.principal_id,w.event_type,w.payload,w.payload_hash,w.run_id,' +
+          'd.wakeup_id AS redacted FROM app_mixer_shared_run_wakeups w LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id ' +
+          'WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.source_id=$3 AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'w.event_id=$4',
         [safe.tenantId, safe.agentId, source, eventId]
       )
     ).rows[0];
@@ -341,7 +828,8 @@ export class PostgresAgentRunLifecycleFoundation {
     if (run.approvalWait) {
       const wait = (
         await query(
-          'SELECT w.action_id,a.status,a.expires_at,a.definition_version FROM app_mixer_shared_approval_waits w JOIN app_mixer_shared_approvals a USING(tenant_id,agent_id,run_id,action_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
+          'SELECT w.action_id,a.status,a.expires_at,a.definition_version FROM app_mixer_shared_approval_waits w JOIN app_mixer_shared_approvals a USING(tenant_id,agent_id,run_id,' +
+            'action_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
           [safe.tenantId, safe.agentId, runId]
         )
       ).rows[0];
@@ -353,7 +841,9 @@ export class PostgresAgentRunLifecycleFoundation {
       const wait = run.delegationWait,
         record = (
           await query(
-            'SELECT w.grant_id,w.grant_revision,w.principal_id,g.revision,g.revoked,g.expires_at,g.principal_id AS grant_principal FROM app_mixer_shared_delegation_waits w JOIN app_mixer_shared_delegations g USING(tenant_id,agent_id,run_id,grant_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
+            'SELECT w.grant_id,w.grant_revision,w.principal_id,g.revision,g.revoked,g.expires_at,' +
+              'g.principal_id AS grant_principal FROM app_mixer_shared_delegation_waits w JOIN app_mixer_shared_delegations g USING(tenant_id,agent_id,run_id,' +
+              'grant_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
             [safe.tenantId, safe.agentId, runId]
           )
         ).rows[0];
@@ -388,7 +878,47 @@ export class PostgresAgentRunLifecycleFoundation {
     const safe = { tenantId: scope.tenantId, agentId: scope.agentId },
       rows = (
         await this.query(
-          'SELECT * FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND archived=false AND status IN (\'queued\',\'paused\') AND deadline<=(extract(epoch from clock_timestamp())*1000)::bigint AND (deadline>$3 OR (deadline=$3 AND run_id COLLATE "C">$4)) ORDER BY deadline,run_id COLLATE "C" LIMIT $5',
+          "SELECT * FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND archived=false AND status IN ('queued'," +
+            '\'paused\') AND deadline<=(extract(epoch from clock_timestamp())*1000)::bigint AND (deadline>$3 OR (deadline=$3 AND run_id COLLATE "C">$4)) ORDER BY deadline,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'run_id COLLATE "C" LIMIT $5',
           [safe.tenantId, safe.agentId, after?.deadline ?? 0, after?.runId ?? '', limit + 1]
         )
       ).rows,
@@ -543,7 +1073,47 @@ export class PostgresAgentRunLifecycleFoundation {
     const safe = { tenantId: scope.tenantId, agentId: scope.agentId };
     const rows = (
       await this.query(
-        'SELECT scope_seq AS id,revision,previous_status,lease_until,actor_id,reference,observed_at FROM app_mixer_shared_run_recovery_audit WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND scope_seq>$4 ORDER BY scope_seq LIMIT $5',
+        'SELECT scope_seq AS id,revision,previous_status,lease_until,actor_id,reference,' +
+          'observed_at FROM app_mixer_shared_run_recovery_audit WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND scope_seq>$4 ORDER BY scope_seq LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$5',
         [safe.tenantId, safe.agentId, runId, after, limit + 1]
       )
     ).rows;
@@ -707,7 +1277,8 @@ export class PostgresAgentRunLifecycleFoundation {
         if (row?.pause_reason === 'approval') {
           const wait = (
             await query(
-              'SELECT w.action_id,a.status,a.expires_at,a.definition_version FROM app_mixer_shared_approval_waits w JOIN app_mixer_shared_approvals a USING(tenant_id,agent_id,run_id,action_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
+              'SELECT w.action_id,a.status,a.expires_at,a.definition_version FROM app_mixer_shared_approval_waits w JOIN app_mixer_shared_approvals a USING(tenant_id,agent_id,run_id,' +
+                'action_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
               [safe.tenantId, safe.agentId, runId]
             )
           ).rows[0];
@@ -719,7 +1290,9 @@ export class PostgresAgentRunLifecycleFoundation {
           const wait = run.delegationWait,
             record = (
               await query(
-                'SELECT w.grant_id,w.grant_revision,w.principal_id,g.revision,g.revoked,g.expires_at,g.principal_id AS grant_principal FROM app_mixer_shared_delegation_waits w JOIN app_mixer_shared_delegations g USING(tenant_id,agent_id,run_id,grant_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
+                'SELECT w.grant_id,w.grant_revision,w.principal_id,g.revision,g.revoked,g.expires_at,' +
+                  'g.principal_id AS grant_principal FROM app_mixer_shared_delegation_waits w JOIN app_mixer_shared_delegations g USING(tenant_id,agent_id,run_id,' +
+                  'grant_id) WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.run_id=$3',
                 [safe.tenantId, safe.agentId, runId]
               )
             ).rows[0];
@@ -749,7 +1322,47 @@ export class PostgresAgentRunLifecycleFoundation {
           time
         ]);
       const result = await query(
-        'UPDATE app_mixer_shared_runs SET revision=revision+1,status=$4,pause_reason=$5,approval_action_id=NULL,delegation_grant_id=NULL,delegation_revision=NULL,delegation_principal_id=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
+        'UPDATE app_mixer_shared_runs SET revision=revision+1,status=$4,pause_reason=$5,approval_action_id=NULL,delegation_grant_id=NULL,delegation_revision=NULL,' +
+          'delegation_principal_id=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '*',
         [safe.tenantId, safe.agentId, runId, status, reason]
       );
       if (result.rows.length !== 1) throw Error('Shared run unavailable');
@@ -902,7 +1515,47 @@ export class PostgresAgentRunLifecycleFoundation {
         status = pending ? 'uncertain' : outcome === 'stopped' ? (run.status === 'pause_requested' ? 'paused' : 'cancelled') : outcome,
         reason = status === 'paused' ? 'manual' : null;
       const result = await query(
-        'UPDATE app_mixer_shared_runs SET revision=revision+1,status=$4,pause_reason=$5,lease_owner=NULL,lease_token=NULL,lease_until=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
+        'UPDATE app_mixer_shared_runs SET revision=revision+1,status=$4,pause_reason=$5,lease_owner=NULL,lease_token=NULL,' +
+          'lease_until=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '*',
         [safe.tenantId, safe.agentId, runId, status, reason]
       );
       if (result.rows.length !== 1) throw Error('Shared run unavailable');
@@ -989,7 +1642,47 @@ export class PostgresAgentRunLifecycleFoundation {
         );
         if (!Number.isSafeInteger(last) || last < 0 || last >= Number.MAX_SAFE_INTEGER) throw Error('Lease recovery history exhausted');
         await query(
-          'INSERT INTO app_mixer_shared_run_recovery_audit (tenant_id,agent_id,scope_seq,run_id,revision,previous_status,lease_until,actor_id,reference,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+          'INSERT INTO app_mixer_shared_run_recovery_audit (tenant_id,agent_id,scope_seq,run_id,revision,previous_status,lease_until,actor_id,reference,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '$8,$9,$10)',
           [safe.tenantId, safe.agentId, last + 1, runId, revision + 1, run.status, run.leaseUntil, proof.principalId, proof.reference, time]
         );
       }

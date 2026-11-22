@@ -167,7 +167,8 @@ export class SqliteDataProvider implements DataProvider {
         PRIMARY KEY(tenant_id,application_id,collection_id,to_version)
       );
       CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_replace BEFORE INSERT ON business_schema_migration_audit
-        WHEN EXISTS (SELECT 1 FROM business_schema_migration_audit WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND collection_id=NEW.collection_id AND to_version=NEW.to_version)
+        WHEN EXISTS (SELECT 1 FROM business_schema_migration_audit WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND collection_id=NEW.collection_id AND 
+          to_version=NEW.to_version)
         BEGIN SELECT RAISE(ABORT, 'Migration audit is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_update BEFORE UPDATE ON business_schema_migration_audit BEGIN SELECT RAISE(ABORT, 'Migration audit is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS business_migration_audit_no_delete BEFORE DELETE ON business_schema_migration_audit BEGIN SELECT RAISE(ABORT, 'Migration audit is immutable'); END;
@@ -338,18 +339,56 @@ export class SqliteDataProvider implements DataProvider {
     if (!options || !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid rollback history');
     const rows = this.db
         .prepare(
-          'SELECT from_version,to_version,target_version,snapshot_digest,record_count FROM business_schema_rollbacks WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ?'
+          'SELECT from_version,to_version,target_version,snapshot_digest,' +
+            'record_count FROM business_schema_rollbacks WHERE tenant_id=? AND application_id=? AND collection_id=? AND to_version>? ORDER BY to_version LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '?'
         )
         .all(scope.tenantId, scope.applicationId, collection, after, limit + 1),
-      items = rows
-        .slice(0, limit)
-        .map(row => ({
-          fromVersion: Number(row.from_version),
-          toVersion: Number(row.to_version),
-          targetVersion: Number(row.target_version),
-          digest: String(row.snapshot_digest),
-          recordCount: Number(row.record_count)
-        }));
+      items = rows.slice(0, limit).map(row => ({
+        fromVersion: Number(row.from_version),
+        toVersion: Number(row.to_version),
+        targetVersion: Number(row.target_version),
+        digest: String(row.snapshot_digest),
+        recordCount: Number(row.record_count)
+      }));
     return { items, ...(rows.length > limit ? { nextAfter: items.at(-1)!.toVersion } : {}) };
   }
   /** Bounded actor-attributed history; the caller must separately authorize access. */
@@ -377,27 +416,65 @@ export class SqliteDataProvider implements DataProvider {
     )
       throw Error('Invalid migration audit');
     const sql =
-        'SELECT from_version,to_version,target_version,snapshot_digest,output_digest,plan_digest,record_count,actor_id,evidence,observed_at FROM business_schema_migration_audit WHERE tenant_id=? AND application_id=? AND collection_id=? AND ' +
+        'SELECT from_version,to_version,target_version,snapshot_digest,output_digest,plan_digest,record_count,actor_id,evidence,' +
+        'observed_at FROM business_schema_migration_audit WHERE tenant_id=? AND application_id=? AND collection_id=? AND ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
         (order === 'asc' ? 'to_version>?' : '(? IS NULL OR to_version<?)') +
         ' ORDER BY to_version ' +
         (order === 'asc' ? 'ASC' : 'DESC') +
         ' LIMIT ?',
       args = order === 'asc' ? [scope.tenantId, scope.applicationId, collection, after, limit + 1] : [scope.tenantId, scope.applicationId, collection, before ?? null, before ?? null, limit + 1];
     const rows = this.db.prepare(sql).all(...args),
-      items = rows
-        .slice(0, limit)
-        .map(row => ({
-          fromVersion: Number(row.from_version),
-          toVersion: Number(row.to_version),
-          targetVersion: row.target_version === null ? null : Number(row.target_version),
-          digest: String(row.snapshot_digest),
-          ...(row.output_digest === null ? {} : { outputDigest: String(row.output_digest) }),
-          ...(row.plan_digest === null ? {} : { planDigest: String(row.plan_digest) }),
-          recordCount: Number(row.record_count),
-          principalId: String(row.actor_id),
-          reference: String(row.evidence),
-          observedAt: Number(row.observed_at)
-        }));
+      items = rows.slice(0, limit).map(row => ({
+        fromVersion: Number(row.from_version),
+        toVersion: Number(row.to_version),
+        targetVersion: row.target_version === null ? null : Number(row.target_version),
+        digest: String(row.snapshot_digest),
+        ...(row.output_digest === null ? {} : { outputDigest: String(row.output_digest) }),
+        ...(row.plan_digest === null ? {} : { planDigest: String(row.plan_digest) }),
+        recordCount: Number(row.record_count),
+        principalId: String(row.actor_id),
+        reference: String(row.evidence),
+        observedAt: Number(row.observed_at)
+      }));
     return { items, ...(rows.length > limit ? (order === 'asc' ? { nextAfter: items.at(-1)!.toVersion } : { nextBefore: items.at(-1)!.toVersion }) : {}) };
   }
   migrateCollection(scope: DataScope, collection: string, migration: DataMigration): MigrationPreview {
@@ -464,7 +541,8 @@ export class SqliteDataProvider implements DataProvider {
       if (safeEvidence)
         this.db
           .prepare(
-            'INSERT INTO business_schema_migration_audit (tenant_id,application_id,collection_id,from_version,to_version,target_version,snapshot_digest,record_count,actor_id,evidence,observed_at,output_digest,plan_digest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
+            'INSERT INTO business_schema_migration_audit (tenant_id,application_id,collection_id,from_version,to_version,target_version,snapshot_digest,record_count,actor_id,evidence,observed_at,' +
+              'output_digest,plan_digest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
           )
           .run(
             scope.tenantId,
@@ -538,7 +616,13 @@ export class SqliteDataProvider implements DataProvider {
         upper = prefix === undefined ? undefined : prefixSuccessor(prefix);
       const rows = this.db
         .prepare(
-          `SELECT record_id,revision,length(CAST(value AS BLOB)) AS byte_size FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 ${prefix === undefined ? '' : 'AND record_id>=? AND substr(record_id,1,length(?))=?'} ${upper === undefined ? '' : 'AND record_id<?'} ${options.after === undefined ? '' : `AND record_id${comparison}?`} ORDER BY record_id ${sort} LIMIT ?`
+          `SELECT record_id,revision,length(CAST(value AS BLOB)) AS byte_size FROM business_records WHERE tenant_id=? AND application_id=? AND collection_id=? AND deleted=0 
+            ${prefix === undefined ? '' : 'AND record_id>=? AND substr(record_id,1,length(?))=?'} ${upper === undefined ? '' : 'AND record_id<?'} ${
+              options.after === undefined
+                ? ''
+                : `AND 
+              record_id${comparison}?`
+            } ORDER BY record_id ${sort} LIMIT ?`
         )
         .all(
           scope.tenantId,

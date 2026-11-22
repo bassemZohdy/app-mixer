@@ -63,9 +63,14 @@ export class SqliteAgentNoticeDelivery {
       this.db.exec('PRAGMA busy_timeout=5000');
       if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_notices'").get()) throw Error('Notice inbox unavailable');
       this.db.exec(`
-   CREATE TABLE IF NOT EXISTS agent_notice_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,notice_id INTEGER NOT NULL,destination_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','sending','uncertain','delivered')),attempts INTEGER NOT NULL,revision INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,notice_id,destination_id));
-   CREATE TABLE IF NOT EXISTS agent_notice_delivery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_id INTEGER NOT NULL,revision INTEGER NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,delivery_id,revision));
-   CREATE TRIGGER IF NOT EXISTS notice_delivery_events_no_replace BEFORE INSERT ON agent_notice_delivery_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_notice_delivery_events WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_notice_delivery_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND delivery_id=NEW.delivery_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Delivery events are immutable'); END;
+   CREATE TABLE IF NOT EXISTS agent_notice_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,notice_id INTEGER NOT NULL,destination_id TEXT NOT NULL,
+     idempotency_key TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','sending','uncertain','delivered')),attempts INTEGER NOT NULL,revision INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,
+       notice_id,destination_id));
+   CREATE TABLE IF NOT EXISTS agent_notice_delivery_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,delivery_id INTEGER NOT NULL,revision INTEGER NOT NULL,
+     action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,delivery_id,revision));
+   CREATE TRIGGER IF NOT EXISTS notice_delivery_events_no_replace BEFORE INSERT ON agent_notice_delivery_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_notice_delivery_events WHERE id=NEW.id)) 
+     OR EXISTS(SELECT 1 FROM agent_notice_delivery_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND delivery_id=NEW.delivery_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,
+       'Delivery events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS notice_delivery_events_no_update BEFORE UPDATE ON agent_notice_delivery_events BEGIN SELECT RAISE(ABORT,'Delivery events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS notice_delivery_events_no_delete BEFORE DELETE ON agent_notice_delivery_events BEGIN SELECT RAISE(ABORT,'Delivery events are immutable'); END;
   `);

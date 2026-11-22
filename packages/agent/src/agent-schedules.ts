@@ -251,10 +251,15 @@ export class SqliteAgentSchedules {
     this.db = openDatabase(path);
     try {
       this.db.exec(`PRAGMA busy_timeout=5000;
-  CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));
+  CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,
+    enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));
   CREATE INDEX IF NOT EXISTS agent_schedules_due ON agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id);
-  CREATE TABLE IF NOT EXISTS agent_schedule_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at INTEGER,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,schedule_id,revision));
-  CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_replace BEFORE INSERT ON agent_schedule_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_schedule_events WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_schedule_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND schedule_id=NEW.schedule_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
+  CREATE TABLE IF NOT EXISTS agent_schedule_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER 
+    NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at INTEGER,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,schedule_id,
+      revision));
+  CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_replace BEFORE INSERT ON agent_schedule_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_schedule_events WHERE id=NEW.id)) OR EXISTS(SELECT 
+    1 FROM agent_schedule_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND schedule_id=NEW.schedule_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Schedule history is 
+      immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_update BEFORE UPDATE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_delete BEFORE DELETE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;`);
       for (const table of ['agent_runs', 'agent_trigger_inbox'])
@@ -337,7 +342,8 @@ export class SqliteAgentSchedules {
       if (!Number.isSafeInteger(generation)) throw Error('Invalid schedule');
       this.db
         .prepare(
-          'INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config'
+          'INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,' +
+            'next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config'
         )
         .run(scope.tenantId, scope.agentId, scheduleId, revision, generation, nextAt, safe.enabled ? 1 : 0, JSON.stringify(safe));
       this.db

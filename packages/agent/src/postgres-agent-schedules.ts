@@ -64,12 +64,92 @@ export class PostgresAgentSchedules {
   }
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,next_at BIGINT NOT NULL,enabled BOOLEAN NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,' +
+        'next_at BIGINT NOT NULL,enabled BOOLEAN NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'schedule_id))',
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_schedules_due ON app_mixer_agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id)', []);
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_agent_schedule_events (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,revision BIGINT NOT NULL,generation BIGINT NOT NULL,next_at BIGINT NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at BIGINT,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,schedule_id,revision))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_schedule_events (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,' +
+        'revision BIGINT NOT NULL,generation BIGINT NOT NULL,next_at BIGINT NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at BIGINT,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'agent_id,schedule_id,revision))',
       []
     );
     await this.query(
@@ -79,7 +159,47 @@ export class PostgresAgentSchedules {
     // The history is append-only: refuse changes at the database, as the SQLite store does, so the audit trail cannot be edited by anything with write access.
     await this.query("CREATE OR REPLACE FUNCTION app_mixer_agent_schedule_events_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Schedule history is immutable'; END $$", []);
     await this.query(
-      'DO $$ BEGIN CREATE TRIGGER app_mixer_agent_schedule_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_agent_schedule_events FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_schedule_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_agent_schedule_events_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_agent_schedule_events FOR EACH STATEMENT EXECUTE FUNCTION ' +
+        'app_mixer_agent_schedule_events_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$$',
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_scheduled_runs_open ON app_mixer_agent_scheduled_runs(tenant_id,agent_id,status,scheduled_at,schedule_id)', []);
@@ -139,7 +259,47 @@ export class PostgresAgentSchedules {
             limit + 1
           ])
         : await this.query(
-            'SELECT * FROM app_mixer_agent_schedules WHERE tenant_id=$1 AND agent_id=$2 AND enabled AND next_at<=$3 AND (next_at>$4 OR (next_at=$4 AND schedule_id>$5)) ORDER BY next_at,schedule_id LIMIT $6',
+            'SELECT * FROM app_mixer_agent_schedules WHERE tenant_id=$1 AND agent_id=$2 AND enabled AND next_at<=$3 AND (next_at>$4 OR (next_at=$4 AND schedule_id>$5)) ORDER BY next_at,' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'schedule_id LIMIT $6',
             [tenantId, agentId, at, after.nextAt, after.scheduleId, limit + 1]
           )
     ).rows;

@@ -91,10 +91,13 @@ export class SqliteAgentActionJournal {
     attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,
     PRIMARY KEY(tenant_id,agent_id,run_id,action_id)
    );
-   CREATE TABLE IF NOT EXISTS agent_action_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
-   CREATE TABLE IF NOT EXISTS agent_action_reconciliations (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL,method TEXT NOT NULL,recorded_at INTEGER NOT NULL);
+   CREATE TABLE IF NOT EXISTS agent_action_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,
+     run_id,action_id));
+   CREATE TABLE IF NOT EXISTS agent_action_reconciliations (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,
+     principal_id TEXT NOT NULL,reference TEXT NOT NULL,outcome TEXT NOT NULL,method TEXT NOT NULL,recorded_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS agent_action_reconciliations_scope ON agent_action_reconciliations(tenant_id,agent_id,run_id,id);
-   CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_replace BEFORE INSERT ON agent_action_reconciliations WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_action_reconciliations WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;
+   CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_replace BEFORE INSERT ON agent_action_reconciliations WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_action_reconciliations WHERE 
+     id=NEW.id) BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_update BEFORE UPDATE ON agent_action_reconciliations BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS agent_action_reconciliations_no_delete BEFORE DELETE ON agent_action_reconciliations BEGIN SELECT RAISE(ABORT,'Action reconciliation records are immutable'); END;`);
     } catch (error) {
@@ -162,7 +165,47 @@ export class SqliteAgentActionJournal {
     const limit = options.limit ?? 50,
       rows = this.db
         .prepare(
-          'SELECT action_id,operation_id,idempotency_key,status,attempts,max_attempts FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id>? AND (? IS NULL OR status=?) ORDER BY action_id LIMIT ?'
+          'SELECT action_id,operation_id,idempotency_key,status,attempts,' +
+            'max_attempts FROM agent_action_journal WHERE tenant_id=? AND agent_id=? AND run_id=? AND action_id>? AND (? IS NULL OR status=?) ORDER BY action_id LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '?'
         )
         .all(...this.args(), options.after ?? '', options.status ?? null, options.status ?? null, limit + 1),
       hasMore = rows.length > limit,

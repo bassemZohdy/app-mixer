@@ -70,10 +70,15 @@ export class SqliteAgentApprovals {
     this.db = openDatabase(path);
     try {
       this.db.exec(`PRAGMA busy_timeout=5000;
-   CREATE TABLE IF NOT EXISTS agent_approvals (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,definition_version INTEGER NOT NULL,status TEXT NOT NULL,expires_at INTEGER NOT NULL,requested_by TEXT NOT NULL,decided_by TEXT,decided_at INTEGER,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
-   CREATE TABLE IF NOT EXISTS agent_approval_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,action_id));
-   CREATE TABLE IF NOT EXISTS agent_approval_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,event TEXT NOT NULL,actor_id TEXT NOT NULL,event_at INTEGER NOT NULL);
-   CREATE TRIGGER IF NOT EXISTS approval_events_no_replace BEFORE INSERT ON agent_approval_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_approval_events WHERE event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Approval events are immutable'); END;
+   CREATE TABLE IF NOT EXISTS agent_approvals (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,
+     input_hash TEXT NOT NULL,definition_version INTEGER NOT NULL,status TEXT NOT NULL,expires_at INTEGER NOT NULL,requested_by TEXT NOT NULL,decided_by TEXT,decided_at INTEGER,PRIMARY KEY(tenant_id,
+       agent_id,run_id,action_id));
+   CREATE TABLE IF NOT EXISTS agent_approval_authority (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,authority TEXT NOT NULL,PRIMARY KEY(tenant_id,
+     agent_id,run_id,action_id));
+   CREATE TABLE IF NOT EXISTS agent_approval_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,event TEXT NOT NULL,
+     actor_id TEXT NOT NULL,event_at INTEGER NOT NULL);
+   CREATE TRIGGER IF NOT EXISTS approval_events_no_replace BEFORE INSERT ON agent_approval_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_approval_events WHERE event_id=NEW.event_id) BEGIN 
+     SELECT RAISE(ABORT,'Approval events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS approval_events_no_update BEFORE UPDATE ON agent_approval_events BEGIN SELECT RAISE(ABORT,'Approval events are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS approval_events_no_delete BEFORE DELETE ON agent_approval_events BEGIN SELECT RAISE(ABORT,'Approval events are immutable'); END;`);
       ensureAgentNoticeSchema(this.db);

@@ -114,13 +114,18 @@ export class SqliteAgentMemory {
     revision INTEGER NOT NULL,value TEXT,provenance TEXT,expires_at INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id)
    );
-   CREATE TABLE IF NOT EXISTS agent_memory_erasure_requests (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,request_id TEXT NOT NULL,actor_id TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,request_id));
+   CREATE TABLE IF NOT EXISTS agent_memory_erasure_requests (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,request_id TEXT 
+     NOT NULL,actor_id TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,request_id));
    CREATE TRIGGER IF NOT EXISTS agent_memory_erase_no_update BEFORE UPDATE ON agent_memory_erasure_requests BEGIN SELECT RAISE(ABORT,'Memory erasure request is immutable'); END;
    CREATE TRIGGER IF NOT EXISTS agent_memory_erase_no_delete BEFORE DELETE ON agent_memory_erasure_requests BEGIN SELECT RAISE(ABORT,'Memory erasure request is immutable'); END;
-   CREATE TRIGGER IF NOT EXISTS agent_memory_erase_no_replace BEFORE INSERT ON agent_memory_erasure_requests WHEN EXISTS(SELECT 1 FROM agent_memory_erasure_requests WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND owner_kind=NEW.owner_kind AND owner_id=NEW.owner_id AND memory_kind=NEW.memory_kind AND request_id=NEW.request_id) BEGIN SELECT RAISE(ABORT,'Memory erasure request is immutable'); END;
-   CREATE TABLE IF NOT EXISTS agent_memory_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,memory_id TEXT,revision INTEGER,count INTEGER NOT NULL,observed_at INTEGER NOT NULL);
+   CREATE TRIGGER IF NOT EXISTS agent_memory_erase_no_replace BEFORE INSERT ON agent_memory_erasure_requests WHEN EXISTS(SELECT 1 FROM agent_memory_erasure_requests WHERE tenant_id=NEW.tenant_id AND 
+     agent_id=NEW.agent_id AND owner_kind=NEW.owner_kind AND owner_id=NEW.owner_id AND memory_kind=NEW.memory_kind AND request_id=NEW.request_id) BEGIN SELECT RAISE(ABORT,'Memory erasure request is 
+       immutable'); END;
+   CREATE TABLE IF NOT EXISTS agent_memory_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT 
+     NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,memory_id TEXT,revision INTEGER,count INTEGER NOT NULL,observed_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS agent_memory_audit_scope ON agent_memory_audit(tenant_id,agent_id,owner_kind,owner_id,memory_kind,id);
-   CREATE TRIGGER IF NOT EXISTS agent_memory_audit_no_replace BEFORE INSERT ON agent_memory_audit WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_memory_audit WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Memory audit is immutable'); END;
+   CREATE TRIGGER IF NOT EXISTS agent_memory_audit_no_replace BEFORE INSERT ON agent_memory_audit WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_memory_audit WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,
+     'Memory audit is immutable'); END;
    CREATE TRIGGER IF NOT EXISTS agent_memory_audit_no_update BEFORE UPDATE ON agent_memory_audit BEGIN SELECT RAISE(ABORT,'Memory audit is immutable'); END;
    CREATE TRIGGER IF NOT EXISTS agent_memory_audit_no_delete BEFORE DELETE ON agent_memory_audit BEGIN SELECT RAISE(ABORT,'Memory audit is immutable'); END;`);
     } catch (error) {
@@ -240,7 +245,47 @@ export class SqliteAgentMemory {
       if (!Number.isSafeInteger(revision) || revision < 1) throw Error('Invalid memory revision');
       this.db
         .prepare(
-          'INSERT INTO agent_memories VALUES (?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id) DO UPDATE SET revision=excluded.revision,value=excluded.value,provenance=excluded.provenance,expires_at=excluded.expires_at,deleted=0'
+          'INSERT INTO agent_memories VALUES (?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id) DO UPDATE SET revision=excluded.revision,' +
+            'value=excluded.value,provenance=excluded.provenance,expires_at=excluded.expires_at,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'deleted=0'
         )
         .run(...this.args(c.scope), memoryId, revision, serialized, provenance, expires);
       this.recordAudit(c.actor, c.scope, 'write', memoryId, revision, 1, now);
@@ -260,7 +305,47 @@ export class SqliteAgentMemory {
     try {
       const result = this.db
         .prepare(
-          'UPDATE agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND memory_id=? AND revision=? AND deleted=0 AND expires_at>?'
+          'UPDATE agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,' +
+            'deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND memory_id=? AND revision=? AND deleted=0 AND ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'expires_at>?'
         )
         .run(...this.args(c.scope), memoryId, expectedRevision, now);
       if (result.changes !== 1) throw Error('Memory revision conflict');
@@ -320,7 +405,47 @@ export class SqliteAgentMemory {
     try {
       const result = this.db
           .prepare(
-            'UPDATE agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0 AND expires_at<=?'
+            'UPDATE agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,' +
+              'deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0 AND ' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'expires_at<=?'
           )
           .run(...this.args(c.scope), now),
         count = Number(result.changes);
@@ -344,7 +469,47 @@ export class SqliteAgentMemory {
     try {
       const result = this.db
           .prepare(
-            'UPDATE agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0'
+            'UPDATE agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,' +
+              'deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND ' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'deleted=0'
           )
           .run(...this.args(c.scope)),
         count = Number(result.changes);
@@ -384,7 +549,47 @@ export class SqliteAgentMemory {
       if (!Number.isSafeInteger(total) || total < 0 || total >= 10000) throw Error('Memory erasure request limit reached');
       const result = this.db
           .prepare(
-            'UPDATE agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND deleted=0'
+            'UPDATE agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,' +
+              'deleted=1 WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND ' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'deleted=0'
           )
           .run(...args),
         count = Number(result.changes);
@@ -426,7 +631,47 @@ export class SqliteAgentMemory {
     await this.permit(c.actor, c.scope, 'audit');
     const rows = this.db
         .prepare(
-          'SELECT id,actor_id,action,memory_id,revision,count,observed_at FROM agent_memory_audit WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND id>? ORDER BY id LIMIT ?'
+          'SELECT id,actor_id,action,memory_id,revision,count,observed_at FROM agent_memory_audit WHERE tenant_id=? AND agent_id=? AND owner_kind=? AND owner_id=? AND memory_kind=? AND id>? ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'ORDER BY id LIMIT ?'
         )
         .all(...this.args(c.scope), after, limit + 1),
       items: AgentMemoryAuditEvent[] = [];

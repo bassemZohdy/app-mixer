@@ -40,7 +40,8 @@ export class SqliteRemoteRollout {
     try {
       this.db
         .exec(`PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS remote_rollouts (id TEXT PRIMARY KEY, phase TEXT NOT NULL CHECK(phase IN ('idle','running','importing','uncertain')), token TEXT, source_version INTEGER, expected_version INTEGER);
-   CREATE TABLE IF NOT EXISTS remote_rollout_recovery_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT NULL,source_version INTEGER,expected_version INTEGER,observed_at INTEGER NOT NULL);
+   CREATE TABLE IF NOT EXISTS remote_rollout_recovery_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT NULL,
+     source_version INTEGER,expected_version INTEGER,observed_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS remote_rollout_recovery_scope ON remote_rollout_recovery_events(rollout_id,event_id);
    CREATE TRIGGER IF NOT EXISTS remote_rollout_recovery_no_update BEFORE UPDATE ON remote_rollout_recovery_events BEGIN SELECT RAISE(ABORT,'Recovery evidence is immutable'); END;
    CREATE TRIGGER IF NOT EXISTS remote_rollout_recovery_no_delete BEFORE DELETE ON remote_rollout_recovery_events BEGIN SELECT RAISE(ABORT,'Recovery evidence is immutable'); END;

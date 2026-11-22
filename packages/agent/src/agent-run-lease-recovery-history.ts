@@ -119,7 +119,47 @@ export class SqliteAgentLeaseRecoveryHistory {
     if ((await this.permit(who, 'list', null, signal)) !== true) throw Error('Lease recovery history access denied');
     const rows = this.db
         .prepare(
-          'SELECT scope_seq AS id,run_id,revision,previous_status,lease_until,actor_id,reference,observed_at FROM agent_run_lease_recovery_audit WHERE tenant_id=? AND agent_id=? AND scope_seq>? ORDER BY scope_seq LIMIT ?'
+          'SELECT scope_seq AS id,run_id,revision,previous_status,lease_until,actor_id,reference,' +
+            'observed_at FROM agent_run_lease_recovery_audit WHERE tenant_id=? AND agent_id=? AND scope_seq>? ORDER BY scope_seq LIMIT ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '?'
         )
         .all(this.scope.tenantId, this.scope.agentId, after, limit + 1),
       items: AgentRunLeaseRecoveryEvent[] = [];

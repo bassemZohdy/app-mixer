@@ -20,7 +20,8 @@ export class PostgresOfflineSlots {
   }
   async initialize(): Promise<void> {
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_offline_slots (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,slot_id TEXT NOT NULL,request_key TEXT NOT NULL,PRIMARY KEY(tenant_id,application_id,principal_id,slot_id))',
+      'CREATE TABLE IF NOT EXISTS app_mixer_offline_slots (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,slot_id TEXT NOT NULL,request_key TEXT NOT NULL,' +
+        'PRIMARY KEY(tenant_id,application_id,principal_id,slot_id))',
       []
     );
   }
@@ -39,7 +40,47 @@ export class PostgresOfflineSlots {
     const args = this.args(scope, principalId, slot),
       candidate = randomUUID(),
       result = await this.query(
-        'INSERT INTO app_mixer_offline_slots (tenant_id,application_id,principal_id,slot_id,request_key) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,application_id,principal_id,slot_id) DO UPDATE SET request_key=app_mixer_offline_slots.request_key RETURNING request_key',
+        'INSERT INTO app_mixer_offline_slots (tenant_id,application_id,principal_id,slot_id,request_key) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,application_id,principal_id,' +
+          'slot_id) DO UPDATE SET request_key=app_mixer_offline_slots.request_key RETURNING ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'request_key',
         [...args, candidate]
       );
     return this.one(result);
@@ -70,7 +111,47 @@ export class PostgresOfflineSlots {
     const digest = offlineRequestDigest(payload),
       candidate = randomUUID();
     const result = await this.query(
-      'WITH current_slot AS (SELECT request_key FROM app_mixer_offline_slots WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND slot_id=$4 AND request_key=$5 FOR UPDATE) INSERT INTO app_mixer_offline_request_keys (tenant_id,application_id,principal_id,request_key,operation_id,payload_digest,idempotency_key) SELECT $1,$2,$3,request_key,$6,$7,$8 FROM current_slot WHERE true ON CONFLICT (tenant_id,application_id,principal_id,request_key) DO UPDATE SET idempotency_key=app_mixer_offline_request_keys.idempotency_key WHERE app_mixer_offline_request_keys.operation_id=EXCLUDED.operation_id AND app_mixer_offline_request_keys.payload_digest=EXCLUDED.payload_digest RETURNING request_key,idempotency_key',
+      'WITH current_slot AS (SELECT request_key FROM app_mixer_offline_slots WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND slot_id=$4 AND request_key=$5 FOR UPDATE) INSERT ' +
+        'INTO app_mixer_offline_request_keys (tenant_id,application_id,principal_id,request_key,operation_id,payload_digest,idempotency_key) SELECT $1,$2,$3,request_key,$6,$7,' +
+        '$8 FROM current_slot WHERE true ON CONFLICT (tenant_id,application_id,principal_id,' +
+        'request_key) DO UPDATE SET idempotency_key=app_mixer_offline_request_keys.idempotency_key WHERE app_mixer_offline_request_keys.operation_id=EXCLUDED.operation_id AND ' +
+        'app_mixer_offline_request_keys.payload_digest=EXCLUDED.payload_digest RETURNING request_key,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'idempotency_key',
       [...args, expectedRequestKey, operationId, digest, candidate]
     );
     this.one(result, expectedRequestKey);
@@ -96,7 +177,47 @@ export class PostgresOfflineSlots {
       idempotencyKey = pair.idempotencyKey;
     if (!(await this.keys.verify(safeScope, principalId, operationId, safePayload, idempotencyKey))) throw new AppMixerError('denied', 'Shared offline key forbidden');
     const result = await this.query(
-      'UPDATE app_mixer_offline_slots SET request_key=$6 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND slot_id=$4 AND request_key=$5 AND EXISTS (SELECT 1 FROM app_mixer_offline_request_keys WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND request_key=$6 AND idempotency_key=$7 AND operation_id=$8) RETURNING request_key',
+      'UPDATE app_mixer_offline_slots SET request_key=$6 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND slot_id=$4 AND request_key=$5 AND EXISTS (SELECT 1 FROM ' +
+        'app_mixer_offline_request_keys WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND request_key=$6 AND idempotency_key=$7 AND operation_id=$8) RETURNING ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'request_key',
       [...args, expectedRequestKey, requestKey, idempotencyKey, operationId]
     );
     return this.one(result, requestKey);
