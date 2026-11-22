@@ -197,7 +197,47 @@ export class PostgresAgentRunLifecycleFoundation {
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_runs_queued ON app_mixer_shared_runs(tenant_id,agent_id,(run_id COLLATE "C")) WHERE status=\'queued\' AND archived=false', []);
       await query(
-        "CREATE INDEX IF NOT EXISTS app_mixer_shared_runs_expired_lease ON app_mixer_shared_runs(tenant_id,agent_id,lease_until,(run_id COLLATE \"C\")) WHERE archived=false AND status IN ('running','pause_requested','cancel_requested')",
+        'CREATE INDEX IF NOT EXISTS app_mixer_shared_runs_expired_lease ON app_mixer_shared_runs(tenant_id,agent_id,lease_until,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "(run_id COLLATE \"C\")) WHERE archived=false AND status IN ('running','pause_requested','cancel_requested')",
         []
       );
       await query(
@@ -859,7 +899,47 @@ export class PostgresAgentRunLifecycleFoundation {
       [safe.tenantId, safe.agentId, source, eventId, principal, eventType, payload, hash, runId, time]
     );
     const result = await query(
-      "UPDATE app_mixer_shared_runs SET revision=revision+1,status='queued',pause_reason=NULL,approval_action_id=NULL,delegation_grant_id=NULL,delegation_revision=NULL,delegation_principal_id=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *",
+      "UPDATE app_mixer_shared_runs SET revision=revision+1,status='queued',pause_reason=NULL,approval_action_id=NULL,delegation_grant_id=NULL,delegation_revision=NULL," +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'delegation_principal_id=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
       [safe.tenantId, safe.agentId, runId]
     );
     if (result.rows.length !== 1) throw Error('Shared run unavailable');
@@ -968,7 +1048,47 @@ export class PostgresAgentRunLifecycleFoundation {
       await query('DELETE FROM app_mixer_shared_approval_waits WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [safe.tenantId, safe.agentId, runId]);
       await query('DELETE FROM app_mixer_shared_delegation_waits WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [safe.tenantId, safe.agentId, runId]);
       const result = await query(
-        "UPDATE app_mixer_shared_runs SET revision=revision+1,status='failed',pause_reason=NULL,approval_action_id=NULL,delegation_grant_id=NULL,delegation_revision=NULL,delegation_principal_id=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *",
+        "UPDATE app_mixer_shared_runs SET revision=revision+1,status='failed',pause_reason=NULL,approval_action_id=NULL,delegation_grant_id=NULL,delegation_revision=NULL," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'delegation_principal_id=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
         [safe.tenantId, safe.agentId, runId]
       );
       if (result.rows.length !== 1) throw Error('Shared run unavailable');
@@ -1013,7 +1133,47 @@ export class PostgresAgentRunLifecycleFoundation {
     const safe = { tenantId: scope.tenantId, agentId: scope.agentId },
       rows = (
         await this.query(
-          "SELECT run_id,revision,status,lease_until FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND archived=false AND status IN ('running','pause_requested','cancel_requested') AND lease_until<=(extract(epoch from clock_timestamp())*1000)::bigint AND (lease_until>$3 OR (lease_until=$3 AND run_id COLLATE \"C\">$4)) ORDER BY lease_until,run_id COLLATE \"C\" LIMIT $5",
+          "SELECT run_id,revision,status,lease_until FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND archived=false AND status IN ('running','pause_requested'," +
+            '\'cancel_requested\') AND lease_until<=(extract(epoch from clock_timestamp())*1000)::bigint AND (lease_until>$3 OR (lease_until=$3 AND run_id COLLATE "C">$4)) ORDER BY lease_until,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'run_id COLLATE "C" LIMIT $5',
           [safe.tenantId, safe.agentId, after?.leaseUntil ?? 0, after?.runId ?? '', limit + 1]
         )
       ).rows,
@@ -1025,7 +1185,47 @@ export class PostgresAgentRunLifecycleFoundation {
     scopeKey(scope, runId);
     const rows = (
       await this.query(
-        "SELECT run_id,revision,status,lease_until FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND archived=false AND status IN ('running','pause_requested','cancel_requested') AND lease_until<=(extract(epoch from clock_timestamp())*1000)::bigint",
+        "SELECT run_id,revision,status,lease_until FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND archived=false AND status IN ('running','pause_requested'," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "'cancel_requested') AND lease_until<=(extract(epoch from clock_timestamp())*1000)::bigint",
         [scope.tenantId, scope.agentId, runId]
       )
     ).rows;
@@ -1245,7 +1445,47 @@ export class PostgresAgentRunLifecycleFoundation {
       }
       const token = randomUUID(),
         result = await query(
-          "UPDATE app_mixer_shared_runs SET revision=revision+1,status='running',attempts=attempts+1,lease_owner=$4,lease_token=$5,lease_until=$6 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *",
+          "UPDATE app_mixer_shared_runs SET revision=revision+1,status='running',attempts=attempts+1,lease_owner=$4,lease_token=$5," +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'lease_until=$6 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
           [safe.tenantId, safe.agentId, runId, workerId, token, Math.min(time + leaseMs, run.deadline)]
         );
       if (result.rows.length !== 1) throw Error('Shared run unavailable');
@@ -1438,7 +1678,47 @@ export class PostgresAgentRunLifecycleFoundation {
       if (await this.unresolved(query, safe, runId)) throw new AgentError('conflict', 'Run requires reconciliation');
       await query('INSERT INTO app_mixer_shared_approval_waits VALUES ($1,$2,$3,$4)', [safe.tenantId, safe.agentId, runId, actionId]);
       const result = await query(
-        "UPDATE app_mixer_shared_runs SET revision=revision+1,status='paused',pause_reason='approval',approval_action_id=$4,lease_owner=NULL,lease_token=NULL,lease_until=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *",
+        "UPDATE app_mixer_shared_runs SET revision=revision+1,status='paused',pause_reason='approval',approval_action_id=$4,lease_owner=NULL,lease_token=NULL," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'lease_until=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
         [safe.tenantId, safe.agentId, runId, actionId]
       );
       if (result.rows.length !== 1) throw Error('Shared run unavailable');
@@ -1483,7 +1763,47 @@ export class PostgresAgentRunLifecycleFoundation {
         time
       ]);
       const result = await query(
-        "UPDATE app_mixer_shared_runs SET revision=revision+1,status='paused',pause_reason='delegation',delegation_grant_id=$4,delegation_revision=$5,delegation_principal_id=$6,lease_owner=NULL,lease_token=NULL,lease_until=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *",
+        "UPDATE app_mixer_shared_runs SET revision=revision+1,status='paused',pause_reason='delegation',delegation_grant_id=$4,delegation_revision=$5,delegation_principal_id=$6,lease_owner=NULL," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'lease_token=NULL,lease_until=NULL WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 RETURNING *',
         [safe.tenantId, safe.agentId, runId, grantId, grantRevision, grant.principal_id]
       );
       if (result.rows.length !== 1) throw Error('Shared run unavailable');

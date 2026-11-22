@@ -44,7 +44,47 @@ export class PostgresRemoteRollout {
   }
   async initialize(): Promise<void> {
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_remote_rollouts (id TEXT PRIMARY KEY,phase TEXT NOT NULL CHECK (phase IN ('idle','running','importing','uncertain')),token TEXT,source_version BIGINT,expected_version BIGINT)",
+      "CREATE TABLE IF NOT EXISTS app_mixer_remote_rollouts (id TEXT PRIMARY KEY,phase TEXT NOT NULL CHECK (phase IN ('idle','running','importing','uncertain')),token TEXT,source_version BIGINT," +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'expected_version BIGINT)',
       []
     );
     await this.query(
@@ -178,7 +218,47 @@ export class PostgresRemoteRollout {
       importing = false;
     try {
       const result = await this.query(
-        "UPDATE app_mixer_remote_rollouts SET phase='running',token=$2,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS NULL RETURNING id",
+        "UPDATE app_mixer_remote_rollouts SET phase='running',token=$2,source_version=NULL," +
+          "expected_version=NULL WHERE id=$1 AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS NULL RETURNING " +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'id',
         [this.key, token]
       );
       if (!Array.isArray(result.rows) || result.rows.length !== 1) throw Error('Remote rollout requires recovery');
@@ -255,7 +335,47 @@ export class PostgresRemoteRollout {
       return;
     }
     await this.change(
-      "WITH changed AS (UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL,expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id) INSERT INTO app_mixer_remote_rollout_recovery_events(rollout_id,principal_id,reference,phase,source_version,expected_version,observed_at) SELECT id,$4,$5,$2,$6,$7,$8 FROM changed RETURNING event_id",
+      "WITH changed AS (UPDATE app_mixer_remote_rollouts SET phase='idle',token=NULL,source_version=NULL," +
+        'expected_version=NULL WHERE id=$1 AND phase=$2 AND token=$3 RETURNING id) INSERT INTO app_mixer_remote_rollout_recovery_events(rollout_id,principal_id,reference,phase,source_version,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'expected_version,observed_at) SELECT id,$4,$5,$2,$6,$7,$8 FROM changed RETURNING event_id',
       [this.key, state.phase, state.token, recorded.principalId, recorded.reference, state.sourceVersion, state.expectedVersion, recorded.observedAt]
     );
   }

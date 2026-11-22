@@ -179,7 +179,47 @@ export class SqliteAgentRunMetrics {
     if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid agent metrics clock');
     const rows = this.db
         .prepare(
-          "SELECT CASE WHEN status IN ('queued','paused') THEN status ELSE 'lease' END AS kind, COUNT(*) AS count, MIN(CASE WHEN status IN ('queued','paused') THEN deadline ELSE lease_until END) AS earliest, SUM(CASE WHEN status IN ('running','pause_requested','cancel_requested') AND lease_until IS NULL THEN 1 ELSE 0 END) AS invalid FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND ((status IN ('queued','paused') AND deadline<=?) OR (status IN ('running','pause_requested','cancel_requested') AND (lease_until<=? OR lease_until IS NULL))) GROUP BY kind"
+          "SELECT CASE WHEN status IN ('queued','paused') THEN status ELSE 'lease' END AS kind, COUNT(*) AS count, MIN(CASE WHEN status IN ('queued'," +
+            "'paused') THEN deadline ELSE lease_until END) AS earliest, SUM(CASE WHEN status IN ('running','pause_requested'," +
+            "'cancel_requested') AND lease_until IS NULL THEN 1 ELSE 0 END) AS invalid FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND ((status IN ('queued'," +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "'paused') AND deadline<=?) OR (status IN ('running','pause_requested','cancel_requested') AND (lease_until<=? OR lease_until IS NULL))) GROUP BY kind"
         )
         .all(this.scope.tenantId, this.scope.agentId, now, now),
       metrics: AgentRunOperationalMetric[] = [
@@ -199,7 +239,47 @@ export class SqliteAgentRunMetrics {
   private readActionBacklog(): AgentActionBacklogMetric[] {
     const rows = this.db
         .prepare(
-          "SELECT a.status AS action_status,r.status AS run_status,COUNT(*) AS count FROM agent_action_journal a LEFT JOIN agent_runs r ON r.tenant_id=a.tenant_id AND r.agent_id=a.agent_id AND r.run_id=a.run_id WHERE a.tenant_id=? AND a.agent_id=? AND a.status IN ('dispatching','uncertain') GROUP BY a.status,r.status"
+          'SELECT a.status AS action_status,r.status AS run_status,COUNT(*) AS count FROM agent_action_journal a LEFT JOIN agent_runs r ON r.tenant_id=a.tenant_id AND r.agent_id=a.agent_id AND ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "r.run_id=a.run_id WHERE a.tenant_id=? AND a.agent_id=? AND a.status IN ('dispatching','uncertain') GROUP BY a.status,r.status"
         )
         .all(this.scope.tenantId, this.scope.agentId),
       counts = new Map<string, number>();
@@ -219,7 +299,47 @@ export class SqliteAgentRunMetrics {
   private readBudgetBacklog(): AgentBudgetBacklogMetric[] {
     const rows = this.db
         .prepare(
-          "SELECT r.status AS run_status,COUNT(*) AS count FROM agent_token_calls c LEFT JOIN agent_runs r ON r.tenant_id=c.tenant_id AND r.agent_id=c.agent_id AND r.run_id=c.run_id WHERE c.tenant_id=? AND c.agent_id=? AND c.status='reserved' GROUP BY r.status"
+          'SELECT r.status AS run_status,COUNT(*) AS count FROM agent_token_calls c LEFT JOIN agent_runs r ON r.tenant_id=c.tenant_id AND r.agent_id=c.agent_id AND r.run_id=c.run_id WHERE ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "c.tenant_id=? AND c.agent_id=? AND c.status='reserved' GROUP BY r.status"
         )
         .all(this.scope.tenantId, this.scope.agentId),
       counts = new Map<string, number>();
@@ -270,7 +390,47 @@ export class SqliteAgentRunMetrics {
   private readApprovals(now: number): AgentApprovalMetric[] {
     const rows = this.db
         .prepare(
-          "SELECT CASE WHEN status IN ('pending','approved') AND expires_at<=? THEN 'expired' ELSE status END AS state,COUNT(*) AS count FROM agent_approvals WHERE tenant_id=? AND agent_id=? GROUP BY state"
+          "SELECT CASE WHEN status IN ('pending','approved') AND expires_at<=? THEN 'expired' ELSE status END AS state," +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'COUNT(*) AS count FROM agent_approvals WHERE tenant_id=? AND agent_id=? GROUP BY state'
         )
         .all(now, this.scope.tenantId, this.scope.agentId),
       counts = new Map<string, number>();
@@ -294,7 +454,47 @@ export class SqliteAgentRunMetrics {
   private readTokens(): AgentTokenMetric {
     const row = this.db
       .prepare(
-        "SELECT COALESCE(SUM(status='reserved'),0) AS reserved_calls,COALESCE(SUM(status='settled'),0) AS settled_calls,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0) AS reserved_tokens,COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0) AS committed_tokens,COALESCE(SUM(status NOT IN ('reserved','settled')),0) AS invalid FROM agent_token_calls WHERE tenant_id=? AND agent_id=?"
+        "SELECT COALESCE(SUM(status='reserved'),0) AS reserved_calls,COALESCE(SUM(status='settled'),0) AS settled_calls,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END)," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "0) AS reserved_tokens,COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0) AS committed_tokens,COALESCE(SUM(status NOT IN ('reserved','settled'))," +
+          '0) AS invalid FROM agent_token_calls WHERE tenant_id=? AND agent_id=?'
       )
       .get(this.scope.tenantId, this.scope.agentId);
     const values = [row?.reserved_calls, row?.settled_calls, row?.reserved_tokens, row?.committed_tokens].map(Number);
@@ -304,7 +504,47 @@ export class SqliteAgentRunMetrics {
   private readMemories(now: number): AgentMemoryMetric[] {
     const rows = this.db
         .prepare(
-          "SELECT CASE WHEN deleted=1 THEN 'deleted' WHEN expires_at<=? THEN 'expired' ELSE 'live' END AS state,COUNT(*) AS count,SUM(deleted NOT IN (0,1)) AS invalid FROM agent_memories WHERE tenant_id=? AND agent_id=? GROUP BY state"
+          "SELECT CASE WHEN deleted=1 THEN 'deleted' WHEN expires_at<=? THEN 'expired' ELSE 'live' END AS state,COUNT(*) AS count,SUM(deleted NOT IN (0," +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '1)) AS invalid FROM agent_memories WHERE tenant_id=? AND agent_id=? GROUP BY state'
         )
         .all(now, this.scope.tenantId, this.scope.agentId),
       counts = new Map<string, number>();
@@ -318,7 +558,47 @@ export class SqliteAgentRunMetrics {
   private readCosts(): AgentCostMetric[] {
     const rows = this.db
       .prepare(
-        "SELECT b.currency AS currency,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used ELSE 0 END),0) AS committed,COALESCE(SUM(c.status NOT IN ('reserved','settled')),0) AS invalid FROM agent_cost_budgets b JOIN agent_cost_calls c ON c.tenant_id=b.tenant_id AND c.agent_id=b.agent_id AND c.run_id=b.run_id WHERE b.tenant_id=? AND b.agent_id=? GROUP BY b.currency ORDER BY b.currency LIMIT 9"
+        "SELECT b.currency AS currency,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used ELSE 0 END)," +
+          "0) AS committed,COALESCE(SUM(c.status NOT IN ('reserved','settled'))," +
+          '0) AS invalid FROM agent_cost_budgets b JOIN agent_cost_calls c ON c.tenant_id=b.tenant_id AND c.agent_id=b.agent_id AND c.run_id=b.run_id WHERE b.tenant_id=? AND b.agent_id=? GROUP BY ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'b.currency ORDER BY b.currency LIMIT 9'
       )
       .all(this.scope.tenantId, this.scope.agentId);
     if (rows.length > 8) throw Error('Invalid agent metrics data');

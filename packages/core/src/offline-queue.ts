@@ -238,7 +238,47 @@ export class SqliteOfflineQueue {
       if (expected && !isDeepStrictEqual(this.get(scope, principalId, id), expected)) throw Error('Stale offline operation');
       const result = this.db
         .prepare(
-          "INSERT INTO offline_archived_operations SELECT tenant_id,application_id,principal_id,id,operation_id,request_key,idempotency_key,status,?,?,? FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')"
+          'INSERT INTO offline_archived_operations SELECT tenant_id,application_id,principal_id,id,operation_id,request_key,idempotency_key,status,?,?,' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "? FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND id=? AND status IN ('succeeded','discarded')"
         )
         .run(evidence.operatorId, evidence.reference, recordedAt, scope.tenantId, scope.applicationId, principalId, id);
       if (result.changes !== 1) throw new AppMixerError('conflict', 'Invalid offline operation state');
@@ -318,7 +358,47 @@ export class SqliteOfflineQueue {
     const limit = options.limit ?? 50,
       sql =
         kind === 'candidates'
-          ? "SELECT o.id,o.status,t.completed_at FROM offline_operations o LEFT JOIN offline_terminal_times t ON t.tenant_id=o.tenant_id AND t.application_id=o.application_id AND t.principal_id=o.principal_id AND t.id=o.id WHERE o.tenant_id=? AND o.application_id=? AND o.principal_id=? AND o.operation_id=? AND o.status IN ('succeeded','discarded') AND o.id>? AND (? IS NULL OR t.completed_at<?) ORDER BY o.id LIMIT ?"
+          ? 'SELECT o.id,o.status,t.completed_at FROM offline_operations o LEFT JOIN offline_terminal_times t ON t.tenant_id=o.tenant_id AND t.application_id=o.application_id AND ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "t.principal_id=o.principal_id AND t.id=o.id WHERE o.tenant_id=? AND o.application_id=? AND o.principal_id=? AND o.operation_id=? AND o.status IN ('succeeded'," +
+            "'discarded') AND o.id>? AND (? IS NULL OR t.completed_at<?) ORDER BY o.id LIMIT ?"
           : 'SELECT id,status,recorded_at FROM offline_archived_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND id>? ORDER BY id LIMIT ?';
     const parameters = [scope.tenantId, scope.applicationId, principalId, operationId, options.after ?? ''],
       rows =
@@ -361,7 +441,47 @@ export class SqliteOfflineQueue {
     const limit = options.limit ?? 50,
       rows = this.db
         .prepare(
-          "SELECT id,status,attempts FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND status IN ('running','uncertain') AND id>? ORDER BY id LIMIT ?"
+          "SELECT id,status,attempts FROM offline_operations WHERE tenant_id=? AND application_id=? AND principal_id=? AND operation_id=? AND status IN ('running'," +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "'uncertain') AND id>? ORDER BY id LIMIT ?"
         )
         .all(scope.tenantId, scope.applicationId, principalId, operationId, options.after ?? '', limit + 1);
     const checked: OfflineRecoveryCandidate[] = rows.map(row => {

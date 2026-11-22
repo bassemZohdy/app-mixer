@@ -89,11 +89,91 @@ export class PostgresAgentSharedCost {
       []
     );
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_calls (tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved_micros BIGINT NOT NULL CHECK(reserved_micros>0),used_micros BIGINT,status TEXT NOT NULL CHECK(status IN ('reserved','settled')),created_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,budget_id,agent_id,run_id,call_id),UNIQUE(tenant_id,agent_id,run_id,call_id),CHECK((status='reserved' AND used_micros IS NULL) OR (status='settled' AND used_micros IS NOT NULL AND used_micros>=0)))",
+      'CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_calls (tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,' +
+        "reserved_micros BIGINT NOT NULL CHECK(reserved_micros>0),used_micros BIGINT,status TEXT NOT NULL CHECK(status IN ('reserved','settled')),created_at BIGINT NOT NULL,PRIMARY KEY(tenant_id," +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'budget_id,agent_id,run_id,call_id),UNIQUE(tenant_id,agent_id,run_id,call_id),' +
+        "CHECK((status='reserved' AND used_micros IS NULL) OR (status='settled' AND used_micros IS NOT NULL AND used_micros>=0)))",
       []
     );
     await this.query(
-      'CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_reconciliations (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_micros BIGINT NOT NULL,recorded_at BIGINT NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_reconciliations (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,' +
+        'call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_micros BIGINT NOT NULL,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'recorded_at BIGINT NOT NULL)',
       []
     );
     await this.query("CREATE INDEX IF NOT EXISTS app_mixer_shared_cost_outstanding ON app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id) WHERE status='reserved'", []);
@@ -103,7 +183,47 @@ export class PostgresAgentSharedCost {
       []
     );
     await this.query(
-      'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_cost_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_cost_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_cost_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_cost_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_cost_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION ' +
+        'app_mixer_shared_cost_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$$',
       []
     );
   }
@@ -210,7 +330,47 @@ export class PostgresAgentSharedCost {
         if (existing.rows.length) throw Error('Shared cost call already exists');
         const totals = (
           await query(
-            "SELECT COUNT(*) AS calls,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved_micros ELSE used_micros END),0) AS total,COUNT(*) FILTER (WHERE status='settled' AND used_micros>reserved_micros) AS overruns FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2",
+            "SELECT COUNT(*) AS calls,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved_micros ELSE used_micros END),0) AS total," +
+              "COUNT(*) FILTER (WHERE status='settled' AND used_micros>reserved_micros) AS overruns FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND " +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'budget_id=$2',
             [this.scope.tenantId, this.scope.budgetId]
           )
         ).rows[0];
@@ -256,7 +416,47 @@ export class PostgresAgentSharedCost {
       await this.permit(who, action, selected);
       const rows = (
         await query(
-          "UPDATE app_mixer_shared_cost_calls SET status='settled',used_micros=$6 WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5 AND status='reserved' RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at",
+          "UPDATE app_mixer_shared_cost_calls SET status='settled',used_micros=$6 WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5 AND status='reserved' RETURNING " +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at',
           [...this.values(selected), usedMicros]
         )
       ).rows;
@@ -276,7 +476,47 @@ export class PostgresAgentSharedCost {
     await this.checkReadConfig();
     const rows = (
       await this.query(
-        'SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5',
+        'SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,' +
+          'created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'call_id=$5',
         this.values(selected)
       )
     ).rows;
@@ -290,7 +530,47 @@ export class PostgresAgentSharedCost {
     await this.permit(who, 'read');
     const rows = (
       await this.query(
-        "SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed FROM app_mixer_shared_cost_budgets b LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=b.tenant_id AND c.budget_id=b.budget_id WHERE b.tenant_id=$1 AND b.budget_id=$2 GROUP BY b.currency,b.max_micros",
+        "SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved," +
+          "COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END)," +
+          '0) AS committed FROM app_mixer_shared_cost_budgets b LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=b.tenant_id AND c.budget_id=b.budget_id WHERE b.tenant_id=$1 AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'b.budget_id=$2 GROUP BY b.currency,b.max_micros',
         [this.scope.tenantId, this.scope.budgetId]
       )
     ).rows;
@@ -370,7 +650,47 @@ export class PostgresAgentSharedCost {
     await this.checkReadConfig();
     const rows = (
       await this.query(
-        "SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND status='reserved' AND (agent_id,run_id,call_id)>($3,$4,$5) ORDER BY agent_id,run_id,call_id LIMIT $6",
+        "SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND status='reserved' AND (agent_id," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'run_id,call_id)>($3,$4,$5) ORDER BY agent_id,run_id,call_id LIMIT $6',
         [this.scope.tenantId, this.scope.budgetId, after?.agentId ?? '', after?.runId ?? '', after?.callId ?? '', limit + 1]
       )
     ).rows;
@@ -404,7 +724,47 @@ export class PostgresAgentSharedCost {
     await this.checkReadConfig();
     const rows = (
       await this.query(
-        'SELECT id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at FROM app_mixer_shared_cost_reconciliations WHERE tenant_id=$1 AND budget_id=$2 AND id>$3 ORDER BY id LIMIT $4',
+        'SELECT id,agent_id,run_id,call_id,principal_id,reference,used_micros,' +
+          'recorded_at FROM app_mixer_shared_cost_reconciliations WHERE tenant_id=$1 AND budget_id=$2 AND id>$3 ORDER BY id LIMIT ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$4',
         [this.scope.tenantId, this.scope.budgetId, after, limit + 1]
       )
     ).rows;

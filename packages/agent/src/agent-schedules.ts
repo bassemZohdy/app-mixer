@@ -437,7 +437,47 @@ export class SqliteAgentSchedules {
       } else {
         this.db
           .prepare(
-            "INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)"
+            'INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              "'queued',0,?,?,NULL,NULL,NULL,0)"
           )
           .run(scope.tenantId, scope.agentId, runId, policy.definitionVersion, policy.maxAttempts, now + policy.runTimeoutMs);
         insertAgentTraceParent(this.db, scope, runId, policy.traceParent);

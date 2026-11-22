@@ -115,7 +115,47 @@ try {
   const history = Number(process.env.BENCH_HISTORY ?? 50000);
   if (history > 0) {
     await pool.query(
-      "INSERT INTO app_mixer_agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline) SELECT 'tenant','old-agent-0','old-'||g,1,3,'succeeded',1,2,9999999999999 FROM generate_series(1,$1) g",
+      "INSERT INTO app_mixer_agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline) SELECT 'tenant','old-agent-0','old-'||g,1,3,'succeeded',1,2," +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '9999999999999 FROM generate_series(1,$1) g',
       [history]
     );
     // Settle the database after the bulk insert (statistics, visibility map, checkpoint) so the row measures the lifecycle, not the load.

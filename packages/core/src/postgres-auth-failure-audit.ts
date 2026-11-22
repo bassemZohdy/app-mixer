@@ -63,7 +63,47 @@ export class PostgresAuthenticationFailureAudit {
     const addressHash = this.addressKey && event.remoteAddress ? createHmac('sha256', this.addressKey).update('app-mixer-auth-failure-address-v1\0').update(event.remoteAddress).digest('hex') : null;
     if (this.anchor) await this.checkAnchor();
     const result = await this.query(
-      "WITH assigned AS (INSERT INTO app_mixer_auth_failure_counter (id,sequence) VALUES (1,1) ON CONFLICT (id) DO UPDATE SET sequence=app_mixer_auth_failure_counter.sequence+1 RETURNING sequence) INSERT INTO app_mixer_auth_failure_audit (sequence,recorded_at,reason,address_hash) SELECT sequence,$1,'unauthenticated',$2 FROM assigned RETURNING sequence",
+      'WITH assigned AS (INSERT INTO app_mixer_auth_failure_counter (id,sequence) VALUES (1,' +
+        '1) ON CONFLICT (id) DO UPDATE SET sequence=app_mixer_auth_failure_counter.sequence+1 RETURNING sequence) INSERT INTO app_mixer_auth_failure_audit (sequence,recorded_at,reason,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "address_hash) SELECT sequence,$1,'unauthenticated',$2 FROM assigned RETURNING sequence",
       [now, addressHash]
     );
     const sequence = Number(result.rows?.[0]?.sequence);

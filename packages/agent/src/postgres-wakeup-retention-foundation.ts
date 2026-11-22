@@ -139,7 +139,47 @@ export class PostgresAgentWakeupRetentionFoundation {
     await permit();
     const rows = (
       await this.query(
-        "SELECT w.id,w.run_id,w.source_id,w.event_id,w.observed_at,r.status,t.completed_at FROM app_mixer_shared_run_wakeups w JOIN app_mixer_shared_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN app_mixer_shared_run_terminal_times t ON t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.id>$3 AND r.status IN ('succeeded','failed','cancelled') AND d.wakeup_id IS NULL AND ($4::bigint IS NULL OR w.observed_at<$4) AND ($5::bigint IS NULL OR t.completed_at<$5) ORDER BY w.id LIMIT $6",
+        'SELECT w.id,w.run_id,w.source_id,w.event_id,w.observed_at,r.status,' +
+          't.completed_at FROM app_mixer_shared_run_wakeups w JOIN app_mixer_shared_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN ' +
+          'app_mixer_shared_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN app_mixer_shared_run_terminal_times t ON ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=$1 AND w.agent_id=$2 AND w.id>$3 AND r.status IN ('succeeded','failed'," +
+          "'cancelled') AND d.wakeup_id IS NULL AND ($4::bigint IS NULL OR w.observed_at<$4) AND ($5::bigint IS NULL OR t.completed_at<$5) ORDER BY w.id LIMIT $6",
         [this.scope.tenantId, this.scope.agentId, after, observedBefore ?? null, completedBefore ?? null, limit + 1]
       )
     ).rows;

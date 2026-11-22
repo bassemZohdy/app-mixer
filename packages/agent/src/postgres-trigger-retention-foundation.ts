@@ -82,7 +82,47 @@ export class PostgresAgentTriggerRetentionFoundation {
     await permit();
     const rows = (
       await this.query(
-        "SELECT i.run_id,r.status,i.received_at,t.completed_at FROM app_mixer_shared_trigger_inbox i JOIN app_mixer_shared_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN app_mixer_shared_run_terminal_times t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.run_id COLLATE \"C\">$3 AND r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL AND ($4::bigint IS NULL OR i.received_at<$4) AND ($5::bigint IS NULL OR t.completed_at<$5) ORDER BY i.run_id COLLATE \"C\" LIMIT $6",
+        'SELECT i.run_id,r.status,i.received_at,t.completed_at FROM app_mixer_shared_trigger_inbox i JOIN app_mixer_shared_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND ' +
+          'r.run_id=i.run_id LEFT JOIN app_mixer_shared_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN ' +
+          'app_mixer_shared_run_terminal_times t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id WHERE i.tenant_id=$1 AND i.agent_id=$2 AND i.run_id COLLATE "C">$3 AND ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL AND ($4::bigint IS NULL OR i.received_at<$4) AND ($5::bigint IS NULL OR t.completed_at<$5) ORDER BY i.run_id COLLATE " +
+          '"C" LIMIT $6',
         [this.scope.tenantId, this.scope.agentId, after, receivedBefore ?? null, completedBefore ?? null, limit + 1]
       )
     ).rows;

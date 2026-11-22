@@ -94,7 +94,47 @@ export class SqliteAgentTriggerRetention {
     await permit();
     const rows = this.db
       .prepare(
-        "SELECT i.run_id,r.status,t.received_at,c.completed_at FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id>? AND r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL AND (? IS NULL OR t.received_at<?) AND (? IS NULL OR c.completed_at<?) ORDER BY i.run_id LIMIT ?"
+        'SELECT i.run_id,r.status,t.received_at,c.completed_at FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND ' +
+          't.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND ' +
+          "i.agent_id=? AND i.run_id>? AND r.status IN ('succeeded','failed'," +
+          "'cancelled') AND d.run_id IS NULL AND (? IS NULL OR t.received_at<?) AND (? IS NULL OR c.completed_at<?) ORDER BY i.run_id LIMIT ?"
       )
       .all(this.scope.tenantId, this.scope.agentId, after, receivedBefore ?? null, receivedBefore ?? null, completedBefore ?? null, completedBefore ?? null, limit + 1);
     const items = rows.slice(0, limit).map(row => {

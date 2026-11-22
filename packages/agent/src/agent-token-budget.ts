@@ -203,7 +203,47 @@ export class SqliteAgentTokenBudget {
     if (config && Number(config.max_tokens) !== this.maxTokens) throw Error('Token budget conflict');
     const row = this.db
       .prepare(
-        "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0) AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0) AS reserved FROM agent_token_calls WHERE tenant_id=? AND agent_id=? AND run_id=?"
+        "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0) AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END)," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '0) AS reserved FROM agent_token_calls WHERE tenant_id=? AND agent_id=? AND run_id=?'
       )
       .get(...this.args());
     return { limit: this.maxTokens, committed: Number(row?.committed), reserved: Number(row?.reserved) };
@@ -214,7 +254,47 @@ export class SqliteAgentTokenBudget {
     if (config && (config.currency !== this.cost.currency || Number(config.max_micros) !== this.cost.maxMicros)) throw Error('Cost budget conflict');
     const row = this.db
       .prepare(
-        "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0) AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0) AS reserved FROM agent_cost_calls WHERE tenant_id=? AND agent_id=? AND run_id=?"
+        "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0) AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END)," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '0) AS reserved FROM agent_cost_calls WHERE tenant_id=? AND agent_id=? AND run_id=?'
       )
       .get(...this.args());
     return { currency: this.cost.currency, limit: this.cost.maxMicros, committed: Number(row?.committed), reserved: Number(row?.reserved) };

@@ -112,7 +112,87 @@ const capabilityURL=endpoint('CAPABILITY_URL','/capabilities/','CAPABILITY_TOKEN
 const agentURL=endpoint('AGENT_URL','/agent','AGENT_TOKEN');
 // Origins the page may call besides itself, for an operator whose extensions use another service; only bare http(s) origins are accepted.
 const connectOrigins=(process.env.CONNECT_ORIGINS??'').split(/[ ,]+/).filter(Boolean);
-for(const origin of connectOrigins){let parsed;try{parsed=new URL(origin);}catch{}if(!parsed||!['http:','https:'].includes(parsed.protocol)||parsed.origin!==origin)fail('CONNECT_ORIGINS must list origins such as https://api.example.com, separated by spaces or commas');}
+for(const origin of connectOrigins){let parsed;try{parsed=new URL(origin);}catch{}if(!parsed||!['http:','https:'].includes(parsed.protocol)||parsed.origin!==origin)fail('CONNECT_ORIGINS must list origins such as https://api.example.com,' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+'' + 
+' separated by spaces or commas');}
 // The page's inline script and style are allowed by hash, so the policy needs no 'unsafe-inline'; only index.html is HTML. The policy is derived from the bytes being served.
 const inlineHashes=(html,tag)=>[...html.matchAll(new RegExp('<'+tag+'( [^>]*)?>([^]*?)</'+tag+'>','g'))].filter(match=>!/\ssrc=/.test(match[1]||'')).map(match=>"'sha256-"+createHash('sha256').update(match[2]).digest('base64')+"'");
 const indexPolicy=html=>["default-src 'none'","script-src 'self' "+inlineHashes(html,'script').join(' '),'style-src '+(inlineHashes(html,'style').join(' ')||"'none'"),"connect-src 'self'"+connectOrigins.map(origin=>' '+origin).join(''),"img-src 'self' data:","worker-src 'self'","base-uri 'none'","form-action 'none'","frame-ancestors 'none'"].join('; ');

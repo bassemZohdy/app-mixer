@@ -107,7 +107,47 @@ export class PostgresOfflineRecovery {
     await this.permit(c.actor, c.target, 'mark_uncertain');
     const now = this.now();
     const result = await this.query(
-      "WITH changed AS (UPDATE app_mixer_offline_executions SET status='uncertain' WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='running' RETURNING attempt_token) INSERT INTO app_mixer_offline_recovery_events (tenant_id,application_id,principal_id,idempotency_key,attempt_token,actor_id,action,reference,recorded_at) SELECT $1,$2,$3,$4,attempt_token,$6,'mark_uncertain',$7,$8 FROM changed RETURNING id,attempt_token",
+      "WITH changed AS (UPDATE app_mixer_offline_executions SET status='uncertain' WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND " +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "status='running' RETURNING attempt_token) INSERT INTO app_mixer_offline_recovery_events (tenant_id,application_id,principal_id,idempotency_key,attempt_token,actor_id,action,reference," +
+        "recorded_at) SELECT $1,$2,$3,$4,attempt_token,$6,'mark_uncertain',$7,$8 FROM changed RETURNING id,attempt_token",
       [...c.args, attemptToken, c.actor.principalId, evidence, now]
     );
     this.checked(result, attemptToken);
@@ -123,7 +163,47 @@ export class PostgresOfflineRecovery {
     await this.permit(c.actor, c.target, 'reconcile');
     const now = this.now();
     const result = await this.query(
-      "WITH changed AS (UPDATE app_mixer_offline_executions SET status=$6,result_json=$7 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='uncertain' RETURNING attempt_token) INSERT INTO app_mixer_offline_recovery_events (tenant_id,application_id,principal_id,idempotency_key,attempt_token,actor_id,action,reference,recorded_at) SELECT $1,$2,$3,$4,attempt_token,$8,$9,$10,$11 FROM changed RETURNING id,attempt_token",
+      'WITH changed AS (UPDATE app_mixer_offline_executions SET status=$6,' +
+        "result_json=$7 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='uncertain' RETURNING attempt_token) INSERT INTO " +
+        'app_mixer_offline_recovery_events (tenant_id,application_id,principal_id,idempotency_key,attempt_token,actor_id,action,reference,recorded_at) SELECT $1,$2,$3,$4,attempt_token,$8,$9,$10,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '$11 FROM changed RETURNING id,attempt_token',
       [...c.args, attemptToken, status, serialized, c.actor.principalId, event, evidence, now]
     );
     this.checked(result, attemptToken);

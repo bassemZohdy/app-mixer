@@ -60,7 +60,47 @@ export class SqliteAgentActionRecoveryDiscovery {
     await this.permit(who);
     const rows = this.db
       .prepare(
-        "SELECT a.run_id,r.status AS run_status,SUM(CASE WHEN a.status='dispatching' THEN 1 ELSE 0 END) AS dispatching,SUM(CASE WHEN a.status='uncertain' THEN 1 ELSE 0 END) AS uncertain FROM agent_action_journal a LEFT JOIN agent_runs r ON r.tenant_id=a.tenant_id AND r.agent_id=a.agent_id AND r.run_id=a.run_id WHERE a.tenant_id=? AND a.agent_id=? AND a.run_id>? AND a.status IN ('dispatching','uncertain') GROUP BY a.run_id,r.status ORDER BY a.run_id LIMIT ?"
+        "SELECT a.run_id,r.status AS run_status,SUM(CASE WHEN a.status='dispatching' THEN 1 ELSE 0 END) AS dispatching," +
+          "SUM(CASE WHEN a.status='uncertain' THEN 1 ELSE 0 END) AS uncertain FROM agent_action_journal a LEFT JOIN agent_runs r ON r.tenant_id=a.tenant_id AND r.agent_id=a.agent_id AND " +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "r.run_id=a.run_id WHERE a.tenant_id=? AND a.agent_id=? AND a.run_id>? AND a.status IN ('dispatching','uncertain') GROUP BY a.run_id,r.status ORDER BY a.run_id LIMIT ?"
       )
       .all(this.scope.tenantId, this.scope.agentId, after, limit + 1);
     const checked = rows.map(row => {

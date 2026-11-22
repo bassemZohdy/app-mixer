@@ -432,7 +432,47 @@ export class PostgresAgentTokenBudgetFoundation {
   private async totals(query: Query): Promise<{ committed: number; reserved: number; costCommitted: number; costReserved: number; violated: boolean; costViolated: boolean; count: number }> {
     const row = (
       await query(
-        "SELECT count(*)::bigint AS n,coalesce(sum(CASE WHEN status='settled' THEN used ELSE 0 END),0)::bigint AS committed,coalesce(sum(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0)::bigint AS reserved,coalesce(sum(CASE WHEN status='settled' THEN cost_used ELSE 0 END),0)::bigint AS cost_committed,coalesce(sum(CASE WHEN status='reserved' THEN cost_reserved ELSE 0 END),0)::bigint AS cost_reserved,coalesce(bool_or(status='settled' AND used>reserved),false) AS violated,coalesce(bool_or(status='settled' AND cost_used>cost_reserved),false) AS cost_violated FROM app_mixer_shared_token_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3",
+        "SELECT count(*)::bigint AS n,coalesce(sum(CASE WHEN status='settled' THEN used ELSE 0 END),0)::bigint AS committed,coalesce(sum(CASE WHEN status='reserved' THEN reserved ELSE 0 END)," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "0)::bigint AS reserved,coalesce(sum(CASE WHEN status='settled' THEN cost_used ELSE 0 END),0)::bigint AS cost_committed," +
+          "coalesce(sum(CASE WHEN status='reserved' THEN cost_reserved ELSE 0 END),0)::bigint AS cost_reserved,coalesce(bool_or(status='settled' AND used>reserved),false) AS violated," +
+          "coalesce(bool_or(status='settled' AND cost_used>cost_reserved),false) AS cost_violated FROM app_mixer_shared_token_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3",
         this.args()
       )
     ).rows[0];

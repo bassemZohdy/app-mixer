@@ -44,7 +44,47 @@ export class PostgresAgentNoticeDelivery {
   async initialize(): Promise<void> {
     await this.transaction(async q => {
       await q(
-        "CREATE TABLE IF NOT EXISTS app_mixer_shared_notice_deliveries (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,notice_id BIGINT NOT NULL,destination_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','sending','uncertain','delivered')),attempts INTEGER NOT NULL,revision BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,notice_id,destination_id),FOREIGN KEY(notice_id) REFERENCES app_mixer_shared_notices(id))",
+        'CREATE TABLE IF NOT EXISTS app_mixer_shared_notice_deliveries (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,' +
+          "notice_id BIGINT NOT NULL,destination_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','sending','uncertain','delivered'))," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'attempts INTEGER NOT NULL,revision BIGINT NOT NULL,UNIQUE(tenant_id,agent_id,notice_id,destination_id),FOREIGN KEY(notice_id) REFERENCES app_mixer_shared_notices(id))',
         []
       );
       await q(
@@ -189,7 +229,47 @@ export class PostgresAgentNoticeDelivery {
   private async actionable(q: Query, message: AgentNoticeMessage): Promise<boolean> {
     const row = (
       await q(
-        "SELECT CASE WHEN run.archived=false AND run.status NOT IN ('succeeded','failed','cancelled') AND run.deadline>(extract(epoch from clock_timestamp())*1000)::bigint THEN CASE WHEN n.kind='approval_requested' THEN a.status='pending' AND a.expires_at>(extract(epoch from clock_timestamp())*1000)::bigint WHEN n.kind='delegation_renewal_required' THEN run.status='paused' AND w.grant_id=n.subject_id AND w.grant_revision=n.subject_revision AND g.revoked=false AND g.revision=n.subject_revision AND g.expires_at<=(extract(epoch from clock_timestamp())*1000)::bigint ELSE false END ELSE false END AS actionable FROM app_mixer_shared_notices n JOIN app_mixer_shared_runs run ON run.tenant_id=n.tenant_id AND run.agent_id=n.agent_id AND run.run_id=n.run_id LEFT JOIN app_mixer_shared_approvals a ON a.tenant_id=n.tenant_id AND a.agent_id=n.agent_id AND a.run_id=n.run_id AND a.action_id=n.subject_id LEFT JOIN app_mixer_shared_delegation_waits w ON w.tenant_id=n.tenant_id AND w.agent_id=n.agent_id AND w.run_id=n.run_id LEFT JOIN app_mixer_shared_delegations g ON g.tenant_id=n.tenant_id AND g.agent_id=n.agent_id AND g.run_id=n.run_id AND g.grant_id=n.subject_id WHERE n.tenant_id=$1 AND n.agent_id=$2 AND n.id=$3",
+        "SELECT CASE WHEN run.archived=false AND run.status NOT IN ('succeeded','failed'," +
+          "'cancelled') AND run.deadline>(extract(epoch from clock_timestamp())*1000)::bigint THEN CASE WHEN n.kind='approval_requested' THEN a.status='pending' AND a.expires_at>(extract(epoch " +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "from clock_timestamp())*1000)::bigint WHEN n.kind='delegation_renewal_required' THEN run.status='paused' AND w.grant_id=n.subject_id AND w.grant_revision=n.subject_revision AND " +
+          'g.revoked=false AND g.revision=n.subject_revision AND g.expires_at<=(extract(epoch from clock_timestamp())*1000)::bigint ELSE false END ELSE false END AS actionable FROM ' +
+          'app_mixer_shared_notices n JOIN app_mixer_shared_runs run ON run.tenant_id=n.tenant_id AND run.agent_id=n.agent_id AND run.run_id=n.run_id LEFT JOIN app_mixer_shared_approvals a ON ' +
+          'a.tenant_id=n.tenant_id AND a.agent_id=n.agent_id AND a.run_id=n.run_id AND a.action_id=n.subject_id LEFT JOIN app_mixer_shared_delegation_waits w ON w.tenant_id=n.tenant_id AND ' +
+          'w.agent_id=n.agent_id AND w.run_id=n.run_id LEFT JOIN app_mixer_shared_delegations g ON g.tenant_id=n.tenant_id AND g.agent_id=n.agent_id AND g.run_id=n.run_id AND ' +
+          'g.grant_id=n.subject_id WHERE n.tenant_id=$1 AND n.agent_id=$2 AND n.id=$3',
         [...this.args(), message.noticeId]
       )
     ).rows[0];

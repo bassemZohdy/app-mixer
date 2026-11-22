@@ -14,7 +14,47 @@ export function readAgentScheduleMetrics(db: DatabaseSync, scope: AgentRunScope,
   if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid schedule metrics clock');
   const row = db
     .prepare(
-      "SELECT SUM(CASE WHEN enabled=1 AND next_at<=? THEN 1 ELSE 0 END) AS due,SUM(CASE WHEN enabled=1 AND next_at>? THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN enabled=0 THEN 1 ELSE 0 END) AS disabled,MIN(CASE WHEN enabled=1 AND next_at<=? THEN next_at END) AS oldest,SUM(CASE WHEN typeof(enabled)<>'integer' OR enabled NOT IN (0,1) OR typeof(next_at)<>'integer' OR next_at<0 OR next_at>9007199254740991 THEN 1 ELSE 0 END) AS invalid FROM agent_schedules WHERE tenant_id=? AND agent_id=?"
+      'SELECT SUM(CASE WHEN enabled=1 AND next_at<=? THEN 1 ELSE 0 END) AS due,SUM(CASE WHEN enabled=1 AND next_at>? THEN 1 ELSE 0 END) AS upcoming,' +
+        "SUM(CASE WHEN enabled=0 THEN 1 ELSE 0 END) AS disabled,MIN(CASE WHEN enabled=1 AND next_at<=? THEN next_at END) AS oldest,SUM(CASE WHEN typeof(enabled)<>'integer' OR enabled NOT IN (0," +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "1) OR typeof(next_at)<>'integer' OR next_at<0 OR next_at>9007199254740991 THEN 1 ELSE 0 END) AS invalid FROM agent_schedules WHERE tenant_id=? AND agent_id=?"
     )
     .get(now, now, now, scope.tenantId, scope.agentId);
   if (!row) throw Error('Invalid schedule metrics data');

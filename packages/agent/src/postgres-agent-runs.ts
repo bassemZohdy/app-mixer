@@ -63,7 +63,47 @@ export class PostgresAgentRuns {
     if (recorded !== undefined && Number(recorded.version) > 2)
       throw Error(`The agent_runs database schema is version ${Number(recorded.version)}, newer than this release supports (2); upgrade the software before opening it`);
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_agent_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,revision BIGINT NOT NULL,status TEXT NOT NULL CHECK (status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(tenant_id,agent_id,run_id))",
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,revision BIGINT NOT NULL,' +
+        "status TEXT NOT NULL CHECK (status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled')),attempts INTEGER NOT NULL," +
+        'max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,lease_owner TEXT,lease_token TEXT,lease_until BIGINT,archived BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(tenant_id,agent_id,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'run_id))',
       []
     );
     // Runs start in creation order: an identity column numbers every run (existing rows are numbered when the column is added).
@@ -116,11 +156,91 @@ export class PostgresAgentRuns {
       []
     );
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_agent_actions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL CHECK (status IN ('ready','dispatching','uncertain','succeeded','failed')),attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id))",
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_actions (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,operation_id TEXT NOT NULL,' +
+        "input_json TEXT NOT NULL,input_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL CHECK (status IN ('ready','dispatching','uncertain','succeeded','failed'))," +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,result_json TEXT,PRIMARY KEY(tenant_id,agent_id,run_id,action_id))',
       []
     );
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_agent_cost_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,day BIGINT NOT NULL,reserved BIGINT NOT NULL,used BIGINT,status TEXT NOT NULL CHECK (status IN ('reserved','settled')),PRIMARY KEY(tenant_id,agent_id,run_id,call_id))",
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_cost_calls (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,day BIGINT NOT NULL,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "reserved BIGINT NOT NULL,used BIGINT,status TEXT NOT NULL CHECK (status IN ('reserved','settled')),PRIMARY KEY(tenant_id,agent_id,run_id,call_id))",
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_cost_calls_day ON app_mixer_agent_cost_calls(tenant_id,agent_id,day)', []);
@@ -218,7 +338,47 @@ export class PostgresAgentRuns {
     return (
       (
         await query(
-          "SELECT 1 FROM app_mixer_agent_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status IN ('dispatching','uncertain') UNION ALL SELECT 1 FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status='reserved' LIMIT 1",
+          "SELECT 1 FROM app_mixer_agent_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status IN ('dispatching'," +
+            "'uncertain') UNION ALL SELECT 1 FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status='reserved' LIMIT " +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '1',
           [run.tenantId, run.agentId, run.runId]
         )
       ).rows.length > 0

@@ -97,7 +97,47 @@ export class PostgresAgentCostBudget {
   private async totals(query: Query, tenantId: string, agentId: string, day: number): Promise<{ committed: number; reserved: number; overrun: boolean }> {
     const row = (
       await query(
-        "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0)::bigint AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0)::bigint AS reserved,COALESCE(BOOL_OR(status='settled' AND used>reserved),false) AS overrun FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND day=$3",
+        "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN used ELSE 0 END),0)::bigint AS committed,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE 0 END),0)::bigint AS reserved," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "COALESCE(BOOL_OR(status='settled' AND used>reserved),false) AS overrun FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND day=$3",
         [tenantId, agentId, day]
       )
     ).rows[0];

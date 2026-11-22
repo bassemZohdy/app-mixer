@@ -192,7 +192,47 @@ export class SqliteStagedOperations {
     try {
       const updated = this.db
         .prepare(
-          "UPDATE staged_business_operations SET status='uncertain',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='submitting' AND state_revision=? AND state_revision<9007199254740991 RETURNING state_revision"
+          "UPDATE staged_business_operations SET status='uncertain',state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='submitting' AND state_revision=? " +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'AND state_revision<9007199254740991 RETURNING state_revision'
         )
         .get(selected.tenantId, selected.applicationId, id, row.state_revision as number);
       if (!updated) throw new AppMixerError('conflict', 'Stale staged recovery');
@@ -321,7 +361,47 @@ export class SqliteStagedOperations {
     try {
       const row = this.db
         .prepare(
-          "UPDATE staged_business_operations SET status=?,state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='uncertain' AND (? IS NULL OR state_revision=?) AND state_revision<9007199254740991 RETURNING state_revision"
+          "UPDATE staged_business_operations SET status=?,state_revision=state_revision+1 WHERE tenant_id=? AND application_id=? AND id=? AND status='uncertain' AND (? IS NULL OR " +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'state_revision=?) AND state_revision<9007199254740991 RETURNING state_revision'
         )
         .get(outcome === 'applied' ? 'succeeded' : 'staged', scope.tenantId, scope.applicationId, id, expectedRevision ?? null, expectedRevision ?? null);
       if (!row) throw Error(expectedRevision === undefined ? 'Invalid operation state' : 'Stale staged verification');

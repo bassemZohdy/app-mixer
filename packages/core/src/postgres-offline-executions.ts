@@ -22,7 +22,47 @@ export class PostgresOfflineExecutions {
   }
   async initialize(): Promise<void> {
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_offline_executions (idempotency_key TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,operation_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('ready','running','uncertain','succeeded')),attempt_token TEXT NOT NULL,result_json TEXT)",
+      'CREATE TABLE IF NOT EXISTS app_mixer_offline_executions (idempotency_key TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "operation_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('ready','running','uncertain','succeeded')),attempt_token TEXT NOT NULL,result_json TEXT)",
       []
     );
   }
@@ -65,7 +105,47 @@ export class PostgresOfflineExecutions {
     if (!(await this.keys.verify(safeScope, principalId, operationId, safePayload, key))) throw new AppMixerError('denied', 'Shared offline key forbidden');
     const attempt = randomUUID();
     const claim = await this.query(
-      "INSERT INTO app_mixer_offline_executions (idempotency_key,tenant_id,application_id,principal_id,operation_id,status,attempt_token,result_json) SELECT idempotency_key,tenant_id,application_id,principal_id,operation_id,'running',$6,NULL FROM app_mixer_offline_request_keys WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND operation_id=$5 ON CONFLICT (idempotency_key) DO UPDATE SET status='running',attempt_token=EXCLUDED.attempt_token,result_json=NULL WHERE app_mixer_offline_executions.status='ready' AND app_mixer_offline_executions.tenant_id=EXCLUDED.tenant_id AND app_mixer_offline_executions.application_id=EXCLUDED.application_id AND app_mixer_offline_executions.principal_id=EXCLUDED.principal_id AND app_mixer_offline_executions.operation_id=EXCLUDED.operation_id RETURNING attempt_token",
+      'INSERT INTO app_mixer_offline_executions (idempotency_key,tenant_id,application_id,principal_id,operation_id,status,attempt_token,result_json) SELECT idempotency_key,tenant_id,' +
+        "application_id,principal_id,operation_id,'running',$6,NULL FROM app_mixer_offline_request_keys WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND " +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "operation_id=$5 ON CONFLICT (idempotency_key) DO UPDATE SET status='running',attempt_token=EXCLUDED.attempt_token," +
+        "result_json=NULL WHERE app_mixer_offline_executions.status='ready' AND app_mixer_offline_executions.tenant_id=EXCLUDED.tenant_id AND " +
+        'app_mixer_offline_executions.application_id=EXCLUDED.application_id AND app_mixer_offline_executions.principal_id=EXCLUDED.principal_id AND ' +
+        'app_mixer_offline_executions.operation_id=EXCLUDED.operation_id RETURNING attempt_token',
       [...identity, operationId, attempt]
     );
     if (!Array.isArray(claim.rows) || claim.rows.length > 1 || (claim.rows.length === 1 && claim.rows[0].attempt_token !== attempt)) throw Error('Invalid shared offline execution');
@@ -80,7 +160,47 @@ export class PostgresOfflineExecutions {
       const result = await dispatch(dataCopy(safePayload)),
         serialized = resultJSON(result);
       const written = await this.query(
-        "UPDATE app_mixer_offline_executions SET status='succeeded',result_json=$6 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='running' RETURNING attempt_token",
+        "UPDATE app_mixer_offline_executions SET status='succeeded',result_json=$6 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND " +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "status='running' RETURNING attempt_token",
         [...identity, attempt, serialized]
       );
       if (!Array.isArray(written.rows) || written.rows.length !== 1 || written.rows[0].attempt_token !== attempt) throw Error('Shared offline execution fence lost');
@@ -97,7 +217,47 @@ export class PostgresOfflineExecutions {
     const identity = this.identity(scope, principalId, key);
     if (!uuid(attemptToken)) throw Error('Invalid shared offline attempt');
     const result = await this.query(
-      "UPDATE app_mixer_offline_executions SET status='uncertain' WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='running' RETURNING attempt_token",
+      "UPDATE app_mixer_offline_executions SET status='uncertain' WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='running' " +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'RETURNING attempt_token',
       [...identity, attemptToken]
     );
     if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].attempt_token !== attemptToken) throw Error('Shared offline execution changed');
@@ -110,7 +270,47 @@ export class PostgresOfflineExecutions {
       status = outcome === 'applied' ? 'succeeded' : 'ready',
       resultJson = outcome === 'applied' ? resultJSON(decision.result) : null;
     const result = await this.query(
-      "UPDATE app_mixer_offline_executions SET status=$6,result_json=$7 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND status='uncertain' RETURNING attempt_token",
+      'UPDATE app_mixer_offline_executions SET status=$6,result_json=$7 WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND ' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        "status='uncertain' RETURNING attempt_token",
       [...identity, attemptToken, status, resultJson]
     );
     if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].attempt_token !== attemptToken) throw Error('Shared offline execution changed');

@@ -116,7 +116,47 @@ export class SqliteAgentBudgetRecoveryDiscovery {
       await this.permit(who, signal);
       const rows = this.db
         .prepare(
-          "SELECT c.run_id,r.status AS run_status,COUNT(*) AS reserved FROM agent_token_calls c LEFT JOIN agent_runs r ON r.tenant_id=c.tenant_id AND r.agent_id=c.agent_id AND r.run_id=c.run_id WHERE c.tenant_id=? AND c.agent_id=? AND c.run_id>? AND c.status='reserved' GROUP BY c.run_id,r.status ORDER BY c.run_id LIMIT ?"
+          'SELECT c.run_id,r.status AS run_status,COUNT(*) AS reserved FROM agent_token_calls c LEFT JOIN agent_runs r ON r.tenant_id=c.tenant_id AND r.agent_id=c.agent_id AND r.run_id=c.run_id ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            "WHERE c.tenant_id=? AND c.agent_id=? AND c.run_id>? AND c.status='reserved' GROUP BY c.run_id,r.status ORDER BY c.run_id LIMIT ?"
         )
         .all(this.scope.tenantId, this.scope.agentId, after, limit + 1);
       const checked = rows.map(row => {

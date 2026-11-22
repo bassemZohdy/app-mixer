@@ -153,7 +153,47 @@ export class PostgresAgentSchedules {
       []
     );
     await this.query(
-      "CREATE TABLE IF NOT EXISTS app_mixer_agent_scheduled_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,generation BIGINT NOT NULL,scheduled_at BIGINT NOT NULL,run_id TEXT NOT NULL UNIQUE,principal_id TEXT NOT NULL,payload TEXT NOT NULL,definition_version INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,fired_at BIGINT NOT NULL,fired_by TEXT NOT NULL,status TEXT NOT NULL CHECK (status IN ('pending','claimed','started')),token TEXT,claimed_by TEXT,lease_until BIGINT,claims INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(tenant_id,agent_id,schedule_id,generation,scheduled_at))",
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_scheduled_runs (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,generation BIGINT NOT NULL,scheduled_at BIGINT NOT NULL,' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        '' +
+        'run_id TEXT NOT NULL UNIQUE,principal_id TEXT NOT NULL,payload TEXT NOT NULL,definition_version INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline BIGINT NOT NULL,' +
+        "fired_at BIGINT NOT NULL,fired_by TEXT NOT NULL,status TEXT NOT NULL CHECK (status IN ('pending','claimed','started')),token TEXT,claimed_by TEXT,lease_until BIGINT," +
+        'claims INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(tenant_id,agent_id,schedule_id,generation,scheduled_at))',
       []
     );
     // The history is append-only: refuse changes at the database, as the SQLite store does, so the audit trail cannot be edited by anything with write access.
@@ -409,7 +449,47 @@ export class PostgresAgentSchedules {
       const runId = randomUUID(),
         payload = JSON.stringify({ scheduleId, scheduledAt, ...(coalesce ? { coalescedThrough: now } : {}) });
       await query(
-        "INSERT INTO app_mixer_agent_scheduled_runs (tenant_id,agent_id,schedule_id,generation,scheduled_at,run_id,principal_id,payload,definition_version,max_attempts,deadline,fired_at,fired_by,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')",
+        'INSERT INTO app_mixer_agent_scheduled_runs (tenant_id,agent_id,schedule_id,generation,scheduled_at,run_id,principal_id,payload,definition_version,max_attempts,deadline,fired_at,fired_by,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')",
         [
           tenantId,
           agentId,
@@ -428,7 +508,47 @@ export class PostgresAgentSchedules {
       );
       await query('UPDATE app_mixer_agent_schedules SET revision=$4,next_at=$5 WHERE tenant_id=$1 AND agent_id=$2 AND schedule_id=$3', [tenantId, agentId, scheduleId, schedule.revision + 1, nextAt]);
       await query(
-        "INSERT INTO app_mixer_agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES ($1,$2,$3,'fired',$4,$5,$6,$7,$8,$9,$10,$11)",
+        "INSERT INTO app_mixer_agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES ($1,$2,$3,'fired',$4," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$5,$6,$7,$8,$9,$10,$11)',
         [tenantId, agentId, scheduleId, schedule.revision + 1, schedule.generation, nextAt, JSON.stringify(schedule.config), options.actorId ?? null, runId, scheduledAt, now]
       );
       return { runId, scheduledAt };
@@ -501,7 +621,47 @@ export class PostgresAgentSchedules {
       const now = await this.now(query),
         row = (
           await query(
-            "SELECT * FROM app_mixer_agent_scheduled_runs WHERE tenant_id=$1 AND agent_id=$2 AND (status='pending' OR (status='claimed' AND lease_until<=$3)) ORDER BY scheduled_at,schedule_id LIMIT 1 FOR UPDATE SKIP LOCKED",
+            "SELECT * FROM app_mixer_agent_scheduled_runs WHERE tenant_id=$1 AND agent_id=$2 AND (status='pending' OR (status='claimed' AND lease_until<=$3)) ORDER BY scheduled_at," +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              'schedule_id LIMIT 1 FOR UPDATE SKIP LOCKED',
             [tenantId, agentId, now]
           )
         ).rows[0];

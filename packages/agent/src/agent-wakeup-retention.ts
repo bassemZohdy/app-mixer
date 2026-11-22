@@ -164,7 +164,47 @@ export class SqliteAgentWakeupRetention {
     await permit();
     const rows = this.db
       .prepare(
-        "SELECT w.id,w.run_id,w.source_id,w.event_id,w.observed_at,r.status,t.completed_at FROM agent_run_wakeups w JOIN agent_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN agent_run_wakeup_redactions d ON d.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN agent_run_terminal_times t ON t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id WHERE w.tenant_id=? AND w.agent_id=? AND w.id>? AND r.status IN ('succeeded','failed','cancelled') AND d.wakeup_id IS NULL AND (? IS NULL OR w.observed_at<?) AND (? IS NULL OR t.completed_at<?) ORDER BY w.id LIMIT ?"
+        'SELECT w.id,w.run_id,w.source_id,w.event_id,w.observed_at,r.status,' +
+          't.completed_at FROM agent_run_wakeups w JOIN agent_runs r ON r.tenant_id=w.tenant_id AND r.agent_id=w.agent_id AND r.run_id=w.run_id LEFT JOIN agent_run_wakeup_redactions d ON ' +
+          'd.wakeup_id=w.id AND d.tenant_id=w.tenant_id AND d.agent_id=w.agent_id LEFT JOIN agent_run_terminal_times t ON t.tenant_id=w.tenant_id AND t.agent_id=w.agent_id AND t.run_id=w.run_id ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "WHERE w.tenant_id=? AND w.agent_id=? AND w.id>? AND r.status IN ('succeeded','failed'," +
+          "'cancelled') AND d.wakeup_id IS NULL AND (? IS NULL OR w.observed_at<?) AND (? IS NULL OR t.completed_at<?) ORDER BY w.id LIMIT ?"
       )
       .all(this.scope.tenantId, this.scope.agentId, after, observedBefore ?? null, observedBefore ?? null, completedBefore ?? null, completedBefore ?? null, limit + 1);
     const items = rows.slice(0, limit).map(row => {

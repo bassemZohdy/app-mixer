@@ -425,7 +425,47 @@ export class SqliteAgentRuns {
       throw Error('Invalid expired run query');
     const rows = this.db
       .prepare(
-        "SELECT run_id,deadline FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('queued','paused') AND deadline<=? AND (deadline>? OR (deadline=? AND run_id>?)) ORDER BY deadline,run_id LIMIT ?"
+        "SELECT run_id,deadline FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('queued'," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "'paused') AND deadline<=? AND (deadline>? OR (deadline=? AND run_id>?)) ORDER BY deadline,run_id LIMIT ?"
       )
       .all(scope.tenantId, scope.agentId, now, after?.deadline ?? 0, after?.deadline ?? 0, after?.runId ?? '', limit + 1);
     const items = rows.slice(0, limit).map(row => this.get(scope, String(row.run_id))!),
@@ -445,7 +485,47 @@ export class SqliteAgentRuns {
       throw Error('Invalid expired lease query');
     const rows = this.db
       .prepare(
-        "SELECT run_id,revision,status,lease_until FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('running','pause_requested','cancel_requested') AND lease_until IS NOT NULL AND lease_until<=? AND (lease_until>? OR (lease_until=? AND run_id>?)) ORDER BY lease_until,run_id LIMIT ?"
+        "SELECT run_id,revision,status,lease_until FROM agent_runs WHERE tenant_id=? AND agent_id=? AND archived=0 AND status IN ('running','pause_requested'," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "'cancel_requested') AND lease_until IS NOT NULL AND lease_until<=? AND (lease_until>? OR (lease_until=? AND run_id>?)) ORDER BY lease_until," +
+          'run_id LIMIT ?'
       )
       .all(scope.tenantId, scope.agentId, now, after?.leaseUntil ?? 0, after?.leaseUntil ?? 0, after?.runId ?? '', limit + 1);
     const items: ExpiredAgentLease[] = rows.slice(0, limit).map(row => {
@@ -486,7 +566,47 @@ export class SqliteAgentRuns {
       try {
         const result = this.db
           .prepare(
-            "INSERT OR IGNORE INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)"
+            'INSERT OR IGNORE INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              '' +
+              "?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)"
           )
           .run(scope.tenantId, scope.agentId, runId, config.definitionVersion, config.maxAttempts, config.deadline);
         if (result.changes !== 1) throw Error('Run already exists');
@@ -501,7 +621,47 @@ export class SqliteAgentRuns {
     }
     const result = this.db
       .prepare(
-        "INSERT OR IGNORE INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)"
+        'INSERT OR IGNORE INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "?,1,'queued',0,?,?,NULL,NULL,NULL,0)"
       )
       .run(scope.tenantId, scope.agentId, runId, config.definitionVersion, config.maxAttempts, config.deadline);
     if (result.changes !== 1) throw Error('Run already exists');

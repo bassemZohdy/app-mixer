@@ -237,7 +237,47 @@ export class PostgresAgentMemory {
     }
     if (this.options.textIndex)
       await this.options.query(
-        "CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_text_idx ON app_mixer_agent_memories USING GIN (to_tsvector('simple'::regconfig, COALESCE(value::jsonb->>'text',''))) WHERE memory_kind='semantic' AND NOT deleted",
+        "CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_text_idx ON app_mixer_agent_memories USING GIN (to_tsvector('simple'::regconfig, COALESCE(value::jsonb->>'text'," +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          "''))) WHERE memory_kind='semantic' AND NOT deleted",
         []
       );
     if (this.options.audit) {

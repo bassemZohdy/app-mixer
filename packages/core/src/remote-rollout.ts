@@ -80,7 +80,47 @@ export class SqliteRemoteRollout {
     const token = randomUUID(),
       claim = this.db
         .prepare(
-          "UPDATE remote_rollouts SET phase='running',token=?,source_version=NULL,expected_version=NULL WHERE id=? AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS NULL"
+          "UPDATE remote_rollouts SET phase='running',token=?,source_version=NULL," +
+            "expected_version=NULL WHERE id=? AND phase='idle' AND token IS NULL AND source_version IS NULL AND expected_version IS " +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'NULL'
         )
         .run(token, this.key);
     if (Number(claim.changes) !== 1) throw Error('Remote rollout requires recovery');
