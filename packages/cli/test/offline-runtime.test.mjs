@@ -1,324 +1,2095 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
-import {once} from 'node:events';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
-import {webcrypto} from 'node:crypto';
-import {IDBFactory} from 'fake-indexeddb';
-import {JSDOM} from 'jsdom';
-import {createProject} from '../dist/index.js';
-import {CapabilityRegistry,createCapabilityServer,SqliteOfflineQueue,registerOfflineRecoveryListCapability,registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability,registerOfflineArchiveListCapability,registerOfflineArchiveCapability,registerOfflineArchiveReadCapability} from '../../core/dist/index.js';
-import {DatabaseSync} from 'node:sqlite';
-const token='capability-secret-at-least-thirty-two-characters',scope={tenantId:'tenant',applicationId:'demo-app',principalId:'local'};
-const waitFor=async condition=>{for(let i=0;i<250;i++){if(await condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for offline integration');};
-
-test('generated browser recovery requires host confirmation and verified outcomes',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-browser-recovery-'));let runtime,queue,release;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),{EncryptedBrowserQueue}=await import(pathToFileURL(join(target,'offline.js')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();
-  let actor={...scope},confirmed=false,outcome='unknown',pause=false,started,verifyGate,verifyStarted;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
-  const config={enabled:true,databaseName:'browser-recovery',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,confirmAbandoned:async item=>{item.payload.value='mutated';if(pause){started();await gate;}return confirmed;},verifyOutcome:async()=>{if(verifyGate){verifyStarted();await verifyGate;}return outcome;},dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  queue=await EncryptedBrowserQueue.open(config);let item=await queue.enqueue('items.update','recover',{value:'original'});item=await queue.transition(item.id,item.version,'claim');runtime=await createGeneratedOfflineRuntime(config);
-  await assert.rejects(runtime.recoverAbandoned(item.id,item.version),/not allowed/);assert.equal((await queue.get(item.id)).status,'running');
-  confirmed=true;pause=true;const pending=runtime.recoverAbandoned(item.id,item.version);await waiting;actor={...scope,principalId:'other'};release();await assert.rejects(pending,/not allowed/);actor={...scope};pause=false;
-  item=await runtime.recoverAbandoned(item.id,item.version);assert.equal(item.status,'uncertain');assert.equal(item.payload.value,'original');assert.equal((await runtime.verifyUncertain(item.id,item.version)).status,'uncertain');
-  outcome='invalid';await assert.rejects(runtime.verifyUncertain(item.id,item.version),/Invalid offline verification/);outcome='not_applied';const stale=item;item=await runtime.verifyUncertain(item.id,item.version);assert.equal(item.status,'pending');await assert.rejects(runtime.verifyUncertain(stale.id,stale.version),/not allowed/);
-  item=await queue.transition(item.id,item.version,'claim');item=await queue.transition(item.id,item.version,'uncertain');outcome='applied';item=await runtime.verifyUncertain(item.id,item.version);assert.equal(item.status,'succeeded');await runtime.close();runtime=undefined;
-  let other=await queue.enqueue('items.update','competing',{value:'other'});other=await queue.transition(other.id,other.version,'claim');other=await queue.transition(other.id,other.version,'uncertain');runtime=await createGeneratedOfflineRuntime(config);let releaseVerify;verifyGate=new Promise(resolve=>releaseVerify=resolve);const verifyWaiting=new Promise(resolve=>verifyStarted=resolve),verifying=runtime.verifyUncertain(other.id,other.version);await verifyWaiting;await queue.transition(other.id,other.version,'reconcileNotApplied');releaseVerify();await assert.rejects(verifying,/version conflict/);verifyGate=undefined;assert.equal((await queue.get(other.id)).status,'pending');await runtime.close();runtime=undefined;
-  delete config.confirmAbandoned;delete config.verifyOutcome;runtime=await createGeneratedOfflineRuntime(config);await assert.rejects(runtime.recoverAbandoned(item.id,item.version),/not allowed/);await assert.rejects(runtime.verifyUncertain(item.id,item.version),/not allowed/);
- }finally{release?.();if(runtime)await runtime.close();queue?.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated offline runtime applies and synchronizes a host rollback anchor',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-runtime-anchor-'));let runtime,db;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();let floor=0,failAdvance=false,actor={...scope},pauseRead=false,startedRead,releaseRead;const waitingRead=new Promise(resolve=>startedRead=resolve),readGate=new Promise(resolve=>releaseRead=resolve);
-  const anchor={async read(){if(pauseRead){startedRead();await readGate;}return floor;},async advance(value){if(failAdvance)throw Error('anchor unavailable');floor=Math.max(floor,value);}},config={enabled:true,databaseName:'anchored-runtime',scope,key,indexedDB,crypto:webcrypto,rollbackAnchor:anchor,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  runtime=await createGeneratedOfflineRuntime(config);anchor.advance=()=>{throw Error('changed callback');};await runtime.enqueue('items.update','first',{value:'one'});assert.equal(floor,1);assert.equal(await runtime.hasPendingRollbackAnchor(),false);
-  db=await new Promise((resolve,reject)=>{const open=indexedDB.open('anchored-runtime',3);open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
-  const snapshot=await new Promise((resolve,reject)=>{const read=db.transaction('offline','readonly').objectStore('offline').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=()=>reject(read.error);});
-  failAdvance=true;await runtime.enqueue('items.update','second',{value:'two'});assert.equal(floor,1);assert.equal(await runtime.hasPendingRollbackAnchor(),true);await assert.rejects(runtime.syncRollbackAnchor(),/anchor unavailable/);
-  actor={...scope,principalId:'other'};await assert.rejects(runtime.hasPendingRollbackAnchor(),/not allowed/);await assert.rejects(runtime.syncRollbackAnchor(),/not allowed/);actor={...scope};failAdvance=false;
-  assert.equal(await runtime.syncRollbackAnchor(),2);assert.equal(await runtime.hasPendingRollbackAnchor(),false);assert.equal((await runtime.list()).length,2);
-  pauseRead=true;const pending=runtime.syncRollbackAnchor();await waitingRead;actor={...scope,principalId:'other'};pauseRead=false;releaseRead();await assert.rejects(pending,/not allowed/);actor={...scope};
-  await new Promise((resolve,reject)=>{const tx=db.transaction('offline','readwrite'),store=tx.objectStore('offline');store.clear();for(const row of snapshot)store.put(row);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
-  await assert.rejects(runtime.list(),/rollback detected/);await runtime.close();runtime=undefined;await assert.rejects(createGeneratedOfflineRuntime(config),/rollback detected/);
- }finally{if(runtime)await runtime.close();db?.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated offline runtime authorizes retirement and prevents recovery or reuse of removed payloads',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retire-'));let runtime,dom,release;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
-  let actor={...scope},allowed=false,blocked=false,started;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
-  const config={enabled:true,databaseName:'retirement',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>true,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,canRetire:async item=>{item.payload.secret='changed';if(blocked){started();await gate;}return allowed;},dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  runtime=await createGeneratedOfflineRuntime(config);config.canRetire=()=>false;runtime.start();const requestKey=webcrypto.randomUUID(),queued=await runtime.enqueue('items.update',requestKey,{secret:'private'});await waitFor(async()=>(await runtime.list())[0].status==='succeeded');const completed=(await runtime.list())[0];
-  await assert.rejects(runtime.retire(queued.id,completed.version),/not allowed/);assert.equal((await runtime.list())[0].payload.secret,'private');
-  allowed=true;blocked=true;const attempt=runtime.retire(queued.id,completed.version);await waiting;actor={...scope,principalId:'other'};release();await assert.rejects(attempt,/not allowed/);actor={...scope};blocked=false;
-  dom=new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const form=mountGeneratedOfflineForm(dom.window.document.getElementById('form'),runtime),historyRoot=dom.window.document.getElementById('history'),history=runtime.mountHistory(historyRoot,{onRecover:id=>form.recover(id),onRetire:(id,version)=>runtime.retire(id,version)});
-  await history.refresh();assert.match(historyRoot.textContent,/private/);const remove=[...historyRoot.querySelectorAll('button')].find(button=>button.textContent==='Remove request data');assert.ok(remove);remove.click();await waitFor(()=>historyRoot.textContent.includes('Request data removed.'));
-  const retired=(await runtime.list())[0];assert.equal(retired.status,'retired');assert.deepEqual(retired.payload,{});await assert.rejects(runtime.enqueue('items.update',requestKey,{secret:'private'}),/retired/);
-  assert.doesNotMatch(historyRoot.textContent,/private/);assert.equal(historyRoot.querySelector('button'),null);await assert.rejects(form.recover(queued.id),/Cannot recover/);history.dispose();form.dispose();
-  await runtime.close();delete config.canRetire;runtime=await createGeneratedOfflineRuntime(config);await assert.rejects(runtime.retire(queued.id,completed.version),/not allowed/);
- }finally{release?.();if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('retirement does not start host policy or identity checks after runtime closure',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-retirement-close-'));let runtime,queue,originalGet,prototype,release;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),{EncryptedBrowserQueue}=await import(pathToFileURL(join(target,'offline.js')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();let policyCalls=0,identityCalls=0,started;
-  const waiting=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),config={enabled:true,databaseName:'retirement-close',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>{identityCalls++;return scope;},canEnqueue:()=>true,canDiscard:()=>true,canRetire:()=>{policyCalls++;return true;},dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  queue=await EncryptedBrowserQueue.open(config);let item=await queue.enqueue('items.update','close',{value:'private'});item=await queue.transition(item.id,item.version,'claim');item=await queue.transition(item.id,item.version,'succeed');runtime=await createGeneratedOfflineRuntime(config);
-  prototype=EncryptedBrowserQueue.prototype;originalGet=prototype.get;prototype.get=async function(id){const result=await originalGet.call(this,id);started();await gate;return result;};
-  const pending=runtime.retire(item.id,item.version);await waiting;await runtime.close();const callsAtClose=identityCalls;release();await assert.rejects(pending,/not allowed/);assert.equal(policyCalls,0);assert.equal(identityCalls,callsAtClose);prototype.get=originalGet;assert.equal((await queue.get(item.id)).status,'succeeded');
- }finally{release?.();if(prototype&&originalGet)prototype.get=originalGet;if(runtime)await runtime.close();queue?.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated offline runtime queues, synchronizes and resolves a conflict through the capability service', {timeout:15000},async()=>{
- let externalCalls=0,stored={value:'server',version:2};const events=[],registry=new CapabilityRegistry(event=>events.push(event));
- registry.register({operationId:'items.offline',method:'POST',path:'/items'}, {authorize:ctx=>ctx.tenantId==='tenant'&&ctx.principalId==='local',validate:input=>typeof input?.idempotencyKey==='string'&&typeof input?.payload?.value==='string',execute:input=>{externalCalls++;if(input.payload.version!==stored.version)throw Error('Data revision conflict');stored={value:input.payload.value,version:stored.version+1};return stored;}});
- registry.register({operationId:'items.current',method:'GET',path:'/items'}, {authorize:ctx=>ctx.principalId==='local',validate:()=>true,execute:()=>stored});
- const upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-runtime-'));let server,runtime,dom;const originalFetch=globalThis.fetch;
- try {
-  const target=await createProject('demo-app',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});
-  const url=await new Promise((resolve,reject)=>{let text='';server.stdout.on('data',chunk=>{text+=chunk;const match=text.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited: ${code}`)));});
-  for(const file of ['offline.js','offline-worker.js','offline-ui.js','offline-runtime.mjs']){const response=await originalFetch(`${url}/${file}`);assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/javascript/);}
-  globalThis.fetch=(input,options)=>typeof input==='string'&&input.startsWith('/')?originalFetch(new URL(input,url),{...options,headers:{...options.headers,origin:url}}):originalFetch(input,options);
-  const {invokeCapability}=await import(pathToFileURL(join(target,'capabilities.mjs')).href);
-  const {createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);
-  let online=false,actor={...scope};const config={enabled:true,databaseName:'generated',scope,key:await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.offline',label:'Update item'}],intervalMs:100,maxPerPass:3,maxAttempts:2,isOnline:()=>online,resolveActor:()=>actor,canEnqueue:(_op,payload)=>typeof payload.value==='string'&&Number.isSafeInteger(payload.version),canDiscard:()=>true,dispatch:(operation,input)=>invokeCapability(operation,input),classify:error=>error.status===409?'conflict':'uncertain',onError:error=>{throw error;},loadCurrent:()=>invokeCapability('items.current',{})};
-  runtime=await createGeneratedOfflineRuntime(config);runtime.start();dom=new JSDOM('<!doctype html><main><div id="enqueue"></div><div id="conflicts"></div></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const doc=dom.window.document;
-  const form=mountGeneratedOfflineForm(doc.getElementById('enqueue'),runtime),textarea=doc.querySelector('#enqueue textarea');textarea.value=JSON.stringify({value:'mine',version:1});doc.querySelector('#enqueue form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
-  await waitFor(async()=>(await runtime.list()).length===1);assert.equal(externalCalls,0);assert.equal((await runtime.list())[0].status,'pending');
-  online=true;await waitFor(async()=>(await runtime.list())[0].status==='conflict');assert.equal(externalCalls,1);
-  const panel=runtime.mountConflicts(doc.getElementById('conflicts'));await panel.refresh();let [review,,resolve]=doc.querySelectorAll('#conflicts button');review.click();await waitFor(()=>!resolve.disabled);assert.match(doc.getElementById('conflicts').textContent,/server/);
-  doc.querySelector('#conflicts textarea').value=JSON.stringify({value:'resolved',version:2});actor={...scope,principalId:'other'};resolve.click();await waitFor(()=>doc.getElementById('conflicts').textContent.includes('Unable to queue'));assert.equal(externalCalls,1);
-  actor={...scope};resolve.click();await waitFor(async()=>(await runtime.list()).some(item=>item.status==='succeeded'));assert.equal(stored.value,'resolved');assert.equal(externalCalls,2);
-  const entries=await runtime.list();assert.equal(entries.filter(item=>item.status==='discarded').length,1);assert.equal(entries.filter(item=>item.status==='succeeded').length,1);assert.ok(events.some(event=>event.outcome==='succeeded'));
-  form.dispose();panel.dispose();
- }finally{
-  globalThis.fetch=originalFetch;if(runtime)await runtime.close();if(dom)dom.window.close();if(upstream.listening)await new Promise((resolve,reject)=>upstream.close(error=>error?reject(error):resolve()));
-  if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}await rm(dir,{recursive:true,force:true});
- }
-});
-
-test('generated offline runtime rejects disabled or malformed setup',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-disabled-'));
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);
-  await assert.rejects(createGeneratedOfflineRuntime({enabled:false}),/configuration/);
-  await assert.rejects(createGeneratedOfflineRuntime({enabled:true,operations:[]}),/configuration/);
- }finally{await rm(dir,{recursive:true,force:true});}
-});
-
-test('offline history recovers encrypted operations after reopening and clears on identity loss or close',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-'));let dom,runtime;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);let actor={...scope};const config={enabled:true,databaseName:'history',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  runtime=await createGeneratedOfflineRuntime(config);await runtime.enqueue('items.update','first',{value:'<img src=x onerror=alert(1)>'},{idempotencyKey:'shared-key'});await runtime.close();runtime=await createGeneratedOfflineRuntime(config);assert.equal((await runtime.list())[0].idempotencyKey,'shared-key');dom=new JSDOM('<!doctype html><main id="history"></main>');const root=dom.window.document.getElementById('history'),panel=runtime.mountHistory(root);await panel.refresh();assert.match(root.textContent,/items.update — pending/);assert.match(root.textContent,/<img src=x onerror=alert\(1\)>/);assert.equal(root.querySelector('img'),null);assert.equal(root.querySelectorAll('button').length,0);
-  actor={...scope,principalId:'other'};await panel.refresh();assert.match(root.textContent,/Unable to load/);assert.doesNotMatch(root.textContent,/img src/);actor={...scope};await panel.refresh();assert.match(root.textContent,/items.update/);await runtime.close();assert.equal(root.textContent,'');
- }finally{if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('offline history ignores stale asynchronous refreshes and disposal',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-race-'));let dom;try{const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let resolve;const panel=mountGeneratedOfflineHistory(root,{list:()=>new Promise(r=>{resolve=r;})}),pending=panel.refresh();panel.dispose();resolve([{operationId:'private',status:'pending',id:'id',payload:{secret:'secret'}}]);await pending;assert.equal(root.textContent,'');}finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('optional history retirement handles failures, stale controls and refreshed data',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retire-view-'));let dom;
- try{
-  const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let retired=false,fail=true,calls=0;
-  const item={id:'a'.repeat(64),version:3,operationId:'save',status:'succeeded',payload:{secret:'private'}},runtime={list:async()=>[retired?{...item,version:4,status:'retired',payload:{}}:item]},options={onRetire:async(id,version)=>{calls++;assert.equal(id,item.id);assert.equal(version,3);if(fail)throw Error('lost');retired=true;}};
-  const panel=mountGeneratedOfflineHistory(root,runtime,options);options.onRetire=()=>{throw Error('mutated callback');};await panel.refresh();let button=[...root.querySelectorAll('button')].find(x=>x.textContent==='Remove request data');assert.ok(button);button.click();await waitFor(()=>root.textContent.includes('Could not confirm removal'));assert.match(root.textContent,/private/);assert.equal(calls,1);
-  await panel.refresh();button.click();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);button=[...root.querySelectorAll('button')].find(x=>x.textContent==='Remove request data');fail=false;button.click();await waitFor(()=>root.textContent.includes('Request data removed.'));assert.doesNotMatch(root.textContent,/private/);assert.equal(root.querySelector('button'),null);assert.equal(calls,2);panel.dispose();
- }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('history exposes interrupted-operation controls only when explicitly configured',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-history-recovery-'));let dom,release;
- try{
-  const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');
-  let item={id:'a'.repeat(64),version:2,operationId:'save',status:'running',payload:{}},calls=0,fail=true,started;const waiting=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),runtime={list:async()=>[item]};
-  const plain=mountGeneratedOfflineHistory(root,runtime);await plain.refresh();assert.equal(root.querySelectorAll('button').length,0);plain.dispose();
-  const panel=mountGeneratedOfflineHistory(root,runtime,{onAbandoned:async(id,version)=>{calls++;assert.equal(id,item.id);assert.equal(version,2);if(fail)throw Error('denied');item={...item,status:'uncertain',version:3};},onVerify:async(id,version)=>{calls++;assert.equal(id,item.id);assert.equal(version,3);started();await gate;item={...item,status:'succeeded',version:4};}});
-  await panel.refresh();let button=root.querySelector('button');assert.equal(button.textContent,'Check interrupted operation');button.click();await waitFor(()=>root.textContent.includes('Could not confirm recovery'));assert.equal(calls,1);fail=false;button.click();await waitFor(()=>root.textContent.includes('save — uncertain'));button.click();assert.equal(calls,2);
-  button=root.querySelector('button');assert.equal(button.textContent,'Verify operation outcome');button.click();await waiting;panel.dispose();release();await new Promise(resolve=>setImmediate(resolve));assert.equal(root.textContent,'');assert.equal(calls,3);
- }finally{release?.();dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('history reports the refreshed verification state without hiding refresh failures',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-history-status-'));let dom;
- try{
-  const target=await createProject('demo-app',dir),{mountGeneratedOfflineHistory}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');let item={id:'a'.repeat(64),version:1,operationId:'save',status:'uncertain',payload:{}},failList=false,mode='unknown';
-  const panel=mountGeneratedOfflineHistory(root,{list:async()=>{if(failList)throw Error('identity lost');return [item];}},{onVerify:async()=>{if(mode==='pending')item={...item,version:2,status:'pending'};if(mode==='failure')failList=true;return {status:'succeeded'};}});
-  await panel.refresh();root.querySelector('button').click();await waitFor(()=>root.textContent.includes('Outcome remains uncertain.'));mode='pending';root.querySelector('button').click();await waitFor(()=>root.textContent.includes('Operation verified and ready to retry.'));assert.match(root.textContent,/save — pending/);
-  item={...item,version:3,status:'uncertain'};await panel.refresh();mode='failure';root.querySelector('button').click();await waitFor(()=>root.textContent.includes('Unable to load offline operations.'));assert.doesNotMatch(root.textContent,/verified as completed/);panel.dispose();
- }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('closing the runtime while identity is resolving prevents a later conflict lookup',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-close-check-'));let runtime,dom,release,started,paused=false,lookups=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
-  const config={enabled:true,databaseName:'close-check',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>true,resolveActor:async()=>{if(paused){started();await gate;}return {...scope};},canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{throw Error('conflict');},classify:()=> 'conflict',onError:()=>{},loadCurrent:()=>{lookups++;return {value:'private'};}};
-  runtime=await createGeneratedOfflineRuntime(config);runtime.start();await runtime.enqueue('items.update','request',{secret:'queued'});await waitFor(async()=>(await runtime.list())[0].status==='conflict');await runtime.stop();
-  dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),panel=runtime.mountConflicts(root);await panel.refresh();const review=[...root.querySelectorAll('button')].find(button=>button.textContent==='Load current data');assert.ok(review);
-  paused=true;review.click();await waiting;await runtime.close();release();await new Promise(resolve=>setImmediate(resolve));assert.equal(lookups,0);assert.equal(root.textContent,'');
- }finally{release();if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('closing the runtime during identity resolution prevents a later enqueue policy call',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-close-enqueue-'));let runtime,release,started,checks=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
-  runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'close-enqueue',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:async()=>{started();await gate;return {...scope};},canEnqueue:()=>{checks++;return true;},canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}});
-  const pending=runtime.enqueue('items.update','request',{secret:'queued'});await waiting;await runtime.close();release();await assert.rejects(pending,/not allowed/);assert.equal(checks,0);
- }finally{release();if(runtime)await runtime.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated runtime can close while a bounded worker policy ignores cancellation',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-bounded-worker-'));let runtime,release,started,signal,blocked=true,calls=0;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB=new IDBFactory();
-  const config={enabled:true,databaseName:'bounded-worker',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,policyTimeoutMs:1000,maxPendingPolicies:1,isOnline:async currentSignal=>{if(blocked){signal=currentSignal;started();await gate;}return true;},resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>calls++,classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  runtime=await createGeneratedOfflineRuntime(config);await runtime.enqueue('items.update','request',{secret:'queued'});runtime.start();await waiting;await runtime.close();assert.equal(signal.aborted,true);assert.equal(calls,0);
-  blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,0);runtime=await createGeneratedOfflineRuntime(config);assert.equal((await runtime.list())[0].status,'pending');runtime.start();await waitFor(async()=>(await runtime.list())[0].status==='succeeded');assert.equal(calls,1);
- }finally{release();if(runtime)await runtime.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('a selected previous form request can be reused after a new browser session',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-recovery-'));let dom,runtime;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);let actor={...scope};const config={enabled:true,databaseName:'recovery',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>actor,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};
-  const createDom=()=>{const window=new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>',{url:'https://app.example/'});Object.defineProperty(window.window,'crypto',{value:webcrypto});return window;};
-  runtime=await createGeneratedOfflineRuntime(config);dom=createDom();let root=dom.window.document.getElementById('form'),form=mountGeneratedOfflineForm(root,runtime);root.querySelector('textarea').value='{"value":"original"}';root.querySelector('form').requestSubmit();await waitFor(async()=>(await runtime.list()).length===1&&!root.querySelector('button').disabled);const original=(await runtime.list())[0];form.dispose();await runtime.close();dom.window.close();
-  runtime=await createGeneratedOfflineRuntime(config);dom=createDom();root=dom.window.document.getElementById('form');form=mountGeneratedOfflineForm(root,runtime);const historyRoot=dom.window.document.getElementById('history'),history=runtime.mountHistory(historyRoot,{onRecover:id=>form.recover(id)});await history.refresh();historyRoot.querySelector('button').click();await waitFor(()=>historyRoot.textContent.includes('Request loaded'));assert.deepEqual(JSON.parse(root.querySelector('textarea').value),{value:'original'});root.querySelector('form').requestSubmit();await waitFor(()=>root.textContent.includes('Operation pending')&&!root.querySelector('button').disabled);const entries=await runtime.list();assert.equal(entries.length,1);assert.equal(entries[0].id,original.id);assert.equal(entries[0].idempotencyKey,original.idempotencyKey);
-  actor={...scope,principalId:'other'};await assert.rejects(form.recover(original.id),/not allowed/);assert.equal((await config.resolveActor()).principalId,'other');actor={...scope};root.querySelector('textarea').value='{"value":"changed"}';root.querySelector('form').requestSubmit();await waitFor(async()=>(await runtime.list()).length===2&&!root.querySelector('button').disabled);history.dispose();form.dispose();
- }finally{if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('form recovery rejects a changed operation and ignores a disposed form',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-recovery-race-'));let dom;try{const target=await createProject('demo-app',dir),{mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main id="form"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const root=dom.window.document.getElementById('form'),item={id:'a'.repeat(64),version:1,operationId:'save',requestKey:webcrypto.randomUUID(),payload:{private:'value'}};let resolve,count=0;const runtime={operations:()=>[{id:'save',label:'Save'}],enqueue:()=>{},list:async()=>{if(++count===1)return [item];return new Promise(r=>{resolve=r;});}},form=mountGeneratedOfflineForm(root,runtime);let pending=form.recover(item.id);await waitFor(()=>typeof resolve==='function');resolve([{...item,version:2}]);await assert.rejects(pending,/Cannot recover/);assert.equal(root.querySelector('textarea').value,'{}');assert.equal(dom.window.sessionStorage.length,0);count=0;resolve=undefined;pending=form.recover(item.id);await waitFor(()=>typeof resolve==='function');form.dispose();resolve([item]);await assert.rejects(pending,/Cannot recover/);assert.equal(root.textContent,'');assert.equal(dom.window.sessionStorage.length,0);}finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('offline form retains request identity across remounts and creates new identities for changes',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-form-'));let dom;
- try{
-  const target=await createProject('demo-app',dir),{mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main id="offline"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const doc=dom.window.document,root=doc.getElementById('offline'),calls=[];let fail=true;
-  const runtime={operations:()=>[{id:'items.update',label:'Update'}],enqueue:async(operation,key,payload)=>{calls.push({operation,key,payload});if(fail)throw Error('outcome unknown');return {status:'pending'};}};
-  const submit=async payload=>{root.querySelector('textarea').value=JSON.stringify(payload);root.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));await waitFor(()=>!root.querySelector('button').disabled);};
-  let form=mountGeneratedOfflineForm(root,runtime);await submit({secret:'private'});assert.equal(calls.length,1);assert.match(root.textContent,/Unable to queue/);const stored=dom.window.sessionStorage.getItem('app-mixer-offline-form-v1:offline');assert.ok(stored);assert.equal(stored.includes('private'),false);form.dispose();
-  fail=false;form=mountGeneratedOfflineForm(root,runtime);await submit({secret:'private'});assert.equal(calls[1].key,calls[0].key);await submit({secret:'changed'});assert.notEqual(calls[2].key,calls[1].key);root.querySelectorAll('button')[1].click();await submit({secret:'changed'});assert.notEqual(calls[3].key,calls[2].key);dom.window.sessionStorage.setItem('app-mixer-offline-form-v1:offline','invalid');await submit({secret:'changed'});assert.equal(calls.length,4);assert.match(root.textContent,/Unable to queue/);form.dispose();
- }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('a committed enqueue with a lost response is deduplicated after the form is reopened',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-retry-'));let dom,runtime;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
-  runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'retry',scope,key,indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}});
-  dom=new JSDOM('<!doctype html><main id="offline"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});const root=dom.window.document.getElementById('offline');let loseResponse=true;const wrapper={operations:()=>runtime.operations(),enqueue:async(...args)=>{const item=await runtime.enqueue(...args);if(loseResponse)throw Error('response lost');return item;}};
-  const submit=async()=>{root.querySelector('textarea').value='{"value":"same"}';root.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));await waitFor(()=>!root.querySelector('button').disabled);};
-  let form=mountGeneratedOfflineForm(root,wrapper);await submit();assert.equal((await runtime.list()).length,1);form.dispose();loseResponse=false;form=mountGeneratedOfflineForm(root,wrapper);await submit();assert.equal((await runtime.list()).length,1);assert.match(root.textContent,/Operation pending/);form.dispose();
- }finally{if(runtime)await runtime.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('persistent form identities survive sessions and coordinate simultaneous tabs',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-cross-session-'));let runtime,store,otherStore,dom1,dom2;
- try{
-  const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm,createPersistentOfflineRequestKeys}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),indexedDB=new IDBFactory(),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
-  const options={databaseName:'request-identities',scope,indexedDB,crypto:webcrypto};store=await createPersistentOfflineRequestKeys(options);otherStore=await createPersistentOfflineRequestKeys(options);
-  const keys=await Promise.all(Array.from({length:20},(_,i)=>(i%2?store:otherStore).getOrCreate('same-slot','items.update',{secret:'private'})));assert.equal(new Set(keys).size,1);
-  const other=await createPersistentOfflineRequestKeys({...options,scope:{...scope,principalId:'other'}});try{assert.notEqual(await other.getOrCreate('same-slot','items.update',{secret:'private'}),keys[0]);}finally{other.close();}
-  runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'queue',scope,key,indexedDB,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}});
-  const createDom=()=>{const dom=new JSDOM('<!doctype html><main id="form"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});return dom;};const submit=(dom,payload)=>{const root=dom.window.document.getElementById('form');root.querySelector('textarea').value=JSON.stringify(payload);root.querySelector('form').requestSubmit();};
-  const lostResponse={operations:()=>runtime.operations(),enqueue:async(...args)=>{await runtime.enqueue(...args);throw Error('response lost');}};dom1=createDom();let form=mountGeneratedOfflineForm(dom1.window.document.getElementById('form'),lostResponse,{identityStore:store});submit(dom1,{secret:'private'});await waitFor(async()=>(await runtime.list()).length===1&&!dom1.window.document.querySelector('button').disabled);assert.match(dom1.window.document.body.textContent,/Unable to queue/);const initial=(await runtime.list())[0];form.dispose();dom1.window.close();dom1=undefined;store.close();store=await createPersistentOfflineRequestKeys(options);
-  dom1=createDom();dom2=createDom();form=mountGeneratedOfflineForm(dom1.window.document.getElementById('form'),runtime,{identityStore:store});const form2=mountGeneratedOfflineForm(dom2.window.document.getElementById('form'),runtime,{identityStore:otherStore});submit(dom1,{secret:'private'});submit(dom2,{secret:'private'});await waitFor(()=>dom1.window.document.body.textContent.includes('Operation pending')&&dom2.window.document.body.textContent.includes('Operation pending'));assert.equal((await runtime.list()).length,1);assert.equal((await runtime.list())[0].id,initial.id);
-  dom1.window.document.querySelectorAll('button')[1].click();await waitFor(()=>dom1.window.document.body.textContent.includes('Ready to queue'));submit(dom1,{secret:'private'});await waitFor(async()=>(await runtime.list()).length===2);form.dispose();form2.dispose();
-  const raw=await new Promise((resolve,reject)=>{const req=indexedDB.open('request-identities');req.onerror=()=>reject(req.error);req.onsuccess=()=>{const db=req.result,tx=db.transaction('request-identities'),get=tx.objectStore('request-identities').getAll();get.onsuccess=()=>resolve(get.result);tx.oncomplete=()=>db.close();};});assert.equal(JSON.stringify(raw).includes('private'),false);assert.equal(JSON.stringify(raw).includes('items.update'),false);
- }finally{if(runtime)await runtime.close();store?.close();otherStore?.close();dom1?.window.close();dom2?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated forms use a shared host identity across devices and fail closed',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-shared-form-'));let one,two,dom1,dom2;
- try{const target=await createProject('demo-app',dir),{createGeneratedOfflineRuntime,mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);const config={enabled:true,databaseName:'queue',scope,key,crypto:webcrypto,operations:[{id:'items.update',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>false,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:()=>{},classify:()=> 'uncertain',onError:()=>{},loadCurrent:()=>{}};one=await createGeneratedOfflineRuntime({...config,indexedDB:new IDBFactory()});two=await createGeneratedOfflineRuntime({...config,indexedDB:new IDBFactory()});let pair={requestKey:webcrypto.randomUUID(),idempotencyKey:webcrypto.randomUUID()},available=true,restored;
-  const shared={getOrCreate:async(_slot,operation,payload)=>{if(available==='invalid')return {requestKey:'bad',idempotencyKey:'bad'};if(!available)throw Error('unavailable');assert.equal(operation,'items.update');assert.equal(payload.value,'original');payload.value='mutated';return {...pair};},reset:async()=>{pair={requestKey:webcrypto.randomUUID(),idempotencyKey:webcrypto.randomUUID()};},restore:async(_slot,operation,payload,value)=>{restored={operation,payload,value};pair={...value};}};const make=()=>{const dom=new JSDOM('<!doctype html><main id="form"></main>',{url:'https://app.example/'});Object.defineProperty(dom.window,'crypto',{value:webcrypto});return dom;};dom1=make();dom2=make();assert.throws(()=>mountGeneratedOfflineForm(dom1.window.document.querySelector('main'),one,{sharedIdentityStore:shared,identityStore:shared}),/Invalid/);const form1=mountGeneratedOfflineForm(dom1.window.document.querySelector('main'),one,{sharedIdentityStore:shared}),form2=mountGeneratedOfflineForm(dom2.window.document.querySelector('main'),two,{sharedIdentityStore:shared}),submit=dom=>{dom.window.document.querySelector('textarea').value='{"value":"original"}';dom.window.document.querySelector('form').requestSubmit();};submit(dom1);submit(dom2);await waitFor(()=>dom1.window.document.body.textContent.includes('Operation pending')&&dom2.window.document.body.textContent.includes('Operation pending'));const a=(await one.list())[0],b=(await two.list())[0];assert.equal(a.requestKey,b.requestKey);assert.equal(a.idempotencyKey,b.idempotencyKey);assert.equal(a.payload.value,'original');assert.equal(b.payload.value,'original');await form1.recover(a.id);assert.deepEqual(restored,{operation:'items.update',payload:{value:'original'},value:{requestKey:a.requestKey,idempotencyKey:a.idempotencyKey}});
-  available=false;submit(dom1);await waitFor(()=>dom1.window.document.body.textContent.includes('Unable to queue'));assert.equal((await one.list()).length,1);assert.equal(dom1.window.document.querySelector('textarea').value,'{"value":"original"}');available='invalid';submit(dom1);await waitFor(()=>!dom1.window.document.querySelector('button').disabled);assert.match(dom1.window.document.body.textContent,/Unable to queue/);assert.equal((await one.list()).length,1);available=true;dom1.window.document.querySelectorAll('button')[1].click();await waitFor(()=>dom1.window.document.body.textContent.includes('Ready to queue'));submit(dom1);await waitFor(async()=>(await one.list()).length===2);assert.notEqual((await one.list()).find(item=>item.id!==a.id).idempotencyKey,a.idempotencyKey);form1.dispose();form2.dispose();
- }finally{await one?.close();await two?.close();dom1?.window.close();dom2?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('disposing a form while shared identity is loading does not enqueue',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-shared-form-dispose-'));let dom;try{const target=await createProject('demo-app',dir),{mountGeneratedOfflineForm}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>',{url:'https://app.example/'});let started,resolve,calls=0;const ready=new Promise(r=>started=r),waiting=new Promise(r=>resolve=r),runtime={operations:()=>[{id:'save',label:'Save'}],enqueue:async()=>{calls++;return {status:'pending'};}},identity={getOrCreate:async()=>{started();return waiting;},reset:async()=>{},restore:async()=>{}};const form=mountGeneratedOfflineForm(dom.window.document.querySelector('main'),runtime,{sharedIdentityStore:identity});dom.window.document.querySelector('form').requestSubmit();await ready;form.dispose();resolve({requestKey:webcrypto.randomUUID(),idempotencyKey:webcrypto.randomUUID()});await new Promise(r=>setTimeout(r,20));assert.equal(calls,0);assert.equal(dom.window.document.querySelector('main').textContent,'');}finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('shared identity stores coordinate generations and fence stale devices across reopening',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-shared-slots-'));let one,two,reopened;try{const target=await createProject('demo-app',dir),{createSharedOfflineIdentityStore}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href),slots=new Map(),requests=new Map();let actor={...scope},calls=0;const invoke=async(operation,input)=>{assert.equal(operation,'slot.capability');calls++;let current=slots.get(input.slot);if(input.action==='open'){if(!current){current=webcrypto.randomUUID();slots.set(input.slot,current);}return {requestKey:current};}if(input.expectedRequestKey!==current)throw Error('Shared offline slot conflict');if(input.action==='reset'){const next=webcrypto.randomUUID();slots.set(input.slot,next);return {requestKey:next};}if(input.action==='allocate'){const digest=JSON.stringify(input.payload),existing=requests.get(current);if(existing&&existing.digest!==digest)throw Error('Shared offline slot conflict');const value=existing??{digest,idempotencyKey:webcrypto.randomUUID()};requests.set(current,value);return {requestKey:current,idempotencyKey:value.idempotencyKey};}if(input.action==='restore'){const saved=requests.get(input.requestKey);if(!saved||saved.digest!==JSON.stringify(input.payload)||saved.idempotencyKey!==input.idempotencyKey)throw Error('Shared offline key forbidden');slots.set(input.slot,input.requestKey);return {requestKey:input.requestKey};}throw Error('Invalid');};const factoryA=new IDBFactory(),factoryB=new IDBFactory(),config=indexedDB=>({databaseName:'shared-slots',scope,operations:[{id:'items.update',slotCapability:'slot.capability'}],invoke,resolveActor:()=>actor,indexedDB,crypto:webcrypto});one=await createSharedOfflineIdentityStore(config(factoryA));two=await createSharedOfflineIdentityStore(config(factoryB));const [a,b]=await Promise.all([one.getOrCreate('form','items.update',{value:'one'}),two.getOrCreate('form','items.update',{value:'one'})]);assert.deepEqual(a,b);await assert.rejects(one.getOrCreate('form','items.update',{value:'different'}),/conflict/);await one.reset('form','items.update');await assert.rejects(two.getOrCreate('form','items.update',{value:'one'}),/conflict/);const next=await one.getOrCreate('form','items.update',{value:'two'});assert.notEqual(next.requestKey,a.requestKey);two.close();two=undefined;reopened=await createSharedOfflineIdentityStore(config(factoryB));await assert.rejects(reopened.getOrCreate('form','items.update',{value:'one'}),/conflict/);assert.equal(await reopened.adoptCurrent('form','items.update'),next.requestKey);assert.deepEqual(await reopened.getOrCreate('form','items.update',{value:'two'}),next);await one.restore('form','items.update',{value:'one'},a);await assert.rejects(reopened.getOrCreate('form','items.update',{value:'two'}),/conflict/);assert.deepEqual(await one.getOrCreate('form','items.update',{value:'one'}),a);const before=calls;actor={...scope,principalId:'other'};await assert.rejects(one.getOrCreate('form','items.update',{value:'one'}),/unavailable/);assert.equal(calls,before);
- }finally{one?.close();two?.close();reopened?.close();await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated offline worker preserves uncertainty after capability audit failure',{timeout:15000},async()=>{
- let effects=0,classifications=0;const registry=new CapabilityRegistry(event=>{if(event.outcome==='succeeded')throw Error('private audit failure');});registry.register({operationId:'items.offline',method:'POST',path:'/items'},{authorize:()=>true,validate:()=>true,execute:()=>{effects++;return {ok:true};}});
- const upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-audit-'));let server,runtime;const originalFetch=globalThis.fetch;
- try{const target=await createProject('demo-app',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});const url=await new Promise((resolve,reject)=>{let text='';server.stdout.on('data',chunk=>{text+=chunk;const match=text.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited: ${code}`)));});
-  globalThis.fetch=(input,options)=>typeof input==='string'&&input.startsWith('/')?originalFetch(new URL(input,url),{...options,headers:{...options.headers,origin:url}}):originalFetch(input,options);const {invokeCapability}=await import(pathToFileURL(join(target,'capabilities.mjs')).href),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);
-  runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:'audit',scope,key:await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.offline',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:3,isOnline:()=>true,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:(operation,input)=>invokeCapability(operation,input),classify:()=>{classifications++;return 'retry';},onError:()=>{},loadCurrent:()=>{}});
-  await runtime.enqueue('items.offline','request',{value:'one'});runtime.start();await waitFor(async()=>(await runtime.list())[0].status==='uncertain');await new Promise(resolve=>setTimeout(resolve,250));assert.equal(effects,1);assert.equal(classifications,0);assert.equal((await runtime.list())[0].attempts,1);
- }finally{globalThis.fetch=originalFetch;if(runtime)await runtime.close();if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));await rm(dir,{recursive:true,force:true});}
-});
-
-test('generated offline worker treats lost, malformed and server-failure responses as uncertain',{timeout:15000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-offline-ambiguous-')),originalFetch=globalThis.fetch;let runtime;
- try{const target=await createProject('demo-app',dir),{invokeCapability}=await import(pathToFileURL(join(target,'capabilities.mjs')).href),{createGeneratedOfflineRuntime}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);
-  for(const mode of ['lost','invalid-json','invalid-body','missing-result','server-error','shared-uncertain']){let calls=0,classifications=0;globalThis.fetch=async()=>{calls++;if(mode==='lost')throw Error('network disconnected');if(mode==='invalid-json')return new Response('{invalid',{status:200});if(mode==='invalid-body')return new Response('null',{status:200});if(mode==='missing-result')return new Response('{}',{status:200});if(mode==='shared-uncertain')return new Response(JSON.stringify({error:'Shared offline outcome uncertain',code:'CAPABILITY_OUTCOME_UNCERTAIN'}),{status:409});return new Response(JSON.stringify({error:'upstream error'}),{status:500});};
-   runtime=await createGeneratedOfflineRuntime({enabled:true,databaseName:mode,scope,key:await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),indexedDB:new IDBFactory(),crypto:webcrypto,operations:[{id:'items.offline',label:'Update'}],intervalMs:100,maxPerPass:1,maxAttempts:2,isOnline:()=>true,resolveActor:()=>scope,canEnqueue:()=>true,canDiscard:()=>true,dispatch:(operation,input)=>invokeCapability(operation,input),classify:()=>{classifications++;return 'retry';},onError:()=>{},loadCurrent:()=>{}});
-   await runtime.enqueue('items.offline','request',{value:mode});runtime.start();await waitFor(async()=>(await runtime.list())[0].status==='uncertain');await new Promise(resolve=>setTimeout(resolve,150));assert.equal(calls,1,mode);assert.equal(classifications,0,mode);await runtime.close();runtime=undefined;
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { webcrypto } from 'node:crypto';
+import { IDBFactory } from 'fake-indexeddb';
+import { JSDOM } from 'jsdom';
+import { createProject } from '../dist/index.js';
+import {
+  CapabilityRegistry,
+  createCapabilityServer,
+  SqliteOfflineQueue,
+  registerOfflineRecoveryListCapability,
+  registerOfflineAbandonedRecoveryCapability,
+  registerOfflineVerificationCapability,
+  registerOfflineRecoveryEvidenceCapability,
+  registerOfflineArchiveListCapability,
+  registerOfflineArchiveCapability,
+  registerOfflineArchiveReadCapability
+} from '../../core/dist/index.js';
+import { DatabaseSync } from 'node:sqlite';
+const token = 'capability-secret-at-least-thirty-two-characters',
+  scope = { tenantId: 'tenant', applicationId: 'demo-app', principalId: 'local' };
+const waitFor = async condition => {
+  for (let i = 0; i < 250; i++) {
+    if (await condition()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
   }
- }finally{globalThis.fetch=originalFetch;if(runtime)await runtime.close();await rm(dir,{recursive:true,force:true});}
+  assert.fail('Timed out waiting for offline integration');
+};
+
+test('generated browser recovery requires host confirmation and verified outcomes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-browser-recovery-'));
+  let runtime, queue, release;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      { EncryptedBrowserQueue } = await import(pathToFileURL(join(target, 'offline.js')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+      indexedDB = new IDBFactory();
+    let actor = { ...scope },
+      confirmed = false,
+      outcome = 'unknown',
+      pause = false,
+      started,
+      verifyGate,
+      verifyStarted;
+    const gate = new Promise(resolve => (release = resolve)),
+      waiting = new Promise(resolve => (started = resolve));
+    const config = {
+      enabled: true,
+      databaseName: 'browser-recovery',
+      scope,
+      key,
+      indexedDB,
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: () => actor,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      confirmAbandoned: async item => {
+        item.payload.value = 'mutated';
+        if (pause) {
+          started();
+          await gate;
+        }
+        return confirmed;
+      },
+      verifyOutcome: async () => {
+        if (verifyGate) {
+          verifyStarted();
+          await verifyGate;
+        }
+        return outcome;
+      },
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    };
+    queue = await EncryptedBrowserQueue.open(config);
+    let item = await queue.enqueue('items.update', 'recover', { value: 'original' });
+    item = await queue.transition(item.id, item.version, 'claim');
+    runtime = await createGeneratedOfflineRuntime(config);
+    await assert.rejects(runtime.recoverAbandoned(item.id, item.version), /not allowed/);
+    assert.equal((await queue.get(item.id)).status, 'running');
+    confirmed = true;
+    pause = true;
+    const pending = runtime.recoverAbandoned(item.id, item.version);
+    await waiting;
+    actor = { ...scope, principalId: 'other' };
+    release();
+    await assert.rejects(pending, /not allowed/);
+    actor = { ...scope };
+    pause = false;
+    item = await runtime.recoverAbandoned(item.id, item.version);
+    assert.equal(item.status, 'uncertain');
+    assert.equal(item.payload.value, 'original');
+    assert.equal((await runtime.verifyUncertain(item.id, item.version)).status, 'uncertain');
+    outcome = 'invalid';
+    await assert.rejects(runtime.verifyUncertain(item.id, item.version), /Invalid offline verification/);
+    outcome = 'not_applied';
+    const stale = item;
+    item = await runtime.verifyUncertain(item.id, item.version);
+    assert.equal(item.status, 'pending');
+    await assert.rejects(runtime.verifyUncertain(stale.id, stale.version), /not allowed/);
+    item = await queue.transition(item.id, item.version, 'claim');
+    item = await queue.transition(item.id, item.version, 'uncertain');
+    outcome = 'applied';
+    item = await runtime.verifyUncertain(item.id, item.version);
+    assert.equal(item.status, 'succeeded');
+    await runtime.close();
+    runtime = undefined;
+    let other = await queue.enqueue('items.update', 'competing', { value: 'other' });
+    other = await queue.transition(other.id, other.version, 'claim');
+    other = await queue.transition(other.id, other.version, 'uncertain');
+    runtime = await createGeneratedOfflineRuntime(config);
+    let releaseVerify;
+    verifyGate = new Promise(resolve => (releaseVerify = resolve));
+    const verifyWaiting = new Promise(resolve => (verifyStarted = resolve)),
+      verifying = runtime.verifyUncertain(other.id, other.version);
+    await verifyWaiting;
+    await queue.transition(other.id, other.version, 'reconcileNotApplied');
+    releaseVerify();
+    await assert.rejects(verifying, /version conflict/);
+    verifyGate = undefined;
+    assert.equal((await queue.get(other.id)).status, 'pending');
+    await runtime.close();
+    runtime = undefined;
+    delete config.confirmAbandoned;
+    delete config.verifyOutcome;
+    runtime = await createGeneratedOfflineRuntime(config);
+    await assert.rejects(runtime.recoverAbandoned(item.id, item.version), /not allowed/);
+    await assert.rejects(runtime.verifyUncertain(item.id, item.version), /not allowed/);
+  } finally {
+    release?.();
+    if (runtime) await runtime.close();
+    queue?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('operator recovery view discovers, verifies and displays audited offline recovery',{timeout:15000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-operator-view-')),path=join(dir,'queue.sqlite'),queue=new SqliteOfflineQueue(path,{enabled:true,maxAttempts:2,retryDelayMs:0}),db=new DatabaseSync(path),registry=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let upstream,server,dom,view;
- try{const item=queue.enqueue({tenantId:'tenant',applicationId:'demo-app'},'local','items.offline','request',{private:'secret'});db.prepare("UPDATE offline_operations SET status='running',attempts=1 WHERE id=?").run(item.id);const base={applicationId:'demo-app',queuePrincipalId:'local',targetOperationId:'items.offline',authorize:actor=>actor.principalId==='local',authorizeOperation:()=>true},candidate=id=>({operationId:id,method:'POST',path:'/operator'});registerOfflineRecoveryListCapability(registry,queue,{...base,candidate:candidate('list'),authorizeListing:()=>true});registerOfflineAbandonedRecoveryCapability(registry,queue,{...base,candidate:candidate('recover'),verifyStopped:()=>true});registerOfflineVerificationCapability(registry,queue,{...base,candidate:candidate('verify'),verify:()=> 'applied'});registerOfflineRecoveryEvidenceCapability(registry,queue,{...base,candidate:candidate('evidence')});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const target=await createProject('demo-app',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});const url=await new Promise((resolve,reject)=>{let text='';server.stdout.on('data',chunk=>{text+=chunk;const match=text.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited: ${code}`)));});globalThis.fetch=(input,options)=>typeof input==='string'&&input.startsWith('/')?originalFetch(new URL(input,url),{...options,headers:{...options.headers,origin:url}}):originalFetch(input,options);
-  const {mountOfflineRecovery}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');view=mountOfflineRecovery(root,{listOperation:'list',recoverOperation:'recover',verifyOperation:'verify',evidenceOperation:'evidence'});const button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);await view.refresh();const itemButton=[...root.querySelectorAll('li button')].find(element=>element.textContent.includes(item.id));assert.ok(itemButton);itemButton.click();const reference=[...root.querySelectorAll('label')].find(label=>label.textContent==='Evidence reference').querySelector('input');assert.equal(button('Recover interrupted operation').disabled,true);reference.value='case-1';reference.dispatchEvent(new dom.window.Event('input'));button('Recover interrupted operation').click();await waitFor(()=>root.textContent.includes('marked uncertain'));assert.equal(queue.get({tenantId:'tenant',applicationId:'demo-app'},'local',item.id).status,'uncertain');reference.value='provider-proof';reference.dispatchEvent(new dom.window.Event('input'));button('Verify provider outcome').click();await waitFor(()=>root.textContent.includes('Verification result: applied'));button('View recovery evidence').click();await waitFor(()=>root.textContent.includes('provider-proof'));assert.match(root.textContent,/case-1/);assert.equal(root.textContent.includes('secret'),false);assert.equal(queue.get({tenantId:'tenant',applicationId:'demo-app'},'local',item.id).status,'succeeded');view.dispose();assert.equal(root.children.length,0);view=mountOfflineRecovery(root,{listOperation:'list',recoverOperation:'recover',verifyOperation:'verify',evidenceOperation:'evidence'});const lookup=[...root.querySelectorAll('label')].find(label=>label.textContent==='Operation ID for evidence').querySelector('input');lookup.value=item.id;lookup.dispatchEvent(new dom.window.Event('input'));button('Select operation for evidence').click();assert.equal(button('Recover interrupted operation').disabled,true);assert.equal(button('Verify provider outcome').disabled,true);button('View recovery evidence').click();await waitFor(()=>root.textContent.includes('provider-proof'));assert.match(root.textContent,/case-1/);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}if(upstream){upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));}db.close();queue.close();await rm(dir,{recursive:true,force:true});}
+test('generated offline runtime applies and synchronizes a host rollback anchor', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-runtime-anchor-'));
+  let runtime, db;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+      indexedDB = new IDBFactory();
+    let floor = 0,
+      failAdvance = false,
+      actor = { ...scope },
+      pauseRead = false,
+      startedRead,
+      releaseRead;
+    const waitingRead = new Promise(resolve => (startedRead = resolve)),
+      readGate = new Promise(resolve => (releaseRead = resolve));
+    const anchor = {
+        async read() {
+          if (pauseRead) {
+            startedRead();
+            await readGate;
+          }
+          return floor;
+        },
+        async advance(value) {
+          if (failAdvance) throw Error('anchor unavailable');
+          floor = Math.max(floor, value);
+        }
+      },
+      config = {
+        enabled: true,
+        databaseName: 'anchored-runtime',
+        scope,
+        key,
+        indexedDB,
+        crypto: webcrypto,
+        rollbackAnchor: anchor,
+        operations: [{ id: 'items.update', label: 'Update' }],
+        intervalMs: 100,
+        maxPerPass: 1,
+        maxAttempts: 2,
+        isOnline: () => false,
+        resolveActor: () => actor,
+        canEnqueue: () => true,
+        canDiscard: () => true,
+        dispatch: () => {},
+        classify: () => 'uncertain',
+        onError: () => {},
+        loadCurrent: () => {}
+      };
+    runtime = await createGeneratedOfflineRuntime(config);
+    anchor.advance = () => {
+      throw Error('changed callback');
+    };
+    await runtime.enqueue('items.update', 'first', { value: 'one' });
+    assert.equal(floor, 1);
+    assert.equal(await runtime.hasPendingRollbackAnchor(), false);
+    db = await new Promise((resolve, reject) => {
+      const open = indexedDB.open('anchored-runtime', 3);
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const snapshot = await new Promise((resolve, reject) => {
+      const read = db.transaction('offline', 'readonly').objectStore('offline').getAll();
+      read.onsuccess = () => resolve(read.result);
+      read.onerror = () => reject(read.error);
+    });
+    failAdvance = true;
+    await runtime.enqueue('items.update', 'second', { value: 'two' });
+    assert.equal(floor, 1);
+    assert.equal(await runtime.hasPendingRollbackAnchor(), true);
+    await assert.rejects(runtime.syncRollbackAnchor(), /anchor unavailable/);
+    actor = { ...scope, principalId: 'other' };
+    await assert.rejects(runtime.hasPendingRollbackAnchor(), /not allowed/);
+    await assert.rejects(runtime.syncRollbackAnchor(), /not allowed/);
+    actor = { ...scope };
+    failAdvance = false;
+    assert.equal(await runtime.syncRollbackAnchor(), 2);
+    assert.equal(await runtime.hasPendingRollbackAnchor(), false);
+    assert.equal((await runtime.list()).length, 2);
+    pauseRead = true;
+    const pending = runtime.syncRollbackAnchor();
+    await waitingRead;
+    actor = { ...scope, principalId: 'other' };
+    pauseRead = false;
+    releaseRead();
+    await assert.rejects(pending, /not allowed/);
+    actor = { ...scope };
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('offline', 'readwrite'),
+        store = tx.objectStore('offline');
+      store.clear();
+      for (const row of snapshot) store.put(row);
+      tx.oncomplete = resolve;
+      tx.onabort = () => reject(tx.error);
+    });
+    await assert.rejects(runtime.list(), /rollback detected/);
+    await runtime.close();
+    runtime = undefined;
+    await assert.rejects(createGeneratedOfflineRuntime(config), /rollback detected/);
+  } finally {
+    if (runtime) await runtime.close();
+    db?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('operator recovery view ignores a late listing after disposal',{timeout:10000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-operator-late-')),originalFetch=globalThis.fetch;let dom,release,started;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);
- try{const target=await createProject('demo-app',dir),{mountOfflineRecovery}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);globalThis.fetch=async()=>{started();await gate;return new Response(JSON.stringify({result:{items:[{id:'late',status:'running',attempts:1}]}}),{status:200,headers:{'content-type':'application/json'}});};dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),view=mountOfflineRecovery(root,{listOperation:'list',recoverOperation:'recover',verifyOperation:'verify',evidenceOperation:'evidence'});const pending=view.refresh();await ready;view.dispose();release();await pending;assert.equal(root.children.length,0);
- }finally{release?.();globalThis.fetch=originalFetch;dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('generated offline runtime authorizes retirement and prevents recovery or reuse of removed payloads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-retire-'));
+  let runtime, dom, release;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime, mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    let actor = { ...scope },
+      allowed = false,
+      blocked = false,
+      started;
+    const gate = new Promise(resolve => (release = resolve)),
+      waiting = new Promise(resolve => (started = resolve));
+    const config = {
+      enabled: true,
+      databaseName: 'retirement',
+      scope,
+      key,
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => true,
+      resolveActor: () => actor,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      canRetire: async item => {
+        item.payload.secret = 'changed';
+        if (blocked) {
+          started();
+          await gate;
+        }
+        return allowed;
+      },
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    };
+    runtime = await createGeneratedOfflineRuntime(config);
+    config.canRetire = () => false;
+    runtime.start();
+    const requestKey = webcrypto.randomUUID(),
+      queued = await runtime.enqueue('items.update', requestKey, { secret: 'private' });
+    await waitFor(async () => (await runtime.list())[0].status === 'succeeded');
+    const completed = (await runtime.list())[0];
+    await assert.rejects(runtime.retire(queued.id, completed.version), /not allowed/);
+    assert.equal((await runtime.list())[0].payload.secret, 'private');
+    allowed = true;
+    blocked = true;
+    const attempt = runtime.retire(queued.id, completed.version);
+    await waiting;
+    actor = { ...scope, principalId: 'other' };
+    release();
+    await assert.rejects(attempt, /not allowed/);
+    actor = { ...scope };
+    blocked = false;
+    dom = new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>', { url: 'https://app.example/' });
+    Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+    const form = mountGeneratedOfflineForm(dom.window.document.getElementById('form'), runtime),
+      historyRoot = dom.window.document.getElementById('history'),
+      history = runtime.mountHistory(historyRoot, { onRecover: id => form.recover(id), onRetire: (id, version) => runtime.retire(id, version) });
+    await history.refresh();
+    assert.match(historyRoot.textContent, /private/);
+    const remove = [...historyRoot.querySelectorAll('button')].find(button => button.textContent === 'Remove request data');
+    assert.ok(remove);
+    remove.click();
+    await waitFor(() => historyRoot.textContent.includes('Request data removed.'));
+    const retired = (await runtime.list())[0];
+    assert.equal(retired.status, 'retired');
+    assert.deepEqual(retired.payload, {});
+    await assert.rejects(runtime.enqueue('items.update', requestKey, { secret: 'private' }), /retired/);
+    assert.doesNotMatch(historyRoot.textContent, /private/);
+    assert.equal(historyRoot.querySelector('button'), null);
+    await assert.rejects(form.recover(queued.id), /Cannot recover/);
+    history.dispose();
+    form.dispose();
+    await runtime.close();
+    delete config.canRetire;
+    runtime = await createGeneratedOfflineRuntime(config);
+    await assert.rejects(runtime.retire(queued.id, completed.version), /not allowed/);
+  } finally {
+    release?.();
+    if (runtime) await runtime.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('operator recovery view clears stale selection after an ambiguous action failure',{timeout:10000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-operator-failed-')),originalFetch=globalThis.fetch;let dom;
- try{const target=await createProject('demo-app',dir),{mountOfflineRecovery}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);globalThis.fetch=async input=>input.endsWith('/list')?new Response(JSON.stringify({result:{items:[{id:'operation-1',status:'running',attempts:1}]}}),{status:200}):new Response(JSON.stringify({error:'failed'}),{status:503});dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),view=mountOfflineRecovery(root,{listOperation:'list',recoverOperation:'recover',verifyOperation:'verify',evidenceOperation:'evidence'}),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);await view.refresh();root.querySelector('li button').click();const ref=[...root.querySelectorAll('label')].find(label=>label.textContent==='Evidence reference').querySelector('input');ref.value='case';ref.dispatchEvent(new dom.window.Event('input'));button('Recover interrupted operation').click();await waitFor(()=>root.textContent.includes('Refresh before trying again'));assert.equal(button('Recover interrupted operation').disabled,true);assert.equal(button('View recovery evidence').disabled,true);assert.match(root.textContent,/No operation selected/);view.dispose();
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('retirement does not start host policy or identity checks after runtime closure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-retirement-close-'));
+  let runtime, queue, originalGet, prototype, release;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      { EncryptedBrowserQueue } = await import(pathToFileURL(join(target, 'offline.js')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+      indexedDB = new IDBFactory();
+    let policyCalls = 0,
+      identityCalls = 0,
+      started;
+    const waiting = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      config = {
+        enabled: true,
+        databaseName: 'retirement-close',
+        scope,
+        key,
+        indexedDB,
+        crypto: webcrypto,
+        operations: [{ id: 'items.update', label: 'Update' }],
+        intervalMs: 100,
+        maxPerPass: 1,
+        maxAttempts: 2,
+        isOnline: () => false,
+        resolveActor: () => {
+          identityCalls++;
+          return scope;
+        },
+        canEnqueue: () => true,
+        canDiscard: () => true,
+        canRetire: () => {
+          policyCalls++;
+          return true;
+        },
+        dispatch: () => {},
+        classify: () => 'uncertain',
+        onError: () => {},
+        loadCurrent: () => {}
+      };
+    queue = await EncryptedBrowserQueue.open(config);
+    let item = await queue.enqueue('items.update', 'close', { value: 'private' });
+    item = await queue.transition(item.id, item.version, 'claim');
+    item = await queue.transition(item.id, item.version, 'succeed');
+    runtime = await createGeneratedOfflineRuntime(config);
+    prototype = EncryptedBrowserQueue.prototype;
+    originalGet = prototype.get;
+    prototype.get = async function (id) {
+      const result = await originalGet.call(this, id);
+      started();
+      await gate;
+      return result;
+    };
+    const pending = runtime.retire(item.id, item.version);
+    await waiting;
+    await runtime.close();
+    const callsAtClose = identityCalls;
+    release();
+    await assert.rejects(pending, /not allowed/);
+    assert.equal(policyCalls, 0);
+    assert.equal(identityCalls, callsAtClose);
+    prototype.get = originalGet;
+    assert.equal((await queue.get(item.id)).status, 'succeeded');
+  } finally {
+    release?.();
+    if (prototype && originalGet) prototype.get = originalGet;
+    if (runtime) await runtime.close();
+    queue?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('operator archive view retires and reads authorized records through the capability service',{timeout:15000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-archive-view-')),queue=new SqliteOfflineQueue(':memory:',{enabled:true,maxAttempts:2,retryDelayMs:0}),registry=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let upstream,dom,view,allow=false;
- try{const dataScope={tenantId:'tenant',applicationId:'demo-app'},item=queue.enqueue(dataScope,'local','items.offline','request',{private:'secret'}),pending=queue.enqueue(dataScope,'local','items.offline','pending',{});queue.discard(dataScope,'local',item.id);const base={applicationId:'demo-app',queuePrincipalId:'local',targetOperationId:'items.offline',authorize:actor=>actor.principalId==='local'},candidate=id=>({operationId:id,method:'POST',path:'/archive'});registerOfflineArchiveListCapability(registry,queue,{...base,candidate:candidate('candidates'),kind:'candidates',authorizeListing:()=>true});registerOfflineArchiveListCapability(registry,queue,{...base,candidate:candidate('archived'),kind:'archived',authorizeListing:()=>true});registerOfflineArchiveCapability(registry,queue,{...base,candidate:candidate('retire'),authorizeOperation:()=>allow});registerOfflineArchiveReadCapability(registry,queue,{...base,candidate:candidate('read'),authorizeArchived:()=>true});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'local'}:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const target=await createProject('demo-app',dir);globalThis.fetch=(url,options)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${upstream.address().port}`),{...options,headers:{...options.headers,authorization:`Bearer ${token}`},body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});
-  const {mountOfflineArchive}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main');view=mountOfflineArchive(root,{candidateListOperation:'candidates',archivedListOperation:'archived',archiveOperation:'retire',readOperation:'read'});const button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text),reference=[...root.querySelectorAll('label')].find(label=>label.textContent==='Retirement evidence reference').querySelector('input');const cutoff=root.querySelector('input[type=date]');cutoff.value='1970-01-01';cutoff.dispatchEvent(new dom.window.Event('input'));await view.refresh();assert.ok(!root.textContent.includes(item.id));cutoff.value='';cutoff.dispatchEvent(new dom.window.Event('input'));await view.refresh();assert.ok(root.textContent.includes(item.id));assert.ok(!root.textContent.includes(pending.id));root.querySelector('li button').click();assert.equal(button('Retire selected operation').disabled,true);reference.value='case-1';reference.dispatchEvent(new dom.window.Event('input'));button('Retire selected operation').click();await waitFor(()=>root.textContent.includes('Refresh before trying again'));assert.equal(queue.get(dataScope,'local',item.id).status,'discarded');assert.equal(button('Retire selected operation').disabled,true);
-  allow=true;await view.refresh();root.querySelector('li button').click();reference.value='<img src=x>';reference.dispatchEvent(new dom.window.Event('input'));button('Retire selected operation').click();await waitFor(()=>root.textContent.includes('Operation retired.'));assert.equal(queue.get(dataScope,'local',item.id),undefined);button('View archive marker').click();await waitFor(()=>root.textContent.includes('Archive marker loaded.'));assert.ok(root.textContent.includes('<img src=x>'));assert.equal(root.querySelector('img'),null);assert.ok(root.textContent.includes(item.idempotencyKey));assert.equal(root.textContent.includes('secret'),false);button('Browse archive records').click();await waitFor(()=>root.querySelector('li button')?.textContent.includes(item.id));root.querySelector('li button').click();button('View archive marker').click();await waitFor(()=>root.textContent.includes('Archive marker loaded.'));view.dispose();assert.equal(root.children.length,0);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;if(upstream){upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));}queue.close();await rm(dir,{recursive:true,force:true});}
+test('generated offline runtime queues, synchronizes and resolves a conflict through the capability service', { timeout: 15000 }, async () => {
+  let externalCalls = 0,
+    stored = { value: 'server', version: 2 };
+  const events = [],
+    registry = new CapabilityRegistry(event => events.push(event));
+  registry.register(
+    { operationId: 'items.offline', method: 'POST', path: '/items' },
+    {
+      authorize: ctx => ctx.tenantId === 'tenant' && ctx.principalId === 'local',
+      validate: input => typeof input?.idempotencyKey === 'string' && typeof input?.payload?.value === 'string',
+      execute: input => {
+        externalCalls++;
+        if (input.payload.version !== stored.version) throw Error('Data revision conflict');
+        stored = { value: input.payload.value, version: stored.version + 1 };
+        return stored;
+      }
+    }
+  );
+  registry.register({ operationId: 'items.current', method: 'GET', path: '/items' }, { authorize: ctx => ctx.principalId === 'local', validate: () => true, execute: () => stored });
+  const upstream = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+    () => {}
+  );
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-runtime-'));
+  let server, runtime, dom;
+  const originalFetch = globalThis.fetch;
+  try {
+    const target = await createProject('demo-app', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const url = await new Promise((resolve, reject) => {
+      let text = '';
+      server.stdout.on('data', chunk => {
+        text += chunk;
+        const match = text.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited: ${code}`)));
+    });
+    for (const file of ['offline.js', 'offline-worker.js', 'offline-ui.js', 'offline-runtime.mjs']) {
+      const response = await originalFetch(`${url}/${file}`);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /javascript/);
+    }
+    globalThis.fetch = (input, options) =>
+      typeof input === 'string' && input.startsWith('/') ? originalFetch(new URL(input, url), { ...options, headers: { ...options.headers, origin: url } }) : originalFetch(input, options);
+    const { invokeCapability } = await import(pathToFileURL(join(target, 'capabilities.mjs')).href);
+    const { createGeneratedOfflineRuntime, mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    let online = false,
+      actor = { ...scope };
+    const config = {
+      enabled: true,
+      databaseName: 'generated',
+      scope,
+      key: await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.offline', label: 'Update item' }],
+      intervalMs: 100,
+      maxPerPass: 3,
+      maxAttempts: 2,
+      isOnline: () => online,
+      resolveActor: () => actor,
+      canEnqueue: (_op, payload) => typeof payload.value === 'string' && Number.isSafeInteger(payload.version),
+      canDiscard: () => true,
+      dispatch: (operation, input) => invokeCapability(operation, input),
+      classify: error => (error.status === 409 ? 'conflict' : 'uncertain'),
+      onError: error => {
+        throw error;
+      },
+      loadCurrent: () => invokeCapability('items.current', {})
+    };
+    runtime = await createGeneratedOfflineRuntime(config);
+    runtime.start();
+    dom = new JSDOM('<!doctype html><main><div id="enqueue"></div><div id="conflicts"></div></main>', { url: 'https://app.example/' });
+    Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+    const doc = dom.window.document;
+    const form = mountGeneratedOfflineForm(doc.getElementById('enqueue'), runtime),
+      textarea = doc.querySelector('#enqueue textarea');
+    textarea.value = JSON.stringify({ value: 'mine', version: 1 });
+    doc.querySelector('#enqueue form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+    await waitFor(async () => (await runtime.list()).length === 1);
+    assert.equal(externalCalls, 0);
+    assert.equal((await runtime.list())[0].status, 'pending');
+    online = true;
+    await waitFor(async () => (await runtime.list())[0].status === 'conflict');
+    assert.equal(externalCalls, 1);
+    const panel = runtime.mountConflicts(doc.getElementById('conflicts'));
+    await panel.refresh();
+    let [review, , resolve] = doc.querySelectorAll('#conflicts button');
+    review.click();
+    await waitFor(() => !resolve.disabled);
+    assert.match(doc.getElementById('conflicts').textContent, /server/);
+    doc.querySelector('#conflicts textarea').value = JSON.stringify({ value: 'resolved', version: 2 });
+    actor = { ...scope, principalId: 'other' };
+    resolve.click();
+    await waitFor(() => doc.getElementById('conflicts').textContent.includes('Unable to queue'));
+    assert.equal(externalCalls, 1);
+    actor = { ...scope };
+    resolve.click();
+    await waitFor(async () => (await runtime.list()).some(item => item.status === 'succeeded'));
+    assert.equal(stored.value, 'resolved');
+    assert.equal(externalCalls, 2);
+    const entries = await runtime.list();
+    assert.equal(entries.filter(item => item.status === 'discarded').length, 1);
+    assert.equal(entries.filter(item => item.status === 'succeeded').length, 1);
+    assert.ok(events.some(event => event.outcome === 'succeeded'));
+    form.dispose();
+    panel.dispose();
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (runtime) await runtime.close();
+    if (dom) dom.window.close();
+    if (upstream.listening) await new Promise((resolve, reject) => upstream.close(error => (error ? reject(error) : resolve())));
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('operator archive view discards late results after disposal',{timeout:10000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-archive-late-')),originalFetch=globalThis.fetch;let dom,release,started;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const target=await createProject('demo-app',dir),{mountOfflineArchive}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);globalThis.fetch=async()=>{started();await gate;return new Response(JSON.stringify({result:{items:[{id:'late',status:'discarded'}]}}),{status:200});};dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),view=mountOfflineArchive(root,{candidateListOperation:'candidates',archivedListOperation:'archived',archiveOperation:'retire',readOperation:'read'}),pending=view.refresh();await ready;view.dispose();release();await pending;assert.equal(root.children.length,0);}finally{release?.();globalThis.fetch=originalFetch;dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('generated offline runtime rejects disabled or malformed setup', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-disabled-'));
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    await assert.rejects(createGeneratedOfflineRuntime({ enabled: false }), /configuration/);
+    await assert.rejects(createGeneratedOfflineRuntime({ enabled: true, operations: [] }), /configuration/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('operator archive view pages candidates and clears ambiguous action state',{timeout:10000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-archive-pages-')),originalFetch=globalThis.fetch;let dom;try{const target=await createProject('demo-app',dir),{mountOfflineArchive}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);globalThis.fetch=async(url,request)=>{const input=JSON.parse(request.body);if(url.endsWith('/candidates'))return new Response(JSON.stringify({result:input.after?{items:[{id:'second',status:'succeeded',completedAt:12}]}:{items:[{id:'first',status:'discarded'}],nextAfter:'first'}}),{status:200});return new Response(JSON.stringify({error:'ambiguous'}),{status:503});};dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),view=mountOfflineArchive(root,{candidateListOperation:'candidates',archivedListOperation:'archived',archiveOperation:'retire',readOperation:'read'}),button=text=>[...root.querySelectorAll('button')].find(x=>x.textContent===text);await view.refresh();assert.ok(root.textContent.includes('completion time unknown'));button('Next page').click();await waitFor(()=>root.textContent.includes('second'));assert.equal(button('Next page').disabled,true);root.querySelector('li button').click();const reference=[...root.querySelectorAll('label')].find(label=>label.textContent==='Retirement evidence reference').querySelector('input');reference.value='case';reference.dispatchEvent(new dom.window.Event('input'));button('Retire selected operation').click();await waitFor(()=>root.textContent.includes('Refresh before trying again'));assert.equal(button('Retire selected operation').disabled,true);assert.equal(button('View archive marker').disabled,true);assert.match(root.textContent,/No operation selected/);view.dispose();}finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('offline history recovers encrypted operations after reopening and clears on identity loss or close', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-history-'));
+  let dom, runtime;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    let actor = { ...scope };
+    const config = {
+      enabled: true,
+      databaseName: 'history',
+      scope,
+      key,
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: () => actor,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    };
+    runtime = await createGeneratedOfflineRuntime(config);
+    await runtime.enqueue('items.update', 'first', { value: '<img src=x onerror=alert(1)>' }, { idempotencyKey: 'shared-key' });
+    await runtime.close();
+    runtime = await createGeneratedOfflineRuntime(config);
+    assert.equal((await runtime.list())[0].idempotencyKey, 'shared-key');
+    dom = new JSDOM('<!doctype html><main id="history"></main>');
+    const root = dom.window.document.getElementById('history'),
+      panel = runtime.mountHistory(root);
+    await panel.refresh();
+    assert.match(root.textContent, /items.update — pending/);
+    assert.match(root.textContent, /<img src=x onerror=alert\(1\)>/);
+    assert.equal(root.querySelector('img'), null);
+    assert.equal(root.querySelectorAll('button').length, 0);
+    actor = { ...scope, principalId: 'other' };
+    await panel.refresh();
+    assert.match(root.textContent, /Unable to load/);
+    assert.doesNotMatch(root.textContent, /img src/);
+    actor = { ...scope };
+    await panel.refresh();
+    assert.match(root.textContent, /items.update/);
+    await runtime.close();
+    assert.equal(root.textContent, '');
+  } finally {
+    if (runtime) await runtime.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
+test('offline history ignores stale asynchronous refreshes and disposal', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-history-race-'));
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineHistory } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main');
+    let resolve;
+    const panel = mountGeneratedOfflineHistory(root, {
+        list: () =>
+          new Promise(r => {
+            resolve = r;
+          })
+      }),
+      pending = panel.refresh();
+    panel.dispose();
+    resolve([{ operationId: 'private', status: 'pending', id: 'id', payload: { secret: 'secret' } }]);
+    await pending;
+    assert.equal(root.textContent, '');
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
-test('operator archive view filters candidates by UTC date across pages',{timeout:10000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'offline-archive-cutoff-')),originalFetch=globalThis.fetch,calls=[];let dom;try{const target=await createProject('demo-app',dir),{mountOfflineArchive}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);globalThis.fetch=async(url,request)=>{const input=JSON.parse(request.body);calls.push({url,input});return new Response(JSON.stringify({result:input.after?{items:[{id:'second',status:'succeeded',completedAt:12}]}:{items:[{id:'first',status:'discarded',completedAt:0}],nextAfter:'first'}}),{status:200});};dom=new JSDOM('<!doctype html><main></main>');const root=dom.window.document.querySelector('main'),view=mountOfflineArchive(root,{candidateListOperation:'candidates',archivedListOperation:'archived',archiveOperation:'retire',readOperation:'read'}),button=text=>[...root.querySelectorAll('button')].find(x=>x.textContent===text),cutoff=root.querySelector('input[type=date]');cutoff.value='2025-01-02';cutoff.dispatchEvent(new dom.window.Event('input'));await view.refresh();assert.equal(calls[0].input.completedBefore,Date.parse('2025-01-02T00:00:00.000Z'));assert.ok(root.textContent.includes('1970-01-01T00:00:00.000Z'));button('Next page').click();await waitFor(()=>calls.length===2&&root.textContent.includes('second'));assert.equal(calls[1].input.completedBefore,calls[0].input.completedBefore);assert.equal(calls[1].input.after,'first');root.querySelector('li button').click();cutoff.value='2025-01-03';cutoff.dispatchEvent(new dom.window.Event('input'));assert.match(root.textContent,/No operation selected/);assert.equal(button('Next page').disabled,true);assert.equal(button('Retire selected operation').disabled,true);cutoff.value='1969-12-31';cutoff.dispatchEvent(new dom.window.Event('input'));assert.equal(button('Browse completed operations').disabled,true);await view.refresh();assert.equal(calls.length,2);assert.match(root.textContent,/on or after 1970-01-01/);cutoff.value='';cutoff.dispatchEvent(new dom.window.Event('input'));await view.refresh();assert.equal(Object.hasOwn(calls[2].input,'completedBefore'),false);view.dispose();}finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('optional history retirement handles failures, stale controls and refreshed data', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-retire-view-'));
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineHistory } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main');
+    let retired = false,
+      fail = true,
+      calls = 0;
+    const item = { id: 'a'.repeat(64), version: 3, operationId: 'save', status: 'succeeded', payload: { secret: 'private' } },
+      runtime = { list: async () => [retired ? { ...item, version: 4, status: 'retired', payload: {} } : item] },
+      options = {
+        onRetire: async (id, version) => {
+          calls++;
+          assert.equal(id, item.id);
+          assert.equal(version, 3);
+          if (fail) throw Error('lost');
+          retired = true;
+        }
+      };
+    const panel = mountGeneratedOfflineHistory(root, runtime, options);
+    options.onRetire = () => {
+      throw Error('mutated callback');
+    };
+    await panel.refresh();
+    let button = [...root.querySelectorAll('button')].find(x => x.textContent === 'Remove request data');
+    assert.ok(button);
+    button.click();
+    await waitFor(() => root.textContent.includes('Could not confirm removal'));
+    assert.match(root.textContent, /private/);
+    assert.equal(calls, 1);
+    await panel.refresh();
+    button.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+    button = [...root.querySelectorAll('button')].find(x => x.textContent === 'Remove request data');
+    fail = false;
+    button.click();
+    await waitFor(() => root.textContent.includes('Request data removed.'));
+    assert.doesNotMatch(root.textContent, /private/);
+    assert.equal(root.querySelector('button'), null);
+    assert.equal(calls, 2);
+    panel.dispose();
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('history exposes interrupted-operation controls only when explicitly configured', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-history-recovery-'));
+  let dom, release;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineHistory } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main');
+    let item = { id: 'a'.repeat(64), version: 2, operationId: 'save', status: 'running', payload: {} },
+      calls = 0,
+      fail = true,
+      started;
+    const waiting = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      runtime = { list: async () => [item] };
+    const plain = mountGeneratedOfflineHistory(root, runtime);
+    await plain.refresh();
+    assert.equal(root.querySelectorAll('button').length, 0);
+    plain.dispose();
+    const panel = mountGeneratedOfflineHistory(root, runtime, {
+      onAbandoned: async (id, version) => {
+        calls++;
+        assert.equal(id, item.id);
+        assert.equal(version, 2);
+        if (fail) throw Error('denied');
+        item = { ...item, status: 'uncertain', version: 3 };
+      },
+      onVerify: async (id, version) => {
+        calls++;
+        assert.equal(id, item.id);
+        assert.equal(version, 3);
+        started();
+        await gate;
+        item = { ...item, status: 'succeeded', version: 4 };
+      }
+    });
+    await panel.refresh();
+    let button = root.querySelector('button');
+    assert.equal(button.textContent, 'Check interrupted operation');
+    button.click();
+    await waitFor(() => root.textContent.includes('Could not confirm recovery'));
+    assert.equal(calls, 1);
+    fail = false;
+    button.click();
+    await waitFor(() => root.textContent.includes('save — uncertain'));
+    button.click();
+    assert.equal(calls, 2);
+    button = root.querySelector('button');
+    assert.equal(button.textContent, 'Verify operation outcome');
+    button.click();
+    await waiting;
+    panel.dispose();
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(root.textContent, '');
+    assert.equal(calls, 3);
+  } finally {
+    release?.();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('history reports the refreshed verification state without hiding refresh failures', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-history-status-'));
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineHistory } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main');
+    let item = { id: 'a'.repeat(64), version: 1, operationId: 'save', status: 'uncertain', payload: {} },
+      failList = false,
+      mode = 'unknown';
+    const panel = mountGeneratedOfflineHistory(
+      root,
+      {
+        list: async () => {
+          if (failList) throw Error('identity lost');
+          return [item];
+        }
+      },
+      {
+        onVerify: async () => {
+          if (mode === 'pending') item = { ...item, version: 2, status: 'pending' };
+          if (mode === 'failure') failList = true;
+          return { status: 'succeeded' };
+        }
+      }
+    );
+    await panel.refresh();
+    root.querySelector('button').click();
+    await waitFor(() => root.textContent.includes('Outcome remains uncertain.'));
+    mode = 'pending';
+    root.querySelector('button').click();
+    await waitFor(() => root.textContent.includes('Operation verified and ready to retry.'));
+    assert.match(root.textContent, /save — pending/);
+    item = { ...item, version: 3, status: 'uncertain' };
+    await panel.refresh();
+    mode = 'failure';
+    root.querySelector('button').click();
+    await waitFor(() => root.textContent.includes('Unable to load offline operations.'));
+    assert.doesNotMatch(root.textContent, /verified as completed/);
+    panel.dispose();
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('closing the runtime while identity is resolving prevents a later conflict lookup', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-close-check-'));
+  let runtime,
+    dom,
+    release,
+    started,
+    paused = false,
+    lookups = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    waiting = new Promise(resolve => (started = resolve));
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const config = {
+      enabled: true,
+      databaseName: 'close-check',
+      scope,
+      key,
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => true,
+      resolveActor: async () => {
+        if (paused) {
+          started();
+          await gate;
+        }
+        return { ...scope };
+      },
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => {
+        throw Error('conflict');
+      },
+      classify: () => 'conflict',
+      onError: () => {},
+      loadCurrent: () => {
+        lookups++;
+        return { value: 'private' };
+      }
+    };
+    runtime = await createGeneratedOfflineRuntime(config);
+    runtime.start();
+    await runtime.enqueue('items.update', 'request', { secret: 'queued' });
+    await waitFor(async () => (await runtime.list())[0].status === 'conflict');
+    await runtime.stop();
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main'),
+      panel = runtime.mountConflicts(root);
+    await panel.refresh();
+    const review = [...root.querySelectorAll('button')].find(button => button.textContent === 'Load current data');
+    assert.ok(review);
+    paused = true;
+    review.click();
+    await waiting;
+    await runtime.close();
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(lookups, 0);
+    assert.equal(root.textContent, '');
+  } finally {
+    release();
+    if (runtime) await runtime.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('closing the runtime during identity resolution prevents a later enqueue policy call', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-close-enqueue-'));
+  let runtime,
+    release,
+    started,
+    checks = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    waiting = new Promise(resolve => (started = resolve));
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    runtime = await createGeneratedOfflineRuntime({
+      enabled: true,
+      databaseName: 'close-enqueue',
+      scope,
+      key,
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: async () => {
+        started();
+        await gate;
+        return { ...scope };
+      },
+      canEnqueue: () => {
+        checks++;
+        return true;
+      },
+      canDiscard: () => true,
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    });
+    const pending = runtime.enqueue('items.update', 'request', { secret: 'queued' });
+    await waiting;
+    await runtime.close();
+    release();
+    await assert.rejects(pending, /not allowed/);
+    assert.equal(checks, 0);
+  } finally {
+    release();
+    if (runtime) await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('generated runtime can close while a bounded worker policy ignores cancellation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-bounded-worker-'));
+  let runtime,
+    release,
+    started,
+    signal,
+    blocked = true,
+    calls = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    waiting = new Promise(resolve => (started = resolve));
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+      indexedDB = new IDBFactory();
+    const config = {
+      enabled: true,
+      databaseName: 'bounded-worker',
+      scope,
+      key,
+      indexedDB,
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      policyTimeoutMs: 1000,
+      maxPendingPolicies: 1,
+      isOnline: async currentSignal => {
+        if (blocked) {
+          signal = currentSignal;
+          started();
+          await gate;
+        }
+        return true;
+      },
+      resolveActor: () => scope,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => calls++,
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    };
+    runtime = await createGeneratedOfflineRuntime(config);
+    await runtime.enqueue('items.update', 'request', { secret: 'queued' });
+    runtime.start();
+    await waiting;
+    await runtime.close();
+    assert.equal(signal.aborted, true);
+    assert.equal(calls, 0);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 0);
+    runtime = await createGeneratedOfflineRuntime(config);
+    assert.equal((await runtime.list())[0].status, 'pending');
+    runtime.start();
+    await waitFor(async () => (await runtime.list())[0].status === 'succeeded');
+    assert.equal(calls, 1);
+  } finally {
+    release();
+    if (runtime) await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a selected previous form request can be reused after a new browser session', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-recovery-'));
+  let dom, runtime;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime, mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    let actor = { ...scope };
+    const config = {
+      enabled: true,
+      databaseName: 'recovery',
+      scope,
+      key,
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: () => actor,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    };
+    const createDom = () => {
+      const window = new JSDOM('<!doctype html><main id="form"></main><main id="history"></main>', { url: 'https://app.example/' });
+      Object.defineProperty(window.window, 'crypto', { value: webcrypto });
+      return window;
+    };
+    runtime = await createGeneratedOfflineRuntime(config);
+    dom = createDom();
+    let root = dom.window.document.getElementById('form'),
+      form = mountGeneratedOfflineForm(root, runtime);
+    root.querySelector('textarea').value = '{"value":"original"}';
+    root.querySelector('form').requestSubmit();
+    await waitFor(async () => (await runtime.list()).length === 1 && !root.querySelector('button').disabled);
+    const original = (await runtime.list())[0];
+    form.dispose();
+    await runtime.close();
+    dom.window.close();
+    runtime = await createGeneratedOfflineRuntime(config);
+    dom = createDom();
+    root = dom.window.document.getElementById('form');
+    form = mountGeneratedOfflineForm(root, runtime);
+    const historyRoot = dom.window.document.getElementById('history'),
+      history = runtime.mountHistory(historyRoot, { onRecover: id => form.recover(id) });
+    await history.refresh();
+    historyRoot.querySelector('button').click();
+    await waitFor(() => historyRoot.textContent.includes('Request loaded'));
+    assert.deepEqual(JSON.parse(root.querySelector('textarea').value), { value: 'original' });
+    root.querySelector('form').requestSubmit();
+    await waitFor(() => root.textContent.includes('Operation pending') && !root.querySelector('button').disabled);
+    const entries = await runtime.list();
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].id, original.id);
+    assert.equal(entries[0].idempotencyKey, original.idempotencyKey);
+    actor = { ...scope, principalId: 'other' };
+    await assert.rejects(form.recover(original.id), /not allowed/);
+    assert.equal((await config.resolveActor()).principalId, 'other');
+    actor = { ...scope };
+    root.querySelector('textarea').value = '{"value":"changed"}';
+    root.querySelector('form').requestSubmit();
+    await waitFor(async () => (await runtime.list()).length === 2 && !root.querySelector('button').disabled);
+    history.dispose();
+    form.dispose();
+  } finally {
+    if (runtime) await runtime.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('form recovery rejects a changed operation and ignores a disposed form', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-recovery-race-'));
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main id="form"></main>', { url: 'https://app.example/' });
+    Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+    const root = dom.window.document.getElementById('form'),
+      item = { id: 'a'.repeat(64), version: 1, operationId: 'save', requestKey: webcrypto.randomUUID(), payload: { private: 'value' } };
+    let resolve,
+      count = 0;
+    const runtime = {
+        operations: () => [{ id: 'save', label: 'Save' }],
+        enqueue: () => {},
+        list: async () => {
+          if (++count === 1) return [item];
+          return new Promise(r => {
+            resolve = r;
+          });
+        }
+      },
+      form = mountGeneratedOfflineForm(root, runtime);
+    let pending = form.recover(item.id);
+    await waitFor(() => typeof resolve === 'function');
+    resolve([{ ...item, version: 2 }]);
+    await assert.rejects(pending, /Cannot recover/);
+    assert.equal(root.querySelector('textarea').value, '{}');
+    assert.equal(dom.window.sessionStorage.length, 0);
+    count = 0;
+    resolve = undefined;
+    pending = form.recover(item.id);
+    await waitFor(() => typeof resolve === 'function');
+    form.dispose();
+    resolve([item]);
+    await assert.rejects(pending, /Cannot recover/);
+    assert.equal(root.textContent, '');
+    assert.equal(dom.window.sessionStorage.length, 0);
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('offline form retains request identity across remounts and creates new identities for changes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-form-'));
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main id="offline"></main>', { url: 'https://app.example/' });
+    Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+    const doc = dom.window.document,
+      root = doc.getElementById('offline'),
+      calls = [];
+    let fail = true;
+    const runtime = {
+      operations: () => [{ id: 'items.update', label: 'Update' }],
+      enqueue: async (operation, key, payload) => {
+        calls.push({ operation, key, payload });
+        if (fail) throw Error('outcome unknown');
+        return { status: 'pending' };
+      }
+    };
+    const submit = async payload => {
+      root.querySelector('textarea').value = JSON.stringify(payload);
+      root.querySelector('form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+      await waitFor(() => !root.querySelector('button').disabled);
+    };
+    let form = mountGeneratedOfflineForm(root, runtime);
+    await submit({ secret: 'private' });
+    assert.equal(calls.length, 1);
+    assert.match(root.textContent, /Unable to queue/);
+    const stored = dom.window.sessionStorage.getItem('app-mixer-offline-form-v1:offline');
+    assert.ok(stored);
+    assert.equal(stored.includes('private'), false);
+    form.dispose();
+    fail = false;
+    form = mountGeneratedOfflineForm(root, runtime);
+    await submit({ secret: 'private' });
+    assert.equal(calls[1].key, calls[0].key);
+    await submit({ secret: 'changed' });
+    assert.notEqual(calls[2].key, calls[1].key);
+    root.querySelectorAll('button')[1].click();
+    await submit({ secret: 'changed' });
+    assert.notEqual(calls[3].key, calls[2].key);
+    dom.window.sessionStorage.setItem('app-mixer-offline-form-v1:offline', 'invalid');
+    await submit({ secret: 'changed' });
+    assert.equal(calls.length, 4);
+    assert.match(root.textContent, /Unable to queue/);
+    form.dispose();
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a committed enqueue with a lost response is deduplicated after the form is reopened', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-retry-'));
+  let dom, runtime;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime, mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    runtime = await createGeneratedOfflineRuntime({
+      enabled: true,
+      databaseName: 'retry',
+      scope,
+      key,
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: () => scope,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    });
+    dom = new JSDOM('<!doctype html><main id="offline"></main>', { url: 'https://app.example/' });
+    Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+    const root = dom.window.document.getElementById('offline');
+    let loseResponse = true;
+    const wrapper = {
+      operations: () => runtime.operations(),
+      enqueue: async (...args) => {
+        const item = await runtime.enqueue(...args);
+        if (loseResponse) throw Error('response lost');
+        return item;
+      }
+    };
+    const submit = async () => {
+      root.querySelector('textarea').value = '{"value":"same"}';
+      root.querySelector('form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+      await waitFor(() => !root.querySelector('button').disabled);
+    };
+    let form = mountGeneratedOfflineForm(root, wrapper);
+    await submit();
+    assert.equal((await runtime.list()).length, 1);
+    form.dispose();
+    loseResponse = false;
+    form = mountGeneratedOfflineForm(root, wrapper);
+    await submit();
+    assert.equal((await runtime.list()).length, 1);
+    assert.match(root.textContent, /Operation pending/);
+    form.dispose();
+  } finally {
+    if (runtime) await runtime.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('persistent form identities survive sessions and coordinate simultaneous tabs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-cross-session-'));
+  let runtime, store, otherStore, dom1, dom2;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime, mountGeneratedOfflineForm, createPersistentOfflineRequestKeys } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      indexedDB = new IDBFactory(),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const options = { databaseName: 'request-identities', scope, indexedDB, crypto: webcrypto };
+    store = await createPersistentOfflineRequestKeys(options);
+    otherStore = await createPersistentOfflineRequestKeys(options);
+    const keys = await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? store : otherStore).getOrCreate('same-slot', 'items.update', { secret: 'private' })));
+    assert.equal(new Set(keys).size, 1);
+    const other = await createPersistentOfflineRequestKeys({ ...options, scope: { ...scope, principalId: 'other' } });
+    try {
+      assert.notEqual(await other.getOrCreate('same-slot', 'items.update', { secret: 'private' }), keys[0]);
+    } finally {
+      other.close();
+    }
+    runtime = await createGeneratedOfflineRuntime({
+      enabled: true,
+      databaseName: 'queue',
+      scope,
+      key,
+      indexedDB,
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: () => scope,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    });
+    const createDom = () => {
+      const dom = new JSDOM('<!doctype html><main id="form"></main>', { url: 'https://app.example/' });
+      Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+      return dom;
+    };
+    const submit = (dom, payload) => {
+      const root = dom.window.document.getElementById('form');
+      root.querySelector('textarea').value = JSON.stringify(payload);
+      root.querySelector('form').requestSubmit();
+    };
+    const lostResponse = {
+      operations: () => runtime.operations(),
+      enqueue: async (...args) => {
+        await runtime.enqueue(...args);
+        throw Error('response lost');
+      }
+    };
+    dom1 = createDom();
+    let form = mountGeneratedOfflineForm(dom1.window.document.getElementById('form'), lostResponse, { identityStore: store });
+    submit(dom1, { secret: 'private' });
+    await waitFor(async () => (await runtime.list()).length === 1 && !dom1.window.document.querySelector('button').disabled);
+    assert.match(dom1.window.document.body.textContent, /Unable to queue/);
+    const initial = (await runtime.list())[0];
+    form.dispose();
+    dom1.window.close();
+    dom1 = undefined;
+    store.close();
+    store = await createPersistentOfflineRequestKeys(options);
+    dom1 = createDom();
+    dom2 = createDom();
+    form = mountGeneratedOfflineForm(dom1.window.document.getElementById('form'), runtime, { identityStore: store });
+    const form2 = mountGeneratedOfflineForm(dom2.window.document.getElementById('form'), runtime, { identityStore: otherStore });
+    submit(dom1, { secret: 'private' });
+    submit(dom2, { secret: 'private' });
+    await waitFor(() => dom1.window.document.body.textContent.includes('Operation pending') && dom2.window.document.body.textContent.includes('Operation pending'));
+    assert.equal((await runtime.list()).length, 1);
+    assert.equal((await runtime.list())[0].id, initial.id);
+    dom1.window.document.querySelectorAll('button')[1].click();
+    await waitFor(() => dom1.window.document.body.textContent.includes('Ready to queue'));
+    submit(dom1, { secret: 'private' });
+    await waitFor(async () => (await runtime.list()).length === 2);
+    form.dispose();
+    form2.dispose();
+    const raw = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('request-identities');
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result,
+          tx = db.transaction('request-identities'),
+          get = tx.objectStore('request-identities').getAll();
+        get.onsuccess = () => resolve(get.result);
+        tx.oncomplete = () => db.close();
+      };
+    });
+    assert.equal(JSON.stringify(raw).includes('private'), false);
+    assert.equal(JSON.stringify(raw).includes('items.update'), false);
+  } finally {
+    if (runtime) await runtime.close();
+    store?.close();
+    otherStore?.close();
+    dom1?.window.close();
+    dom2?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('generated forms use a shared host identity across devices and fail closed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-shared-form-'));
+  let one, two, dom1, dom2;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createGeneratedOfflineRuntime, mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      key = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const config = {
+      enabled: true,
+      databaseName: 'queue',
+      scope,
+      key,
+      crypto: webcrypto,
+      operations: [{ id: 'items.update', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 2,
+      isOnline: () => false,
+      resolveActor: () => scope,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: () => {},
+      classify: () => 'uncertain',
+      onError: () => {},
+      loadCurrent: () => {}
+    };
+    one = await createGeneratedOfflineRuntime({ ...config, indexedDB: new IDBFactory() });
+    two = await createGeneratedOfflineRuntime({ ...config, indexedDB: new IDBFactory() });
+    let pair = { requestKey: webcrypto.randomUUID(), idempotencyKey: webcrypto.randomUUID() },
+      available = true,
+      restored;
+    const shared = {
+      getOrCreate: async (_slot, operation, payload) => {
+        if (available === 'invalid') return { requestKey: 'bad', idempotencyKey: 'bad' };
+        if (!available) throw Error('unavailable');
+        assert.equal(operation, 'items.update');
+        assert.equal(payload.value, 'original');
+        payload.value = 'mutated';
+        return { ...pair };
+      },
+      reset: async () => {
+        pair = { requestKey: webcrypto.randomUUID(), idempotencyKey: webcrypto.randomUUID() };
+      },
+      restore: async (_slot, operation, payload, value) => {
+        restored = { operation, payload, value };
+        pair = { ...value };
+      }
+    };
+    const make = () => {
+      const dom = new JSDOM('<!doctype html><main id="form"></main>', { url: 'https://app.example/' });
+      Object.defineProperty(dom.window, 'crypto', { value: webcrypto });
+      return dom;
+    };
+    dom1 = make();
+    dom2 = make();
+    assert.throws(() => mountGeneratedOfflineForm(dom1.window.document.querySelector('main'), one, { sharedIdentityStore: shared, identityStore: shared }), /Invalid/);
+    const form1 = mountGeneratedOfflineForm(dom1.window.document.querySelector('main'), one, { sharedIdentityStore: shared }),
+      form2 = mountGeneratedOfflineForm(dom2.window.document.querySelector('main'), two, { sharedIdentityStore: shared }),
+      submit = dom => {
+        dom.window.document.querySelector('textarea').value = '{"value":"original"}';
+        dom.window.document.querySelector('form').requestSubmit();
+      };
+    submit(dom1);
+    submit(dom2);
+    await waitFor(() => dom1.window.document.body.textContent.includes('Operation pending') && dom2.window.document.body.textContent.includes('Operation pending'));
+    const a = (await one.list())[0],
+      b = (await two.list())[0];
+    assert.equal(a.requestKey, b.requestKey);
+    assert.equal(a.idempotencyKey, b.idempotencyKey);
+    assert.equal(a.payload.value, 'original');
+    assert.equal(b.payload.value, 'original');
+    await form1.recover(a.id);
+    assert.deepEqual(restored, { operation: 'items.update', payload: { value: 'original' }, value: { requestKey: a.requestKey, idempotencyKey: a.idempotencyKey } });
+    available = false;
+    submit(dom1);
+    await waitFor(() => dom1.window.document.body.textContent.includes('Unable to queue'));
+    assert.equal((await one.list()).length, 1);
+    assert.equal(dom1.window.document.querySelector('textarea').value, '{"value":"original"}');
+    available = 'invalid';
+    submit(dom1);
+    await waitFor(() => !dom1.window.document.querySelector('button').disabled);
+    assert.match(dom1.window.document.body.textContent, /Unable to queue/);
+    assert.equal((await one.list()).length, 1);
+    available = true;
+    dom1.window.document.querySelectorAll('button')[1].click();
+    await waitFor(() => dom1.window.document.body.textContent.includes('Ready to queue'));
+    submit(dom1);
+    await waitFor(async () => (await one.list()).length === 2);
+    assert.notEqual((await one.list()).find(item => item.id !== a.id).idempotencyKey, a.idempotencyKey);
+    form1.dispose();
+    form2.dispose();
+  } finally {
+    await one?.close();
+    await two?.close();
+    dom1?.window.close();
+    dom2?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('disposing a form while shared identity is loading does not enqueue', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-shared-form-dispose-'));
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountGeneratedOfflineForm } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>', { url: 'https://app.example/' });
+    let started,
+      resolve,
+      calls = 0;
+    const ready = new Promise(r => (started = r)),
+      waiting = new Promise(r => (resolve = r)),
+      runtime = {
+        operations: () => [{ id: 'save', label: 'Save' }],
+        enqueue: async () => {
+          calls++;
+          return { status: 'pending' };
+        }
+      },
+      identity = {
+        getOrCreate: async () => {
+          started();
+          return waiting;
+        },
+        reset: async () => {},
+        restore: async () => {}
+      };
+    const form = mountGeneratedOfflineForm(dom.window.document.querySelector('main'), runtime, { sharedIdentityStore: identity });
+    dom.window.document.querySelector('form').requestSubmit();
+    await ready;
+    form.dispose();
+    resolve({ requestKey: webcrypto.randomUUID(), idempotencyKey: webcrypto.randomUUID() });
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(calls, 0);
+    assert.equal(dom.window.document.querySelector('main').textContent, '');
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('shared identity stores coordinate generations and fence stale devices across reopening', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-shared-slots-'));
+  let one, two, reopened;
+  try {
+    const target = await createProject('demo-app', dir),
+      { createSharedOfflineIdentityStore } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href),
+      slots = new Map(),
+      requests = new Map();
+    let actor = { ...scope },
+      calls = 0;
+    const invoke = async (operation, input) => {
+      assert.equal(operation, 'slot.capability');
+      calls++;
+      let current = slots.get(input.slot);
+      if (input.action === 'open') {
+        if (!current) {
+          current = webcrypto.randomUUID();
+          slots.set(input.slot, current);
+        }
+        return { requestKey: current };
+      }
+      if (input.expectedRequestKey !== current) throw Error('Shared offline slot conflict');
+      if (input.action === 'reset') {
+        const next = webcrypto.randomUUID();
+        slots.set(input.slot, next);
+        return { requestKey: next };
+      }
+      if (input.action === 'allocate') {
+        const digest = JSON.stringify(input.payload),
+          existing = requests.get(current);
+        if (existing && existing.digest !== digest) throw Error('Shared offline slot conflict');
+        const value = existing ?? { digest, idempotencyKey: webcrypto.randomUUID() };
+        requests.set(current, value);
+        return { requestKey: current, idempotencyKey: value.idempotencyKey };
+      }
+      if (input.action === 'restore') {
+        const saved = requests.get(input.requestKey);
+        if (!saved || saved.digest !== JSON.stringify(input.payload) || saved.idempotencyKey !== input.idempotencyKey) throw Error('Shared offline key forbidden');
+        slots.set(input.slot, input.requestKey);
+        return { requestKey: input.requestKey };
+      }
+      throw Error('Invalid');
+    };
+    const factoryA = new IDBFactory(),
+      factoryB = new IDBFactory(),
+      config = indexedDB => ({
+        databaseName: 'shared-slots',
+        scope,
+        operations: [{ id: 'items.update', slotCapability: 'slot.capability' }],
+        invoke,
+        resolveActor: () => actor,
+        indexedDB,
+        crypto: webcrypto
+      });
+    one = await createSharedOfflineIdentityStore(config(factoryA));
+    two = await createSharedOfflineIdentityStore(config(factoryB));
+    const [a, b] = await Promise.all([one.getOrCreate('form', 'items.update', { value: 'one' }), two.getOrCreate('form', 'items.update', { value: 'one' })]);
+    assert.deepEqual(a, b);
+    await assert.rejects(one.getOrCreate('form', 'items.update', { value: 'different' }), /conflict/);
+    await one.reset('form', 'items.update');
+    await assert.rejects(two.getOrCreate('form', 'items.update', { value: 'one' }), /conflict/);
+    const next = await one.getOrCreate('form', 'items.update', { value: 'two' });
+    assert.notEqual(next.requestKey, a.requestKey);
+    two.close();
+    two = undefined;
+    reopened = await createSharedOfflineIdentityStore(config(factoryB));
+    await assert.rejects(reopened.getOrCreate('form', 'items.update', { value: 'one' }), /conflict/);
+    assert.equal(await reopened.adoptCurrent('form', 'items.update'), next.requestKey);
+    assert.deepEqual(await reopened.getOrCreate('form', 'items.update', { value: 'two' }), next);
+    await one.restore('form', 'items.update', { value: 'one' }, a);
+    await assert.rejects(reopened.getOrCreate('form', 'items.update', { value: 'two' }), /conflict/);
+    assert.deepEqual(await one.getOrCreate('form', 'items.update', { value: 'one' }), a);
+    const before = calls;
+    actor = { ...scope, principalId: 'other' };
+    await assert.rejects(one.getOrCreate('form', 'items.update', { value: 'one' }), /unavailable/);
+    assert.equal(calls, before);
+  } finally {
+    one?.close();
+    two?.close();
+    reopened?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('generated offline worker preserves uncertainty after capability audit failure', { timeout: 15000 }, async () => {
+  let effects = 0,
+    classifications = 0;
+  const registry = new CapabilityRegistry(event => {
+    if (event.outcome === 'succeeded') throw Error('private audit failure');
+  });
+  registry.register(
+    { operationId: 'items.offline', method: 'POST', path: '/items' },
+    {
+      authorize: () => true,
+      validate: () => true,
+      execute: () => {
+        effects++;
+        return { ok: true };
+      }
+    }
+  );
+  const upstream = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+    () => {}
+  );
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-audit-'));
+  let server, runtime;
+  const originalFetch = globalThis.fetch;
+  try {
+    const target = await createProject('demo-app', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const url = await new Promise((resolve, reject) => {
+      let text = '';
+      server.stdout.on('data', chunk => {
+        text += chunk;
+        const match = text.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited: ${code}`)));
+    });
+    globalThis.fetch = (input, options) =>
+      typeof input === 'string' && input.startsWith('/') ? originalFetch(new URL(input, url), { ...options, headers: { ...options.headers, origin: url } }) : originalFetch(input, options);
+    const { invokeCapability } = await import(pathToFileURL(join(target, 'capabilities.mjs')).href),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    runtime = await createGeneratedOfflineRuntime({
+      enabled: true,
+      databaseName: 'audit',
+      scope,
+      key: await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+      indexedDB: new IDBFactory(),
+      crypto: webcrypto,
+      operations: [{ id: 'items.offline', label: 'Update' }],
+      intervalMs: 100,
+      maxPerPass: 1,
+      maxAttempts: 3,
+      isOnline: () => true,
+      resolveActor: () => scope,
+      canEnqueue: () => true,
+      canDiscard: () => true,
+      dispatch: (operation, input) => invokeCapability(operation, input),
+      classify: () => {
+        classifications++;
+        return 'retry';
+      },
+      onError: () => {},
+      loadCurrent: () => {}
+    });
+    await runtime.enqueue('items.offline', 'request', { value: 'one' });
+    runtime.start();
+    await waitFor(async () => (await runtime.list())[0].status === 'uncertain');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(effects, 1);
+    assert.equal(classifications, 0);
+    assert.equal((await runtime.list())[0].attempts, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (runtime) await runtime.close();
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    upstream.closeAllConnections();
+    if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('generated offline worker treats lost, malformed and server-failure responses as uncertain', { timeout: 15000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-ambiguous-')),
+    originalFetch = globalThis.fetch;
+  let runtime;
+  try {
+    const target = await createProject('demo-app', dir),
+      { invokeCapability } = await import(pathToFileURL(join(target, 'capabilities.mjs')).href),
+      { createGeneratedOfflineRuntime } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    for (const mode of ['lost', 'invalid-json', 'invalid-body', 'missing-result', 'server-error', 'shared-uncertain']) {
+      let calls = 0,
+        classifications = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        if (mode === 'lost') throw Error('network disconnected');
+        if (mode === 'invalid-json') return new Response('{invalid', { status: 200 });
+        if (mode === 'invalid-body') return new Response('null', { status: 200 });
+        if (mode === 'missing-result') return new Response('{}', { status: 200 });
+        if (mode === 'shared-uncertain') return new Response(JSON.stringify({ error: 'Shared offline outcome uncertain', code: 'CAPABILITY_OUTCOME_UNCERTAIN' }), { status: 409 });
+        return new Response(JSON.stringify({ error: 'upstream error' }), { status: 500 });
+      };
+      runtime = await createGeneratedOfflineRuntime({
+        enabled: true,
+        databaseName: mode,
+        scope,
+        key: await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+        indexedDB: new IDBFactory(),
+        crypto: webcrypto,
+        operations: [{ id: 'items.offline', label: 'Update' }],
+        intervalMs: 100,
+        maxPerPass: 1,
+        maxAttempts: 2,
+        isOnline: () => true,
+        resolveActor: () => scope,
+        canEnqueue: () => true,
+        canDiscard: () => true,
+        dispatch: (operation, input) => invokeCapability(operation, input),
+        classify: () => {
+          classifications++;
+          return 'retry';
+        },
+        onError: () => {},
+        loadCurrent: () => {}
+      });
+      await runtime.enqueue('items.offline', 'request', { value: mode });
+      runtime.start();
+      await waitFor(async () => (await runtime.list())[0].status === 'uncertain');
+      await new Promise(resolve => setTimeout(resolve, 150));
+      assert.equal(calls, 1, mode);
+      assert.equal(classifications, 0, mode);
+      await runtime.close();
+      runtime = undefined;
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (runtime) await runtime.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator recovery view discovers, verifies and displays audited offline recovery', { timeout: 15000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-operator-view-')),
+    path = join(dir, 'queue.sqlite'),
+    queue = new SqliteOfflineQueue(path, { enabled: true, maxAttempts: 2, retryDelayMs: 0 }),
+    db = new DatabaseSync(path),
+    registry = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let upstream, server, dom, view;
+  try {
+    const item = queue.enqueue({ tenantId: 'tenant', applicationId: 'demo-app' }, 'local', 'items.offline', 'request', { private: 'secret' });
+    db.prepare("UPDATE offline_operations SET status='running',attempts=1 WHERE id=?").run(item.id);
+    const base = { applicationId: 'demo-app', queuePrincipalId: 'local', targetOperationId: 'items.offline', authorize: actor => actor.principalId === 'local', authorizeOperation: () => true },
+      candidate = id => ({ operationId: id, method: 'POST', path: '/operator' });
+    registerOfflineRecoveryListCapability(registry, queue, { ...base, candidate: candidate('list'), authorizeListing: () => true });
+    registerOfflineAbandonedRecoveryCapability(registry, queue, { ...base, candidate: candidate('recover'), verifyStopped: () => true });
+    registerOfflineVerificationCapability(registry, queue, { ...base, candidate: candidate('verify'), verify: () => 'applied' });
+    registerOfflineRecoveryEvidenceCapability(registry, queue, { ...base, candidate: candidate('evidence') });
+    upstream = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+      () => {}
+    );
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const target = await createProject('demo-app', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const url = await new Promise((resolve, reject) => {
+      let text = '';
+      server.stdout.on('data', chunk => {
+        text += chunk;
+        const match = text.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited: ${code}`)));
+    });
+    globalThis.fetch = (input, options) =>
+      typeof input === 'string' && input.startsWith('/') ? originalFetch(new URL(input, url), { ...options, headers: { ...options.headers, origin: url } }) : originalFetch(input, options);
+    const { mountOfflineRecovery } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main');
+    view = mountOfflineRecovery(root, { listOperation: 'list', recoverOperation: 'recover', verifyOperation: 'verify', evidenceOperation: 'evidence' });
+    const button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    await view.refresh();
+    const itemButton = [...root.querySelectorAll('li button')].find(element => element.textContent.includes(item.id));
+    assert.ok(itemButton);
+    itemButton.click();
+    const reference = [...root.querySelectorAll('label')].find(label => label.textContent === 'Evidence reference').querySelector('input');
+    assert.equal(button('Recover interrupted operation').disabled, true);
+    reference.value = 'case-1';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Recover interrupted operation').click();
+    await waitFor(() => root.textContent.includes('marked uncertain'));
+    assert.equal(queue.get({ tenantId: 'tenant', applicationId: 'demo-app' }, 'local', item.id).status, 'uncertain');
+    reference.value = 'provider-proof';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Verify provider outcome').click();
+    await waitFor(() => root.textContent.includes('Verification result: applied'));
+    button('View recovery evidence').click();
+    await waitFor(() => root.textContent.includes('provider-proof'));
+    assert.match(root.textContent, /case-1/);
+    assert.equal(root.textContent.includes('secret'), false);
+    assert.equal(queue.get({ tenantId: 'tenant', applicationId: 'demo-app' }, 'local', item.id).status, 'succeeded');
+    view.dispose();
+    assert.equal(root.children.length, 0);
+    view = mountOfflineRecovery(root, { listOperation: 'list', recoverOperation: 'recover', verifyOperation: 'verify', evidenceOperation: 'evidence' });
+    const lookup = [...root.querySelectorAll('label')].find(label => label.textContent === 'Operation ID for evidence').querySelector('input');
+    lookup.value = item.id;
+    lookup.dispatchEvent(new dom.window.Event('input'));
+    button('Select operation for evidence').click();
+    assert.equal(button('Recover interrupted operation').disabled, true);
+    assert.equal(button('Verify provider outcome').disabled, true);
+    button('View recovery evidence').click();
+    await waitFor(() => root.textContent.includes('provider-proof'));
+    assert.match(root.textContent, /case-1/);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    if (upstream) {
+      upstream.closeAllConnections();
+      if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    }
+    db.close();
+    queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator recovery view ignores a late listing after disposal', { timeout: 10000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-operator-late-')),
+    originalFetch = globalThis.fetch;
+  let dom, release, started;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountOfflineRecovery } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    globalThis.fetch = async () => {
+      started();
+      await gate;
+      return new Response(JSON.stringify({ result: { items: [{ id: 'late', status: 'running', attempts: 1 }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main'),
+      view = mountOfflineRecovery(root, { listOperation: 'list', recoverOperation: 'recover', verifyOperation: 'verify', evidenceOperation: 'evidence' });
+    const pending = view.refresh();
+    await ready;
+    view.dispose();
+    release();
+    await pending;
+    assert.equal(root.children.length, 0);
+  } finally {
+    release?.();
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator recovery view clears stale selection after an ambiguous action failure', { timeout: 10000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-operator-failed-')),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountOfflineRecovery } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    globalThis.fetch = async input =>
+      input.endsWith('/list')
+        ? new Response(JSON.stringify({ result: { items: [{ id: 'operation-1', status: 'running', attempts: 1 }] } }), { status: 200 })
+        : new Response(JSON.stringify({ error: 'failed' }), { status: 503 });
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main'),
+      view = mountOfflineRecovery(root, { listOperation: 'list', recoverOperation: 'recover', verifyOperation: 'verify', evidenceOperation: 'evidence' }),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    await view.refresh();
+    root.querySelector('li button').click();
+    const ref = [...root.querySelectorAll('label')].find(label => label.textContent === 'Evidence reference').querySelector('input');
+    ref.value = 'case';
+    ref.dispatchEvent(new dom.window.Event('input'));
+    button('Recover interrupted operation').click();
+    await waitFor(() => root.textContent.includes('Refresh before trying again'));
+    assert.equal(button('Recover interrupted operation').disabled, true);
+    assert.equal(button('View recovery evidence').disabled, true);
+    assert.match(root.textContent, /No operation selected/);
+    view.dispose();
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator archive view retires and reads authorized records through the capability service', { timeout: 15000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-archive-view-')),
+    queue = new SqliteOfflineQueue(':memory:', { enabled: true, maxAttempts: 2, retryDelayMs: 0 }),
+    registry = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let upstream,
+    dom,
+    view,
+    allow = false;
+  try {
+    const dataScope = { tenantId: 'tenant', applicationId: 'demo-app' },
+      item = queue.enqueue(dataScope, 'local', 'items.offline', 'request', { private: 'secret' }),
+      pending = queue.enqueue(dataScope, 'local', 'items.offline', 'pending', {});
+    queue.discard(dataScope, 'local', item.id);
+    const base = { applicationId: 'demo-app', queuePrincipalId: 'local', targetOperationId: 'items.offline', authorize: actor => actor.principalId === 'local' },
+      candidate = id => ({ operationId: id, method: 'POST', path: '/archive' });
+    registerOfflineArchiveListCapability(registry, queue, { ...base, candidate: candidate('candidates'), kind: 'candidates', authorizeListing: () => true });
+    registerOfflineArchiveListCapability(registry, queue, { ...base, candidate: candidate('archived'), kind: 'archived', authorizeListing: () => true });
+    registerOfflineArchiveCapability(registry, queue, { ...base, candidate: candidate('retire'), authorizeOperation: () => allow });
+    registerOfflineArchiveReadCapability(registry, queue, { ...base, candidate: candidate('read'), authorizeArchived: () => true });
+    upstream = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+      () => {}
+    );
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const target = await createProject('demo-app', dir);
+    globalThis.fetch = (url, options) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${upstream.address().port}`), {
+        ...options,
+        headers: { ...options.headers, authorization: `Bearer ${token}` },
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    const { mountOfflineArchive } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main');
+    view = mountOfflineArchive(root, { candidateListOperation: 'candidates', archivedListOperation: 'archived', archiveOperation: 'retire', readOperation: 'read' });
+    const button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text),
+      reference = [...root.querySelectorAll('label')].find(label => label.textContent === 'Retirement evidence reference').querySelector('input');
+    const cutoff = root.querySelector('input[type=date]');
+    cutoff.value = '1970-01-01';
+    cutoff.dispatchEvent(new dom.window.Event('input'));
+    await view.refresh();
+    assert.ok(!root.textContent.includes(item.id));
+    cutoff.value = '';
+    cutoff.dispatchEvent(new dom.window.Event('input'));
+    await view.refresh();
+    assert.ok(root.textContent.includes(item.id));
+    assert.ok(!root.textContent.includes(pending.id));
+    root.querySelector('li button').click();
+    assert.equal(button('Retire selected operation').disabled, true);
+    reference.value = 'case-1';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Retire selected operation').click();
+    await waitFor(() => root.textContent.includes('Refresh before trying again'));
+    assert.equal(queue.get(dataScope, 'local', item.id).status, 'discarded');
+    assert.equal(button('Retire selected operation').disabled, true);
+    allow = true;
+    await view.refresh();
+    root.querySelector('li button').click();
+    reference.value = '<img src=x>';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Retire selected operation').click();
+    await waitFor(() => root.textContent.includes('Operation retired.'));
+    assert.equal(queue.get(dataScope, 'local', item.id), undefined);
+    button('View archive marker').click();
+    await waitFor(() => root.textContent.includes('Archive marker loaded.'));
+    assert.ok(root.textContent.includes('<img src=x>'));
+    assert.equal(root.querySelector('img'), null);
+    assert.ok(root.textContent.includes(item.idempotencyKey));
+    assert.equal(root.textContent.includes('secret'), false);
+    button('Browse archive records').click();
+    await waitFor(() => root.querySelector('li button')?.textContent.includes(item.id));
+    root.querySelector('li button').click();
+    button('View archive marker').click();
+    await waitFor(() => root.textContent.includes('Archive marker loaded.'));
+    view.dispose();
+    assert.equal(root.children.length, 0);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (upstream) {
+      upstream.closeAllConnections();
+      if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    }
+    queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator archive view discards late results after disposal', { timeout: 10000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-archive-late-')),
+    originalFetch = globalThis.fetch;
+  let dom, release, started;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountOfflineArchive } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    globalThis.fetch = async () => {
+      started();
+      await gate;
+      return new Response(JSON.stringify({ result: { items: [{ id: 'late', status: 'discarded' }] } }), { status: 200 });
+    };
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main'),
+      view = mountOfflineArchive(root, { candidateListOperation: 'candidates', archivedListOperation: 'archived', archiveOperation: 'retire', readOperation: 'read' }),
+      pending = view.refresh();
+    await ready;
+    view.dispose();
+    release();
+    await pending;
+    assert.equal(root.children.length, 0);
+  } finally {
+    release?.();
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator archive view pages candidates and clears ambiguous action state', { timeout: 10000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-archive-pages-')),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountOfflineArchive } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    globalThis.fetch = async (url, request) => {
+      const input = JSON.parse(request.body);
+      if (url.endsWith('/candidates'))
+        return new Response(
+          JSON.stringify({ result: input.after ? { items: [{ id: 'second', status: 'succeeded', completedAt: 12 }] } : { items: [{ id: 'first', status: 'discarded' }], nextAfter: 'first' } }),
+          { status: 200 }
+        );
+      return new Response(JSON.stringify({ error: 'ambiguous' }), { status: 503 });
+    };
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main'),
+      view = mountOfflineArchive(root, { candidateListOperation: 'candidates', archivedListOperation: 'archived', archiveOperation: 'retire', readOperation: 'read' }),
+      button = text => [...root.querySelectorAll('button')].find(x => x.textContent === text);
+    await view.refresh();
+    assert.ok(root.textContent.includes('completion time unknown'));
+    button('Next page').click();
+    await waitFor(() => root.textContent.includes('second'));
+    assert.equal(button('Next page').disabled, true);
+    root.querySelector('li button').click();
+    const reference = [...root.querySelectorAll('label')].find(label => label.textContent === 'Retirement evidence reference').querySelector('input');
+    reference.value = 'case';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Retire selected operation').click();
+    await waitFor(() => root.textContent.includes('Refresh before trying again'));
+    assert.equal(button('Retire selected operation').disabled, true);
+    assert.equal(button('View archive marker').disabled, true);
+    assert.match(root.textContent, /No operation selected/);
+    view.dispose();
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator archive view filters candidates by UTC date across pages', { timeout: 10000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offline-archive-cutoff-')),
+    originalFetch = globalThis.fetch,
+    calls = [];
+  let dom;
+  try {
+    const target = await createProject('demo-app', dir),
+      { mountOfflineArchive } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    globalThis.fetch = async (url, request) => {
+      const input = JSON.parse(request.body);
+      calls.push({ url, input });
+      return new Response(
+        JSON.stringify({
+          result: input.after ? { items: [{ id: 'second', status: 'succeeded', completedAt: 12 }] } : { items: [{ id: 'first', status: 'discarded', completedAt: 0 }], nextAfter: 'first' }
+        }),
+        { status: 200 }
+      );
+    };
+    dom = new JSDOM('<!doctype html><main></main>');
+    const root = dom.window.document.querySelector('main'),
+      view = mountOfflineArchive(root, { candidateListOperation: 'candidates', archivedListOperation: 'archived', archiveOperation: 'retire', readOperation: 'read' }),
+      button = text => [...root.querySelectorAll('button')].find(x => x.textContent === text),
+      cutoff = root.querySelector('input[type=date]');
+    cutoff.value = '2025-01-02';
+    cutoff.dispatchEvent(new dom.window.Event('input'));
+    await view.refresh();
+    assert.equal(calls[0].input.completedBefore, Date.parse('2025-01-02T00:00:00.000Z'));
+    assert.ok(root.textContent.includes('1970-01-01T00:00:00.000Z'));
+    button('Next page').click();
+    await waitFor(() => calls.length === 2 && root.textContent.includes('second'));
+    assert.equal(calls[1].input.completedBefore, calls[0].input.completedBefore);
+    assert.equal(calls[1].input.after, 'first');
+    root.querySelector('li button').click();
+    cutoff.value = '2025-01-03';
+    cutoff.dispatchEvent(new dom.window.Event('input'));
+    assert.match(root.textContent, /No operation selected/);
+    assert.equal(button('Next page').disabled, true);
+    assert.equal(button('Retire selected operation').disabled, true);
+    cutoff.value = '1969-12-31';
+    cutoff.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(button('Browse completed operations').disabled, true);
+    await view.refresh();
+    assert.equal(calls.length, 2);
+    assert.match(root.textContent, /on or after 1970-01-01/);
+    cutoff.value = '';
+    cutoff.dispatchEvent(new dom.window.Event('input'));
+    await view.refresh();
+    assert.equal(Object.hasOwn(calls[2].input, 'completedBefore'), false);
+    view.dispose();
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

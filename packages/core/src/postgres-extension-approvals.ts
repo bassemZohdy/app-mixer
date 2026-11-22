@@ -1,65 +1,399 @@
-import {isValidExtensionReferences,isValidExtensionOperations,type ExtensionReference,type ExtensionOperation} from './index.js';
-import {CapabilityOutcomeUncertainError} from './capabilities.js';
-import {createBoundedOperation} from './bounded-operation.js';
-import type {ExtensionInvocationApproval,ExtensionInvocationApprovalWithSignal} from './extension-adapters.js';
-import type {PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
-import {AppMixerError} from './errors.js';
-import {extensionApprovalAnchorKey,checkAgainstAnchor,advanceAnchor,reportAnchorError,type AuditSequenceAnchor,type AnchorErrorHandler} from './file-sequence-anchor.js';
+import { isValidExtensionReferences, isValidExtensionOperations, type ExtensionReference, type ExtensionOperation } from './index.js';
+import { CapabilityOutcomeUncertainError } from './capabilities.js';
+import { createBoundedOperation } from './bounded-operation.js';
+import type { ExtensionInvocationApproval, ExtensionInvocationApprovalWithSignal } from './extension-adapters.js';
+import type { PostgresJwtRevocationQuery } from './postgres-jwt-revocations.js';
+import { AppMixerError } from './errors.js';
+import { extensionApprovalAnchorKey, checkAgainstAnchor, advanceAnchor, reportAnchorError, type AuditSequenceAnchor, type AnchorErrorHandler } from './file-sequence-anchor.js';
 
-type Actor={tenantId:string;principalId:string};
-export type ExtensionApprovalScope={tenantId:string;applicationId:string};
-type Action='manage'|'invoke'|'audit'|'inspect';
-type Options={epochAnchor?:AuditSequenceAnchor;onAnchorError?:AnchorErrorHandler;query:PostgresJwtRevocationQuery;queryWithSignal?:(sql:string,parameters:unknown[],signal:AbortSignal)=>ReturnType<PostgresJwtRevocationQuery>;queryWriteWithSignal?:(sql:string,parameters:unknown[],signal:AbortSignal)=>ReturnType<PostgresJwtRevocationQuery>;authorize:(actor:Actor,action:Action,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation)=>boolean|Promise<boolean>;authorizeInvokeWithSignal?:(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeReadWithSignal?:(actor:Actor,action:'inspect'|'audit',scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeManageWithSignal?:(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,signal:AbortSignal)=>boolean|Promise<boolean>;manageTimeoutMs?:number;maxPendingManage?:number;writeTimeoutMs?:number;maxPendingWrites?:number;clock?:()=>number};
-export type ExtensionApprovalEvent={id:number;actorId:string;revision:number;allowed:boolean;expiresAt:number;observedAt:number;terminal?:true};
-export type ExtensionApprovalState={revision:number;allowed:boolean;expiresAt:number;active:boolean;terminal?:true};
-const terminalRevision='9007199254740992';
-function approvalRevision(value:unknown):{revision:number;terminal:boolean}{if(String(value)===terminalRevision)return {revision:Number.MAX_SAFE_INTEGER,terminal:true};const revision=Number(value);if(!Number.isSafeInteger(revision)||revision<1)throw Error('Invalid extension approval result');return {revision,terminal:false};}
-const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
-function checked(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation){if(!actor||!id(actor.tenantId)||!id(actor.principalId)||!scope||!id(scope.tenantId)||!id(scope.applicationId)||actor.tenantId!==scope.tenantId||!isValidExtensionReferences([reference])||!isValidExtensionOperations([operation])||operation.extensionId!==reference.id)throw Error('Invalid extension approval scope');return {actor:{tenantId:actor.tenantId,principalId:actor.principalId},scope:{tenantId:scope.tenantId,applicationId:scope.applicationId},reference:structuredClone(reference),operation:structuredClone(operation)};}
-const where='tenant_id=$1 AND application_id=$2 AND extension_id=$3 AND extension_version=$4 AND extension_scope=$5 AND operation_kind=$6 AND operation_name=$7';
+type Actor = { tenantId: string; principalId: string };
+export type ExtensionApprovalScope = { tenantId: string; applicationId: string };
+type Action = 'manage' | 'invoke' | 'audit' | 'inspect';
+type Options = {
+  epochAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
+  query: PostgresJwtRevocationQuery;
+  queryWithSignal?: (sql: string, parameters: unknown[], signal: AbortSignal) => ReturnType<PostgresJwtRevocationQuery>;
+  queryWriteWithSignal?: (sql: string, parameters: unknown[], signal: AbortSignal) => ReturnType<PostgresJwtRevocationQuery>;
+  authorize: (actor: Actor, action: Action, scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation) => boolean | Promise<boolean>;
+  authorizeInvokeWithSignal?: (actor: Actor, scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation, signal: AbortSignal) => boolean | Promise<boolean>;
+  authorizeReadWithSignal?: (
+    actor: Actor,
+    action: 'inspect' | 'audit',
+    scope: ExtensionApprovalScope,
+    reference: ExtensionReference,
+    operation: ExtensionOperation,
+    signal: AbortSignal
+  ) => boolean | Promise<boolean>;
+  authorizeManageWithSignal?: (actor: Actor, scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation, signal: AbortSignal) => boolean | Promise<boolean>;
+  manageTimeoutMs?: number;
+  maxPendingManage?: number;
+  writeTimeoutMs?: number;
+  maxPendingWrites?: number;
+  clock?: () => number;
+};
+export type ExtensionApprovalEvent = { id: number; actorId: string; revision: number; allowed: boolean; expiresAt: number; observedAt: number; terminal?: true };
+export type ExtensionApprovalState = { revision: number; allowed: boolean; expiresAt: number; active: boolean; terminal?: true };
+const terminalRevision = '9007199254740992';
+function approvalRevision(value: unknown): { revision: number; terminal: boolean } {
+  if (String(value) === terminalRevision) return { revision: Number.MAX_SAFE_INTEGER, terminal: true };
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 1) throw Error('Invalid extension approval result');
+  return { revision, terminal: false };
+}
+const id = (x: unknown): x is string => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x);
+function checked(actor: Actor, scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation) {
+  if (
+    !actor ||
+    !id(actor.tenantId) ||
+    !id(actor.principalId) ||
+    !scope ||
+    !id(scope.tenantId) ||
+    !id(scope.applicationId) ||
+    actor.tenantId !== scope.tenantId ||
+    !isValidExtensionReferences([reference]) ||
+    !isValidExtensionOperations([operation]) ||
+    operation.extensionId !== reference.id
+  )
+    throw Error('Invalid extension approval scope');
+  return {
+    actor: { tenantId: actor.tenantId, principalId: actor.principalId },
+    scope: { tenantId: scope.tenantId, applicationId: scope.applicationId },
+    reference: structuredClone(reference),
+    operation: structuredClone(operation)
+  };
+}
+const where = 'tenant_id=$1 AND application_id=$2 AND extension_id=$3 AND extension_version=$4 AND extension_scope=$5 AND operation_kind=$6 AND operation_name=$7';
 /** Host-authorized shared per-operation approval with optimistic revisions and atomic audit. */
 export class PostgresExtensionApprovals {
- private readonly anchor:AuditSequenceAnchor|undefined;private readonly onAnchorError:AnchorErrorHandler|undefined;private readonly query:Options['query'];private readonly queryWithSignal:Options['queryWithSignal'];private readonly queryWriteWithSignal:Options['queryWriteWithSignal'];private readonly authorize:Options['authorize'];private readonly authorizeInvokeWithSignal:Options['authorizeInvokeWithSignal'];private readonly authorizeReadWithSignal:Options['authorizeReadWithSignal'];private readonly authorizeManageWithSignal:Options['authorizeManageWithSignal'];private readonly clock:()=>number;private readonly boundedWrite:ReturnType<typeof createBoundedOperation>;private readonly boundedManage:ReturnType<typeof createBoundedOperation>;
- constructor(options:Options){if(!options||typeof options.query!=='function'||typeof options.authorize!=='function'||(options.queryWithSignal!==undefined&&typeof options.queryWithSignal!=='function')||(options.queryWriteWithSignal!==undefined&&typeof options.queryWriteWithSignal!=='function')||(options.authorizeInvokeWithSignal!==undefined&&typeof options.authorizeInvokeWithSignal!=='function')||(options.authorizeReadWithSignal!==undefined&&typeof options.authorizeReadWithSignal!=='function')||(options.authorizeManageWithSignal!==undefined&&typeof options.authorizeManageWithSignal!=='function')||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid extension approval configuration');if(options.epochAnchor!==undefined&&(!options.epochAnchor||typeof options.epochAnchor.read!=='function'||typeof options.epochAnchor.advance!=='function'||(options.onAnchorError!==undefined&&typeof options.onAnchorError!=='function')))throw Error('Invalid extension approval configuration');this.anchor=options.epochAnchor;this.onAnchorError=options.onAnchorError;this.query=options.query;this.queryWithSignal=options.queryWithSignal;this.queryWriteWithSignal=options.queryWriteWithSignal;this.authorize=options.authorize;this.authorizeInvokeWithSignal=options.authorizeInvokeWithSignal;this.authorizeReadWithSignal=options.authorizeReadWithSignal;this.authorizeManageWithSignal=options.authorizeManageWithSignal;this.clock=options.clock??Date.now;this.boundedWrite=createBoundedOperation(options.writeTimeoutMs,options.maxPendingWrites,'Invalid extension approval configuration','Extension approval write unavailable');this.boundedManage=createBoundedOperation(options.manageTimeoutMs,options.maxPendingManage,'Invalid extension approval configuration','Extension approval manage unavailable');}
- private now():number{const now=this.clock();if(!Number.isSafeInteger(now)||now<0)throw Error('Invalid clock');return now;}
- private args(scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation):string[]{return [scope.tenantId,scope.applicationId,reference.id,reference.version,reference.scope,operation.kind,operation.name];}
- private async permitManage(c:ReturnType<typeof checked>):Promise<void>{await this.boundedManage(async signal=>{const check=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Extension approval manage unavailable');},permit=async()=>{check();const allowed=this.authorizeManageWithSignal?await this.authorizeManageWithSignal({...c.actor},{...c.scope},{...c.reference},{...c.operation},signal):await this.authorize({...c.actor},'manage',{...c.scope},{...c.reference},{...c.operation});check();if(allowed!==true)throw new AppMixerError('denied','Extension approval forbidden');};await permit();await permit();});}
- private async permitRead(c:ReturnType<typeof checked>,action:'inspect'|'audit',signal?:AbortSignal):Promise<void>{this.checkSignal(signal);const allowed=signal&&this.authorizeReadWithSignal?await this.authorizeReadWithSignal({...c.actor},action,{...c.scope},{...c.reference},{...c.operation},signal):await this.authorize({...c.actor},action,{...c.scope},{...c.reference},{...c.operation});this.checkSignal(signal);if(allowed!==true)throw new AppMixerError('denied','Extension approval forbidden');}
- private checkSignal(signal?:AbortSignal):void{if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid extension approval signal');if(signal?.aborted)throw Error('Extension approval cancelled');}
- private async readQuery(sql:string,args:unknown[],signal?:AbortSignal):ReturnType<PostgresJwtRevocationQuery>{this.checkSignal(signal);const result=signal&&this.queryWithSignal?await this.queryWithSignal(sql,[...args],signal):await this.query(sql,[...args]);this.checkSignal(signal);return result;}
- async initialize():Promise<void>{
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_extension_approvals (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name))',[]);
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_extension_approval_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,actor_id TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision))',[]);
-  await this.query('CREATE INDEX IF NOT EXISTS app_mixer_extension_approval_audit_scope ON app_mixer_extension_approval_audit(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,id)',[]);
-  await this.query("CREATE OR REPLACE FUNCTION app_mixer_extension_approval_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Extension approval audit is immutable'; END $$",[]);
-  await this.query("DO $$ BEGIN CREATE TRIGGER app_mixer_extension_approval_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_extension_approval_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_extension_approval_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$",[]);
- }
- /** The sum of all revisions in a scope only grows (every decision adds one and approvals are never deleted), so it serves as an epoch. */
- private async epoch(scope:ExtensionApprovalScope):Promise<number>{
-  const result=await this.query('SELECT COALESCE(SUM(revision),0) AS epoch FROM app_mixer_extension_approvals WHERE tenant_id=$1 AND application_id=$2',[scope.tenantId,scope.applicationId]);
-  if(!Array.isArray(result.rows)||result.rows.length!==1)throw Error('Invalid extension approval result');const value=Number(result.rows[0].epoch);if(!Number.isSafeInteger(value)||value<0)throw Error('Invalid extension approval result');return value;
- }
- /** Fails closed when the database epoch is below the anchored epoch, which means the approvals were restored to an older state. */
- private async checkAnchor(scope:ExtensionApprovalScope):Promise<void>{
-  await checkAgainstAnchor({anchor:this.anchor!,key:extensionApprovalAnchorKey(scope.tenantId,scope.applicationId),unavailable:'Extension approval epoch anchor unavailable',rolledBack:'Extension approvals were rolled back',onError:this.onAnchorError,stored:()=>this.epoch(scope)});
- }
- async decide(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,decision:{allowed:boolean;expiresAt:number;expectedRevision:number}):Promise<number>{
-  const c=checked(actor,scope,reference,operation);if(!decision||typeof decision.allowed!=='boolean'||!Number.isSafeInteger(decision.expiresAt)||!Number.isSafeInteger(decision.expectedRevision)||decision.expectedRevision<0||(decision.expectedRevision===Number.MAX_SAFE_INTEGER&&decision.allowed)||(decision.allowed?decision.expiresAt<=0:decision.expiresAt!==0))throw Error('Invalid extension approval decision');const allowed=decision.allowed,expiresAt=decision.expiresAt,expected=decision.expectedRevision,terminal=expected===Number.MAX_SAFE_INTEGER;await this.permitManage(c);const now=this.now();if(allowed&&(expiresAt<=now||expiresAt-now>365*86400000))throw Error('Invalid extension approval expiration');
-  const change=expected===0?'INSERT INTO app_mixer_extension_approvals (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision,allowed,expires_at) SELECT $1,$2,$3,$4,$5,$6,$7,1,$8,$9 WHERE $10::bigint=0 ON CONFLICT DO NOTHING RETURNING revision':'UPDATE app_mixer_extension_approvals SET revision=revision+1,allowed=$8,expires_at=$9 WHERE '+where+' AND revision=$10'+(terminal?' AND allowed=TRUE':'')+' RETURNING revision';
-  const sql=`WITH changed AS (${change}) INSERT INTO app_mixer_extension_approval_audit (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,actor_id,revision,allowed,expires_at,observed_at) SELECT $1,$2,$3,$4,$5,$6,$7,$11,revision,$8,$9,$12 FROM changed RETURNING revision`,args=[...this.args(c.scope,c.reference,c.operation),allowed,expiresAt,expected,c.actor.principalId,now];let result;try{result=await this.boundedWrite(async signal=>{if(signal.aborted)throw Error('Extension approval write unavailable');const value=this.queryWriteWithSignal?await this.queryWriteWithSignal(sql,[...args],signal):await this.query(sql,[...args]);if(signal.aborted)throw Error('Extension approval write unavailable');return value;});}catch{throw new CapabilityOutcomeUncertainError();}if(!Array.isArray(result?.rows)||result.rows.length>1)throw new CapabilityOutcomeUncertainError();if(result.rows.length===0)throw new AppMixerError('conflict','Extension approval revision conflict');if(terminal?String(result.rows[0].revision)!==terminalRevision:Number(result.rows[0].revision)!==expected+1)throw new CapabilityOutcomeUncertainError();// The decision is committed; an anchor failure leaves the anchor behind until the next check catches it up.
-  if(this.anchor){try{await advanceAnchor(this.anchor,extensionApprovalAnchorKey(c.scope.tenantId,c.scope.applicationId),await this.epoch(c.scope),this.onAnchorError);}catch(error){reportAnchorError(this.onAnchorError,error);}}
-  return terminal?Number.MAX_SAFE_INTEGER:expected+1;
- }
- async isAllowed(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,signal?:AbortSignal):Promise<boolean>{
-  if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid extension approval signal');const c=checked(actor,scope,reference,operation),args=this.args(c.scope,c.reference,c.operation),sql=`SELECT revision,allowed,expires_at FROM app_mixer_extension_approvals WHERE ${where}`,active=()=>{if(signal?.aborted)throw Error('Extension approval cancelled');},permit=async()=>{active();const allowed=signal&&this.authorizeInvokeWithSignal?await this.authorizeInvokeWithSignal({...c.actor},{...c.scope},{...c.reference},{...c.operation},signal):await this.authorize({...c.actor},'invoke',{...c.scope},{...c.reference},{...c.operation});active();if(allowed!==true)throw new AppMixerError('denied','Extension approval forbidden');},read=async()=>{active();const result=signal&&this.queryWithSignal?await this.queryWithSignal(sql,[...args],signal):await this.query(sql,[...args]);active();return result;};await permit();if(this.anchor){await this.checkAnchor(c.scope);active();}const first=await read();if(!Array.isArray(first.rows)||first.rows.length>1)throw Error('Invalid extension approval result');await permit();if(!first.rows.length)return false;const result=await read();if(!Array.isArray(result.rows)||result.rows.length>1)throw Error('Invalid extension approval result');await permit();if(!result.rows.length)return false;const row=result.rows[0],revision=approvalRevision(row.revision),firstRevision=approvalRevision(first.rows[0].revision),expires=Number(row.expires_at);if(typeof row.allowed!=='boolean'||!Number.isSafeInteger(expires)||expires<0||(revision.terminal&&(row.allowed||expires!==0)))throw Error('Invalid extension approval result');if(firstRevision.revision!==revision.revision||firstRevision.terminal!==revision.terminal)return false;return !revision.terminal&&row.allowed&&expires>this.now();
- }
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
+  private readonly query: Options['query'];
+  private readonly queryWithSignal: Options['queryWithSignal'];
+  private readonly queryWriteWithSignal: Options['queryWriteWithSignal'];
+  private readonly authorize: Options['authorize'];
+  private readonly authorizeInvokeWithSignal: Options['authorizeInvokeWithSignal'];
+  private readonly authorizeReadWithSignal: Options['authorizeReadWithSignal'];
+  private readonly authorizeManageWithSignal: Options['authorizeManageWithSignal'];
+  private readonly clock: () => number;
+  private readonly boundedWrite: ReturnType<typeof createBoundedOperation>;
+  private readonly boundedManage: ReturnType<typeof createBoundedOperation>;
+  constructor(options: Options) {
+    if (
+      !options ||
+      typeof options.query !== 'function' ||
+      typeof options.authorize !== 'function' ||
+      (options.queryWithSignal !== undefined && typeof options.queryWithSignal !== 'function') ||
+      (options.queryWriteWithSignal !== undefined && typeof options.queryWriteWithSignal !== 'function') ||
+      (options.authorizeInvokeWithSignal !== undefined && typeof options.authorizeInvokeWithSignal !== 'function') ||
+      (options.authorizeReadWithSignal !== undefined && typeof options.authorizeReadWithSignal !== 'function') ||
+      (options.authorizeManageWithSignal !== undefined && typeof options.authorizeManageWithSignal !== 'function') ||
+      (options.clock !== undefined && typeof options.clock !== 'function')
+    )
+      throw Error('Invalid extension approval configuration');
+    if (
+      options.epochAnchor !== undefined &&
+      (!options.epochAnchor ||
+        typeof options.epochAnchor.read !== 'function' ||
+        typeof options.epochAnchor.advance !== 'function' ||
+        (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function'))
+    )
+      throw Error('Invalid extension approval configuration');
+    this.anchor = options.epochAnchor;
+    this.onAnchorError = options.onAnchorError;
+    this.query = options.query;
+    this.queryWithSignal = options.queryWithSignal;
+    this.queryWriteWithSignal = options.queryWriteWithSignal;
+    this.authorize = options.authorize;
+    this.authorizeInvokeWithSignal = options.authorizeInvokeWithSignal;
+    this.authorizeReadWithSignal = options.authorizeReadWithSignal;
+    this.authorizeManageWithSignal = options.authorizeManageWithSignal;
+    this.clock = options.clock ?? Date.now;
+    this.boundedWrite = createBoundedOperation(options.writeTimeoutMs, options.maxPendingWrites, 'Invalid extension approval configuration', 'Extension approval write unavailable');
+    this.boundedManage = createBoundedOperation(options.manageTimeoutMs, options.maxPendingManage, 'Invalid extension approval configuration', 'Extension approval manage unavailable');
+  }
+  private now(): number {
+    const now = this.clock();
+    if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid clock');
+    return now;
+  }
+  private args(scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation): string[] {
+    return [scope.tenantId, scope.applicationId, reference.id, reference.version, reference.scope, operation.kind, operation.name];
+  }
+  private async permitManage(c: ReturnType<typeof checked>): Promise<void> {
+    await this.boundedManage(async signal => {
+      const check = () => {
+          if (signal.aborted) throw new AppMixerError('unavailable', 'Extension approval manage unavailable');
+        },
+        permit = async () => {
+          check();
+          const allowed = this.authorizeManageWithSignal
+            ? await this.authorizeManageWithSignal({ ...c.actor }, { ...c.scope }, { ...c.reference }, { ...c.operation }, signal)
+            : await this.authorize({ ...c.actor }, 'manage', { ...c.scope }, { ...c.reference }, { ...c.operation });
+          check();
+          if (allowed !== true) throw new AppMixerError('denied', 'Extension approval forbidden');
+        };
+      await permit();
+      await permit();
+    });
+  }
+  private async permitRead(c: ReturnType<typeof checked>, action: 'inspect' | 'audit', signal?: AbortSignal): Promise<void> {
+    this.checkSignal(signal);
+    const allowed =
+      signal && this.authorizeReadWithSignal
+        ? await this.authorizeReadWithSignal({ ...c.actor }, action, { ...c.scope }, { ...c.reference }, { ...c.operation }, signal)
+        : await this.authorize({ ...c.actor }, action, { ...c.scope }, { ...c.reference }, { ...c.operation });
+    this.checkSignal(signal);
+    if (allowed !== true) throw new AppMixerError('denied', 'Extension approval forbidden');
+  }
+  private checkSignal(signal?: AbortSignal): void {
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid extension approval signal');
+    if (signal?.aborted) throw Error('Extension approval cancelled');
+  }
+  private async readQuery(sql: string, args: unknown[], signal?: AbortSignal): ReturnType<PostgresJwtRevocationQuery> {
+    this.checkSignal(signal);
+    const result = signal && this.queryWithSignal ? await this.queryWithSignal(sql, [...args], signal) : await this.query(sql, [...args]);
+    this.checkSignal(signal);
+    return result;
+  }
+  async initialize(): Promise<void> {
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_extension_approvals (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name))',
+      []
+    );
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_extension_approval_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,extension_id TEXT NOT NULL,extension_version TEXT NOT NULL,extension_scope TEXT NOT NULL,operation_kind TEXT NOT NULL,operation_name TEXT NOT NULL,actor_id TEXT NOT NULL,revision BIGINT NOT NULL,allowed BOOLEAN NOT NULL,expires_at BIGINT NOT NULL,observed_at BIGINT NOT NULL,UNIQUE(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision))',
+      []
+    );
+    await this.query(
+      'CREATE INDEX IF NOT EXISTS app_mixer_extension_approval_audit_scope ON app_mixer_extension_approval_audit(tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,id)',
+      []
+    );
+    await this.query(
+      "CREATE OR REPLACE FUNCTION app_mixer_extension_approval_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Extension approval audit is immutable'; END $$",
+      []
+    );
+    await this.query(
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_extension_approval_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_extension_approval_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_extension_approval_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      []
+    );
+  }
+  /** The sum of all revisions in a scope only grows (every decision adds one and approvals are never deleted), so it serves as an epoch. */
+  private async epoch(scope: ExtensionApprovalScope): Promise<number> {
+    const result = await this.query('SELECT COALESCE(SUM(revision),0) AS epoch FROM app_mixer_extension_approvals WHERE tenant_id=$1 AND application_id=$2', [scope.tenantId, scope.applicationId]);
+    if (!Array.isArray(result.rows) || result.rows.length !== 1) throw Error('Invalid extension approval result');
+    const value = Number(result.rows[0].epoch);
+    if (!Number.isSafeInteger(value) || value < 0) throw Error('Invalid extension approval result');
+    return value;
+  }
+  /** Fails closed when the database epoch is below the anchored epoch, which means the approvals were restored to an older state. */
+  private async checkAnchor(scope: ExtensionApprovalScope): Promise<void> {
+    await checkAgainstAnchor({
+      anchor: this.anchor!,
+      key: extensionApprovalAnchorKey(scope.tenantId, scope.applicationId),
+      unavailable: 'Extension approval epoch anchor unavailable',
+      rolledBack: 'Extension approvals were rolled back',
+      onError: this.onAnchorError,
+      stored: () => this.epoch(scope)
+    });
+  }
+  async decide(
+    actor: Actor,
+    scope: ExtensionApprovalScope,
+    reference: ExtensionReference,
+    operation: ExtensionOperation,
+    decision: { allowed: boolean; expiresAt: number; expectedRevision: number }
+  ): Promise<number> {
+    const c = checked(actor, scope, reference, operation);
+    if (
+      !decision ||
+      typeof decision.allowed !== 'boolean' ||
+      !Number.isSafeInteger(decision.expiresAt) ||
+      !Number.isSafeInteger(decision.expectedRevision) ||
+      decision.expectedRevision < 0 ||
+      (decision.expectedRevision === Number.MAX_SAFE_INTEGER && decision.allowed) ||
+      (decision.allowed ? decision.expiresAt <= 0 : decision.expiresAt !== 0)
+    )
+      throw Error('Invalid extension approval decision');
+    const allowed = decision.allowed,
+      expiresAt = decision.expiresAt,
+      expected = decision.expectedRevision,
+      terminal = expected === Number.MAX_SAFE_INTEGER;
+    await this.permitManage(c);
+    const now = this.now();
+    if (allowed && (expiresAt <= now || expiresAt - now > 365 * 86400000)) throw Error('Invalid extension approval expiration');
+    const change =
+      expected === 0
+        ? 'INSERT INTO app_mixer_extension_approvals (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,revision,allowed,expires_at) SELECT $1,$2,$3,$4,$5,$6,$7,1,$8,$9 WHERE $10::bigint=0 ON CONFLICT DO NOTHING RETURNING revision'
+        : 'UPDATE app_mixer_extension_approvals SET revision=revision+1,allowed=$8,expires_at=$9 WHERE ' + where + ' AND revision=$10' + (terminal ? ' AND allowed=TRUE' : '') + ' RETURNING revision';
+    const sql = `WITH changed AS (${change}) INSERT INTO app_mixer_extension_approval_audit (tenant_id,application_id,extension_id,extension_version,extension_scope,operation_kind,operation_name,actor_id,revision,allowed,expires_at,observed_at) SELECT $1,$2,$3,$4,$5,$6,$7,$11,revision,$8,$9,$12 FROM changed RETURNING revision`,
+      args = [...this.args(c.scope, c.reference, c.operation), allowed, expiresAt, expected, c.actor.principalId, now];
+    let result;
+    try {
+      result = await this.boundedWrite(async signal => {
+        if (signal.aborted) throw Error('Extension approval write unavailable');
+        const value = this.queryWriteWithSignal ? await this.queryWriteWithSignal(sql, [...args], signal) : await this.query(sql, [...args]);
+        if (signal.aborted) throw Error('Extension approval write unavailable');
+        return value;
+      });
+    } catch {
+      throw new CapabilityOutcomeUncertainError();
+    }
+    if (!Array.isArray(result?.rows) || result.rows.length > 1) throw new CapabilityOutcomeUncertainError();
+    if (result.rows.length === 0) throw new AppMixerError('conflict', 'Extension approval revision conflict');
+    if (terminal ? String(result.rows[0].revision) !== terminalRevision : Number(result.rows[0].revision) !== expected + 1) throw new CapabilityOutcomeUncertainError(); // The decision is committed; an anchor failure leaves the anchor behind until the next check catches it up.
+    if (this.anchor) {
+      try {
+        await advanceAnchor(this.anchor, extensionApprovalAnchorKey(c.scope.tenantId, c.scope.applicationId), await this.epoch(c.scope), this.onAnchorError);
+      } catch (error) {
+        reportAnchorError(this.onAnchorError, error);
+      }
+    }
+    return terminal ? Number.MAX_SAFE_INTEGER : expected + 1;
+  }
+  async isAllowed(actor: Actor, scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation, signal?: AbortSignal): Promise<boolean> {
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid extension approval signal');
+    const c = checked(actor, scope, reference, operation),
+      args = this.args(c.scope, c.reference, c.operation),
+      sql = `SELECT revision,allowed,expires_at FROM app_mixer_extension_approvals WHERE ${where}`,
+      active = () => {
+        if (signal?.aborted) throw Error('Extension approval cancelled');
+      },
+      permit = async () => {
+        active();
+        const allowed =
+          signal && this.authorizeInvokeWithSignal
+            ? await this.authorizeInvokeWithSignal({ ...c.actor }, { ...c.scope }, { ...c.reference }, { ...c.operation }, signal)
+            : await this.authorize({ ...c.actor }, 'invoke', { ...c.scope }, { ...c.reference }, { ...c.operation });
+        active();
+        if (allowed !== true) throw new AppMixerError('denied', 'Extension approval forbidden');
+      },
+      read = async () => {
+        active();
+        const result = signal && this.queryWithSignal ? await this.queryWithSignal(sql, [...args], signal) : await this.query(sql, [...args]);
+        active();
+        return result;
+      };
+    await permit();
+    if (this.anchor) {
+      await this.checkAnchor(c.scope);
+      active();
+    }
+    const first = await read();
+    if (!Array.isArray(first.rows) || first.rows.length > 1) throw Error('Invalid extension approval result');
+    await permit();
+    if (!first.rows.length) return false;
+    const result = await read();
+    if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid extension approval result');
+    await permit();
+    if (!result.rows.length) return false;
+    const row = result.rows[0],
+      revision = approvalRevision(row.revision),
+      firstRevision = approvalRevision(first.rows[0].revision),
+      expires = Number(row.expires_at);
+    if (typeof row.allowed !== 'boolean' || !Number.isSafeInteger(expires) || expires < 0 || (revision.terminal && (row.allowed || expires !== 0))) throw Error('Invalid extension approval result');
+    if (firstRevision.revision !== revision.revision || firstRevision.terminal !== revision.terminal) return false;
+    return !revision.terminal && row.allowed && expires > this.now();
+  }
 
- /** Administrative state read, independently authorized from runtime invocation. */
- async inspect(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,signal?:AbortSignal):Promise<ExtensionApprovalState|undefined>{const c=checked(actor,scope,reference,operation),args=this.args(c.scope,c.reference,c.operation),sql=`SELECT revision,allowed,expires_at FROM app_mixer_extension_approvals WHERE ${where}`;await this.permitRead(c,'inspect',signal);const first=await this.readQuery(sql,args,signal);if(!Array.isArray(first.rows)||first.rows.length>1)throw Error('Invalid extension approval result');await this.permitRead(c,'inspect',signal);if(!first.rows.length)return undefined;const current=await this.readQuery(sql,args,signal);if(!Array.isArray(current.rows)||current.rows.length>1)throw Error('Invalid extension approval result');await this.permitRead(c,'inspect',signal);if(!current.rows.length)throw Error('Extension approval changed');const row=current.rows[0],revision=approvalRevision(row.revision),firstRevision=approvalRevision(first.rows[0].revision),expiresAt=Number(row.expires_at);if(revision.revision!==firstRevision.revision||revision.terminal!==firstRevision.terminal)throw Error('Extension approval changed');if(typeof row.allowed!=='boolean'||!Number.isSafeInteger(expiresAt)||expiresAt<0||(revision.terminal&&(row.allowed||expiresAt!==0)))throw Error('Invalid extension approval result');return {revision:revision.revision,allowed:row.allowed,expiresAt,active:!revision.terminal&&row.allowed&&expiresAt>this.now(),...(revision.terminal?{terminal:true as const}:{})};}
- /** Bind a host-selected application scope to the extension runtime's live approval hook. */
- forRuntime(scope:ExtensionApprovalScope):ExtensionInvocationApproval{if(!scope||!id(scope.tenantId)||!id(scope.applicationId))throw Error('Invalid extension approval scope');const fixed={tenantId:scope.tenantId,applicationId:scope.applicationId};return (actor,reference,operation)=>this.isAllowed(actor,fixed,reference,operation);}
- forRuntimeWithSignal(scope:ExtensionApprovalScope):ExtensionInvocationApprovalWithSignal{if(!scope||!id(scope.tenantId)||!id(scope.applicationId))throw Error('Invalid extension approval scope');const fixed={tenantId:scope.tenantId,applicationId:scope.applicationId};return (actor,reference,operation,signal)=>this.isAllowed(actor,fixed,reference,operation,signal);}
- async history(actor:Actor,scope:ExtensionApprovalScope,reference:ExtensionReference,operation:ExtensionOperation,options:{after?:number;before?:number;order?:'asc'|'desc';limit?:number}={},signal?:AbortSignal):Promise<{items:ExtensionApprovalEvent[];nextAfter?:number;nextBefore?:number}>{const c=checked(actor,scope,reference,operation),order=options?.order??'asc',after=options?.after??0,before=options?.before,limit=options?.limit??50;if(!options||!['asc','desc'].includes(order)||!Number.isSafeInteger(after)||after<0||(before!==undefined&&(!Number.isSafeInteger(before)||before<1))||(order==='asc'&&before!==undefined)||(order==='desc'&&options.after!==undefined)||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid extension approval history');await this.permitRead(c,'audit',signal);const filter=order==='asc'?'id>$8':'($8::bigint IS NULL OR id<$8)',rows=(await this.readQuery(`SELECT id,actor_id,revision,allowed,expires_at,observed_at FROM app_mixer_extension_approval_audit WHERE ${where} AND ${filter} ORDER BY id ${order==='asc'?'ASC':'DESC'} LIMIT $9`,[...this.args(c.scope,c.reference,c.operation),order==='asc'?after:before??null,limit+1],signal)).rows;if(!Array.isArray(rows)||rows.length>limit+1)throw Error('Invalid extension approval history');await this.permitRead(c,'audit',signal);const items=rows.slice(0,limit).map(row=>{const id=Number(row.id),revision=approvalRevision(row.revision),expiresAt=Number(row.expires_at),observedAt=Number(row.observed_at);if(!Number.isSafeInteger(id)||id<1||!validActorId(row.actor_id)||typeof row.allowed!=='boolean'||!Number.isSafeInteger(expiresAt)||expiresAt<0||(revision.terminal&&(row.allowed||expiresAt!==0))||!Number.isSafeInteger(observedAt)||observedAt<0)throw Error('Invalid extension approval history');return {id,actorId:row.actor_id,revision:revision.revision,allowed:row.allowed,expiresAt,observedAt,...(revision.terminal?{terminal:true as const}:{})};});return {items,...(rows.length>limit?(order==='asc'?{nextAfter:items.at(-1)!.id}:{nextBefore:items.at(-1)!.id}):{})};}
+  /** Administrative state read, independently authorized from runtime invocation. */
+  async inspect(actor: Actor, scope: ExtensionApprovalScope, reference: ExtensionReference, operation: ExtensionOperation, signal?: AbortSignal): Promise<ExtensionApprovalState | undefined> {
+    const c = checked(actor, scope, reference, operation),
+      args = this.args(c.scope, c.reference, c.operation),
+      sql = `SELECT revision,allowed,expires_at FROM app_mixer_extension_approvals WHERE ${where}`;
+    await this.permitRead(c, 'inspect', signal);
+    const first = await this.readQuery(sql, args, signal);
+    if (!Array.isArray(first.rows) || first.rows.length > 1) throw Error('Invalid extension approval result');
+    await this.permitRead(c, 'inspect', signal);
+    if (!first.rows.length) return undefined;
+    const current = await this.readQuery(sql, args, signal);
+    if (!Array.isArray(current.rows) || current.rows.length > 1) throw Error('Invalid extension approval result');
+    await this.permitRead(c, 'inspect', signal);
+    if (!current.rows.length) throw Error('Extension approval changed');
+    const row = current.rows[0],
+      revision = approvalRevision(row.revision),
+      firstRevision = approvalRevision(first.rows[0].revision),
+      expiresAt = Number(row.expires_at);
+    if (revision.revision !== firstRevision.revision || revision.terminal !== firstRevision.terminal) throw Error('Extension approval changed');
+    if (typeof row.allowed !== 'boolean' || !Number.isSafeInteger(expiresAt) || expiresAt < 0 || (revision.terminal && (row.allowed || expiresAt !== 0)))
+      throw Error('Invalid extension approval result');
+    return {
+      revision: revision.revision,
+      allowed: row.allowed,
+      expiresAt,
+      active: !revision.terminal && row.allowed && expiresAt > this.now(),
+      ...(revision.terminal ? { terminal: true as const } : {})
+    };
+  }
+  /** Bind a host-selected application scope to the extension runtime's live approval hook. */
+  forRuntime(scope: ExtensionApprovalScope): ExtensionInvocationApproval {
+    if (!scope || !id(scope.tenantId) || !id(scope.applicationId)) throw Error('Invalid extension approval scope');
+    const fixed = { tenantId: scope.tenantId, applicationId: scope.applicationId };
+    return (actor, reference, operation) => this.isAllowed(actor, fixed, reference, operation);
+  }
+  forRuntimeWithSignal(scope: ExtensionApprovalScope): ExtensionInvocationApprovalWithSignal {
+    if (!scope || !id(scope.tenantId) || !id(scope.applicationId)) throw Error('Invalid extension approval scope');
+    const fixed = { tenantId: scope.tenantId, applicationId: scope.applicationId };
+    return (actor, reference, operation, signal) => this.isAllowed(actor, fixed, reference, operation, signal);
+  }
+  async history(
+    actor: Actor,
+    scope: ExtensionApprovalScope,
+    reference: ExtensionReference,
+    operation: ExtensionOperation,
+    options: { after?: number; before?: number; order?: 'asc' | 'desc'; limit?: number } = {},
+    signal?: AbortSignal
+  ): Promise<{ items: ExtensionApprovalEvent[]; nextAfter?: number; nextBefore?: number }> {
+    const c = checked(actor, scope, reference, operation),
+      order = options?.order ?? 'asc',
+      after = options?.after ?? 0,
+      before = options?.before,
+      limit = options?.limit ?? 50;
+    if (
+      !options ||
+      !['asc', 'desc'].includes(order) ||
+      !Number.isSafeInteger(after) ||
+      after < 0 ||
+      (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) ||
+      (order === 'asc' && before !== undefined) ||
+      (order === 'desc' && options.after !== undefined) ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    )
+      throw Error('Invalid extension approval history');
+    await this.permitRead(c, 'audit', signal);
+    const filter = order === 'asc' ? 'id>$8' : '($8::bigint IS NULL OR id<$8)',
+      rows = (
+        await this.readQuery(
+          `SELECT id,actor_id,revision,allowed,expires_at,observed_at FROM app_mixer_extension_approval_audit WHERE ${where} AND ${filter} ORDER BY id ${order === 'asc' ? 'ASC' : 'DESC'} LIMIT $9`,
+          [...this.args(c.scope, c.reference, c.operation), order === 'asc' ? after : (before ?? null), limit + 1],
+          signal
+        )
+      ).rows;
+    if (!Array.isArray(rows) || rows.length > limit + 1) throw Error('Invalid extension approval history');
+    await this.permitRead(c, 'audit', signal);
+    const items = rows.slice(0, limit).map(row => {
+      const id = Number(row.id),
+        revision = approvalRevision(row.revision),
+        expiresAt = Number(row.expires_at),
+        observedAt = Number(row.observed_at);
+      if (
+        !Number.isSafeInteger(id) ||
+        id < 1 ||
+        !validActorId(row.actor_id) ||
+        typeof row.allowed !== 'boolean' ||
+        !Number.isSafeInteger(expiresAt) ||
+        expiresAt < 0 ||
+        (revision.terminal && (row.allowed || expiresAt !== 0)) ||
+        !Number.isSafeInteger(observedAt) ||
+        observedAt < 0
+      )
+        throw Error('Invalid extension approval history');
+      return { id, actorId: row.actor_id, revision: revision.revision, allowed: row.allowed, expiresAt, observedAt, ...(revision.terminal ? { terminal: true as const } : {}) };
+    });
+    return { items, ...(rows.length > limit ? (order === 'asc' ? { nextAfter: items.at(-1)!.id } : { nextBefore: items.at(-1)!.id }) : {}) };
+  }
 }
-const validActorId=id;
-export type {Options as PostgresExtensionApprovalsOptions};
+const validActorId = id;
+export type { Options as PostgresExtensionApprovalsOptions };

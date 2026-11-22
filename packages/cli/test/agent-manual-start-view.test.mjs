@@ -1,40 +1,447 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
-import {spawn} from 'node:child_process';
-import {once} from 'node:events';
-import {JSDOM} from 'jsdom';
-import {createProject} from '../dist/index.js';
-import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentTriggers,registerAgentManualStart} from '../../agent/dist/index.js';
-const wait=async fn=>{for(let i=0;i<500;i++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,20));}assert.fail('Timed out waiting for manual start view');};
-const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'},manifest={manifestVersion:1,...scope,name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'model'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
-test('manual start view retries an uncertain response with the same durable identity',{timeout:30000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-view-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),token='capability-secret-at-least-thirty-two-characters',registry=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let upstream,server,dom,view;try{
-  registerAgentManualStart(registry,{triggers,scope,sourceId:'manual',operationId:'manual-start',path:'/manual-start',maxPendingRuns:1,clock:()=>100,getDefinition:()=>({version:1,manifest}),authorize:()=>true});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const target=await createProject('manual-start',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});const url=await new Promise((resolve,reject)=>{let output='',errors='';server.stderr.on('data',chunk=>errors+=chunk);server.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited ${code}: ${errors}`)));});let lose=true;const sent=[];globalThis.fetch=async(input,options)=>{if(typeof input==='string'&&input.endsWith('/manual-start'))sent.push(JSON.parse(options.body));const response=typeof input==='string'&&input.startsWith('/')?await originalFetch(new URL(input,url),{...options,headers:{...options.headers,origin:url}}):await originalFetch(input,options);if(lose&&typeof input==='string'&&input.endsWith('/manual-start')){lose=false;assert.equal(response.status,200);throw Error('response lost');}return response;};
-  const {mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);view=mountAgentManualStart(root,{startOperation:'manual-start'});const fields=root.querySelectorAll('input');assert.equal(button('Start run').disabled,true);fields[0].value='request-1';fields[1].value='1';for(const field of fields)field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Start run').click();await wait(()=>root.textContent.includes('Start outcome unknown'));assert.equal(fields[0].disabled,true);assert.equal(fields[1].disabled,true);assert.equal(button('Start another request').disabled,true);fields[0].value='tampered';button('Retry same request').click();await wait(()=>root.textContent.includes('Existing run:'));assert.deepEqual(sent,[{requestId:'request-1',definitionVersion:1},{requestId:'request-1',definitionVersion:1}]);const [firstId]=runs.queuedPage(scope).runIds;assert.ok(firstId);assert.equal(runs.queuedPage({...scope,tenantId:'other'}).runIds.length,0);button('Start another request').click();assert.equal(fields[0].value,'');assert.equal(fields[1].value,'');assert.equal(button('Start run').disabled,true);fields[0].value='request-2';fields[1].value='1';for(const field of fields)field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Start run').click();await wait(()=>root.textContent.includes('Agent backlog is full'));assert.equal(fields[0].disabled,true);assert.equal(runs.queuedPage(scope).runIds.length,1);const firstRun=runs.get(scope,firstId);runs.request(scope,firstId,firstRun.revision,'cancel',100);button('Retry same request').click();await wait(()=>root.textContent.includes('Run started:'));assert.equal(runs.queuedPage(scope).runIds.length,1);assert.deepEqual(sent.slice(-2),[{requestId:'request-2',definitionVersion:1},{requestId:'request-2',definitionVersion:1}]);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}if(upstream){upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));}triggers.close();runs.close();await rm(dir,{recursive:true,force:true});}
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { JSDOM } from 'jsdom';
+import { createProject } from '../dist/index.js';
+import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import { SqliteAgentRuns, SqliteAgentTriggers, registerAgentManualStart } from '../../agent/dist/index.js';
+const wait = async fn => {
+  for (let i = 0; i < 500; i++) {
+    if (fn()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail('Timed out waiting for manual start view');
+};
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  manifest = {
+    manifestVersion: 1,
+    ...scope,
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    model: { provider: 'local', model: 'model' },
+    allowedCapabilities: [],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 1000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  };
+test('manual start view retries an uncertain response with the same durable identity', { timeout: 30000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-view-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    token = 'capability-secret-at-least-thirty-two-characters',
+    registry = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let upstream, server, dom, view;
+  try {
+    registerAgentManualStart(registry, {
+      triggers,
+      scope,
+      sourceId: 'manual',
+      operationId: 'manual-start',
+      path: '/manual-start',
+      maxPendingRuns: 1,
+      clock: () => 100,
+      getDefinition: () => ({ version: 1, manifest }),
+      authorize: () => true
+    });
+    upstream = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
+      () => {}
+    );
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const target = await createProject('manual-start', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const url = await new Promise((resolve, reject) => {
+      let output = '',
+        errors = '';
+      server.stderr.on('data', chunk => (errors += chunk));
+      server.stdout.on('data', chunk => {
+        output += chunk;
+        const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited ${code}: ${errors}`)));
+    });
+    let lose = true;
+    const sent = [];
+    globalThis.fetch = async (input, options) => {
+      if (typeof input === 'string' && input.endsWith('/manual-start')) sent.push(JSON.parse(options.body));
+      const response =
+        typeof input === 'string' && input.startsWith('/')
+          ? await originalFetch(new URL(input, url), { ...options, headers: { ...options.headers, origin: url } })
+          : await originalFetch(input, options);
+      if (lose && typeof input === 'string' && input.endsWith('/manual-start')) {
+        lose = false;
+        assert.equal(response.status, 200);
+        throw Error('response lost');
+      }
+      return response;
+    };
+    const { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    view = mountAgentManualStart(root, { startOperation: 'manual-start' });
+    const fields = root.querySelectorAll('input');
+    assert.equal(button('Start run').disabled, true);
+    fields[0].value = 'request-1';
+    fields[1].value = '1';
+    for (const field of fields) field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Start outcome unknown'));
+    assert.equal(fields[0].disabled, true);
+    assert.equal(fields[1].disabled, true);
+    assert.equal(button('Start another request').disabled, true);
+    fields[0].value = 'tampered';
+    button('Retry same request').click();
+    await wait(() => root.textContent.includes('Existing run:'));
+    assert.deepEqual(sent, [
+      { requestId: 'request-1', definitionVersion: 1 },
+      { requestId: 'request-1', definitionVersion: 1 }
+    ]);
+    const [firstId] = runs.queuedPage(scope).runIds;
+    assert.ok(firstId);
+    assert.equal(runs.queuedPage({ ...scope, tenantId: 'other' }).runIds.length, 0);
+    button('Start another request').click();
+    assert.equal(fields[0].value, '');
+    assert.equal(fields[1].value, '');
+    assert.equal(button('Start run').disabled, true);
+    fields[0].value = 'request-2';
+    fields[1].value = '1';
+    for (const field of fields) field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Agent backlog is full'));
+    assert.equal(fields[0].disabled, true);
+    assert.equal(runs.queuedPage(scope).runIds.length, 1);
+    const firstRun = runs.get(scope, firstId);
+    runs.request(scope, firstId, firstRun.revision, 'cancel', 100);
+    button('Retry same request').click();
+    await wait(() => root.textContent.includes('Run started:'));
+    assert.equal(runs.queuedPage(scope).runIds.length, 1);
+    assert.deepEqual(sent.slice(-2), [
+      { requestId: 'request-2', definitionVersion: 1 },
+      { requestId: 'request-2', definitionVersion: 1 }
+    ]);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    if (upstream) {
+      upstream.closeAllConnections();
+      if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    }
+    triggers.close();
+    runs.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('manual start view validates inputs and ignores late results after disposal',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-invalid-')),originalFetch=globalThis.fetch;let dom,view,release;try{const target=await createProject('manual-start',dir),{mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main');view=mountAgentManualStart(root,{startOperation:'start'});const button=()=>[...root.querySelectorAll('button')].find(element=>element.textContent==='Start run'),fields=root.querySelectorAll('input');fields[0].value='valid';for(const value of ['0','01','1e2','9007199254740992']){fields[1].value=value;fields[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));assert.equal(button().disabled,true);}fields[1].value='1';fields[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));const gate=new Promise(resolve=>release=resolve);globalThis.fetch=async()=>{await gate;return new Response(JSON.stringify({result:{runId:'run',duplicate:false}}));};button().click();view.dispose();release();await new Promise(resolve=>setImmediate(resolve));assert.equal(root.children.length,0);}finally{release?.();view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('manual start view validates inputs and ignores late results after disposal', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-invalid-')),
+    originalFetch = globalThis.fetch;
+  let dom, view, release;
+  try {
+    const target = await createProject('manual-start', dir),
+      { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main');
+    view = mountAgentManualStart(root, { startOperation: 'start' });
+    const button = () => [...root.querySelectorAll('button')].find(element => element.textContent === 'Start run'),
+      fields = root.querySelectorAll('input');
+    fields[0].value = 'valid';
+    for (const value of ['0', '01', '1e2', '9007199254740992']) {
+      fields[1].value = value;
+      fields[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+      assert.equal(button().disabled, true);
+    }
+    fields[1].value = '1';
+    fields[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    const gate = new Promise(resolve => (release = resolve));
+    globalThis.fetch = async () => {
+      await gate;
+      return new Response(JSON.stringify({ result: { runId: 'run', duplicate: false } }));
+    };
+    button().click();
+    view.dispose();
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(root.children.length, 0);
+  } finally {
+    release?.();
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('optional pending storage saves before dispatch, restores identity and clears only after success',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-store-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('manual-start',dir),{mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>',{url:'https://app.example/'});const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text),storage=dom.window.sessionStorage,sent=[];let lose=true;globalThis.fetch=async(_url,options)=>{sent.push(JSON.parse(options.body));if(lose){lose=false;throw Error('lost');}return new Response(JSON.stringify({result:{runId:'run',duplicate:true}}));};view=mountAgentManualStart(root,{startOperation:'start',pendingStorage:storage,pendingKey:'run-start'});let fields=root.querySelectorAll('input');fields[0].value='request-1';fields[1].value='2';for(const field of fields)field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Start run').click();await wait(()=>root.textContent.includes('Start outcome unknown'));assert.deepEqual(JSON.parse(storage.getItem('run-start')),{version:1,operation:'start',requestId:'request-1',definitionVersion:2});view.dispose();view=mountAgentManualStart(root,{startOperation:'start',pendingStorage:storage,pendingKey:'run-start'});fields=root.querySelectorAll('input');assert.equal(fields[0].value,'request-1');assert.equal(fields[1].value,'2');assert.equal(fields[0].disabled,true);button('Retry same request').click();await wait(()=>root.textContent.includes('Existing run: run'));assert.deepEqual(sent,[{requestId:'request-1',definitionVersion:2},{requestId:'request-1',definitionVersion:2}]);assert.notEqual(storage.getItem('run-start'),null);button('Start another request').click();assert.equal(storage.getItem('run-start'),null);view.dispose();storage.setItem('run-start','{"version":1,"operation":"other","requestId":"request-1","definitionVersion":2}');assert.throws(()=>mountAgentManualStart(root,{startOperation:'start',pendingStorage:storage,pendingKey:'run-start'}),/Invalid saved/);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('optional pending storage saves before dispatch, restores identity and clears only after success', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-store-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('manual-start', dir),
+      { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>', { url: 'https://app.example/' });
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text),
+      storage = dom.window.sessionStorage,
+      sent = [];
+    let lose = true;
+    globalThis.fetch = async (_url, options) => {
+      sent.push(JSON.parse(options.body));
+      if (lose) {
+        lose = false;
+        throw Error('lost');
+      }
+      return new Response(JSON.stringify({ result: { runId: 'run', duplicate: true } }));
+    };
+    view = mountAgentManualStart(root, { startOperation: 'start', pendingStorage: storage, pendingKey: 'run-start' });
+    let fields = root.querySelectorAll('input');
+    fields[0].value = 'request-1';
+    fields[1].value = '2';
+    for (const field of fields) field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Start outcome unknown'));
+    assert.deepEqual(JSON.parse(storage.getItem('run-start')), { version: 1, operation: 'start', requestId: 'request-1', definitionVersion: 2 });
+    view.dispose();
+    view = mountAgentManualStart(root, { startOperation: 'start', pendingStorage: storage, pendingKey: 'run-start' });
+    fields = root.querySelectorAll('input');
+    assert.equal(fields[0].value, 'request-1');
+    assert.equal(fields[1].value, '2');
+    assert.equal(fields[0].disabled, true);
+    button('Retry same request').click();
+    await wait(() => root.textContent.includes('Existing run: run'));
+    assert.deepEqual(sent, [
+      { requestId: 'request-1', definitionVersion: 2 },
+      { requestId: 'request-1', definitionVersion: 2 }
+    ]);
+    assert.notEqual(storage.getItem('run-start'), null);
+    button('Start another request').click();
+    assert.equal(storage.getItem('run-start'), null);
+    view.dispose();
+    storage.setItem('run-start', '{"version":1,"operation":"other","requestId":"request-1","definitionVersion":2}');
+    assert.throws(() => mountAgentManualStart(root, { startOperation: 'start', pendingStorage: storage, pendingKey: 'run-start' }), /Invalid saved/);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('storage failures cannot dispatch or silently discard a pending request',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-store-error-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('manual-start',dir),{mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);let saved=null,failSave=true,failClear=true,calls=0;const storage={getItem:()=>saved,setItem:(_key,value)=>{if(failSave)throw Error('full');saved=value;},removeItem:()=>{if(failClear)throw Error('blocked');saved=null;}};globalThis.fetch=async()=>{calls++;return new Response(JSON.stringify({result:{runId:'run',duplicate:false}}));};view=mountAgentManualStart(root,{startOperation:'start',pendingStorage:storage,pendingKey:'request'});const fields=root.querySelectorAll('input');fields[0].value='request-1';fields[1].value='1';for(const field of fields)field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Start run').click();assert.match(root.textContent,/Nothing was sent/);assert.equal(calls,0);assert.equal(fields[0].disabled,false);failSave=false;button('Start run').click();await wait(()=>root.textContent.includes('Run started: run'));button('Start another request').click();assert.match(root.textContent,/Unable to clear/);assert.notEqual(saved,null);assert.equal(fields[0].disabled,true);failClear=false;button('Start another request').click();assert.equal(saved,null);assert.equal(fields[0].disabled,false);}finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('storage failures cannot dispatch or silently discard a pending request', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-store-error-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('manual-start', dir),
+      { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    let saved = null,
+      failSave = true,
+      failClear = true,
+      calls = 0;
+    const storage = {
+      getItem: () => saved,
+      setItem: (_key, value) => {
+        if (failSave) throw Error('full');
+        saved = value;
+      },
+      removeItem: () => {
+        if (failClear) throw Error('blocked');
+        saved = null;
+      }
+    };
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(JSON.stringify({ result: { runId: 'run', duplicate: false } }));
+    };
+    view = mountAgentManualStart(root, { startOperation: 'start', pendingStorage: storage, pendingKey: 'request' });
+    const fields = root.querySelectorAll('input');
+    fields[0].value = 'request-1';
+    fields[1].value = '1';
+    for (const field of fields) field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Start run').click();
+    assert.match(root.textContent, /Nothing was sent/);
+    assert.equal(calls, 0);
+    assert.equal(fields[0].disabled, false);
+    failSave = false;
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Run started: run'));
+    button('Start another request').click();
+    assert.match(root.textContent, /Unable to clear/);
+    assert.notEqual(saved, null);
+    assert.equal(fields[0].disabled, true);
+    failClear = false;
+    button('Start another request').click();
+    assert.equal(saved, null);
+    assert.equal(fields[0].disabled, false);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('the view fences missing, replaced and silently unwritten pending requests',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-store-fence-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('manual-start',dir),{mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);let saved=null,discardWrite=true,calls=0;const storage={getItem:()=>saved,setItem:(_key,value)=>{if(!discardWrite)saved=value;},removeItem:()=>{saved=null;}};globalThis.fetch=async()=>{calls++;if(calls===1)throw Error('lost');return new Response(JSON.stringify({result:{runId:'run',duplicate:true}}));};view=mountAgentManualStart(root,{startOperation:'start',pendingStorage:storage,pendingKey:'request'});const fields=root.querySelectorAll('input');fields[0].value='request-1';fields[1].value='1';for(const field of fields)field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Start run').click();assert.match(root.textContent,/Nothing was sent/);assert.equal(calls,0);discardWrite=false;saved=JSON.stringify({version:1,operation:'start',requestId:'other',definitionVersion:1});button('Start run').click();assert.equal(calls,0);assert.match(saved,/other/);saved=null;button('Start run').click();await wait(()=>root.textContent.includes('Start outcome unknown'));assert.equal(calls,1);const original=saved;saved=null;button('Retry same request').click();assert.match(root.textContent,/Saved request changed/);assert.equal(calls,1);saved=JSON.stringify({version:1,operation:'start',requestId:'other',definitionVersion:1});button('Retry same request').click();assert.equal(calls,1);saved=original;button('Retry same request').click();await wait(()=>root.textContent.includes('Existing run: run'));saved=JSON.stringify({version:1,operation:'start',requestId:'other',definitionVersion:1});button('Start another request').click();assert.match(root.textContent,/Unable to clear/);assert.match(saved,/other/);saved=original;button('Start another request').click();assert.equal(saved,null);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('the view fences missing, replaced and silently unwritten pending requests', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-store-fence-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('manual-start', dir),
+      { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    let saved = null,
+      discardWrite = true,
+      calls = 0;
+    const storage = {
+      getItem: () => saved,
+      setItem: (_key, value) => {
+        if (!discardWrite) saved = value;
+      },
+      removeItem: () => {
+        saved = null;
+      }
+    };
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls === 1) throw Error('lost');
+      return new Response(JSON.stringify({ result: { runId: 'run', duplicate: true } }));
+    };
+    view = mountAgentManualStart(root, { startOperation: 'start', pendingStorage: storage, pendingKey: 'request' });
+    const fields = root.querySelectorAll('input');
+    fields[0].value = 'request-1';
+    fields[1].value = '1';
+    for (const field of fields) field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Start run').click();
+    assert.match(root.textContent, /Nothing was sent/);
+    assert.equal(calls, 0);
+    discardWrite = false;
+    saved = JSON.stringify({ version: 1, operation: 'start', requestId: 'other', definitionVersion: 1 });
+    button('Start run').click();
+    assert.equal(calls, 0);
+    assert.match(saved, /other/);
+    saved = null;
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Start outcome unknown'));
+    assert.equal(calls, 1);
+    const original = saved;
+    saved = null;
+    button('Retry same request').click();
+    assert.match(root.textContent, /Saved request changed/);
+    assert.equal(calls, 1);
+    saved = JSON.stringify({ version: 1, operation: 'start', requestId: 'other', definitionVersion: 1 });
+    button('Retry same request').click();
+    assert.equal(calls, 1);
+    saved = original;
+    button('Retry same request').click();
+    await wait(() => root.textContent.includes('Existing run: run'));
+    saved = JSON.stringify({ version: 1, operation: 'start', requestId: 'other', definitionVersion: 1 });
+    button('Start another request').click();
+    assert.match(root.textContent, /Unable to clear/);
+    assert.match(saved, /other/);
+    saved = original;
+    button('Start another request').click();
+    assert.equal(saved, null);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('manual start can inspect the fixed agent version without changing a pending request',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-status-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('manual-start',dir),{mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);let state={agentId:'agent',version:3,enabled:true};globalThis.fetch=async url=>{if(url.endsWith('/status'))return new Response(JSON.stringify({result:state}));throw Error('response lost');};view=mountAgentManualStart(root,{startOperation:'start',statusOperation:'status',agentId:'agent'});const fields=root.querySelectorAll('input');fields[0].value='request-1';fields[0].dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Check agent status').click();await wait(()=>root.textContent.includes('Agent enabled at definition version 3'));assert.equal(fields[1].value,'3');assert.equal(button('Start run').disabled,false);state={agentId:'agent',version:4,enabled:false};button('Check agent status').click();await wait(()=>root.textContent.includes('Agent suspended at definition version 4'));assert.equal(fields[1].value,'');assert.equal(button('Start run').disabled,true);state={agentId:'other',version:4,enabled:true};button('Check agent status').click();await wait(()=>root.textContent.includes('Unable to check agent status'));assert.equal(fields[1].value,'');state={agentId:'agent',version:5,enabled:true};button('Check agent status').click();await wait(()=>root.textContent.includes('Agent enabled at definition version 5'));button('Start run').click();await wait(()=>root.textContent.includes('Start outcome unknown'));assert.equal(button('Check agent status').disabled,true);assert.equal(fields[1].value,'5');}finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('manual start can inspect the fixed agent version without changing a pending request', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-status-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('manual-start', dir),
+      { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    let state = { agentId: 'agent', version: 3, enabled: true };
+    globalThis.fetch = async url => {
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ result: state }));
+      throw Error('response lost');
+    };
+    view = mountAgentManualStart(root, { startOperation: 'start', statusOperation: 'status', agentId: 'agent' });
+    const fields = root.querySelectorAll('input');
+    fields[0].value = 'request-1';
+    fields[0].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Check agent status').click();
+    await wait(() => root.textContent.includes('Agent enabled at definition version 3'));
+    assert.equal(fields[1].value, '3');
+    assert.equal(button('Start run').disabled, false);
+    state = { agentId: 'agent', version: 4, enabled: false };
+    button('Check agent status').click();
+    await wait(() => root.textContent.includes('Agent suspended at definition version 4'));
+    assert.equal(fields[1].value, '');
+    assert.equal(button('Start run').disabled, true);
+    state = { agentId: 'other', version: 4, enabled: true };
+    button('Check agent status').click();
+    await wait(() => root.textContent.includes('Unable to check agent status'));
+    assert.equal(fields[1].value, '');
+    state = { agentId: 'agent', version: 5, enabled: true };
+    button('Check agent status').click();
+    await wait(() => root.textContent.includes('Agent enabled at definition version 5'));
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Start outcome unknown'));
+    assert.equal(button('Check agent status').disabled, true);
+    assert.equal(fields[1].value, '5');
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('an uncertain 429 is not treated as a known backlog rejection',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-start-uncertain-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('manual-start',dir),{mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);globalThis.fetch=async()=>new Response(JSON.stringify({error:'Manual start backlog full',code:'CAPABILITY_OUTCOME_UNCERTAIN'}),{status:429});view=mountAgentManualStart(root,{startOperation:'start'});const fields=root.querySelectorAll('input');fields[0].value='request-1';fields[1].value='1';for(const field of fields)field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Start run').click();await wait(()=>root.textContent.includes('Start outcome unknown'));assert.doesNotMatch(root.textContent,/Agent backlog is full/);assert.equal(fields[0].disabled,true);}finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('an uncertain 429 is not treated as a known backlog rejection', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-start-uncertain-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('manual-start', dir),
+      { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: 'Manual start backlog full', code: 'CAPABILITY_OUTCOME_UNCERTAIN' }), { status: 429 });
+    view = mountAgentManualStart(root, { startOperation: 'start' });
+    const fields = root.querySelectorAll('input');
+    fields[0].value = 'request-1';
+    fields[1].value = '1';
+    for (const field of fields) field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Start outcome unknown'));
+    assert.doesNotMatch(root.textContent, /Agent backlog is full/);
+    assert.equal(fields[0].disabled, true);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });

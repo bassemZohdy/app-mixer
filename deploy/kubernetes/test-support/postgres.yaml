@@ -6,31 +6,31 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: {app-mixer-revocations-db: "true"}
+    matchLabels: { app-mixer-revocations-db: 'true' }
   template:
     metadata:
-      labels: {app-mixer-revocations-db: "true"}
+      labels: { app-mixer-revocations-db: 'true' }
     spec:
       initContainers:
         - name: prepare-tls
           image: postgres:16
-          command: ["sh", "-c", "cp /source/tls.crt /certs/server.crt && cp /source/tls.key /certs/server.key && chown postgres:postgres /certs/server.* && chmod 600 /certs/server.key"]
-          volumeMounts: [{name: source, mountPath: /source, readOnly: true}, {name: certs, mountPath: /certs}]
+          command: ['sh', '-c', 'cp /source/tls.crt /certs/server.crt && cp /source/tls.key /certs/server.key && chown postgres:postgres /certs/server.* && chmod 600 /certs/server.key']
+          volumeMounts: [{ name: source, mountPath: /source, readOnly: true }, { name: certs, mountPath: /certs }]
       containers:
         - name: postgres
           image: postgres:16
-          args: ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/certs/server.crt", "-c", "ssl_key_file=/certs/server.key"]
+          args: ['postgres', '-c', 'ssl=on', '-c', 'ssl_cert_file=/certs/server.crt', '-c', 'ssl_key_file=/certs/server.key']
           env:
             - name: POSTGRES_PASSWORD
-              valueFrom: {secretKeyRef: {name: app-mixer-test-postgres, key: password}}
-          ports: [{name: postgres, containerPort: 5432}]
+              valueFrom: { secretKeyRef: { name: app-mixer-test-postgres, key: password } }
+          ports: [{ name: postgres, containerPort: 5432 }]
           readinessProbe:
-            exec: {command: ["pg_isready", "-U", "postgres"]}
+            exec: { command: ['pg_isready', '-U', 'postgres'] }
             periodSeconds: 2
-          volumeMounts: [{name: certs, mountPath: /certs, readOnly: true}]
+          volumeMounts: [{ name: certs, mountPath: /certs, readOnly: true }]
       volumes:
         - name: source
-          secret: {secretName: app-mixer-test-postgres-tls}
+          secret: { secretName: app-mixer-test-postgres-tls }
         - name: certs
           emptyDir: {}
 ---
@@ -39,5 +39,5 @@ kind: Service
 metadata:
   name: app-mixer-revocations
 spec:
-  selector: {app-mixer-revocations-db: "true"}
-  ports: [{port: 5432, targetPort: postgres}]
+  selector: { app-mixer-revocations-db: 'true' }
+  ports: [{ port: 5432, targetPort: postgres }]

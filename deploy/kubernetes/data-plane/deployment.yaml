@@ -6,12 +6,12 @@ spec:
   replicas: 2
   strategy:
     type: RollingUpdate
-    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
   selector:
-    matchLabels: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
+    matchLabels: { app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane }
   template:
     metadata:
-      labels: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
+      labels: { app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane }
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
@@ -22,49 +22,49 @@ spec:
               podAffinityTerm:
                 topologyKey: kubernetes.io/hostname
                 labelSelector:
-                  matchLabels: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
+                  matchLabels: { app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane }
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
-        seccompProfile: {type: RuntimeDefault}
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: data-plane
           image: app-mixer-data-plane:test
           imagePullPolicy: IfNotPresent
-          ports: [{name: http, containerPort: 3002, protocol: TCP}]
+          ports: [{ name: http, containerPort: 3002, protocol: TCP }]
           env:
-            - {name: APP_MIXER_PUBLICATION_PATH, value: /publication/publication.json}
-            - {name: APP_MIXER_PUBLICATION_MODE, value: unsigned}
-            - {name: APP_MIXER_ACCESS_MODE, value: public}
-            - {name: APP_MIXER_TRANSPORT, value: http}
-            - {name: APP_MIXER_REVOCATION_MODE, value: disabled}
-            - {name: DATA_DRAIN_DELAY_MS, value: "5000"}
+            - { name: APP_MIXER_PUBLICATION_PATH, value: /publication/publication.json }
+            - { name: APP_MIXER_PUBLICATION_MODE, value: unsigned }
+            - { name: APP_MIXER_ACCESS_MODE, value: public }
+            - { name: APP_MIXER_TRANSPORT, value: http }
+            - { name: APP_MIXER_REVOCATION_MODE, value: disabled }
+            - { name: DATA_DRAIN_DELAY_MS, value: '5000' }
           readinessProbe:
-            httpGet: {path: /health/ready, port: http}
+            httpGet: { path: /health/ready, port: http }
             periodSeconds: 2
             timeoutSeconds: 1
             failureThreshold: 1
           livenessProbe:
-            httpGet: {path: /health/live, port: http}
+            httpGet: { path: /health/live, port: http }
             periodSeconds: 10
             timeoutSeconds: 1
             failureThreshold: 3
           startupProbe:
-            httpGet: {path: /health/live, port: http}
+            httpGet: { path: /health/live, port: http }
             periodSeconds: 2
             failureThreshold: 30
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
+            capabilities: { drop: [ALL] }
           resources:
-            requests: {cpu: 50m, memory: 96Mi}
-            limits: {cpu: "1", memory: 256Mi}
-          volumeMounts: [{name: publication, mountPath: /publication, readOnly: true}]
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: '1', memory: 256Mi }
+          volumeMounts: [{ name: publication, mountPath: /publication, readOnly: true }]
       volumes:
         - name: publication
-          configMap: {name: app-mixer-publication}
+          configMap: { name: app-mixer-publication }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -73,4 +73,4 @@ metadata:
 spec:
   minAvailable: 1
   selector:
-    matchLabels: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
+    matchLabels: { app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane }

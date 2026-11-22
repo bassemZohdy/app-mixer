@@ -1,53 +1,348 @@
-import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
-import {createBoundedOperation} from './bounded-operation.js';
-import {SqliteDataProvider,checkKey,migrationPlanDigest,type DataScope,type DataMigration,type DataMigrationRehearsal,type DataRollback} from './data-provider.js';
-import {AppMixerError} from './errors.js';
+import { CapabilityRegistry, type CapabilityCandidate } from './capabilities.js';
+import { createBoundedOperation } from './bounded-operation.js';
+import { SqliteDataProvider, checkKey, migrationPlanDigest, type DataScope, type DataMigration, type DataMigrationRehearsal, type DataRollback } from './data-provider.js';
+import { AppMixerError } from './errors.js';
 
-type Actor={tenantId:string;principalId:string};
-type Plan={kind:'forward';fromVersion:number;toVersion:number;transform:DataMigration['transform'];validate:DataMigration['validate']}|{kind:'rollback';fromVersion:number;targetVersion:number;transform:DataRollback['transform'];validate:DataRollback['validate']};
-type Base={provider:SqliteDataProvider;scope:DataScope;collection:string;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
-type ApplyOptions=Base&{plan:Plan;authorizeApply:(actor:Actor,input:{digest:string;reference:string;outputDigest?:string;planDigest?:string})=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeApplyWithSignal?:(actor:Actor,input:{digest:string;reference:string;outputDigest?:string;planDigest?:string},signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number;requireOutputDigest?:boolean;requirePlanDigest?:boolean;clock?:()=>number};
-type RehearsalOptions=Base&{plan:DataMigrationRehearsal|Plan;authorizeRehearsal:(actor:Actor)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeRehearsalWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number};
-type StatusOptions=Base&{authorizeStatus:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number};
-type AuditOptions=Base&{authorizeAudit?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number};
-type Page={after?:number;before?:number;order?:'asc'|'desc';limit?:number};
-const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-const query=(input:unknown):Record<string,unknown>|undefined=>object(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&object(input.query)?input.query:undefined;
-const applyInput=(input:unknown):{digest:string;reference:string;outputDigest?:string;planDigest?:string}|undefined=>{const value=query(input);if(!value||Object.keys(value).some(key=>!['digest','reference','outputDigest','planDigest'].includes(key))||!Object.hasOwn(value,'digest')||!Object.hasOwn(value,'reference')||typeof value.digest!=='string'||!/^[a-f0-9]{64}$/.test(value.digest)||(value.outputDigest!==undefined&&(typeof value.outputDigest!=='string'||!/^[a-f0-9]{64}$/.test(value.outputDigest)))||(value.planDigest!==undefined&&(typeof value.planDigest!=='string'||!/^[a-f0-9]{64}$/.test(value.planDigest)))||(value.planDigest!==undefined&&value.outputDigest===undefined)||typeof value.reference!=='string'||!value.reference.trim()||value.reference.length>512||/[\u0000-\u001f\u007f]/.test(value.reference))return;return {digest:value.digest,reference:value.reference,...(value.outputDigest===undefined?{}:{outputDigest:value.outputDigest as string}),...(value.planDigest===undefined?{}:{planDigest:value.planDigest as string})};};
-const planMetadata=(plan:Plan)=>plan.kind==='forward'?{kind:plan.kind,fromVersion:plan.fromVersion,toVersion:plan.toVersion}:{kind:plan.kind,fromVersion:plan.fromVersion,toVersion:plan.fromVersion+1,targetVersion:plan.targetVersion};
-const digestPlan=(scope:DataScope,collection:string,plan:Plan,inputDigest:string,outputDigest:string)=>migrationPlanDigest(scope,collection,plan.fromVersion,plan.kind==='forward'?plan.toVersion:plan.fromVersion+1,plan.kind==='rollback'?plan.targetVersion:undefined,inputDigest,outputDigest);
-const page=(input:unknown):Page|undefined=>{const value=query(input);if(!value||Object.keys(value).some(key=>!['after','before','order','limit'].includes(key))||(value.order!==undefined&&value.order!=='asc'&&value.order!=='desc')||(value.after!==undefined&&(!Number.isSafeInteger(value.after)||Number(value.after)<0||value.order==='desc'))||(value.before!==undefined&&(!Number.isSafeInteger(value.before)||Number(value.before)<1||value.order!=='desc'))||(value.limit!==undefined&&(!Number.isSafeInteger(value.limit)||Number(value.limit)<1||Number(value.limit)>100)))return;return {...(value.after===undefined?{}:{after:Number(value.after)}),...(value.before===undefined?{}:{before:Number(value.before)}),...(value.order===undefined?{}:{order:value.order as 'asc'|'desc'}),...(value.limit===undefined?{}:{limit:Number(value.limit)})};};
-function snapshot(registry:CapabilityRegistry,options:Base,method:'GET'|'POST'){
- if(!(registry instanceof CapabilityRegistry)||!options||!(options.provider instanceof SqliteDataProvider)||!options.candidate||typeof options.candidate.method!=='string'||options.candidate.method.toUpperCase()!==method||typeof options.authorize!=='function')throw Error('Invalid migration capability');checkKey(options.scope,options.collection,'validation');return {provider:options.provider,scope:{tenantId:options.scope.tenantId,applicationId:options.scope.applicationId},collection:options.collection,candidate:structuredClone(options.candidate),authorize:options.authorize};
+type Actor = { tenantId: string; principalId: string };
+type Plan =
+  | { kind: 'forward'; fromVersion: number; toVersion: number; transform: DataMigration['transform']; validate: DataMigration['validate'] }
+  | { kind: 'rollback'; fromVersion: number; targetVersion: number; transform: DataRollback['transform']; validate: DataRollback['validate'] };
+type Base = { provider: SqliteDataProvider; scope: DataScope; collection: string; candidate: CapabilityCandidate; authorize: (actor: Actor) => boolean | Promise<boolean> };
+type ApplyOptions = Base & {
+  plan: Plan;
+  authorizeApply: (actor: Actor, input: { digest: string; reference: string; outputDigest?: string; planDigest?: string }) => boolean | Promise<boolean>;
+  authorizeWithSignal?: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>;
+  authorizeApplyWithSignal?: (actor: Actor, input: { digest: string; reference: string; outputDigest?: string; planDigest?: string }, signal: AbortSignal) => boolean | Promise<boolean>;
+  policyTimeoutMs?: number;
+  maxPendingPolicies?: number;
+  requireOutputDigest?: boolean;
+  requirePlanDigest?: boolean;
+  clock?: () => number;
+};
+type RehearsalOptions = Base & {
+  plan: DataMigrationRehearsal | Plan;
+  authorizeRehearsal: (actor: Actor) => boolean | Promise<boolean>;
+  authorizeWithSignal?: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>;
+  authorizeRehearsalWithSignal?: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>;
+  policyTimeoutMs?: number;
+  maxPendingPolicies?: number;
+};
+type StatusOptions = Base & { authorizeStatus: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>; policyTimeoutMs?: number; maxPendingPolicies?: number };
+type AuditOptions = Base & { authorizeAudit?: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>; policyTimeoutMs?: number; maxPendingPolicies?: number };
+type Page = { after?: number; before?: number; order?: 'asc' | 'desc'; limit?: number };
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+const query = (input: unknown): Record<string, unknown> | undefined =>
+  object(input) && Object.keys(input).length === 1 && Object.hasOwn(input, 'query') && object(input.query) ? input.query : undefined;
+const applyInput = (input: unknown): { digest: string; reference: string; outputDigest?: string; planDigest?: string } | undefined => {
+  const value = query(input);
+  if (
+    !value ||
+    Object.keys(value).some(key => !['digest', 'reference', 'outputDigest', 'planDigest'].includes(key)) ||
+    !Object.hasOwn(value, 'digest') ||
+    !Object.hasOwn(value, 'reference') ||
+    typeof value.digest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.digest) ||
+    (value.outputDigest !== undefined && (typeof value.outputDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.outputDigest))) ||
+    (value.planDigest !== undefined && (typeof value.planDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.planDigest))) ||
+    (value.planDigest !== undefined && value.outputDigest === undefined) ||
+    typeof value.reference !== 'string' ||
+    !value.reference.trim() ||
+    value.reference.length > 512 ||
+    /[\u0000-\u001f\u007f]/.test(value.reference)
+  )
+    return;
+  return {
+    digest: value.digest,
+    reference: value.reference,
+    ...(value.outputDigest === undefined ? {} : { outputDigest: value.outputDigest as string }),
+    ...(value.planDigest === undefined ? {} : { planDigest: value.planDigest as string })
+  };
+};
+const planMetadata = (plan: Plan) =>
+  plan.kind === 'forward'
+    ? { kind: plan.kind, fromVersion: plan.fromVersion, toVersion: plan.toVersion }
+    : { kind: plan.kind, fromVersion: plan.fromVersion, toVersion: plan.fromVersion + 1, targetVersion: plan.targetVersion };
+const digestPlan = (scope: DataScope, collection: string, plan: Plan, inputDigest: string, outputDigest: string) =>
+  migrationPlanDigest(
+    scope,
+    collection,
+    plan.fromVersion,
+    plan.kind === 'forward' ? plan.toVersion : plan.fromVersion + 1,
+    plan.kind === 'rollback' ? plan.targetVersion : undefined,
+    inputDigest,
+    outputDigest
+  );
+const page = (input: unknown): Page | undefined => {
+  const value = query(input);
+  if (
+    !value ||
+    Object.keys(value).some(key => !['after', 'before', 'order', 'limit'].includes(key)) ||
+    (value.order !== undefined && value.order !== 'asc' && value.order !== 'desc') ||
+    (value.after !== undefined && (!Number.isSafeInteger(value.after) || Number(value.after) < 0 || value.order === 'desc')) ||
+    (value.before !== undefined && (!Number.isSafeInteger(value.before) || Number(value.before) < 1 || value.order !== 'desc')) ||
+    (value.limit !== undefined && (!Number.isSafeInteger(value.limit) || Number(value.limit) < 1 || Number(value.limit) > 100))
+  )
+    return;
+  return {
+    ...(value.after === undefined ? {} : { after: Number(value.after) }),
+    ...(value.before === undefined ? {} : { before: Number(value.before) }),
+    ...(value.order === undefined ? {} : { order: value.order as 'asc' | 'desc' }),
+    ...(value.limit === undefined ? {} : { limit: Number(value.limit) })
+  };
+};
+function snapshot(registry: CapabilityRegistry, options: Base, method: 'GET' | 'POST') {
+  if (
+    !(registry instanceof CapabilityRegistry) ||
+    !options ||
+    !(options.provider instanceof SqliteDataProvider) ||
+    !options.candidate ||
+    typeof options.candidate.method !== 'string' ||
+    options.candidate.method.toUpperCase() !== method ||
+    typeof options.authorize !== 'function'
+  )
+    throw Error('Invalid migration capability');
+  checkKey(options.scope, options.collection, 'validation');
+  return {
+    provider: options.provider,
+    scope: { tenantId: options.scope.tenantId, applicationId: options.scope.applicationId },
+    collection: options.collection,
+    candidate: structuredClone(options.candidate),
+    authorize: options.authorize
+  };
 }
 /** A scoped preview never exposes record values or migration code. */
-export function registerDataMigrationPreview(registry:CapabilityRegistry,options:Base):void{
- const c=snapshot(registry,options,'GET');registry.register(c.candidate,{authorize:async actor=>actor.tenantId===c.scope.tenantId&&await c.authorize({...actor})===true,validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>c.authorize({...actor}),execute:()=>c.provider.previewMigration(c.scope,c.collection)});
+export function registerDataMigrationPreview(registry: CapabilityRegistry, options: Base): void {
+  const c = snapshot(registry, options, 'GET');
+  registry.register(c.candidate, {
+    authorize: async actor => actor.tenantId === c.scope.tenantId && (await c.authorize({ ...actor })) === true,
+    validate: input => {
+      const value = query(input);
+      return !!value && Object.keys(value).length === 0;
+    },
+    authorizeInput: actor => c.authorize({ ...actor }),
+    execute: () => c.provider.previewMigration(c.scope, c.collection)
+  });
 }
 /** Inspect one fixed collection's current generation without reading record values. */
-export function registerDataMigrationStatus(registry:CapabilityRegistry,options:StatusOptions):void{
- const c=snapshot(registry,options,'GET');if(typeof options.authorizeStatus!=='function')throw Error('Invalid migration capability');const authorizeStatus=options.authorizeStatus,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid migration capability','Migration status unavailable');
- const permit=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Migration status unavailable');};check();if(actor.tenantId!==c.scope.tenantId||await c.authorize({...actor})!==true)return false;check();const allowed=await authorizeStatus({...actor},signal)===true;check();return allowed;};
- registry.register(c.candidate,{authorize:actor=>bounded(signal=>permit(actor,signal)),validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>bounded(signal=>permit(actor,signal)),execute:(_input,actor)=>bounded(async signal=>{if(!await permit(actor,signal))throw new AppMixerError('denied','Capability forbidden');const before=c.provider.getSchemaVersion(c.scope,c.collection);if(!await permit(actor,signal))throw new AppMixerError('denied','Capability forbidden');const after=c.provider.getSchemaVersion(c.scope,c.collection);if(before!==after)throw new AppMixerError('unavailable','Migration status unavailable');if(signal.aborted)throw new AppMixerError('unavailable','Migration status unavailable');return {schemaVersion:after};})});
+export function registerDataMigrationStatus(registry: CapabilityRegistry, options: StatusOptions): void {
+  const c = snapshot(registry, options, 'GET');
+  if (typeof options.authorizeStatus !== 'function') throw Error('Invalid migration capability');
+  const authorizeStatus = options.authorizeStatus,
+    bounded = createBoundedOperation(options.policyTimeoutMs, options.maxPendingPolicies, 'Invalid migration capability', 'Migration status unavailable');
+  const permit = async (actor: Actor, signal: AbortSignal) => {
+    const check = () => {
+      if (signal.aborted) throw new AppMixerError('unavailable', 'Migration status unavailable');
+    };
+    check();
+    if (actor.tenantId !== c.scope.tenantId || (await c.authorize({ ...actor })) !== true) return false;
+    check();
+    const allowed = (await authorizeStatus({ ...actor }, signal)) === true;
+    check();
+    return allowed;
+  };
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => permit(actor, signal)),
+    validate: input => {
+      const value = query(input);
+      return !!value && Object.keys(value).length === 0;
+    },
+    authorizeInput: actor => bounded(signal => permit(actor, signal)),
+    execute: (_input, actor) =>
+      bounded(async signal => {
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Capability forbidden');
+        const before = c.provider.getSchemaVersion(c.scope, c.collection);
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Capability forbidden');
+        const after = c.provider.getSchemaVersion(c.scope, c.collection);
+        if (before !== after) throw new AppMixerError('unavailable', 'Migration status unavailable');
+        if (signal.aborted) throw new AppMixerError('unavailable', 'Migration status unavailable');
+        return { schemaVersion: after };
+      })
+  });
 }
 /** Rehearse one host-fixed plan without returning records or transformed values. */
-export function registerDataMigrationRehearsal(registry:CapabilityRegistry,options:RehearsalOptions):void{
- const c=snapshot(registry,options,'POST'),plan=options.plan;if(!plan||!Number.isSafeInteger(plan.fromVersion)||plan.fromVersion<0||plan.fromVersion>=Number.MAX_SAFE_INTEGER||typeof plan.transform!=='function'||typeof plan.validate!=='function'||typeof options.authorizeRehearsal!=='function'||(options.authorizeWithSignal!==undefined&&typeof options.authorizeWithSignal!=='function')||(options.authorizeRehearsalWithSignal!==undefined&&typeof options.authorizeRehearsalWithSignal!=='function')||('kind' in plan&&plan.kind!=='forward'&&plan.kind!=='rollback')||('kind' in plan&&plan.kind==='forward'&&(!Number.isSafeInteger(plan.toVersion)||plan.toVersion!==plan.fromVersion+1))||('kind' in plan&&plan.kind==='rollback'&&(!Number.isSafeInteger(plan.targetVersion)||plan.fromVersion<1||plan.targetVersion<0||plan.targetVersion>=plan.fromVersion)))throw Error('Invalid migration capability');
- const metadataPlan:Plan|undefined='kind' in plan?{...plan}:undefined,fixed={fromVersion:plan.fromVersion,transform:plan.transform,validate:plan.validate},target=metadataPlan?.kind==='rollback'?metadataPlan.targetVersion:undefined,authorizeRehearsal=options.authorizeRehearsal,authorizeWithSignal=options.authorizeWithSignal,authorizeRehearsalWithSignal=options.authorizeRehearsalWithSignal,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid migration capability','Migration rehearsal unavailable');
- const permit=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Migration rehearsal unavailable');};check();if(actor.tenantId!==c.scope.tenantId)return false;const scopeAllowed=authorizeWithSignal?await authorizeWithSignal({...actor},signal):await c.authorize({...actor});check();if(scopeAllowed!==true)return false;const allowed=authorizeRehearsalWithSignal?await authorizeRehearsalWithSignal({...actor},signal):await authorizeRehearsal({...actor});check();return allowed===true;};
- registry.register(c.candidate,{authorize:actor=>bounded(signal=>permit(actor,signal)),validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>bounded(signal=>permit(actor,signal)),execute:(_input,actor)=>bounded(async signal=>{if(!await permit(actor,signal))throw new AppMixerError('denied','Capability forbidden');const result=target===undefined?c.provider.rehearseMigration(c.scope,c.collection,fixed):c.provider.rehearseRollback(c.scope,c.collection,{...fixed,targetVersion:target});if(!await permit(actor,signal))throw new AppMixerError('denied','Capability forbidden');if(signal.aborted)throw new AppMixerError('unavailable','Migration rehearsal unavailable');return metadataPlan?{...result,plan:planMetadata(metadataPlan),planDigest:digestPlan(c.scope,c.collection,metadataPlan,result.digest,result.outputDigest)}:result;})});
+export function registerDataMigrationRehearsal(registry: CapabilityRegistry, options: RehearsalOptions): void {
+  const c = snapshot(registry, options, 'POST'),
+    plan = options.plan;
+  if (
+    !plan ||
+    !Number.isSafeInteger(plan.fromVersion) ||
+    plan.fromVersion < 0 ||
+    plan.fromVersion >= Number.MAX_SAFE_INTEGER ||
+    typeof plan.transform !== 'function' ||
+    typeof plan.validate !== 'function' ||
+    typeof options.authorizeRehearsal !== 'function' ||
+    (options.authorizeWithSignal !== undefined && typeof options.authorizeWithSignal !== 'function') ||
+    (options.authorizeRehearsalWithSignal !== undefined && typeof options.authorizeRehearsalWithSignal !== 'function') ||
+    ('kind' in plan && plan.kind !== 'forward' && plan.kind !== 'rollback') ||
+    ('kind' in plan && plan.kind === 'forward' && (!Number.isSafeInteger(plan.toVersion) || plan.toVersion !== plan.fromVersion + 1)) ||
+    ('kind' in plan && plan.kind === 'rollback' && (!Number.isSafeInteger(plan.targetVersion) || plan.fromVersion < 1 || plan.targetVersion < 0 || plan.targetVersion >= plan.fromVersion))
+  )
+    throw Error('Invalid migration capability');
+  const metadataPlan: Plan | undefined = 'kind' in plan ? { ...plan } : undefined,
+    fixed = { fromVersion: plan.fromVersion, transform: plan.transform, validate: plan.validate },
+    target = metadataPlan?.kind === 'rollback' ? metadataPlan.targetVersion : undefined,
+    authorizeRehearsal = options.authorizeRehearsal,
+    authorizeWithSignal = options.authorizeWithSignal,
+    authorizeRehearsalWithSignal = options.authorizeRehearsalWithSignal,
+    bounded = createBoundedOperation(options.policyTimeoutMs, options.maxPendingPolicies, 'Invalid migration capability', 'Migration rehearsal unavailable');
+  const permit = async (actor: Actor, signal: AbortSignal) => {
+    const check = () => {
+      if (signal.aborted) throw new AppMixerError('unavailable', 'Migration rehearsal unavailable');
+    };
+    check();
+    if (actor.tenantId !== c.scope.tenantId) return false;
+    const scopeAllowed = authorizeWithSignal ? await authorizeWithSignal({ ...actor }, signal) : await c.authorize({ ...actor });
+    check();
+    if (scopeAllowed !== true) return false;
+    const allowed = authorizeRehearsalWithSignal ? await authorizeRehearsalWithSignal({ ...actor }, signal) : await authorizeRehearsal({ ...actor });
+    check();
+    return allowed === true;
+  };
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => permit(actor, signal)),
+    validate: input => {
+      const value = query(input);
+      return !!value && Object.keys(value).length === 0;
+    },
+    authorizeInput: actor => bounded(signal => permit(actor, signal)),
+    execute: (_input, actor) =>
+      bounded(async signal => {
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Capability forbidden');
+        const result = target === undefined ? c.provider.rehearseMigration(c.scope, c.collection, fixed) : c.provider.rehearseRollback(c.scope, c.collection, { ...fixed, targetVersion: target });
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Capability forbidden');
+        if (signal.aborted) throw new AppMixerError('unavailable', 'Migration rehearsal unavailable');
+        return metadataPlan ? { ...result, plan: planMetadata(metadataPlan), planDigest: digestPlan(c.scope, c.collection, metadataPlan, result.digest, result.outputDigest) } : result;
+      })
+  });
 }
 /** Execute only a trusted, fixed migration plan, with actor-attributed transactional evidence. */
-export function registerDataMigrationApply(registry:CapabilityRegistry,options:ApplyOptions):void{
- const c=snapshot(registry,options,'POST'),plan=options.plan;if(!plan||!['forward','rollback'].includes(plan.kind)||!Number.isSafeInteger(plan.fromVersion)||plan.fromVersion<0||plan.fromVersion>=Number.MAX_SAFE_INTEGER||typeof plan.transform!=='function'||typeof plan.validate!=='function'||(plan.kind==='forward'&&(!Number.isSafeInteger(plan.toVersion)||plan.toVersion!==plan.fromVersion+1))||(plan.kind==='rollback'&&(!Number.isSafeInteger(plan.targetVersion)||plan.fromVersion<1||plan.targetVersion<0||plan.targetVersion>=plan.fromVersion))||typeof options.authorizeApply!=='function'||(options.authorizeWithSignal!==undefined&&typeof options.authorizeWithSignal!=='function')||(options.authorizeApplyWithSignal!==undefined&&typeof options.authorizeApplyWithSignal!=='function')||(options.requireOutputDigest!==undefined&&typeof options.requireOutputDigest!=='boolean')||(options.requirePlanDigest!==undefined&&typeof options.requirePlanDigest!=='boolean')||(options.clock!==undefined&&typeof options.clock!=='function'))throw Error('Invalid migration capability');
- const fixed={...plan},authorizeApply=options.authorizeApply,authorizeWithSignal=options.authorizeWithSignal,authorizeApplyWithSignal=options.authorizeApplyWithSignal,requireOutputDigest=options.requireOutputDigest===true||options.requirePlanDigest===true,requirePlanDigest=options.requirePlanDigest===true,clock=options.clock??Date.now,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid migration capability','Migration policy unavailable');
- const check=(signal:AbortSignal)=>{if(signal.aborted)throw new AppMixerError('unavailable','Migration policy unavailable');},scopePolicy=async(actor:Actor,signal:AbortSignal)=>{check(signal);const allowed=actor.tenantId===c.scope.tenantId&&(authorizeWithSignal?await authorizeWithSignal({...actor},signal):await c.authorize({...actor}))===true;check(signal);return allowed;};
- registry.register(c.candidate,{authorize:actor=>bounded(signal=>scopePolicy(actor,signal)),validate:input=>{const safe=applyInput(input);return !!safe&&(!requireOutputDigest||safe.outputDigest!==undefined)&&(!requirePlanDigest||safe.planDigest!==undefined);},authorizeInput:(actor,input)=>{const safe=applyInput(input);if(!safe||(requireOutputDigest&&safe.outputDigest===undefined)||(requirePlanDigest&&safe.planDigest===undefined))return false;return bounded(async signal=>{const action=async()=>{check(signal);const allowed=(authorizeApplyWithSignal?await authorizeApplyWithSignal({...actor},{...safe},signal):await authorizeApply({...actor},{...safe}))===true;check(signal);return allowed;};return await scopePolicy(actor,signal)&&await action()&&await scopePolicy(actor,signal)&&await action();});},execute:(input,actor)=>{const safe=applyInput(input),now=clock();if(!safe||(requireOutputDigest&&safe.outputDigest===undefined)||(requirePlanDigest&&safe.planDigest===undefined)||!Number.isSafeInteger(now)||now<0)throw Error('Invalid migration evidence');if(safe.planDigest!==undefined&&safe.planDigest!==digestPlan(c.scope,c.collection,fixed,safe.digest,safe.outputDigest!))throw new AppMixerError('conflict','Migration plan conflict');const evidence={principalId:actor.principalId,reference:safe.reference,observedAt:now};return fixed.kind==='forward'?c.provider.migrateCollection(c.scope,c.collection,{fromVersion:fixed.fromVersion,toVersion:fixed.toVersion,digest:safe.digest,outputDigest:safe.outputDigest,planDigest:safe.planDigest,transform:fixed.transform,validate:fixed.validate,evidence}):c.provider.rollbackCollection(c.scope,c.collection,{fromVersion:fixed.fromVersion,targetVersion:fixed.targetVersion,digest:safe.digest,outputDigest:safe.outputDigest,planDigest:safe.planDigest,transform:fixed.transform,validate:fixed.validate,evidence});}});
+export function registerDataMigrationApply(registry: CapabilityRegistry, options: ApplyOptions): void {
+  const c = snapshot(registry, options, 'POST'),
+    plan = options.plan;
+  if (
+    !plan ||
+    !['forward', 'rollback'].includes(plan.kind) ||
+    !Number.isSafeInteger(plan.fromVersion) ||
+    plan.fromVersion < 0 ||
+    plan.fromVersion >= Number.MAX_SAFE_INTEGER ||
+    typeof plan.transform !== 'function' ||
+    typeof plan.validate !== 'function' ||
+    (plan.kind === 'forward' && (!Number.isSafeInteger(plan.toVersion) || plan.toVersion !== plan.fromVersion + 1)) ||
+    (plan.kind === 'rollback' && (!Number.isSafeInteger(plan.targetVersion) || plan.fromVersion < 1 || plan.targetVersion < 0 || plan.targetVersion >= plan.fromVersion)) ||
+    typeof options.authorizeApply !== 'function' ||
+    (options.authorizeWithSignal !== undefined && typeof options.authorizeWithSignal !== 'function') ||
+    (options.authorizeApplyWithSignal !== undefined && typeof options.authorizeApplyWithSignal !== 'function') ||
+    (options.requireOutputDigest !== undefined && typeof options.requireOutputDigest !== 'boolean') ||
+    (options.requirePlanDigest !== undefined && typeof options.requirePlanDigest !== 'boolean') ||
+    (options.clock !== undefined && typeof options.clock !== 'function')
+  )
+    throw Error('Invalid migration capability');
+  const fixed = { ...plan },
+    authorizeApply = options.authorizeApply,
+    authorizeWithSignal = options.authorizeWithSignal,
+    authorizeApplyWithSignal = options.authorizeApplyWithSignal,
+    requireOutputDigest = options.requireOutputDigest === true || options.requirePlanDigest === true,
+    requirePlanDigest = options.requirePlanDigest === true,
+    clock = options.clock ?? Date.now,
+    bounded = createBoundedOperation(options.policyTimeoutMs, options.maxPendingPolicies, 'Invalid migration capability', 'Migration policy unavailable');
+  const check = (signal: AbortSignal) => {
+      if (signal.aborted) throw new AppMixerError('unavailable', 'Migration policy unavailable');
+    },
+    scopePolicy = async (actor: Actor, signal: AbortSignal) => {
+      check(signal);
+      const allowed = actor.tenantId === c.scope.tenantId && (authorizeWithSignal ? await authorizeWithSignal({ ...actor }, signal) : await c.authorize({ ...actor })) === true;
+      check(signal);
+      return allowed;
+    };
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => scopePolicy(actor, signal)),
+    validate: input => {
+      const safe = applyInput(input);
+      return !!safe && (!requireOutputDigest || safe.outputDigest !== undefined) && (!requirePlanDigest || safe.planDigest !== undefined);
+    },
+    authorizeInput: (actor, input) => {
+      const safe = applyInput(input);
+      if (!safe || (requireOutputDigest && safe.outputDigest === undefined) || (requirePlanDigest && safe.planDigest === undefined)) return false;
+      return bounded(async signal => {
+        const action = async () => {
+          check(signal);
+          const allowed = (authorizeApplyWithSignal ? await authorizeApplyWithSignal({ ...actor }, { ...safe }, signal) : await authorizeApply({ ...actor }, { ...safe })) === true;
+          check(signal);
+          return allowed;
+        };
+        return (await scopePolicy(actor, signal)) && (await action()) && (await scopePolicy(actor, signal)) && (await action());
+      });
+    },
+    execute: (input, actor) => {
+      const safe = applyInput(input),
+        now = clock();
+      if (!safe || (requireOutputDigest && safe.outputDigest === undefined) || (requirePlanDigest && safe.planDigest === undefined) || !Number.isSafeInteger(now) || now < 0)
+        throw Error('Invalid migration evidence');
+      if (safe.planDigest !== undefined && safe.planDigest !== digestPlan(c.scope, c.collection, fixed, safe.digest, safe.outputDigest!))
+        throw new AppMixerError('conflict', 'Migration plan conflict');
+      const evidence = { principalId: actor.principalId, reference: safe.reference, observedAt: now };
+      return fixed.kind === 'forward'
+        ? c.provider.migrateCollection(c.scope, c.collection, {
+            fromVersion: fixed.fromVersion,
+            toVersion: fixed.toVersion,
+            digest: safe.digest,
+            outputDigest: safe.outputDigest,
+            planDigest: safe.planDigest,
+            transform: fixed.transform,
+            validate: fixed.validate,
+            evidence
+          })
+        : c.provider.rollbackCollection(c.scope, c.collection, {
+            fromVersion: fixed.fromVersion,
+            targetVersion: fixed.targetVersion,
+            digest: safe.digest,
+            outputDigest: safe.outputDigest,
+            planDigest: safe.planDigest,
+            transform: fixed.transform,
+            validate: fixed.validate,
+            evidence
+          });
+    }
+  });
 }
 /** Scoped audit reads still require host authorization. */
-export function registerDataMigrationAudit(registry:CapabilityRegistry,options:AuditOptions):void{
- const c=snapshot(registry,options,'GET');if(options.authorizeAudit!==undefined&&typeof options.authorizeAudit!=='function')throw Error('Invalid migration capability');const authorizeAudit=options.authorizeAudit,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid migration capability','Migration audit unavailable');
- const permit=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Migration audit unavailable');};check();if(actor.tenantId!==c.scope.tenantId||await c.authorize({...actor})!==true)return false;check();const allowed=authorizeAudit?await authorizeAudit({...actor},signal)===true:true;check();return allowed;};
- registry.register(c.candidate,{authorize:actor=>bounded(signal=>permit(actor,signal)),validate:input=>!!page(input),authorizeInput:actor=>bounded(signal=>permit(actor,signal)),execute:(input,actor)=>bounded(async signal=>{const safe=page(input);if(!safe)throw Error('Invalid migration audit');if(!await permit(actor,signal))throw new AppMixerError('denied','Capability forbidden');const result=c.provider.migrationAudit(c.scope,c.collection,safe);if(!await permit(actor,signal))throw new AppMixerError('denied','Capability forbidden');if(signal.aborted)throw new AppMixerError('unavailable','Migration audit unavailable');return result;})});
+export function registerDataMigrationAudit(registry: CapabilityRegistry, options: AuditOptions): void {
+  const c = snapshot(registry, options, 'GET');
+  if (options.authorizeAudit !== undefined && typeof options.authorizeAudit !== 'function') throw Error('Invalid migration capability');
+  const authorizeAudit = options.authorizeAudit,
+    bounded = createBoundedOperation(options.policyTimeoutMs, options.maxPendingPolicies, 'Invalid migration capability', 'Migration audit unavailable');
+  const permit = async (actor: Actor, signal: AbortSignal) => {
+    const check = () => {
+      if (signal.aborted) throw new AppMixerError('unavailable', 'Migration audit unavailable');
+    };
+    check();
+    if (actor.tenantId !== c.scope.tenantId || (await c.authorize({ ...actor })) !== true) return false;
+    check();
+    const allowed = authorizeAudit ? (await authorizeAudit({ ...actor }, signal)) === true : true;
+    check();
+    return allowed;
+  };
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => permit(actor, signal)),
+    validate: input => !!page(input),
+    authorizeInput: actor => bounded(signal => permit(actor, signal)),
+    execute: (input, actor) =>
+      bounded(async signal => {
+        const safe = page(input);
+        if (!safe) throw Error('Invalid migration audit');
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Capability forbidden');
+        const result = c.provider.migrationAudit(c.scope, c.collection, safe);
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Capability forbidden');
+        if (signal.aborted) throw new AppMixerError('unavailable', 'Migration audit unavailable');
+        return result;
+      })
+  });
 }
-export type {Base as DataMigrationReadCapabilityOptions,AuditOptions as DataMigrationAuditCapabilityOptions,StatusOptions as DataMigrationStatusCapabilityOptions,ApplyOptions as DataMigrationApplyCapabilityOptions,RehearsalOptions as DataMigrationRehearsalCapabilityOptions,Plan as DataMigrationPlan};
+export type {
+  Base as DataMigrationReadCapabilityOptions,
+  AuditOptions as DataMigrationAuditCapabilityOptions,
+  StatusOptions as DataMigrationStatusCapabilityOptions,
+  ApplyOptions as DataMigrationApplyCapabilityOptions,
+  RehearsalOptions as DataMigrationRehearsalCapabilityOptions,
+  Plan as DataMigrationPlan
+};

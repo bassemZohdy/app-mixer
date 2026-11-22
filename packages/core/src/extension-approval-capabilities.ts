@@ -1,37 +1,194 @@
-import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
-import {createBoundedOperation} from './bounded-operation.js';
-import {PostgresExtensionApprovals,type ExtensionApprovalScope} from './postgres-extension-approvals.js';
-import {isValidExtensionReferences,isValidExtensionOperations,type ExtensionReference,type ExtensionOperation} from './index.js';
-import {AppMixerError} from './errors.js';
+import { CapabilityRegistry, type CapabilityCandidate } from './capabilities.js';
+import { createBoundedOperation } from './bounded-operation.js';
+import { PostgresExtensionApprovals, type ExtensionApprovalScope } from './postgres-extension-approvals.js';
+import { isValidExtensionReferences, isValidExtensionOperations, type ExtensionReference, type ExtensionOperation } from './index.js';
+import { AppMixerError } from './errors.js';
 
-type Actor={tenantId:string;principalId:string};
-type Decision={allowed:boolean;expiresAt:number;expectedRevision:number};
-type Page={after?:number;before?:number;order?:'asc'|'desc';limit?:number};
-type Base={store:PostgresExtensionApprovals;scope:ExtensionApprovalScope;reference:ExtensionReference;operation:ExtensionOperation;candidate:CapabilityCandidate;authorize:(actor:Actor)=>boolean|Promise<boolean>};
-type DecisionOptions=Base&{authorizeDecision:(actor:Actor,decision:Decision)=>boolean|Promise<boolean>;authorizeWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeDecisionWithSignal?:(actor:Actor,decision:Decision,signal:AbortSignal)=>boolean|Promise<boolean>;policyTimeoutMs?:number;maxPendingPolicies?:number};
-type ReadOptions=Base&{authorizeWithSignal?:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;readTimeoutMs?:number;maxPendingReads?:number};
-const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
-const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-const query=(input:unknown):Record<string,unknown>|undefined=>object(input)&&Object.keys(input).length===1&&Object.hasOwn(input,'query')&&object(input.query)?input.query:undefined;
-const decision=(input:unknown):Decision|undefined=>{const value=query(input);if(!value||Object.keys(value).length!==3||!['allowed','expiresAt','expectedRevision'].every(key=>Object.hasOwn(value,key))||typeof value.allowed!=='boolean'||!Number.isSafeInteger(value.expiresAt)||!Number.isSafeInteger(value.expectedRevision)||Number(value.expectedRevision)<0||(Number(value.expectedRevision)===Number.MAX_SAFE_INTEGER&&value.allowed)||(value.allowed?Number(value.expiresAt)<=0:value.expiresAt!==0))return;return {allowed:value.allowed,expiresAt:Number(value.expiresAt),expectedRevision:Number(value.expectedRevision)};};
-const page=(input:unknown):Page|undefined=>{const value=query(input);if(!value||Object.keys(value).some(key=>!['after','before','order','limit'].includes(key))||(value.order!==undefined&&value.order!=='asc'&&value.order!=='desc')||(value.after!==undefined&&(!Number.isSafeInteger(value.after)||Number(value.after)<0||value.order==='desc'))||(value.before!==undefined&&(!Number.isSafeInteger(value.before)||Number(value.before)<1||value.order!=='desc'))||(value.limit!==undefined&&(!Number.isSafeInteger(value.limit)||Number(value.limit)<1||Number(value.limit)>100)))return;return {...(value.after===undefined?{}:{after:Number(value.after)}),...(value.before===undefined?{}:{before:Number(value.before)}),...(value.order===undefined?{}:{order:value.order as 'asc'|'desc'}),...(value.limit===undefined?{}:{limit:Number(value.limit)})};};
-function snapshot(registry:CapabilityRegistry,options:Base,method:'GET'|'POST'){
- if(!(registry instanceof CapabilityRegistry)||!options||!(options.store instanceof PostgresExtensionApprovals)||!options.scope||!id(options.scope.tenantId)||!id(options.scope.applicationId)||!isValidExtensionReferences([options.reference])||!isValidExtensionOperations([options.operation])||options.operation.extensionId!==options.reference.id||!options.candidate||typeof options.candidate.method!=='string'||options.candidate.method.toUpperCase()!==method||typeof options.authorize!=='function')throw Error('Invalid extension approval capability');
- return {store:options.store,scope:structuredClone(options.scope),reference:structuredClone(options.reference),operation:structuredClone(options.operation),candidate:structuredClone(options.candidate),authorize:options.authorize};
+type Actor = { tenantId: string; principalId: string };
+type Decision = { allowed: boolean; expiresAt: number; expectedRevision: number };
+type Page = { after?: number; before?: number; order?: 'asc' | 'desc'; limit?: number };
+type Base = {
+  store: PostgresExtensionApprovals;
+  scope: ExtensionApprovalScope;
+  reference: ExtensionReference;
+  operation: ExtensionOperation;
+  candidate: CapabilityCandidate;
+  authorize: (actor: Actor) => boolean | Promise<boolean>;
+};
+type DecisionOptions = Base & {
+  authorizeDecision: (actor: Actor, decision: Decision) => boolean | Promise<boolean>;
+  authorizeWithSignal?: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>;
+  authorizeDecisionWithSignal?: (actor: Actor, decision: Decision, signal: AbortSignal) => boolean | Promise<boolean>;
+  policyTimeoutMs?: number;
+  maxPendingPolicies?: number;
+};
+type ReadOptions = Base & { authorizeWithSignal?: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>; readTimeoutMs?: number; maxPendingReads?: number };
+const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+const query = (input: unknown): Record<string, unknown> | undefined =>
+  object(input) && Object.keys(input).length === 1 && Object.hasOwn(input, 'query') && object(input.query) ? input.query : undefined;
+const decision = (input: unknown): Decision | undefined => {
+  const value = query(input);
+  if (
+    !value ||
+    Object.keys(value).length !== 3 ||
+    !['allowed', 'expiresAt', 'expectedRevision'].every(key => Object.hasOwn(value, key)) ||
+    typeof value.allowed !== 'boolean' ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    !Number.isSafeInteger(value.expectedRevision) ||
+    Number(value.expectedRevision) < 0 ||
+    (Number(value.expectedRevision) === Number.MAX_SAFE_INTEGER && value.allowed) ||
+    (value.allowed ? Number(value.expiresAt) <= 0 : value.expiresAt !== 0)
+  )
+    return;
+  return { allowed: value.allowed, expiresAt: Number(value.expiresAt), expectedRevision: Number(value.expectedRevision) };
+};
+const page = (input: unknown): Page | undefined => {
+  const value = query(input);
+  if (
+    !value ||
+    Object.keys(value).some(key => !['after', 'before', 'order', 'limit'].includes(key)) ||
+    (value.order !== undefined && value.order !== 'asc' && value.order !== 'desc') ||
+    (value.after !== undefined && (!Number.isSafeInteger(value.after) || Number(value.after) < 0 || value.order === 'desc')) ||
+    (value.before !== undefined && (!Number.isSafeInteger(value.before) || Number(value.before) < 1 || value.order !== 'desc')) ||
+    (value.limit !== undefined && (!Number.isSafeInteger(value.limit) || Number(value.limit) < 1 || Number(value.limit) > 100))
+  )
+    return;
+  return {
+    ...(value.after === undefined ? {} : { after: Number(value.after) }),
+    ...(value.before === undefined ? {} : { before: Number(value.before) }),
+    ...(value.order === undefined ? {} : { order: value.order as 'asc' | 'desc' }),
+    ...(value.limit === undefined ? {} : { limit: Number(value.limit) })
+  };
+};
+function snapshot(registry: CapabilityRegistry, options: Base, method: 'GET' | 'POST') {
+  if (
+    !(registry instanceof CapabilityRegistry) ||
+    !options ||
+    !(options.store instanceof PostgresExtensionApprovals) ||
+    !options.scope ||
+    !id(options.scope.tenantId) ||
+    !id(options.scope.applicationId) ||
+    !isValidExtensionReferences([options.reference]) ||
+    !isValidExtensionOperations([options.operation]) ||
+    options.operation.extensionId !== options.reference.id ||
+    !options.candidate ||
+    typeof options.candidate.method !== 'string' ||
+    options.candidate.method.toUpperCase() !== method ||
+    typeof options.authorize !== 'function'
+  )
+    throw Error('Invalid extension approval capability');
+  return {
+    store: options.store,
+    scope: structuredClone(options.scope),
+    reference: structuredClone(options.reference),
+    operation: structuredClone(options.operation),
+    candidate: structuredClone(options.candidate),
+    authorize: options.authorize
+  };
 }
-function readControls(c:ReturnType<typeof snapshot>,options:ReadOptions){if(options.authorizeWithSignal!==undefined&&typeof options.authorizeWithSignal!=='function')throw Error('Invalid extension approval capability');const authorizeWithSignal=options.authorizeWithSignal,bounded=createBoundedOperation(options.readTimeoutMs,options.maxPendingReads,'Invalid extension approval capability','Extension approval read unavailable'),permit=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Extension approval read unavailable');};check();if(actor.tenantId!==c.scope.tenantId)return false;const allowed=authorizeWithSignal?await authorizeWithSignal({...actor},signal):await c.authorize({...actor});check();return allowed===true;};return {bounded,permit};}
+function readControls(c: ReturnType<typeof snapshot>, options: ReadOptions) {
+  if (options.authorizeWithSignal !== undefined && typeof options.authorizeWithSignal !== 'function') throw Error('Invalid extension approval capability');
+  const authorizeWithSignal = options.authorizeWithSignal,
+    bounded = createBoundedOperation(options.readTimeoutMs, options.maxPendingReads, 'Invalid extension approval capability', 'Extension approval read unavailable'),
+    permit = async (actor: Actor, signal: AbortSignal) => {
+      const check = () => {
+        if (signal.aborted) throw new AppMixerError('unavailable', 'Extension approval read unavailable');
+      };
+      check();
+      if (actor.tenantId !== c.scope.tenantId) return false;
+      const allowed = authorizeWithSignal ? await authorizeWithSignal({ ...actor }, signal) : await c.authorize({ ...actor });
+      check();
+      return allowed === true;
+    };
+  return { bounded, permit };
+}
 /** Fixed-target administrative approval decisions; the store independently authorizes and audits. */
-export function registerExtensionApprovalDecision(registry:CapabilityRegistry,options:DecisionOptions):void{
- const c=snapshot(registry,options,'POST');if(typeof options.authorizeDecision!=='function'||(options.authorizeWithSignal!==undefined&&typeof options.authorizeWithSignal!=='function')||(options.authorizeDecisionWithSignal!==undefined&&typeof options.authorizeDecisionWithSignal!=='function'))throw Error('Invalid extension approval capability');const authorizeDecision=options.authorizeDecision,authorizeWithSignal=options.authorizeWithSignal,authorizeDecisionWithSignal=options.authorizeDecisionWithSignal,bounded=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid extension approval capability','Extension decision policy unavailable');
- const scope=async(actor:Actor,signal:AbortSignal)=>{const check=()=>{if(signal.aborted)throw new AppMixerError('unavailable','Extension decision policy unavailable');};check();if(actor.tenantId!==c.scope.tenantId)return false;const allowed=authorizeWithSignal?await authorizeWithSignal({...actor},signal):await c.authorize({...actor});check();return allowed===true;};
- registry.register(c.candidate,{authorize:actor=>bounded(signal=>scope(actor,signal)),validate:input=>!!decision(input),authorizeInput:(actor,input)=>{const safe=decision(input);if(!safe)return false;return bounded(async signal=>{const permit=async()=>{if(signal.aborted)throw new AppMixerError('unavailable','Extension decision policy unavailable');const allowed=authorizeDecisionWithSignal?await authorizeDecisionWithSignal({...actor},{...safe},signal):await authorizeDecision({...actor},{...safe});if(signal.aborted)throw new AppMixerError('unavailable','Extension decision policy unavailable');return allowed===true;};return await scope(actor,signal)&&await permit()&&await scope(actor,signal)&&await permit();});},execute:async(input,actor)=>{const safe=decision(input);if(!safe)throw Error('Invalid extension approval decision');const revision=await c.store.decide({...actor},c.scope,c.reference,c.operation,safe);return {revision,...(safe.expectedRevision===Number.MAX_SAFE_INTEGER?{terminal:true}: {})};}});
+export function registerExtensionApprovalDecision(registry: CapabilityRegistry, options: DecisionOptions): void {
+  const c = snapshot(registry, options, 'POST');
+  if (
+    typeof options.authorizeDecision !== 'function' ||
+    (options.authorizeWithSignal !== undefined && typeof options.authorizeWithSignal !== 'function') ||
+    (options.authorizeDecisionWithSignal !== undefined && typeof options.authorizeDecisionWithSignal !== 'function')
+  )
+    throw Error('Invalid extension approval capability');
+  const authorizeDecision = options.authorizeDecision,
+    authorizeWithSignal = options.authorizeWithSignal,
+    authorizeDecisionWithSignal = options.authorizeDecisionWithSignal,
+    bounded = createBoundedOperation(options.policyTimeoutMs, options.maxPendingPolicies, 'Invalid extension approval capability', 'Extension decision policy unavailable');
+  const scope = async (actor: Actor, signal: AbortSignal) => {
+    const check = () => {
+      if (signal.aborted) throw new AppMixerError('unavailable', 'Extension decision policy unavailable');
+    };
+    check();
+    if (actor.tenantId !== c.scope.tenantId) return false;
+    const allowed = authorizeWithSignal ? await authorizeWithSignal({ ...actor }, signal) : await c.authorize({ ...actor });
+    check();
+    return allowed === true;
+  };
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => scope(actor, signal)),
+    validate: input => !!decision(input),
+    authorizeInput: (actor, input) => {
+      const safe = decision(input);
+      if (!safe) return false;
+      return bounded(async signal => {
+        const permit = async () => {
+          if (signal.aborted) throw new AppMixerError('unavailable', 'Extension decision policy unavailable');
+          const allowed = authorizeDecisionWithSignal ? await authorizeDecisionWithSignal({ ...actor }, { ...safe }, signal) : await authorizeDecision({ ...actor }, { ...safe });
+          if (signal.aborted) throw new AppMixerError('unavailable', 'Extension decision policy unavailable');
+          return allowed === true;
+        };
+        return (await scope(actor, signal)) && (await permit()) && (await scope(actor, signal)) && (await permit());
+      });
+    },
+    execute: async (input, actor) => {
+      const safe = decision(input);
+      if (!safe) throw Error('Invalid extension approval decision');
+      const revision = await c.store.decide({ ...actor }, c.scope, c.reference, c.operation, safe);
+      return { revision, ...(safe.expectedRevision === Number.MAX_SAFE_INTEGER ? { terminal: true } : {}) };
+    }
+  });
 }
 /** Fixed-target administrative status, with separate store inspection authorization. */
-export function registerExtensionApprovalStatus(registry:CapabilityRegistry,options:ReadOptions):void{
- const c=snapshot(registry,options,'GET'),{bounded,permit}=readControls(c,options);registry.register(c.candidate,{authorize:actor=>bounded(signal=>permit(actor,signal)),validate:input=>{const value=query(input);return !!value&&Object.keys(value).length===0;},authorizeInput:actor=>bounded(signal=>permit(actor,signal)),execute:(_input,actor)=>bounded(async signal=>{if(!await permit(actor,signal))throw new AppMixerError('denied','Extension approval forbidden');const state=await c.store.inspect({...actor},c.scope,c.reference,c.operation,signal);if(!await permit(actor,signal))throw new AppMixerError('denied','Extension approval forbidden');if(signal.aborted)throw new AppMixerError('unavailable','Extension approval read unavailable');return state??null;})});
+export function registerExtensionApprovalStatus(registry: CapabilityRegistry, options: ReadOptions): void {
+  const c = snapshot(registry, options, 'GET'),
+    { bounded, permit } = readControls(c, options);
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => permit(actor, signal)),
+    validate: input => {
+      const value = query(input);
+      return !!value && Object.keys(value).length === 0;
+    },
+    authorizeInput: actor => bounded(signal => permit(actor, signal)),
+    execute: (_input, actor) =>
+      bounded(async signal => {
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Extension approval forbidden');
+        const state = await c.store.inspect({ ...actor }, c.scope, c.reference, c.operation, signal);
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Extension approval forbidden');
+        if (signal.aborted) throw new AppMixerError('unavailable', 'Extension approval read unavailable');
+        return state ?? null;
+      })
+  });
 }
 /** Fixed-target audit history, with separate store audit authorization. */
-export function registerExtensionApprovalHistory(registry:CapabilityRegistry,options:ReadOptions):void{
- const c=snapshot(registry,options,'GET'),{bounded,permit}=readControls(c,options);registry.register(c.candidate,{authorize:actor=>bounded(signal=>permit(actor,signal)),validate:input=>!!page(input),authorizeInput:actor=>bounded(signal=>permit(actor,signal)),execute:(input,actor)=>bounded(async signal=>{const safe=page(input);if(!safe)throw Error('Invalid extension approval history');if(!await permit(actor,signal))throw new AppMixerError('denied','Extension approval forbidden');const result=await c.store.history({...actor},c.scope,c.reference,c.operation,safe,signal);if(!await permit(actor,signal))throw new AppMixerError('denied','Extension approval forbidden');if(signal.aborted)throw new AppMixerError('unavailable','Extension approval read unavailable');return result;})});
+export function registerExtensionApprovalHistory(registry: CapabilityRegistry, options: ReadOptions): void {
+  const c = snapshot(registry, options, 'GET'),
+    { bounded, permit } = readControls(c, options);
+  registry.register(c.candidate, {
+    authorize: actor => bounded(signal => permit(actor, signal)),
+    validate: input => !!page(input),
+    authorizeInput: actor => bounded(signal => permit(actor, signal)),
+    execute: (input, actor) =>
+      bounded(async signal => {
+        const safe = page(input);
+        if (!safe) throw Error('Invalid extension approval history');
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Extension approval forbidden');
+        const result = await c.store.history({ ...actor }, c.scope, c.reference, c.operation, safe, signal);
+        if (!(await permit(actor, signal))) throw new AppMixerError('denied', 'Extension approval forbidden');
+        if (signal.aborted) throw new AppMixerError('unavailable', 'Extension approval read unavailable');
+        return result;
+      })
+  });
 }
-export type {DecisionOptions as ExtensionApprovalDecisionCapabilityOptions,ReadOptions as ExtensionApprovalReadCapabilityOptions};
+export type { DecisionOptions as ExtensionApprovalDecisionCapabilityOptions, ReadOptions as ExtensionApprovalReadCapabilityOptions };

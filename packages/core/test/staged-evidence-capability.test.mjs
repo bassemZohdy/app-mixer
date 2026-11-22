@@ -1,31 +1,232 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {CapabilityRegistry,SqliteStagedOperations,registerStagedEvidenceCapability,createCapabilityServer} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'auditor',origin:'ui'},candidate={operationId:'evidence',method:'POST',path:'/evidence'};
-async function setup(){const registry=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),store=new SqliteStagedOperations(':memory:');external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('lost')}});const operation=store.stage(scope,'pay',{secret:'hidden'});await assert.rejects(store.submit(scope,operation.id,external,actor),/lost/);store.reconcileWithEvidence(scope,operation.id,'not_applied',{principalId:'first',reference:'case-1'});await assert.rejects(store.submit(scope,operation.id,external,actor),/lost/);store.reconcileWithEvidence(scope,operation.id,'applied',{principalId:'second',reference:'case-2'});return {registry,external,store,operation};}
+import { CapabilityRegistry, SqliteStagedOperations, registerStagedEvidenceCapability, createCapabilityServer } from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' },
+  actor = { tenantId: 'tenant', principalId: 'auditor', origin: 'ui' },
+  candidate = { operationId: 'evidence', method: 'POST', path: '/evidence' };
+async function setup() {
+  const registry = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    store = new SqliteStagedOperations(':memory:');
+  external.register(
+    { operationId: 'pay', method: 'POST', path: '/pay' },
+    {
+      authorize: () => true,
+      validate: () => true,
+      execute: () => {
+        throw Error('lost');
+      }
+    }
+  );
+  const operation = store.stage(scope, 'pay', { secret: 'hidden' });
+  await assert.rejects(store.submit(scope, operation.id, external, actor), /lost/);
+  store.reconcileWithEvidence(scope, operation.id, 'not_applied', { principalId: 'first', reference: 'case-1' });
+  await assert.rejects(store.submit(scope, operation.id, external, actor), /lost/);
+  store.reconcileWithEvidence(scope, operation.id, 'applied', { principalId: 'second', reference: 'case-2' });
+  return { registry, external, store, operation };
+}
 
-test('evidence capability provides authorized scoped pages without exposing payloads',async()=>{
- const s=await setup();try{let checks=0;registerStagedEvidenceCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:a=>a.principalId==='auditor',authorizeOperation:(_actor,operation)=>{checks++;operation.payload.secret='mutated';return true;}});const first=await s.registry.invoke('evidence',{id:s.operation.id,limit:1},actor);assert.equal(first.items.length,1);assert.equal(first.items[0].principalId,'first');assert.equal(first.nextAfter,first.items[0].revision);const second=await s.registry.invoke('evidence',{id:s.operation.id,after:first.nextAfter,limit:1},actor);assert.equal(second.items[0].principalId,'second');assert.equal(second.nextAfter,undefined);assert.equal(checks,4);assert.equal(JSON.stringify([first,second]).includes('hidden'),false);assert.equal(s.store.get(scope,s.operation.id).payload.secret,'hidden');
-  for(const input of [{id:s.operation.id,limit:0},{id:s.operation.id,limit:100},{id:s.operation.id,after:-1},{id:s.operation.id,other:true}])await assert.rejects(s.registry.invoke('evidence',input,actor),/Invalid capability input/);await assert.rejects(s.registry.invoke('evidence',{id:s.operation.id},{...actor,tenantId:'other'}),/not found/);await assert.rejects(s.registry.invoke('evidence',{id:s.operation.id},{...actor,principalId:'denied'}),/forbidden/);const wrong=s.store.stage(scope,'other',{});await assert.rejects(s.registry.invoke('evidence',{id:wrong.id},actor),/not found/);
- }finally{s.store.close();}
+test('evidence capability provides authorized scoped pages without exposing payloads', async () => {
+  const s = await setup();
+  try {
+    let checks = 0;
+    registerStagedEvidenceCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: a => a.principalId === 'auditor',
+      authorizeOperation: (_actor, operation) => {
+        checks++;
+        operation.payload.secret = 'mutated';
+        return true;
+      }
+    });
+    const first = await s.registry.invoke('evidence', { id: s.operation.id, limit: 1 }, actor);
+    assert.equal(first.items.length, 1);
+    assert.equal(first.items[0].principalId, 'first');
+    assert.equal(first.nextAfter, first.items[0].revision);
+    const second = await s.registry.invoke('evidence', { id: s.operation.id, after: first.nextAfter, limit: 1 }, actor);
+    assert.equal(second.items[0].principalId, 'second');
+    assert.equal(second.nextAfter, undefined);
+    assert.equal(checks, 4);
+    assert.equal(JSON.stringify([first, second]).includes('hidden'), false);
+    assert.equal(s.store.get(scope, s.operation.id).payload.secret, 'hidden');
+    for (const input of [
+      { id: s.operation.id, limit: 0 },
+      { id: s.operation.id, limit: 100 },
+      { id: s.operation.id, after: -1 },
+      { id: s.operation.id, other: true }
+    ])
+      await assert.rejects(s.registry.invoke('evidence', input, actor), /Invalid capability input/);
+    await assert.rejects(s.registry.invoke('evidence', { id: s.operation.id }, { ...actor, tenantId: 'other' }), /not found/);
+    await assert.rejects(s.registry.invoke('evidence', { id: s.operation.id }, { ...actor, principalId: 'denied' }), /forbidden/);
+    const wrong = s.store.stage(scope, 'other', {});
+    await assert.rejects(s.registry.invoke('evidence', { id: wrong.id }, actor), /not found/);
+  } finally {
+    s.store.close();
+  }
 });
 
-test('evidence access is rechecked after reading and fails closed on revocation',async()=>{
- const s=await setup();try{let allowed=true,checks=0,entered,release;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r);registerStagedEvidenceCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:async()=>{if(++checks===2){entered();await gate;}return allowed;}});const pending=s.registry.invoke('evidence',{id:s.operation.id},actor);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);
- }finally{s.store.close();}
+test('evidence access is rechecked after reading and fails closed on revocation', async () => {
+  const s = await setup();
+  try {
+    let allowed = true,
+      checks = 0,
+      entered,
+      release;
+    const ready = new Promise(r => (entered = r)),
+      gate = new Promise(r => (release = r));
+    registerStagedEvidenceCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: async () => {
+        if (++checks === 2) {
+          entered();
+          await gate;
+        }
+        return allowed;
+      }
+    });
+    const pending = s.registry.invoke('evidence', { id: s.operation.id }, actor);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+  } finally {
+    s.store.close();
+  }
 });
 
-test('evidence capability enforces authentication and paging at the HTTP boundary',async()=>{
- const s=await setup();let server;try{registerStagedEvidenceCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true});server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'auditor'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(input,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({origin:'ui',input})});assert.equal((await call({id:s.operation.id},'invalid')).status,401);assert.equal((await call({id:s.operation.id,limit:100})).status,400);const first=await (await call({id:s.operation.id,limit:1})).json(),second=await (await call({id:s.operation.id,limit:1,after:first.result.nextAfter})).json();assert.equal(first.result.items[0].reference,'case-1');assert.equal(second.result.items[0].reference,'case-2');assert.equal((await call({id:'missing'})).status,404);
- }finally{if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));s.store.close();}
+test('evidence capability enforces authentication and paging at the HTTP boundary', async () => {
+  const s = await setup();
+  let server;
+  try {
+    registerStagedEvidenceCapability(s.registry, s.store, { candidate, applicationId: 'app', externalOperationId: 'pay', authorize: () => true, authorizeOperation: () => true });
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'auditor' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (input, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call({ id: s.operation.id }, 'invalid')).status, 401);
+    assert.equal((await call({ id: s.operation.id, limit: 100 })).status, 400);
+    const first = await (await call({ id: s.operation.id, limit: 1 })).json(),
+      second = await (await call({ id: s.operation.id, limit: 1, after: first.result.nextAfter })).json();
+    assert.equal(first.result.items[0].reference, 'case-1');
+    assert.equal(second.result.items[0].reference, 'case-2');
+    assert.equal((await call({ id: 'missing' })).status, 404);
+  } finally {
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    s.store.close();
+  }
 });
 
-test('bounded evidence reads discard results when operation authorization stalls before or after the read',async()=>{
- for(const blockedCheck of [1,2]){const s=await setup();let server,checks=0,started,release,signal;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);try{registerStagedEvidenceCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',timeoutMs:100,maxPending:1,authorize:()=>true,authorizeOperation:async(_actor,_operation,abort)=>{if(++checks===blockedCheck){signal=abort;started();await gate;}return true;}});server=createCapabilityServer(s.registry,()=>({tenantId:'tenant',principalId:'auditor'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{id:s.operation.id}})});const pending=call();await ready;const timed=await pending;assert.equal(timed.status,503);assert.equal(signal.aborted,true);assert.equal((await timed.text()).includes('case-1'),false);assert.equal((await call()).status,503);release();await new Promise(resolve=>setImmediate(resolve));const recovered=await call();assert.equal(recovered.status,200);assert.equal((await recovered.json()).result.items.length,2);
- }finally{release?.();if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));s.store.close();}}
+test('bounded evidence reads discard results when operation authorization stalls before or after the read', async () => {
+  for (const blockedCheck of [1, 2]) {
+    const s = await setup();
+    let server,
+      checks = 0,
+      started,
+      release,
+      signal;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    try {
+      registerStagedEvidenceCapability(s.registry, s.store, {
+        candidate,
+        applicationId: 'app',
+        externalOperationId: 'pay',
+        timeoutMs: 100,
+        maxPending: 1,
+        authorize: () => true,
+        authorizeOperation: async (_actor, _operation, abort) => {
+          if (++checks === blockedCheck) {
+            signal = abort;
+            started();
+            await gate;
+          }
+          return true;
+        }
+      });
+      server = createCapabilityServer(
+        s.registry,
+        () => ({ tenantId: 'tenant', principalId: 'auditor' }),
+        () => {}
+      );
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      const call = () =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input: { id: s.operation.id } })
+        });
+      const pending = call();
+      await ready;
+      const timed = await pending;
+      assert.equal(timed.status, 503);
+      assert.equal(signal.aborted, true);
+      assert.equal((await timed.text()).includes('case-1'), false);
+      assert.equal((await call()).status, 503);
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+      const recovered = await call();
+      assert.equal(recovered.status, 200);
+      assert.equal((await recovered.json()).result.items.length, 2);
+    } finally {
+      release?.();
+      if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+      s.store.close();
+    }
+  }
 });
 
-test('bounded evidence reads fence stalled repeated actor authorization and validate limits',async()=>{
- const s=await setup();let calls=0,started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);try{const base={candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true};for(const config of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:30001,maxPending:1},{timeoutMs:100,maxPending:0},{timeoutMs:100,maxPending:101}])assert.throws(()=>registerStagedEvidenceCapability(s.registry,s.store,{...base,...config}),/Invalid staged evidence/);registerStagedEvidenceCapability(s.registry,s.store,{...base,timeoutMs:100,maxPending:1,authorize:async()=>{if(++calls===2){started();await gate;}return true;}});const pending=s.registry.invoke('evidence',{id:s.operation.id},actor);await ready;await assert.rejects(pending,/evidence unavailable/);await assert.rejects(s.registry.invoke('evidence',{id:s.operation.id},actor),/evidence unavailable/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await s.registry.invoke('evidence',{id:s.operation.id},actor)).items.length,2);
- }finally{release?.();s.store.close();}
+test('bounded evidence reads fence stalled repeated actor authorization and validate limits', async () => {
+  const s = await setup();
+  let calls = 0,
+    started,
+    release;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r));
+  try {
+    const base = { candidate, applicationId: 'app', externalOperationId: 'pay', authorize: () => true, authorizeOperation: () => true };
+    for (const config of [
+      { timeoutMs: 100 },
+      { maxPending: 1 },
+      { timeoutMs: 99, maxPending: 1 },
+      { timeoutMs: 30001, maxPending: 1 },
+      { timeoutMs: 100, maxPending: 0 },
+      { timeoutMs: 100, maxPending: 101 }
+    ])
+      assert.throws(() => registerStagedEvidenceCapability(s.registry, s.store, { ...base, ...config }), /Invalid staged evidence/);
+    registerStagedEvidenceCapability(s.registry, s.store, {
+      ...base,
+      timeoutMs: 100,
+      maxPending: 1,
+      authorize: async () => {
+        if (++calls === 2) {
+          started();
+          await gate;
+        }
+        return true;
+      }
+    });
+    const pending = s.registry.invoke('evidence', { id: s.operation.id }, actor);
+    await ready;
+    await assert.rejects(pending, /evidence unavailable/);
+    await assert.rejects(s.registry.invoke('evidence', { id: s.operation.id }, actor), /evidence unavailable/);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await s.registry.invoke('evidence', { id: s.operation.id }, actor)).items.length, 2);
+  } finally {
+    release?.();
+    s.store.close();
+  }
 });

@@ -1,34 +1,536 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {AIMessage,HumanMessage} from '@langchain/core/messages';
-import {createOpenAIPricedCostModel} from '../dist/index.js';
-const limits={callId:'call-1',currency:'USD',maxTotalTokens:100,maxCostMicros:40},messages=[new HumanMessage('hello')],base={model:'model-snapshot',apiKey:'test-secret',inputMicrosPerMillionTokens:2000000,outputMicrosPerMillionTokens:3000000,fixedMicrosPerCall:5,maxOutputTokens:100,timeoutMs:500,maxPending:2,prepare:()=>({messages:[{role:'user',content:'hello'}],maxInputTokens:10})};
-const completion=overrides=>({model:'model-snapshot',service_tier:'default',usage:{prompt_tokens:8,completion_tokens:3,total_tokens:11},choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Done'}}],...overrides});
-const response=value=>new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json'}});
-test('OpenAI adapter sends one fixed-tier cost-limited request and prices reported usage',async()=>{let captured;const model=createOpenAIPricedCostModel({...base,fetch:async(url,options)=>{captured={url,options,body:JSON.parse(options.body)};return response(completion());}});const result=await model.invokeLimitedCost(messages,limits);assert.equal(captured.url,'https://api.openai.com/v1/chat/completions');assert.equal(captured.options.method,'POST');assert.equal(captured.options.redirect,'error');assert.equal(captured.options.headers.authorization,'Bearer test-secret');assert.equal(captured.options.headers['x-client-request-id'],'call-1');assert.deepEqual(captured.body,{model:'model-snapshot',messages:[{role:'user',content:'hello'}],max_completion_tokens:5,n:1,stream:false,store:false,service_tier:'default'});assert.equal(result.message.content,'Done');assert.equal(result.usedTokens,11);assert.equal(result.usedCostMicros,30);});
-test('OpenAI adapter maps validated function calls and counts all reported output tokens',async()=>{const model=createOpenAIPricedCostModel({...base,prepare:()=>({messages:[{role:'user',content:'hello'}],tools:[{type:'function',function:{name:'lookup',parameters:{type:'object'}}}],maxInputTokens:10}),fetch:async(_url,options)=>{assert.equal(JSON.parse(options.body).tools[0].function.name,'lookup');return response(completion({choices:[{index:0,finish_reason:'tool_calls',message:{role:'assistant',content:null,tool_calls:[{id:'call_a',type:'function',function:{name:'lookup',arguments:'{"key":"value"}'}}]}}]}));}}),result=await model.invokeLimitedCost(messages,limits);assert.equal(result.message instanceof AIMessage,true);assert.deepEqual(result.message.tool_calls,[{id:'call_a',name:'lookup',args:{key:'value'},type:'tool_call'}]);assert.equal(result.usedCostMicros,30);});
-test('OpenAI adapter fails closed on inconsistent usage, model, tier and unsupported responses',async()=>{const malformed=[completion({model:'other'}),completion({service_tier:'priority'}),completion({usage:{prompt_tokens:8,completion_tokens:3,total_tokens:12}}),completion({usage:undefined}),completion({choices:[]}),completion({choices:[{index:0,finish_reason:'length',message:{role:'assistant',content:'partial'}}]}),completion({choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:null,function_call:{}}}]}),completion({choices:[{index:0,finish_reason:'tool_calls',message:{role:'assistant',content:null,tool_calls:[{id:'call_a',type:'function',function:{name:'lookup',arguments:'['}}]}}]})];for(const value of malformed){const model=createOpenAIPricedCostModel({...base,fetch:async()=>response(value)});await assert.rejects(model.invokeLimitedCost(messages,limits),/Invalid OpenAI completion/);}for(const usage of [{prompt_tokens:11,completion_tokens:1,total_tokens:12},{prompt_tokens:8,completion_tokens:6,total_tokens:14}]){const model=createOpenAIPricedCostModel({...base,fetch:async()=>response(completion({usage}))});await assert.rejects(model.invokeLimitedCost(messages,limits),/provider limit violated/);}});
-test('OpenAI adapter rejects unsupported requests before network dispatch',async()=>{let calls=0;for(const prepare of [()=>({messages:[{role:'user',content:[{type:'image_url'}]}],maxInputTokens:10}),()=>({messages:[{role:'user',content:'hello',extra:'x'}],maxInputTokens:10}),()=>({messages:[{role:'user',content:'hello'}],tools:[{type:'web_search'}],maxInputTokens:10})]){const model=createOpenAIPricedCostModel({...base,prepare,fetch:async()=>{calls++;return response(completion());}});await assert.rejects(model.invokeLimitedCost(messages,limits),/Invalid OpenAI request/);}assert.equal(calls,0);for(const bad of [{model:'bad model'},{apiKey:'bad\nkey'},{timeoutMs:99},{maxPending:0},{fetch:null}])assert.throws(()=>createOpenAIPricedCostModel({...base,fetch:async()=>response(completion()),...bad}),/Invalid/);});
-test('OpenAI adapter bounds a stalled request and holds its slot until transport settles',async()=>{let entered,release,signal,calls=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),model=createOpenAIPricedCostModel({...base,timeoutMs:100,maxPending:1,fetch:async(_url,options)=>{calls++;signal=options.signal;entered();await gate;return response(completion());}});const first=model.invokeLimitedCost(messages,limits);await ready;await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);await assert.rejects(first,/unavailable/);assert.equal(signal.aborted,true);await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);assert.equal(calls,1);release();await new Promise(resolve=>setImmediate(resolve));const again=createOpenAIPricedCostModel({...base,fetch:async()=>response(completion())});assert.equal((await again.invokeLimitedCost(messages,limits)).usedCostMicros,30);});
-test('OpenAI adapter treats HTTP errors, oversized and malformed bodies as uncertain',async()=>{for(const fetcher of [async()=>new Response('failure',{status:429}),async()=>new Response('{',{status:200}),async()=>new Response('x'.repeat(1000001),{status:200})]){const model=createOpenAIPricedCostModel({...base,fetch:fetcher});await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable|Invalid OpenAI completion/);}});
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
+import { createOpenAIPricedCostModel } from '../dist/index.js';
+const limits = { callId: 'call-1', currency: 'USD', maxTotalTokens: 100, maxCostMicros: 40 },
+  messages = [new HumanMessage('hello')],
+  base = {
+    model: 'model-snapshot',
+    apiKey: 'test-secret',
+    inputMicrosPerMillionTokens: 2000000,
+    outputMicrosPerMillionTokens: 3000000,
+    fixedMicrosPerCall: 5,
+    maxOutputTokens: 100,
+    timeoutMs: 500,
+    maxPending: 2,
+    prepare: () => ({ messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 })
+  };
+const completion = overrides => ({
+  model: 'model-snapshot',
+  service_tier: 'default',
+  usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+  choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done' } }],
+  ...overrides
+});
+const response = value => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
+test('OpenAI adapter sends one fixed-tier cost-limited request and prices reported usage', async () => {
+  let captured;
+  const model = createOpenAIPricedCostModel({
+    ...base,
+    fetch: async (url, options) => {
+      captured = { url, options, body: JSON.parse(options.body) };
+      return response(completion());
+    }
+  });
+  const result = await model.invokeLimitedCost(messages, limits);
+  assert.equal(captured.url, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(captured.options.method, 'POST');
+  assert.equal(captured.options.redirect, 'error');
+  assert.equal(captured.options.headers.authorization, 'Bearer test-secret');
+  assert.equal(captured.options.headers['x-client-request-id'], 'call-1');
+  assert.deepEqual(captured.body, { model: 'model-snapshot', messages: [{ role: 'user', content: 'hello' }], max_completion_tokens: 5, n: 1, stream: false, store: false, service_tier: 'default' });
+  assert.equal(result.message.content, 'Done');
+  assert.equal(result.usedTokens, 11);
+  assert.equal(result.usedCostMicros, 30);
+});
+test('OpenAI adapter maps validated function calls and counts all reported output tokens', async () => {
+  const model = createOpenAIPricedCostModel({
+      ...base,
+      prepare: () => ({ messages: [{ role: 'user', content: 'hello' }], tools: [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }], maxInputTokens: 10 }),
+      fetch: async (_url, options) => {
+        assert.equal(JSON.parse(options.body).tools[0].function.name, 'lookup');
+        return response(
+          completion({
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'tool_calls',
+                message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'lookup', arguments: '{"key":"value"}' } }] }
+              }
+            ]
+          })
+        );
+      }
+    }),
+    result = await model.invokeLimitedCost(messages, limits);
+  assert.equal(result.message instanceof AIMessage, true);
+  assert.deepEqual(result.message.tool_calls, [{ id: 'call_a', name: 'lookup', args: { key: 'value' }, type: 'tool_call' }]);
+  assert.equal(result.usedCostMicros, 30);
+});
+test('OpenAI adapter fails closed on inconsistent usage, model, tier and unsupported responses', async () => {
+  const malformed = [
+    completion({ model: 'other' }),
+    completion({ service_tier: 'priority' }),
+    completion({ usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 12 } }),
+    completion({ usage: undefined }),
+    completion({ choices: [] }),
+    completion({ choices: [{ index: 0, finish_reason: 'length', message: { role: 'assistant', content: 'partial' } }] }),
+    completion({ choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: null, function_call: {} } }] }),
+    completion({
+      choices: [
+        { index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'lookup', arguments: '[' } }] } }
+      ]
+    })
+  ];
+  for (const value of malformed) {
+    const model = createOpenAIPricedCostModel({ ...base, fetch: async () => response(value) });
+    await assert.rejects(model.invokeLimitedCost(messages, limits), /Invalid OpenAI completion/);
+  }
+  for (const usage of [
+    { prompt_tokens: 11, completion_tokens: 1, total_tokens: 12 },
+    { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 }
+  ]) {
+    const model = createOpenAIPricedCostModel({ ...base, fetch: async () => response(completion({ usage })) });
+    await assert.rejects(model.invokeLimitedCost(messages, limits), /provider limit violated/);
+  }
+});
+test('OpenAI adapter rejects unsupported requests before network dispatch', async () => {
+  let calls = 0;
+  for (const prepare of [
+    () => ({ messages: [{ role: 'user', content: [{ type: 'image_url' }] }], maxInputTokens: 10 }),
+    () => ({ messages: [{ role: 'user', content: 'hello', extra: 'x' }], maxInputTokens: 10 }),
+    () => ({ messages: [{ role: 'user', content: 'hello' }], tools: [{ type: 'web_search' }], maxInputTokens: 10 })
+  ]) {
+    const model = createOpenAIPricedCostModel({
+      ...base,
+      prepare,
+      fetch: async () => {
+        calls++;
+        return response(completion());
+      }
+    });
+    await assert.rejects(model.invokeLimitedCost(messages, limits), /Invalid OpenAI request/);
+  }
+  assert.equal(calls, 0);
+  for (const bad of [{ model: 'bad model' }, { apiKey: 'bad\nkey' }, { timeoutMs: 99 }, { maxPending: 0 }, { fetch: null }])
+    assert.throws(() => createOpenAIPricedCostModel({ ...base, fetch: async () => response(completion()), ...bad }), /Invalid/);
+});
+test('OpenAI adapter bounds a stalled request and holds its slot until transport settles', async () => {
+  let entered,
+    release,
+    signal,
+    calls = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    model = createOpenAIPricedCostModel({
+      ...base,
+      timeoutMs: 100,
+      maxPending: 1,
+      fetch: async (_url, options) => {
+        calls++;
+        signal = options.signal;
+        entered();
+        await gate;
+        return response(completion());
+      }
+    });
+  const first = model.invokeLimitedCost(messages, limits);
+  await ready;
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  await assert.rejects(first, /unavailable/);
+  assert.equal(signal.aborted, true);
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  assert.equal(calls, 1);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  const again = createOpenAIPricedCostModel({ ...base, fetch: async () => response(completion()) });
+  assert.equal((await again.invokeLimitedCost(messages, limits)).usedCostMicros, 30);
+});
+test('OpenAI adapter treats HTTP errors, oversized and malformed bodies as uncertain', async () => {
+  for (const fetcher of [async () => new Response('failure', { status: 429 }), async () => new Response('{', { status: 200 }), async () => new Response('x'.repeat(1000001), { status: 200 })]) {
+    const model = createOpenAIPricedCostModel({ ...base, fetch: fetcher });
+    await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable|Invalid OpenAI completion/);
+  }
+});
 
-test('OpenAI adapter does not expose transport errors or credentials',async()=>{const model=createOpenAIPricedCostModel({...base,fetch:async()=>{throw Error('provider leaked test-secret');}});await assert.rejects(model.invokeLimitedCost(messages,limits),error=>error.message==='OpenAI model unavailable');});
-import {createServer} from 'node:http';
-import {once} from 'node:events';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {SqliteAgentRuns,SqliteAgentDefinitions,SqliteAgentTokenBudget,createConfiguredAgentRun} from '../dist/index.js';
-test('OpenAI adapter accounts for a simulated provider and holds ambiguous usage after dispatch',async()=>{let calls=0;const server=createServer((req,res)=>{let raw='';req.on('data',chunk=>raw+=chunk);req.on('end',()=>{calls++;const body=JSON.parse(raw);assert.equal(req.headers.authorization,'Bearer test-secret');assert.match(req.headers['x-client-request-id'],/^[a-f0-9-]{36}$/);assert.equal(body.max_completion_tokens,5);res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(calls===1?completion():completion({usage:undefined})));});});server.listen(0,'127.0.0.1');await once(server,'listening');const endpoint=`http://127.0.0.1:${server.address().port}/`,scope={tenantId:'t',agentId:'agent'},manifest={manifestVersion:1,tenantId:'t',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:10000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};try{for(const ambiguous of [false,true]){const dir=mkdtempSync(join(tmpdir(),'openai-priced-')),path=join(dir,'db'),runs=new SqliteAgentRuns(path),definitions=new SqliteAgentDefinitions(':memory:');let budget;try{definitions.save('t',manifest,0);let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',100,10);budget=new SqliteAgentTokenBudget(path,{scope,runId:'run',leaseToken:run.leaseToken,maxTokens:100,cost:{currency:'USD',maxMicros:1000},clock:()=>10});const model=createOpenAIPricedCostModel({...base,fetch:(url,options)=>{assert.equal(url,'https://api.openai.com/v1/chat/completions');return fetch(endpoint,options);}}),agent=await createConfiguredAgentRun({definitions,tenantId:'t',agentId:'agent',expectedVersion:1,bindings:[],registry:{invoke:async()=>null},authorizeRun:()=>true,authorizeCapability:()=>true,tokenBudget:{budget,maxTokensPerCall:60,maxCostMicrosPerCall:40},createModel:()=>model});let last;for await(const event of agent.run({threadId:'thread',runId:'run',messages:[{role:'user',content:'hello'}]}))last=event;assert.equal(last.type,ambiguous?'RUN_ERROR':'RUN_FINISHED');assert.equal(budget.list()[0].status,ambiguous?'reserved':'settled');if(ambiguous){run=runs.settle(scope,'run',run.revision,run.leaseToken,'failed',11);assert.equal(run.status,'uncertain');assert.throws(()=>runs.reconcile(scope,'run',run.revision,'retry',12),/Token usage/);}else assert.equal(budget.costSummary().committed,30);}finally{budget?.close();runs.close();definitions.close();rmSync(dir,{recursive:true,force:true});}}assert.equal(calls,2);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}});
+test('OpenAI adapter does not expose transport errors or credentials', async () => {
+  const model = createOpenAIPricedCostModel({
+    ...base,
+    fetch: async () => {
+      throw Error('provider leaked test-secret');
+    }
+  });
+  await assert.rejects(model.invokeLimitedCost(messages, limits), error => error.message === 'OpenAI model unavailable');
+});
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { SqliteAgentRuns, SqliteAgentDefinitions, SqliteAgentTokenBudget, createConfiguredAgentRun } from '../dist/index.js';
+test('OpenAI adapter accounts for a simulated provider and holds ambiguous usage after dispatch', async () => {
+  let calls = 0;
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', chunk => (raw += chunk));
+    req.on('end', () => {
+      calls++;
+      const body = JSON.parse(raw);
+      assert.equal(req.headers.authorization, 'Bearer test-secret');
+      assert.match(req.headers['x-client-request-id'], /^[a-f0-9-]{36}$/);
+      assert.equal(body.max_completion_tokens, 5);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(calls === 1 ? completion() : completion({ usage: undefined })));
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const endpoint = `http://127.0.0.1:${server.address().port}/`,
+    scope = { tenantId: 't', agentId: 'agent' },
+    manifest = {
+      manifestVersion: 1,
+      tenantId: 't',
+      agentId: 'agent',
+      name: 'Agent',
+      owner: { kind: 'organization', id: 'org' },
+      administrators: ['admin'],
+      servicePrincipalId: 'service',
+      model: { provider: 'local', model: 'test' },
+      allowedCapabilities: [],
+      lifecycle: { enabled: true, maxAttempts: 3, runTimeoutMs: 10000 },
+      quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+    };
+  try {
+    for (const ambiguous of [false, true]) {
+      const dir = mkdtempSync(join(tmpdir(), 'openai-priced-')),
+        path = join(dir, 'db'),
+        runs = new SqliteAgentRuns(path),
+        definitions = new SqliteAgentDefinitions(':memory:');
+      let budget;
+      try {
+        definitions.save('t', manifest, 0);
+        let run = runs.create(scope, 'run', { definitionVersion: 1, maxAttempts: 3, deadline: 1000 }, 0);
+        run = runs.claim(scope, 'run', run.revision, 'worker', 100, 10);
+        budget = new SqliteAgentTokenBudget(path, { scope, runId: 'run', leaseToken: run.leaseToken, maxTokens: 100, cost: { currency: 'USD', maxMicros: 1000 }, clock: () => 10 });
+        const model = createOpenAIPricedCostModel({
+            ...base,
+            fetch: (url, options) => {
+              assert.equal(url, 'https://api.openai.com/v1/chat/completions');
+              return fetch(endpoint, options);
+            }
+          }),
+          agent = await createConfiguredAgentRun({
+            definitions,
+            tenantId: 't',
+            agentId: 'agent',
+            expectedVersion: 1,
+            bindings: [],
+            registry: { invoke: async () => null },
+            authorizeRun: () => true,
+            authorizeCapability: () => true,
+            tokenBudget: { budget, maxTokensPerCall: 60, maxCostMicrosPerCall: 40 },
+            createModel: () => model
+          });
+        let last;
+        for await (const event of agent.run({ threadId: 'thread', runId: 'run', messages: [{ role: 'user', content: 'hello' }] })) last = event;
+        assert.equal(last.type, ambiguous ? 'RUN_ERROR' : 'RUN_FINISHED');
+        assert.equal(budget.list()[0].status, ambiguous ? 'reserved' : 'settled');
+        if (ambiguous) {
+          run = runs.settle(scope, 'run', run.revision, run.leaseToken, 'failed', 11);
+          assert.equal(run.status, 'uncertain');
+          assert.throws(() => runs.reconcile(scope, 'run', run.revision, 'retry', 12), /Token usage/);
+        } else assert.equal(budget.costSummary().committed, 30);
+      } finally {
+        budget?.close();
+        runs.close();
+        definitions.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    assert.equal(calls, 2);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 
-test('OpenAI adapter refreshes host-managed credentials on each call',async()=>{let current='first-key';const seen=[],config={...base,apiKey:undefined,getApiKey:async signal=>{assert.equal(signal.aborted,false);return current;},fetch:async(_url,options)=>{seen.push(options.headers.authorization);return response(completion());}},model=createOpenAIPricedCostModel(config);config.getApiKey=()=> 'replaced-function';await model.invokeLimitedCost(messages,limits);current='second-key';await model.invokeLimitedCost(messages,{...limits,callId:'call-2'});assert.deepEqual(seen,['Bearer first-key','Bearer second-key']);});
-test('OpenAI adapter fails closed on invalid or failed credential lookup',async()=>{let dispatches=0;for(const getApiKey of [()=>'',()=> 'bad\nkey',()=>undefined,()=>{throw Error('sensitive-secret');}]){const model=createOpenAIPricedCostModel({...base,apiKey:undefined,getApiKey,fetch:async()=>{dispatches++;return response(completion());}});await assert.rejects(model.invokeLimitedCost(messages,limits),error=>error.message==='OpenAI model unavailable');}assert.equal(dispatches,0);for(const credentials of [{apiKey:undefined},{apiKey:'key',getApiKey:()=> 'other'},{apiKey:undefined,getApiKey:null},{apiKey:'bad\nkey',getApiKey:()=> 'key'}])assert.throws(()=>createOpenAIPricedCostModel({...base,...credentials}),/Invalid/);});
-test('OpenAI credential timeout fences late dispatch and retains the concurrency slot',async()=>{let entered,release,seenSignal,slow=true,dispatches=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),model=createOpenAIPricedCostModel({...base,apiKey:undefined,timeoutMs:100,maxPending:1,getApiKey:async signal=>{if(slow){seenSignal=signal;entered();await gate;}return 'refreshed-key';},fetch:async(_url,options)=>{dispatches++;assert.equal(options.headers.authorization,'Bearer refreshed-key');return response(completion());}});const first=model.invokeLimitedCost(messages,limits);await ready;await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);await assert.rejects(first,/unavailable/);assert.equal(seenSignal.aborted,true);await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);assert.equal(dispatches,0);slow=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await model.invokeLimitedCost(messages,limits)).usedCostMicros,30);assert.equal(dispatches,1);});
-test('OpenAI caller cancellation fences a late credential result',async()=>{let entered,release,signal,dispatches=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController(),model=createOpenAIPricedCostModel({...base,apiKey:undefined,getApiKey:async received=>{signal=received;entered();await gate;return 'key';},fetch:async()=>{dispatches++;return response(completion());}}),pending=model.invokeLimitedCost(messages,{...limits,signal:controller.signal});await ready;controller.abort();await assert.rejects(pending,/unavailable/);assert.equal(signal.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(dispatches,0);});
+test('OpenAI adapter refreshes host-managed credentials on each call', async () => {
+  let current = 'first-key';
+  const seen = [],
+    config = {
+      ...base,
+      apiKey: undefined,
+      getApiKey: async signal => {
+        assert.equal(signal.aborted, false);
+        return current;
+      },
+      fetch: async (_url, options) => {
+        seen.push(options.headers.authorization);
+        return response(completion());
+      }
+    },
+    model = createOpenAIPricedCostModel(config);
+  config.getApiKey = () => 'replaced-function';
+  await model.invokeLimitedCost(messages, limits);
+  current = 'second-key';
+  await model.invokeLimitedCost(messages, { ...limits, callId: 'call-2' });
+  assert.deepEqual(seen, ['Bearer first-key', 'Bearer second-key']);
+});
+test('OpenAI adapter fails closed on invalid or failed credential lookup', async () => {
+  let dispatches = 0;
+  for (const getApiKey of [
+    () => '',
+    () => 'bad\nkey',
+    () => undefined,
+    () => {
+      throw Error('sensitive-secret');
+    }
+  ]) {
+    const model = createOpenAIPricedCostModel({
+      ...base,
+      apiKey: undefined,
+      getApiKey,
+      fetch: async () => {
+        dispatches++;
+        return response(completion());
+      }
+    });
+    await assert.rejects(model.invokeLimitedCost(messages, limits), error => error.message === 'OpenAI model unavailable');
+  }
+  assert.equal(dispatches, 0);
+  for (const credentials of [{ apiKey: undefined }, { apiKey: 'key', getApiKey: () => 'other' }, { apiKey: undefined, getApiKey: null }, { apiKey: 'bad\nkey', getApiKey: () => 'key' }])
+    assert.throws(() => createOpenAIPricedCostModel({ ...base, ...credentials }), /Invalid/);
+});
+test('OpenAI credential timeout fences late dispatch and retains the concurrency slot', async () => {
+  let entered,
+    release,
+    seenSignal,
+    slow = true,
+    dispatches = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    model = createOpenAIPricedCostModel({
+      ...base,
+      apiKey: undefined,
+      timeoutMs: 100,
+      maxPending: 1,
+      getApiKey: async signal => {
+        if (slow) {
+          seenSignal = signal;
+          entered();
+          await gate;
+        }
+        return 'refreshed-key';
+      },
+      fetch: async (_url, options) => {
+        dispatches++;
+        assert.equal(options.headers.authorization, 'Bearer refreshed-key');
+        return response(completion());
+      }
+    });
+  const first = model.invokeLimitedCost(messages, limits);
+  await ready;
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  await assert.rejects(first, /unavailable/);
+  assert.equal(seenSignal.aborted, true);
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  assert.equal(dispatches, 0);
+  slow = false;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await model.invokeLimitedCost(messages, limits)).usedCostMicros, 30);
+  assert.equal(dispatches, 1);
+});
+test('OpenAI caller cancellation fences a late credential result', async () => {
+  let entered,
+    release,
+    signal,
+    dispatches = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    controller = new AbortController(),
+    model = createOpenAIPricedCostModel({
+      ...base,
+      apiKey: undefined,
+      getApiKey: async received => {
+        signal = received;
+        entered();
+        await gate;
+        return 'key';
+      },
+      fetch: async () => {
+        dispatches++;
+        return response(completion());
+      }
+    }),
+    pending = model.invokeLimitedCost(messages, { ...limits, signal: controller.signal });
+  await ready;
+  controller.abort();
+  await assert.rejects(pending, /unavailable/);
+  assert.equal(signal.aborted, true);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(dispatches, 0);
+});
 
-test('OpenAI preparation timeout prevents credential lookup and retains its slot until preparation settles',async()=>{let entered,release,signal,slow=true,prepares=0,credentials=0,dispatches=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),model=createOpenAIPricedCostModel({...base,apiKey:undefined,timeoutMs:100,maxPending:1,prepare:async(_messages,received)=>{prepares++;if(slow){signal=received;entered();await gate;}return {messages:[{role:'user',content:'hello'}],maxInputTokens:10};},getApiKey:()=>{credentials++;return 'key';},fetch:async()=>{dispatches++;return response(completion());}}),pending=model.invokeLimitedCost(messages,limits);await ready;await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);await assert.rejects(pending,/unavailable/);assert.equal(signal.aborted,true);await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);assert.equal(prepares,1);assert.equal(credentials,0);assert.equal(dispatches,0);slow=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await model.invokeLimitedCost(messages,limits)).usedCostMicros,30);assert.equal(credentials,1);assert.equal(dispatches,1);});
-test('OpenAI preparation cancellation fences late work and hides callback errors',async()=>{let entered,release,signal,dispatches=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController(),model=createOpenAIPricedCostModel({...base,prepare:async(_messages,received)=>{signal=received;entered();await gate;return {messages:[{role:'user',content:'hello'}],maxInputTokens:10};},fetch:async()=>{dispatches++;return response(completion());}}),pending=model.invokeLimitedCost(messages,{...limits,signal:controller.signal});await ready;controller.abort();await assert.rejects(pending,/unavailable/);assert.equal(signal.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(dispatches,0);const broken=createOpenAIPricedCostModel({...base,prepare:()=>{throw Error('private-details');},fetch:async()=>response(completion())});await assert.rejects(broken.invokeLimitedCost(messages,limits),error=>error.message==='OpenAI model unavailable');});
-test('OpenAI adapter snapshots call limits and message list before asynchronous preparation',async()=>{let seen,body;const mutableMessages=[new HumanMessage('one')],mutableLimits={...limits},model=createOpenAIPricedCostModel({...base,prepare:input=>{seen=input;return {messages:[{role:'user',content:'hello'}],maxInputTokens:10};},fetch:async(_url,options)=>{body=JSON.parse(options.body);return response(completion());}}),pending=model.invokeLimitedCost(mutableMessages,mutableLimits);mutableMessages.push(new HumanMessage('two'));mutableLimits.maxCostMicros=1000;mutableLimits.maxTotalTokens=1000;mutableLimits.callId='changed';const result=await pending;assert.equal(seen.length,1);assert.equal(body.max_completion_tokens,5);assert.equal(result.usedCostMicros,30);});
+test('OpenAI preparation timeout prevents credential lookup and retains its slot until preparation settles', async () => {
+  let entered,
+    release,
+    signal,
+    slow = true,
+    prepares = 0,
+    credentials = 0,
+    dispatches = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    model = createOpenAIPricedCostModel({
+      ...base,
+      apiKey: undefined,
+      timeoutMs: 100,
+      maxPending: 1,
+      prepare: async (_messages, received) => {
+        prepares++;
+        if (slow) {
+          signal = received;
+          entered();
+          await gate;
+        }
+        return { messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 };
+      },
+      getApiKey: () => {
+        credentials++;
+        return 'key';
+      },
+      fetch: async () => {
+        dispatches++;
+        return response(completion());
+      }
+    }),
+    pending = model.invokeLimitedCost(messages, limits);
+  await ready;
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  await assert.rejects(pending, /unavailable/);
+  assert.equal(signal.aborted, true);
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  assert.equal(prepares, 1);
+  assert.equal(credentials, 0);
+  assert.equal(dispatches, 0);
+  slow = false;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await model.invokeLimitedCost(messages, limits)).usedCostMicros, 30);
+  assert.equal(credentials, 1);
+  assert.equal(dispatches, 1);
+});
+test('OpenAI preparation cancellation fences late work and hides callback errors', async () => {
+  let entered,
+    release,
+    signal,
+    dispatches = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    controller = new AbortController(),
+    model = createOpenAIPricedCostModel({
+      ...base,
+      prepare: async (_messages, received) => {
+        signal = received;
+        entered();
+        await gate;
+        return { messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 };
+      },
+      fetch: async () => {
+        dispatches++;
+        return response(completion());
+      }
+    }),
+    pending = model.invokeLimitedCost(messages, { ...limits, signal: controller.signal });
+  await ready;
+  controller.abort();
+  await assert.rejects(pending, /unavailable/);
+  assert.equal(signal.aborted, true);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(dispatches, 0);
+  const broken = createOpenAIPricedCostModel({
+    ...base,
+    prepare: () => {
+      throw Error('private-details');
+    },
+    fetch: async () => response(completion())
+  });
+  await assert.rejects(broken.invokeLimitedCost(messages, limits), error => error.message === 'OpenAI model unavailable');
+});
+test('OpenAI adapter snapshots call limits and message list before asynchronous preparation', async () => {
+  let seen, body;
+  const mutableMessages = [new HumanMessage('one')],
+    mutableLimits = { ...limits },
+    model = createOpenAIPricedCostModel({
+      ...base,
+      prepare: input => {
+        seen = input;
+        return { messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 };
+      },
+      fetch: async (_url, options) => {
+        body = JSON.parse(options.body);
+        return response(completion());
+      }
+    }),
+    pending = model.invokeLimitedCost(mutableMessages, mutableLimits);
+  mutableMessages.push(new HumanMessage('two'));
+  mutableLimits.maxCostMicros = 1000;
+  mutableLimits.maxTotalTokens = 1000;
+  mutableLimits.callId = 'changed';
+  const result = await pending;
+  assert.equal(seen.length, 1);
+  assert.equal(body.max_completion_tokens, 5);
+  assert.equal(result.usedCostMicros, 30);
+});
 
-test('OpenAI adapter detects a synchronous preparation overrun before dispatch',async()=>{let signal,credentials=0,dispatches=0;const model=createOpenAIPricedCostModel({...base,apiKey:undefined,timeoutMs:100,getApiKey:()=>{credentials++;return 'key';},prepare:(_messages,received)=>{signal=received;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);return {messages:[{role:'user',content:'hello'}],maxInputTokens:10};},fetch:async()=>{dispatches++;return response(completion());}});await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);assert.equal(signal.aborted,true);assert.equal(credentials,0);assert.equal(dispatches,0);});
-test('OpenAI adapter detects a synchronous credential overrun before dispatch',async()=>{let signal,dispatches=0;const model=createOpenAIPricedCostModel({...base,apiKey:undefined,timeoutMs:100,getApiKey:received=>{signal=received;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);return 'key';},fetch:async()=>{dispatches++;return response(completion());}});await assert.rejects(model.invokeLimitedCost(messages,limits),/unavailable/);assert.equal(signal.aborted,true);assert.equal(dispatches,0);});
+test('OpenAI adapter detects a synchronous preparation overrun before dispatch', async () => {
+  let signal,
+    credentials = 0,
+    dispatches = 0;
+  const model = createOpenAIPricedCostModel({
+    ...base,
+    apiKey: undefined,
+    timeoutMs: 100,
+    getApiKey: () => {
+      credentials++;
+      return 'key';
+    },
+    prepare: (_messages, received) => {
+      signal = received;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      return { messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 };
+    },
+    fetch: async () => {
+      dispatches++;
+      return response(completion());
+    }
+  });
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  assert.equal(signal.aborted, true);
+  assert.equal(credentials, 0);
+  assert.equal(dispatches, 0);
+});
+test('OpenAI adapter detects a synchronous credential overrun before dispatch', async () => {
+  let signal,
+    dispatches = 0;
+  const model = createOpenAIPricedCostModel({
+    ...base,
+    apiKey: undefined,
+    timeoutMs: 100,
+    getApiKey: received => {
+      signal = received;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      return 'key';
+    },
+    fetch: async () => {
+      dispatches++;
+      return response(completion());
+    }
+  });
+  await assert.rejects(model.invokeLimitedCost(messages, limits), /unavailable/);
+  assert.equal(signal.aborted, true);
+  assert.equal(dispatches, 0);
+});

@@ -1,82 +1,618 @@
-import type {ApplicationDefinition} from './index.js';
-import {checkPromotionPackage,createPromotionPackage,validEnvironment} from './promotion.js';
-import {checkPromotionEvidence,type VerifiedPromotion,type PromotionSignatureEvidence} from './signed-promotion.js';
-import {context,propagation,trace,SpanKind,SpanStatusCode,type Tracer} from '@opentelemetry/api';
+import type { ApplicationDefinition } from './index.js';
+import { checkPromotionPackage, createPromotionPackage, validEnvironment } from './promotion.js';
+import { checkPromotionEvidence, type VerifiedPromotion, type PromotionSignatureEvidence } from './signed-promotion.js';
+import { context, propagation, trace, SpanKind, SpanStatusCode, type Tracer } from '@opentelemetry/api';
 
-export type RemoteControlImportRequest={actor:{tenantId:string;principalId:string};sourceVersion:number;expectedVersion:number};
-export type RemoteControlImportDetails=RemoteControlImportRequest & {applicationId:string;sourceEnvironment:string;targetEnvironment:string;sourceOrigin:string;digest?:string};
-export type RemoteControlImportEvent={phase:'attempt'|'source_verified'|'import_authorized'|'completed'|'denied'|'uncertain'|'floor_rejected';details:RemoteControlImportDetails};
-export type RemoteControlDiscoveryDetails={actor:{tenantId:string;principalId:string};applicationId:string;sourceEnvironment:string;sourceOrigin:string;sourceVersion?:number};
-export type RemoteControlDiscoveryEvent={phase:'attempt'|'denied'|'completed';details:RemoteControlDiscoveryDetails};
-type Published={version:number;definition:ApplicationDefinition};
-export type RemotePromotionRepository={promote?:(input:unknown,expectedVersion:number,targetEnvironment:string)=>Published|Promise<Published>;promoteVerified?:(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence)=>Published|Promise<Published>;promoteAdvancing?:(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence)=>Published|Promise<Published>;getPublished?:(version?:number)=>Published|undefined|Promise<Published|undefined>;getPromotionFloor?:(source:string,target:string)=>number|Promise<number>};
+export type RemoteControlImportRequest = { actor: { tenantId: string; principalId: string }; sourceVersion: number; expectedVersion: number };
+export type RemoteControlImportDetails = RemoteControlImportRequest & { applicationId: string; sourceEnvironment: string; targetEnvironment: string; sourceOrigin: string; digest?: string };
+export type RemoteControlImportEvent = { phase: 'attempt' | 'source_verified' | 'import_authorized' | 'completed' | 'denied' | 'uncertain' | 'floor_rejected'; details: RemoteControlImportDetails };
+export type RemoteControlDiscoveryDetails = { actor: { tenantId: string; principalId: string }; applicationId: string; sourceEnvironment: string; sourceOrigin: string; sourceVersion?: number };
+export type RemoteControlDiscoveryEvent = { phase: 'attempt' | 'denied' | 'completed'; details: RemoteControlDiscoveryDetails };
+type Published = { version: number; definition: ApplicationDefinition };
+export type RemotePromotionRepository = {
+  promote?: (input: unknown, expectedVersion: number, targetEnvironment: string) => Published | Promise<Published>;
+  promoteVerified?: (input: unknown, expectedVersion: number, targetEnvironment: string, evidence: PromotionSignatureEvidence) => Published | Promise<Published>;
+  promoteAdvancing?: (input: unknown, expectedVersion: number, targetEnvironment: string, evidence?: PromotionSignatureEvidence) => Published | Promise<Published>;
+  getPublished?: (version?: number) => Published | undefined | Promise<Published | undefined>;
+  getPromotionFloor?: (source: string, target: string) => number | Promise<number>;
+};
 /** Host-held floor for the highest imported source version, stored outside the target database. `advance` must keep the maximum value it has seen. */
-export type RemotePromotionFloorAnchor={read():number|Promise<number>;advance(sourceVersion:number):void|Promise<void>};
-export type RemoteControlConnectorOptions={sourceOrigin:string;sourceToken:string;sourceEnvironment:string;targetEnvironment:string;applicationId:string;repository:RemotePromotionRepository;authorize:(stage:'export'|'import',details:RemoteControlImportDetails)=>boolean|Promise<boolean>;audit:(event:RemoteControlImportEvent)=>void|Promise<void>;authorizeWithSignal?:(stage:'export'|'import',details:RemoteControlImportDetails,signal:AbortSignal)=>boolean|Promise<boolean>;auditWithSignal?:(event:RemoteControlImportEvent,signal:AbortSignal)=>void|Promise<void>;preflightTimeoutMs?:number;maxPendingPreflightCallbacks?:number;completionAuditTimeoutMs?:number;maxPendingCompletionAudits?:number;discovery?:{authorize:(details:RemoteControlDiscoveryDetails)=>boolean|Promise<boolean>;audit:(event:RemoteControlDiscoveryEvent)=>void|Promise<void>;authorizeWithSignal?:(details:RemoteControlDiscoveryDetails,signal:AbortSignal)=>boolean|Promise<boolean>;auditWithSignal?:(event:RemoteControlDiscoveryEvent,signal:AbortSignal)=>void|Promise<void>;callbackTimeoutMs?:number;maxPendingCallbacks?:number};verifyWithEvidence?:(input:unknown,targetEnvironment:string,applicationId:string,expectedVersion:number)=>VerifiedPromotion;requireAdvancingSource?:boolean;promotionFloorAnchor?:RemotePromotionFloorAnchor;tracing?:{tracer:Tracer;propagate?:boolean};timeoutMs?:number;allowLoopbackHttp?:boolean};
-export class RemoteControlImportPreflightUnavailableError extends Error{constructor(){super('Remote control import preflight unavailable');this.name='RemoteControlImportPreflightUnavailableError';}}
-export class RemoteControlImportCancelledError extends Error{constructor(){super('Remote control import cancelled before local publication');this.name='RemoteControlImportCancelledError';}}
-export class RemoteControlImportUncertainError extends Error{constructor(){super('Local import outcome is uncertain; inspect publication and provenance before retrying');this.name='RemoteControlImportUncertainError';}}
-const text=(v:unknown,max=256):v is string=>typeof v==='string'&&v.trim().length>0&&v.length<=max&&!/[\x00-\x1f\x7f]/.test(v);
-function checkedOrigin(value:unknown,loopback:boolean):string{
- if(!text(value,2048))throw Error('Invalid remote control configuration');let u:URL;try{u=new URL(value);}catch{throw Error('Invalid remote control configuration');}
- if(u.username||u.password||u.pathname!=='/'||u.search||u.hash||!(u.protocol==='https:'||(loopback&&u.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(u.hostname))))throw Error('Invalid remote control configuration');return u.origin;
+export type RemotePromotionFloorAnchor = { read(): number | Promise<number>; advance(sourceVersion: number): void | Promise<void> };
+export type RemoteControlConnectorOptions = {
+  sourceOrigin: string;
+  sourceToken: string;
+  sourceEnvironment: string;
+  targetEnvironment: string;
+  applicationId: string;
+  repository: RemotePromotionRepository;
+  authorize: (stage: 'export' | 'import', details: RemoteControlImportDetails) => boolean | Promise<boolean>;
+  audit: (event: RemoteControlImportEvent) => void | Promise<void>;
+  authorizeWithSignal?: (stage: 'export' | 'import', details: RemoteControlImportDetails, signal: AbortSignal) => boolean | Promise<boolean>;
+  auditWithSignal?: (event: RemoteControlImportEvent, signal: AbortSignal) => void | Promise<void>;
+  preflightTimeoutMs?: number;
+  maxPendingPreflightCallbacks?: number;
+  completionAuditTimeoutMs?: number;
+  maxPendingCompletionAudits?: number;
+  discovery?: {
+    authorize: (details: RemoteControlDiscoveryDetails) => boolean | Promise<boolean>;
+    audit: (event: RemoteControlDiscoveryEvent) => void | Promise<void>;
+    authorizeWithSignal?: (details: RemoteControlDiscoveryDetails, signal: AbortSignal) => boolean | Promise<boolean>;
+    auditWithSignal?: (event: RemoteControlDiscoveryEvent, signal: AbortSignal) => void | Promise<void>;
+    callbackTimeoutMs?: number;
+    maxPendingCallbacks?: number;
+  };
+  verifyWithEvidence?: (input: unknown, targetEnvironment: string, applicationId: string, expectedVersion: number) => VerifiedPromotion;
+  requireAdvancingSource?: boolean;
+  promotionFloorAnchor?: RemotePromotionFloorAnchor;
+  tracing?: { tracer: Tracer; propagate?: boolean };
+  timeoutMs?: number;
+  allowLoopbackHttp?: boolean;
+};
+export class RemoteControlImportPreflightUnavailableError extends Error {
+  constructor() {
+    super('Remote control import preflight unavailable');
+    this.name = 'RemoteControlImportPreflightUnavailableError';
+  }
 }
-async function readJson(response:Response):Promise<unknown>{
- if(response.status!==200||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body)throw Error('Invalid response');
- const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
- try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>2*1024*1024)throw Error('Response too large');chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
- return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))) as unknown;
+export class RemoteControlImportCancelledError extends Error {
+  constructor() {
+    super('Remote control import cancelled before local publication');
+    this.name = 'RemoteControlImportCancelledError';
+  }
 }
-async function tracedRequest<T>(options:RemoteControlConnectorOptions['tracing'],method:'GET'|'POST',path:string,work:(headers:Record<string,string>,report:(status:number)=>void)=>Promise<T>):Promise<T>{
- if(!options)return work({},()=>{});let span;try{span=options.tracer.startSpan(`${method} ${path}`,{kind:SpanKind.CLIENT,attributes:{'http.request.method':method,'url.path':path}},context.active());}catch{return work({},()=>{});}
- const headers:Record<string,string>={};let active;try{active=trace.setSpan(context.active(),span);if(options.propagate){const carrier:Record<string,unknown>={};propagation.inject(active,carrier);const value=carrier.traceparent;if(typeof value==='string'&&/^00-[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{2}$/.test(value))headers.traceparent=value;}}catch{}
- const report=(status:number)=>{try{span.setAttribute('http.response.status_code',status);if(status>=400)span.setStatus({code:SpanStatusCode.ERROR});}catch{}};let pending:Promise<T>|undefined;
- try{try{context.with(active??context.active(),()=>{pending=work(headers,report);});}catch{if(!pending)pending=work({},report);}return await pending!;}catch(error){try{span.setStatus({code:SpanStatusCode.ERROR});span.setAttribute('error.type','request_failed');}catch{}throw error;}finally{try{span.end();}catch{}}
+export class RemoteControlImportUncertainError extends Error {
+  constructor() {
+    super('Local import outcome is uncertain; inspect publication and provenance before retrying');
+    this.name = 'RemoteControlImportUncertainError';
+  }
 }
-const builtinConnectors=new WeakSet<object>();
+const text = (v: unknown, max = 256): v is string => typeof v === 'string' && v.trim().length > 0 && v.length <= max && !/[\x00-\x1f\x7f]/.test(v);
+function checkedOrigin(value: unknown, loopback: boolean): string {
+  if (!text(value, 2048)) throw Error('Invalid remote control configuration');
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    throw Error('Invalid remote control configuration');
+  }
+  if (
+    u.username ||
+    u.password ||
+    u.pathname !== '/' ||
+    u.search ||
+    u.hash ||
+    !(u.protocol === 'https:' || (loopback && u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)))
+  )
+    throw Error('Invalid remote control configuration');
+  return u.origin;
+}
+async function readJson(response: Response): Promise<unknown> {
+  if (response.status !== 200 || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '') || !response.body) throw Error('Invalid response');
+  const reader = response.body.getReader(),
+    chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > 2 * 1024 * 1024) throw Error('Response too large');
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))) as unknown;
+}
+async function tracedRequest<T>(
+  options: RemoteControlConnectorOptions['tracing'],
+  method: 'GET' | 'POST',
+  path: string,
+  work: (headers: Record<string, string>, report: (status: number) => void) => Promise<T>
+): Promise<T> {
+  if (!options) return work({}, () => {});
+  let span;
+  try {
+    span = options.tracer.startSpan(`${method} ${path}`, { kind: SpanKind.CLIENT, attributes: { 'http.request.method': method, 'url.path': path } }, context.active());
+  } catch {
+    return work({}, () => {});
+  }
+  const headers: Record<string, string> = {};
+  let active;
+  try {
+    active = trace.setSpan(context.active(), span);
+    if (options.propagate) {
+      const carrier: Record<string, unknown> = {};
+      propagation.inject(active, carrier);
+      const value = carrier.traceparent;
+      if (typeof value === 'string' && /^00-[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{2}$/.test(value)) headers.traceparent = value;
+    }
+  } catch {}
+  const report = (status: number) => {
+    try {
+      span.setAttribute('http.response.status_code', status);
+      if (status >= 400) span.setStatus({ code: SpanStatusCode.ERROR });
+    } catch {}
+  };
+  let pending: Promise<T> | undefined;
+  try {
+    try {
+      context.with(active ?? context.active(), () => {
+        pending = work(headers, report);
+      });
+    } catch {
+      if (!pending) pending = work({}, report);
+    }
+    return await pending!;
+  } catch (error) {
+    try {
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      span.setAttribute('error.type', 'request_failed');
+    } catch {}
+    throw error;
+  } finally {
+    try {
+      span.end();
+    } catch {}
+  }
+}
+const builtinConnectors = new WeakSet<object>();
 /** Internal identity check: only immutable built-in connectors guarantee the pre-publication error boundary. */
-export function isBuiltinRemoteControlConnector(value:unknown):boolean{return !!value&&typeof value==='object'&&builtinConnectors.has(value);}
+export function isBuiltinRemoteControlConnector(value: unknown): boolean {
+  return !!value && typeof value === 'object' && builtinConnectors.has(value);
+}
 
 /** Explicit host-driven imports; runtime reads remain entirely local. */
-export function createRemoteControlConnector(options:RemoteControlConnectorOptions){
- if(!options||!text(options.sourceToken,4096)||!text(options.applicationId)||!validEnvironment(options.sourceEnvironment)||!validEnvironment(options.targetEnvironment)||options.sourceEnvironment===options.targetEnvironment||!options.repository||typeof options.repository.promote!=='function'||typeof options.authorize!=='function'||typeof options.audit!=='function'||(options.authorizeWithSignal!==undefined&&typeof options.authorizeWithSignal!=='function')||(options.auditWithSignal!==undefined&&typeof options.auditWithSignal!=='function')||(options.preflightTimeoutMs===undefined)!==(options.maxPendingPreflightCallbacks===undefined)||(options.preflightTimeoutMs!==undefined&&(!Number.isSafeInteger(options.preflightTimeoutMs)||options.preflightTimeoutMs<100||options.preflightTimeoutMs>30000))||(options.maxPendingPreflightCallbacks!==undefined&&(!Number.isSafeInteger(options.maxPendingPreflightCallbacks)||options.maxPendingPreflightCallbacks<1||options.maxPendingPreflightCallbacks>100))||(options.completionAuditTimeoutMs===undefined)!==(options.maxPendingCompletionAudits===undefined)||(options.completionAuditTimeoutMs!==undefined&&(!Number.isSafeInteger(options.completionAuditTimeoutMs)||options.completionAuditTimeoutMs<100||options.completionAuditTimeoutMs>30000))||(options.maxPendingCompletionAudits!==undefined&&(!Number.isSafeInteger(options.maxPendingCompletionAudits)||options.maxPendingCompletionAudits<1||options.maxPendingCompletionAudits>100))||(options.discovery!==undefined&&(!options.discovery||typeof options.discovery.authorize!=='function'||typeof options.discovery.audit!=='function'||(options.discovery.authorizeWithSignal!==undefined&&typeof options.discovery.authorizeWithSignal!=='function')||(options.discovery.auditWithSignal!==undefined&&typeof options.discovery.auditWithSignal!=='function')||(options.discovery.callbackTimeoutMs===undefined)!==(options.discovery.maxPendingCallbacks===undefined)||(options.discovery.callbackTimeoutMs!==undefined&&(!Number.isSafeInteger(options.discovery.callbackTimeoutMs)||options.discovery.callbackTimeoutMs<100||options.discovery.callbackTimeoutMs>30000))||(options.discovery.maxPendingCallbacks!==undefined&&(!Number.isSafeInteger(options.discovery.maxPendingCallbacks)||options.discovery.maxPendingCallbacks<1||options.discovery.maxPendingCallbacks>100))))||(options.verifyWithEvidence!==undefined&&(typeof options.verifyWithEvidence!=='function'||typeof options.repository.promoteVerified!=='function'))||(options.tracing!==undefined&&(!options.tracing||!options.tracing.tracer||typeof options.tracing.tracer.startSpan!=='function'||(options.tracing.propagate!==undefined&&typeof options.tracing.propagate!=='boolean')))||(options.requireAdvancingSource!==undefined&&typeof options.requireAdvancingSource!=='boolean')||(options.requireAdvancingSource===true&&typeof options.repository.promoteAdvancing!=='function')||(options.promotionFloorAnchor!==undefined&&(options.requireAdvancingSource!==true||!options.promotionFloorAnchor||typeof options.promotionFloorAnchor.read!=='function'||typeof options.promotionFloorAnchor.advance!=='function'||typeof options.repository.getPromotionFloor!=='function'))||(options.allowLoopbackHttp!==undefined&&typeof options.allowLoopbackHttp!=='boolean')||!Number.isSafeInteger(options.timeoutMs??10000)||(options.timeoutMs??10000)<100||(options.timeoutMs??10000)>120000)throw Error('Invalid remote control configuration');
- const sourceOrigin=checkedOrigin(options.sourceOrigin,options.allowLoopbackHttp===true),{sourceToken,sourceEnvironment,targetEnvironment,applicationId,repository,authorize,audit,authorizeWithSignal,auditWithSignal,preflightTimeoutMs,maxPendingPreflightCallbacks,completionAuditTimeoutMs,maxPendingCompletionAudits,verifyWithEvidence,requireAdvancingSource}=options,timeoutMs=options.timeoutMs??10000,tracing=options.tracing&&{tracer:options.tracing.tracer,propagate:options.tracing.propagate},discovery=options.discovery&&{authorize:options.discovery.authorize,audit:options.discovery.audit,authorizeWithSignal:options.discovery.authorizeWithSignal,auditWithSignal:options.discovery.auditWithSignal,callbackTimeoutMs:options.discovery.callbackTimeoutMs,maxPendingCallbacks:options.discovery.maxPendingCallbacks};
- const anchor=options.promotionFloorAnchor&&{read:options.promotionFloorAnchor.read.bind(options.promotionFloorAnchor),advance:options.promotionFloorAnchor.advance.bind(options.promotionFloorAnchor)};
- let completionAuditsInFlight=0;const runCompletionAudit=async (fn:(signal:AbortSignal)=>void|Promise<void>):Promise<void>=>{const controller=new AbortController();if(completionAuditTimeoutMs===undefined){await fn(controller.signal);return;}if(completionAuditsInFlight>=maxPendingCompletionAudits!)throw Error('Remote control completion audit unavailable');completionAuditsInFlight++;const task=Promise.resolve().then(()=>fn(controller.signal));void task.then(()=>{completionAuditsInFlight--;},()=>{completionAuditsInFlight--;});let timer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([task,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('Remote control completion audit unavailable'));},completionAuditTimeoutMs);})]);if(controller.signal.aborted)throw Error('Remote control completion audit unavailable');}finally{if(timer!==undefined)clearTimeout(timer);}};
- let preflightCallbacksInFlight=0;const runPreflightCallback=async <T>(fn:(signal:AbortSignal)=>T|Promise<T>,parent?:AbortSignal):Promise<T>=>{if(parent?.aborted)throw new RemoteControlImportCancelledError();if(preflightTimeoutMs===undefined){const result=await fn(parent??new AbortController().signal);if(parent?.aborted)throw new RemoteControlImportCancelledError();return result;}if(preflightCallbacksInFlight>=maxPendingPreflightCallbacks!)throw new RemoteControlImportPreflightUnavailableError();const controller=new AbortController(),signal=parent?AbortSignal.any([parent,controller.signal]):controller.signal;preflightCallbacksInFlight++;const task=Promise.resolve().then(()=>{if(signal.aborted)throw new RemoteControlImportPreflightUnavailableError();return fn(signal);});void task.then(()=>{preflightCallbacksInFlight--;},()=>{preflightCallbacksInFlight--;});let abort=()=>{};const cancelled=new Promise<never>((_resolve,reject)=>{abort=()=>reject(parent?.aborted?new RemoteControlImportCancelledError():new RemoteControlImportPreflightUnavailableError());if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});});const timer=setTimeout(()=>controller.abort(),preflightTimeoutMs);try{const result=await Promise.race([task,cancelled]);if(parent?.aborted)throw new RemoteControlImportCancelledError();if(signal.aborted)throw new RemoteControlImportPreflightUnavailableError();return result;}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}};
- let discoveryCallbacksInFlight=0;class DiscoveryUnavailable extends Error{constructor(){super('Remote control discovery unavailable');}}
- const runDiscoveryCallback=async <T>(fn:(signal:AbortSignal)=>T|Promise<T>,parent?:AbortSignal):Promise<T>=>{if(parent?.aborted)throw Error('Remote rollout cancelled');const timeout=discovery?.callbackTimeoutMs;if(timeout===undefined){const result=await fn(parent??new AbortController().signal);if(parent?.aborted)throw Error('Remote rollout cancelled');return result;}if(discoveryCallbacksInFlight>=discovery!.maxPendingCallbacks!)throw new DiscoveryUnavailable();const controller=new AbortController(),signal=parent?AbortSignal.any([parent,controller.signal]):controller.signal;discoveryCallbacksInFlight++;const task=Promise.resolve().then(()=>{if(signal.aborted)throw new DiscoveryUnavailable();return fn(signal);});void task.then(()=>{discoveryCallbacksInFlight--;},()=>{discoveryCallbacksInFlight--;});let abort=()=>{};const cancelled=new Promise<never>((_resolve,reject)=>{abort=()=>reject(parent?.aborted?Error('Remote rollout cancelled'):new DiscoveryUnavailable());if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});});const timer=setTimeout(()=>controller.abort(),timeout);try{const result=await Promise.race([task,cancelled]);if(parent?.aborted)throw Error('Remote rollout cancelled');if(signal.aborted)throw new DiscoveryUnavailable();return result;}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}};
- const connector={rolloutConfig:Object.freeze({applicationId,sourceEnvironment,targetEnvironment,safe:requireAdvancingSource===true&&!!verifyWithEvidence&&!!discovery}),rolloutRepository:repository,async discoverLatest(actor:{tenantId:string;principalId:string},signal?:AbortSignal):Promise<{applicationId:string;sourceVersion:number}>{
-  if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid remote control discovery signal');const check=()=>{if(signal?.aborted)throw Error('Remote rollout cancelled');};check();
-  if(!discovery||!actor||!text(actor.tenantId)||!text(actor.principalId))throw Error('Invalid remote control discovery');
-  const details:RemoteControlDiscoveryDetails={actor:{tenantId:actor.tenantId,principalId:actor.principalId},applicationId,sourceEnvironment,sourceOrigin};
-  const emit=async(phase:RemoteControlDiscoveryEvent['phase'])=>{check();const event={phase,details:structuredClone(details)};try{await runDiscoveryCallback(callbackSignal=>discovery.auditWithSignal?discovery.auditWithSignal(event,callbackSignal):discovery.audit(event),signal);}catch(error){check();throw error;}check();};const permit=async()=>runDiscoveryCallback(callbackSignal=>discovery.authorizeWithSignal?discovery.authorizeWithSignal(structuredClone(details),callbackSignal):discovery.authorize(structuredClone(details)),signal);
-  await emit('attempt');check();let allowed=false;try{allowed=await permit()===true;}catch(error){check();if(error instanceof DiscoveryUnavailable)throw error;}check();if(!allowed){await emit('denied');throw Error('Remote control discovery denied');}
-  let version:number;try{const value=await tracedRequest(tracing,'GET','/publications/latest',async(headers,report)=>{const response=await fetch(sourceOrigin+'/publications/latest',{method:'GET',headers:{...headers,authorization:`Bearer ${sourceToken}`,accept:'application/json'},redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs)});report(response.status);return readJson(response);});check();if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==2||!Object.hasOwn(value,'applicationId')||!Object.hasOwn(value,'version')||(value as {applicationId:unknown}).applicationId!==applicationId||!Number.isSafeInteger((value as {version:unknown}).version)||Number((value as {version:unknown}).version)<1)throw Error('Invalid discovery response');version=Number((value as {version:unknown}).version);}catch{check();throw Error('Remote control discovery failed');}
-  details.sourceVersion=version;allowed=false;try{allowed=await permit()===true;}catch(error){check();if(error instanceof DiscoveryUnavailable)throw error;}check();if(!allowed){await emit('denied');throw Error('Remote control discovery denied');}await emit('completed');check();return {applicationId,sourceVersion:version};
- },async importPublication(input:RemoteControlImportRequest,signal?:AbortSignal):Promise<{version:number;definition:ApplicationDefinition}>{
-  if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid remote control import signal');const check=()=>{if(signal?.aborted)throw new RemoteControlImportCancelledError();};check();
-  if(!input||!input.actor||!text(input.actor.tenantId)||!text(input.actor.principalId)||!Number.isSafeInteger(input.sourceVersion)||input.sourceVersion<1||!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion<0||input.expectedVersion>=Number.MAX_SAFE_INTEGER)throw Error('Invalid remote control import');
-  const details:RemoteControlImportDetails={actor:{tenantId:input.actor.tenantId,principalId:input.actor.principalId},sourceVersion:input.sourceVersion,expectedVersion:input.expectedVersion,applicationId,sourceEnvironment,targetEnvironment,sourceOrigin};
-  const emit=async(phase:RemoteControlImportEvent['phase'])=>{const event={phase,details:structuredClone(details)},preflight=phase!=='completed'&&phase!=='uncertain';try{if(preflight)await runPreflightCallback(callbackSignal=>auditWithSignal?auditWithSignal(event,callbackSignal):audit(event),signal);else await runCompletionAudit(callbackSignal=>auditWithSignal?auditWithSignal(event,callbackSignal):audit(event));}catch(error){if(preflight)check();throw error;}};
-  const permit=async(stage:'export'|'import')=>{let allowed=false;try{allowed=await runPreflightCallback(callbackSignal=>authorizeWithSignal?authorizeWithSignal(stage,structuredClone(details),callbackSignal):authorize(stage,structuredClone(details)),signal)===true;}catch(error){check();if(error instanceof RemoteControlImportPreflightUnavailableError)throw error;}check();if(!allowed){await emit('denied');check();throw Error('Remote control authorization denied');}};
-  await emit('attempt');check();await permit('export');check();
-  if(anchor){
-   // A target floor below the host-held floor means the target database was restored or replaced; refuse before fetching anything.
-   let floor:unknown,local:unknown;try{floor=await anchor.read();local=await repository.getPromotionFloor!(sourceEnvironment,targetEnvironment);}catch{await emit('floor_rejected');throw Error('Promotion floor unavailable');}
-   check();
-   if(!Number.isSafeInteger(floor)||(floor as number)<0||!Number.isSafeInteger(local)||(local as number)<0){await emit('floor_rejected');throw Error('Invalid promotion floor');}
-   if((local as number)<(floor as number)){await emit('floor_rejected');throw Error('Promotion floor rollback detected');}
-   if((local as number)>(floor as number))try{await anchor.advance(local as number);}catch{}
-   if(details.sourceVersion<=(local as number)){await emit('floor_rejected');throw Error('Source version is not newer than the promotion floor');}
-   check();
+export function createRemoteControlConnector(options: RemoteControlConnectorOptions) {
+  if (
+    !options ||
+    !text(options.sourceToken, 4096) ||
+    !text(options.applicationId) ||
+    !validEnvironment(options.sourceEnvironment) ||
+    !validEnvironment(options.targetEnvironment) ||
+    options.sourceEnvironment === options.targetEnvironment ||
+    !options.repository ||
+    typeof options.repository.promote !== 'function' ||
+    typeof options.authorize !== 'function' ||
+    typeof options.audit !== 'function' ||
+    (options.authorizeWithSignal !== undefined && typeof options.authorizeWithSignal !== 'function') ||
+    (options.auditWithSignal !== undefined && typeof options.auditWithSignal !== 'function') ||
+    (options.preflightTimeoutMs === undefined) !== (options.maxPendingPreflightCallbacks === undefined) ||
+    (options.preflightTimeoutMs !== undefined && (!Number.isSafeInteger(options.preflightTimeoutMs) || options.preflightTimeoutMs < 100 || options.preflightTimeoutMs > 30000)) ||
+    (options.maxPendingPreflightCallbacks !== undefined &&
+      (!Number.isSafeInteger(options.maxPendingPreflightCallbacks) || options.maxPendingPreflightCallbacks < 1 || options.maxPendingPreflightCallbacks > 100)) ||
+    (options.completionAuditTimeoutMs === undefined) !== (options.maxPendingCompletionAudits === undefined) ||
+    (options.completionAuditTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.completionAuditTimeoutMs) || options.completionAuditTimeoutMs < 100 || options.completionAuditTimeoutMs > 30000)) ||
+    (options.maxPendingCompletionAudits !== undefined &&
+      (!Number.isSafeInteger(options.maxPendingCompletionAudits) || options.maxPendingCompletionAudits < 1 || options.maxPendingCompletionAudits > 100)) ||
+    (options.discovery !== undefined &&
+      (!options.discovery ||
+        typeof options.discovery.authorize !== 'function' ||
+        typeof options.discovery.audit !== 'function' ||
+        (options.discovery.authorizeWithSignal !== undefined && typeof options.discovery.authorizeWithSignal !== 'function') ||
+        (options.discovery.auditWithSignal !== undefined && typeof options.discovery.auditWithSignal !== 'function') ||
+        (options.discovery.callbackTimeoutMs === undefined) !== (options.discovery.maxPendingCallbacks === undefined) ||
+        (options.discovery.callbackTimeoutMs !== undefined &&
+          (!Number.isSafeInteger(options.discovery.callbackTimeoutMs) || options.discovery.callbackTimeoutMs < 100 || options.discovery.callbackTimeoutMs > 30000)) ||
+        (options.discovery.maxPendingCallbacks !== undefined &&
+          (!Number.isSafeInteger(options.discovery.maxPendingCallbacks) || options.discovery.maxPendingCallbacks < 1 || options.discovery.maxPendingCallbacks > 100)))) ||
+    (options.verifyWithEvidence !== undefined && (typeof options.verifyWithEvidence !== 'function' || typeof options.repository.promoteVerified !== 'function')) ||
+    (options.tracing !== undefined &&
+      (!options.tracing ||
+        !options.tracing.tracer ||
+        typeof options.tracing.tracer.startSpan !== 'function' ||
+        (options.tracing.propagate !== undefined && typeof options.tracing.propagate !== 'boolean'))) ||
+    (options.requireAdvancingSource !== undefined && typeof options.requireAdvancingSource !== 'boolean') ||
+    (options.requireAdvancingSource === true && typeof options.repository.promoteAdvancing !== 'function') ||
+    (options.promotionFloorAnchor !== undefined &&
+      (options.requireAdvancingSource !== true ||
+        !options.promotionFloorAnchor ||
+        typeof options.promotionFloorAnchor.read !== 'function' ||
+        typeof options.promotionFloorAnchor.advance !== 'function' ||
+        typeof options.repository.getPromotionFloor !== 'function')) ||
+    (options.allowLoopbackHttp !== undefined && typeof options.allowLoopbackHttp !== 'boolean') ||
+    !Number.isSafeInteger(options.timeoutMs ?? 10000) ||
+    (options.timeoutMs ?? 10000) < 100 ||
+    (options.timeoutMs ?? 10000) > 120000
+  )
+    throw Error('Invalid remote control configuration');
+  const sourceOrigin = checkedOrigin(options.sourceOrigin, options.allowLoopbackHttp === true),
+    {
+      sourceToken,
+      sourceEnvironment,
+      targetEnvironment,
+      applicationId,
+      repository,
+      authorize,
+      audit,
+      authorizeWithSignal,
+      auditWithSignal,
+      preflightTimeoutMs,
+      maxPendingPreflightCallbacks,
+      completionAuditTimeoutMs,
+      maxPendingCompletionAudits,
+      verifyWithEvidence,
+      requireAdvancingSource
+    } = options,
+    timeoutMs = options.timeoutMs ?? 10000,
+    tracing = options.tracing && { tracer: options.tracing.tracer, propagate: options.tracing.propagate },
+    discovery = options.discovery && {
+      authorize: options.discovery.authorize,
+      audit: options.discovery.audit,
+      authorizeWithSignal: options.discovery.authorizeWithSignal,
+      auditWithSignal: options.discovery.auditWithSignal,
+      callbackTimeoutMs: options.discovery.callbackTimeoutMs,
+      maxPendingCallbacks: options.discovery.maxPendingCallbacks
+    };
+  const anchor = options.promotionFloorAnchor && {
+    read: options.promotionFloorAnchor.read.bind(options.promotionFloorAnchor),
+    advance: options.promotionFloorAnchor.advance.bind(options.promotionFloorAnchor)
+  };
+  let completionAuditsInFlight = 0;
+  const runCompletionAudit = async (fn: (signal: AbortSignal) => void | Promise<void>): Promise<void> => {
+    const controller = new AbortController();
+    if (completionAuditTimeoutMs === undefined) {
+      await fn(controller.signal);
+      return;
+    }
+    if (completionAuditsInFlight >= maxPendingCompletionAudits!) throw Error('Remote control completion audit unavailable');
+    completionAuditsInFlight++;
+    const task = Promise.resolve().then(() => fn(controller.signal));
+    void task.then(
+      () => {
+        completionAuditsInFlight--;
+      },
+      () => {
+        completionAuditsInFlight--;
+      }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        task,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(Error('Remote control completion audit unavailable'));
+          }, completionAuditTimeoutMs);
+        })
+      ]);
+      if (controller.signal.aborted) throw Error('Remote control completion audit unavailable');
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+  let preflightCallbacksInFlight = 0;
+  const runPreflightCallback = async <T>(fn: (signal: AbortSignal) => T | Promise<T>, parent?: AbortSignal): Promise<T> => {
+    if (parent?.aborted) throw new RemoteControlImportCancelledError();
+    if (preflightTimeoutMs === undefined) {
+      const result = await fn(parent ?? new AbortController().signal);
+      if (parent?.aborted) throw new RemoteControlImportCancelledError();
+      return result;
+    }
+    if (preflightCallbacksInFlight >= maxPendingPreflightCallbacks!) throw new RemoteControlImportPreflightUnavailableError();
+    const controller = new AbortController(),
+      signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+    preflightCallbacksInFlight++;
+    const task = Promise.resolve().then(() => {
+      if (signal.aborted) throw new RemoteControlImportPreflightUnavailableError();
+      return fn(signal);
+    });
+    void task.then(
+      () => {
+        preflightCallbacksInFlight--;
+      },
+      () => {
+        preflightCallbacksInFlight--;
+      }
+    );
+    let abort = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(parent?.aborted ? new RemoteControlImportCancelledError() : new RemoteControlImportPreflightUnavailableError());
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    });
+    const timer = setTimeout(() => controller.abort(), preflightTimeoutMs);
+    try {
+      const result = await Promise.race([task, cancelled]);
+      if (parent?.aborted) throw new RemoteControlImportCancelledError();
+      if (signal.aborted) throw new RemoteControlImportPreflightUnavailableError();
+      return result;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+    }
+  };
+  let discoveryCallbacksInFlight = 0;
+  class DiscoveryUnavailable extends Error {
+    constructor() {
+      super('Remote control discovery unavailable');
+    }
   }
-  let pkg,evidence;try{const path=verifyWithEvidence?'/promotion/export-signed':'/promotion/export',raw=await tracedRequest(tracing,'POST',path,async(headers,report)=>{const response=await fetch(sourceOrigin+path,{method:'POST',headers:{...headers,authorization:`Bearer ${sourceToken}`,'content-type':'application/json'},body:JSON.stringify(verifyWithEvidence?{sourceEnvironment,version:details.sourceVersion,targetEnvironment,expectedVersion:details.expectedVersion}:{sourceEnvironment,version:details.sourceVersion}),redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs)});report(response.status);return readJson(response);});check();if(verifyWithEvidence){const verified=verifyWithEvidence(raw,targetEnvironment,applicationId,details.expectedVersion);pkg=checkPromotionPackage(verified.package,targetEnvironment,applicationId);evidence=checkPromotionEvidence(pkg,targetEnvironment,verified.evidence,details.expectedVersion);if(evidence.expectedVersion!==details.expectedVersion)throw Error('Unbound signature');}else pkg=checkPromotionPackage(raw,targetEnvironment,applicationId);if(pkg.sourceEnvironment!==sourceEnvironment||pkg.sourceVersion!==details.sourceVersion)throw Error('Unexpected source');}catch{check();throw Error('Remote control export failed');}
-  details.digest=pkg.digest;await emit('source_verified');check();await permit('import');check();await emit('import_authorized');check();
-  try{const result=await (requireAdvancingSource?repository.promoteAdvancing!(pkg,details.expectedVersion,targetEnvironment,evidence):evidence?repository.promoteVerified!(pkg,details.expectedVersion,targetEnvironment,evidence):repository.promote!(pkg,details.expectedVersion,targetEnvironment));if(!result||result.version!==details.expectedVersion+1||createPromotionPackage(sourceEnvironment,{version:details.sourceVersion,definition:result.definition}).digest!==pkg.digest)throw Error('Unexpected local publication');await emit('completed');
-   // The import is committed; an anchor failure here leaves the host floor behind until the next import catches it up.
-   if(anchor)try{await anchor.advance(details.sourceVersion);}catch{}
-   return result;}catch{try{await emit('uncertain');}catch{}throw new RemoteControlImportUncertainError();}
- }};
- builtinConnectors.add(connector);return Object.freeze(connector);
+  const runDiscoveryCallback = async <T>(fn: (signal: AbortSignal) => T | Promise<T>, parent?: AbortSignal): Promise<T> => {
+    if (parent?.aborted) throw Error('Remote rollout cancelled');
+    const timeout = discovery?.callbackTimeoutMs;
+    if (timeout === undefined) {
+      const result = await fn(parent ?? new AbortController().signal);
+      if (parent?.aborted) throw Error('Remote rollout cancelled');
+      return result;
+    }
+    if (discoveryCallbacksInFlight >= discovery!.maxPendingCallbacks!) throw new DiscoveryUnavailable();
+    const controller = new AbortController(),
+      signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+    discoveryCallbacksInFlight++;
+    const task = Promise.resolve().then(() => {
+      if (signal.aborted) throw new DiscoveryUnavailable();
+      return fn(signal);
+    });
+    void task.then(
+      () => {
+        discoveryCallbacksInFlight--;
+      },
+      () => {
+        discoveryCallbacksInFlight--;
+      }
+    );
+    let abort = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(parent?.aborted ? Error('Remote rollout cancelled') : new DiscoveryUnavailable());
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    });
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const result = await Promise.race([task, cancelled]);
+      if (parent?.aborted) throw Error('Remote rollout cancelled');
+      if (signal.aborted) throw new DiscoveryUnavailable();
+      return result;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+    }
+  };
+  const connector = {
+    rolloutConfig: Object.freeze({ applicationId, sourceEnvironment, targetEnvironment, safe: requireAdvancingSource === true && !!verifyWithEvidence && !!discovery }),
+    rolloutRepository: repository,
+    async discoverLatest(actor: { tenantId: string; principalId: string }, signal?: AbortSignal): Promise<{ applicationId: string; sourceVersion: number }> {
+      if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid remote control discovery signal');
+      const check = () => {
+        if (signal?.aborted) throw Error('Remote rollout cancelled');
+      };
+      check();
+      if (!discovery || !actor || !text(actor.tenantId) || !text(actor.principalId)) throw Error('Invalid remote control discovery');
+      const details: RemoteControlDiscoveryDetails = { actor: { tenantId: actor.tenantId, principalId: actor.principalId }, applicationId, sourceEnvironment, sourceOrigin };
+      const emit = async (phase: RemoteControlDiscoveryEvent['phase']) => {
+        check();
+        const event = { phase, details: structuredClone(details) };
+        try {
+          await runDiscoveryCallback(callbackSignal => (discovery.auditWithSignal ? discovery.auditWithSignal(event, callbackSignal) : discovery.audit(event)), signal);
+        } catch (error) {
+          check();
+          throw error;
+        }
+        check();
+      };
+      const permit = async () =>
+        runDiscoveryCallback(
+          callbackSignal => (discovery.authorizeWithSignal ? discovery.authorizeWithSignal(structuredClone(details), callbackSignal) : discovery.authorize(structuredClone(details))),
+          signal
+        );
+      await emit('attempt');
+      check();
+      let allowed = false;
+      try {
+        allowed = (await permit()) === true;
+      } catch (error) {
+        check();
+        if (error instanceof DiscoveryUnavailable) throw error;
+      }
+      check();
+      if (!allowed) {
+        await emit('denied');
+        throw Error('Remote control discovery denied');
+      }
+      let version: number;
+      try {
+        const value = await tracedRequest(tracing, 'GET', '/publications/latest', async (headers, report) => {
+          const response = await fetch(sourceOrigin + '/publications/latest', {
+            method: 'GET',
+            headers: { ...headers, authorization: `Bearer ${sourceToken}`, accept: 'application/json' },
+            redirect: 'error',
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+          });
+          report(response.status);
+          return readJson(response);
+        });
+        check();
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          Array.isArray(value) ||
+          Object.keys(value).length !== 2 ||
+          !Object.hasOwn(value, 'applicationId') ||
+          !Object.hasOwn(value, 'version') ||
+          (value as { applicationId: unknown }).applicationId !== applicationId ||
+          !Number.isSafeInteger((value as { version: unknown }).version) ||
+          Number((value as { version: unknown }).version) < 1
+        )
+          throw Error('Invalid discovery response');
+        version = Number((value as { version: unknown }).version);
+      } catch {
+        check();
+        throw Error('Remote control discovery failed');
+      }
+      details.sourceVersion = version;
+      allowed = false;
+      try {
+        allowed = (await permit()) === true;
+      } catch (error) {
+        check();
+        if (error instanceof DiscoveryUnavailable) throw error;
+      }
+      check();
+      if (!allowed) {
+        await emit('denied');
+        throw Error('Remote control discovery denied');
+      }
+      await emit('completed');
+      check();
+      return { applicationId, sourceVersion: version };
+    },
+    async importPublication(input: RemoteControlImportRequest, signal?: AbortSignal): Promise<{ version: number; definition: ApplicationDefinition }> {
+      if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid remote control import signal');
+      const check = () => {
+        if (signal?.aborted) throw new RemoteControlImportCancelledError();
+      };
+      check();
+      if (
+        !input ||
+        !input.actor ||
+        !text(input.actor.tenantId) ||
+        !text(input.actor.principalId) ||
+        !Number.isSafeInteger(input.sourceVersion) ||
+        input.sourceVersion < 1 ||
+        !Number.isSafeInteger(input.expectedVersion) ||
+        input.expectedVersion < 0 ||
+        input.expectedVersion >= Number.MAX_SAFE_INTEGER
+      )
+        throw Error('Invalid remote control import');
+      const details: RemoteControlImportDetails = {
+        actor: { tenantId: input.actor.tenantId, principalId: input.actor.principalId },
+        sourceVersion: input.sourceVersion,
+        expectedVersion: input.expectedVersion,
+        applicationId,
+        sourceEnvironment,
+        targetEnvironment,
+        sourceOrigin
+      };
+      const emit = async (phase: RemoteControlImportEvent['phase']) => {
+        const event = { phase, details: structuredClone(details) },
+          preflight = phase !== 'completed' && phase !== 'uncertain';
+        try {
+          if (preflight) await runPreflightCallback(callbackSignal => (auditWithSignal ? auditWithSignal(event, callbackSignal) : audit(event)), signal);
+          else await runCompletionAudit(callbackSignal => (auditWithSignal ? auditWithSignal(event, callbackSignal) : audit(event)));
+        } catch (error) {
+          if (preflight) check();
+          throw error;
+        }
+      };
+      const permit = async (stage: 'export' | 'import') => {
+        let allowed = false;
+        try {
+          allowed =
+            (await runPreflightCallback(
+              callbackSignal => (authorizeWithSignal ? authorizeWithSignal(stage, structuredClone(details), callbackSignal) : authorize(stage, structuredClone(details))),
+              signal
+            )) === true;
+        } catch (error) {
+          check();
+          if (error instanceof RemoteControlImportPreflightUnavailableError) throw error;
+        }
+        check();
+        if (!allowed) {
+          await emit('denied');
+          check();
+          throw Error('Remote control authorization denied');
+        }
+      };
+      await emit('attempt');
+      check();
+      await permit('export');
+      check();
+      if (anchor) {
+        // A target floor below the host-held floor means the target database was restored or replaced; refuse before fetching anything.
+        let floor: unknown, local: unknown;
+        try {
+          floor = await anchor.read();
+          local = await repository.getPromotionFloor!(sourceEnvironment, targetEnvironment);
+        } catch {
+          await emit('floor_rejected');
+          throw Error('Promotion floor unavailable');
+        }
+        check();
+        if (!Number.isSafeInteger(floor) || (floor as number) < 0 || !Number.isSafeInteger(local) || (local as number) < 0) {
+          await emit('floor_rejected');
+          throw Error('Invalid promotion floor');
+        }
+        if ((local as number) < (floor as number)) {
+          await emit('floor_rejected');
+          throw Error('Promotion floor rollback detected');
+        }
+        if ((local as number) > (floor as number))
+          try {
+            await anchor.advance(local as number);
+          } catch {}
+        if (details.sourceVersion <= (local as number)) {
+          await emit('floor_rejected');
+          throw Error('Source version is not newer than the promotion floor');
+        }
+        check();
+      }
+      let pkg, evidence;
+      try {
+        const path = verifyWithEvidence ? '/promotion/export-signed' : '/promotion/export',
+          raw = await tracedRequest(tracing, 'POST', path, async (headers, report) => {
+            const response = await fetch(sourceOrigin + path, {
+              method: 'POST',
+              headers: { ...headers, authorization: `Bearer ${sourceToken}`, 'content-type': 'application/json' },
+              body: JSON.stringify(
+                verifyWithEvidence
+                  ? { sourceEnvironment, version: details.sourceVersion, targetEnvironment, expectedVersion: details.expectedVersion }
+                  : { sourceEnvironment, version: details.sourceVersion }
+              ),
+              redirect: 'error',
+              signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+            });
+            report(response.status);
+            return readJson(response);
+          });
+        check();
+        if (verifyWithEvidence) {
+          const verified = verifyWithEvidence(raw, targetEnvironment, applicationId, details.expectedVersion);
+          pkg = checkPromotionPackage(verified.package, targetEnvironment, applicationId);
+          evidence = checkPromotionEvidence(pkg, targetEnvironment, verified.evidence, details.expectedVersion);
+          if (evidence.expectedVersion !== details.expectedVersion) throw Error('Unbound signature');
+        } else pkg = checkPromotionPackage(raw, targetEnvironment, applicationId);
+        if (pkg.sourceEnvironment !== sourceEnvironment || pkg.sourceVersion !== details.sourceVersion) throw Error('Unexpected source');
+      } catch {
+        check();
+        throw Error('Remote control export failed');
+      }
+      details.digest = pkg.digest;
+      await emit('source_verified');
+      check();
+      await permit('import');
+      check();
+      await emit('import_authorized');
+      check();
+      try {
+        const result = await (requireAdvancingSource
+          ? repository.promoteAdvancing!(pkg, details.expectedVersion, targetEnvironment, evidence)
+          : evidence
+            ? repository.promoteVerified!(pkg, details.expectedVersion, targetEnvironment, evidence)
+            : repository.promote!(pkg, details.expectedVersion, targetEnvironment));
+        if (
+          !result ||
+          result.version !== details.expectedVersion + 1 ||
+          createPromotionPackage(sourceEnvironment, { version: details.sourceVersion, definition: result.definition }).digest !== pkg.digest
+        )
+          throw Error('Unexpected local publication');
+        await emit('completed');
+        // The import is committed; an anchor failure here leaves the host floor behind until the next import catches it up.
+        if (anchor)
+          try {
+            await anchor.advance(details.sourceVersion);
+          } catch {}
+        return result;
+      } catch {
+        try {
+          await emit('uncertain');
+        } catch {}
+        throw new RemoteControlImportUncertainError();
+      }
+    }
+  };
+  builtinConnectors.add(connector);
+  return Object.freeze(connector);
 }

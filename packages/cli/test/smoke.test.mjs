@@ -8,13 +8,15 @@ import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import { createProject } from '../dist/index.js';
 
-test('generated app serves its workspace and definition', {timeout: 15000}, async () => {
+test('generated app serves its workspace and definition', { timeout: 15000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-smoke-'));
   let server;
   try {
     const target = await createProject('demo-app', dir);
     server = spawn(process.execPath, ['server.mjs'], {
-      cwd: target, env: {...process.env, PORT: '0'}, stdio: ['ignore', 'pipe', 'pipe']
+      cwd: target,
+      env: { ...process.env, PORT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe']
     });
     const url = await new Promise((resolve, reject) => {
       let output = '';
@@ -37,20 +39,36 @@ test('generated app serves its workspace and definition', {timeout: 15000}, asyn
     assert.match(await renderer.text(), /class A2UIRenderer/);
     // Execute the actual generated module script against a minimal DOM and the running server.
     class Element {
-      constructor(doc) { this.ownerDocument=doc; this.children=[]; this.style={}; this.dataset={}; this.textContent=''; }
-      appendChild(child) { this.children.push(child); return child; }
-      replaceChildren(...children) { this.children=children; }
+      constructor(doc) {
+        this.ownerDocument = doc;
+        this.children = [];
+        this.style = {};
+        this.dataset = {};
+        this.textContent = '';
+      }
+      appendChild(child) {
+        this.children.push(child);
+        return child;
+      }
+      replaceChildren(...children) {
+        this.children = children;
+      }
     }
-    const doc = {createElement: () => new Element(doc), getElementById: () => host};
+    const doc = { createElement: () => new Element(doc), getElementById: () => host };
     const host = new Element(doc);
     const module = await import(pathToFileURL(join(target, 'renderer.mjs')).href);
     const workspace = await import(pathToFileURL(join(target, 'workspace.mjs')).href);
     const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
     assert.ok(script);
     const executable = script.replace(/^import [^;]+;\s*/gm, '');
-    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     await new AsyncFunction('document', 'fetch', 'A2UIRenderer', 'APP_MIXER_CATALOG', 'prepareWorkspace', 'initializeOfflinePublication', executable)(
-      doc, path => fetch(new URL(path, url)), module.A2UIRenderer, module.APP_MIXER_CATALOG, workspace.prepareWorkspace, async()=>null
+      doc,
+      path => fetch(new URL(path, url)),
+      module.A2UIRenderer,
+      module.APP_MIXER_CATALOG,
+      workspace.prepareWorkspace,
+      async () => null
     );
     const rendered = host.children[0].children[0];
     assert.equal(rendered.children[0].textContent, 'Home');
@@ -65,6 +83,6 @@ test('generated app serves its workspace and definition', {timeout: 15000}, asyn
       server.kill();
       await exited;
     }
-    await rm(dir, {recursive:true, force:true});
+    await rm(dir, { recursive: true, force: true });
   }
 });

@@ -1,40 +1,264 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentRunControlHistory,registerAgentRunControl} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},other={...scope,tenantId:'other'},actor={tenantId:'tenant',principalId:'operator'},config={definitionVersion:1,maxAttempts:2,deadline:1000};
-async function serve(registry){const server=createCapabilityServer(registry,req=>req.headers.authorization==='valid'?actor:req.headers.authorization==='other'?{...actor,tenantId:'other'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));return {server,call:(input,auth='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/run-control/invoke`,{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})})};}
-async function stop(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
-test('fixed-run control enforces action policy and revisions over authenticated HTTP',async()=>{
- const runs=new SqliteAgentRuns(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event));let server;try{
-  const run=runs.create(scope,'run',config,0);runs.create(other,'run',config,0);let denyCancel=true;const options={runs,scope:{...scope},runId:'run',operationId:'run-control',path:'/run-control',clock:()=>100,authorize:(who,action,snapshot)=>{if(snapshot){assert.deepEqual(Object.keys(snapshot).sort(),['revision','runId','status']);snapshot.runId='tampered';}return who.principalId==='operator'&&(action!=='cancel'||!denyCancel);}};registerAgentRunControl(registry,options);options.scope.tenantId='other';options.runId='changed';options.authorize=()=>false;const app=await serve(registry);server=app.server;
-  assert.equal((await app.call({action:'pause',revision:run.revision},'bad')).status,401);assert.equal((await app.call({action:'pause',revision:run.revision},'other')).status,403);assert.equal((await app.call({action:'pause',revision:run.revision,runId:'other'})).status,400);assert.equal((await app.call({action:'cancel',revision:run.revision})).status,403);let response=await app.call({action:'pause',revision:run.revision});assert.equal(response.status,200);let body=(await response.json()).result;assert.deepEqual(body,{runId:'run',revision:run.revision+1,status:'paused',archived:false});assert.equal((await app.call({action:'resume',revision:run.revision})).status,409);response=await app.call({action:'resume',revision:body.revision});assert.equal(response.status,200);body=(await response.json()).result;assert.equal(body.status,'queued');denyCancel=false;response=await app.call({action:'cancel',revision:body.revision});assert.equal(response.status,200);body=(await response.json()).result;assert.equal(body.status,'cancelled');assert.equal((await app.call({action:'resume',revision:body.revision})).status,409);assert.equal(runs.get(other,'run').status,'queued');assert.ok(events.some(event=>event.outcome==='succeeded'));
- }finally{if(server)await stop(server);runs.close();}
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import { SqliteAgentRuns, SqliteAgentRunControlHistory, registerAgentRunControl } from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  other = { ...scope, tenantId: 'other' },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  config = { definitionVersion: 1, maxAttempts: 2, deadline: 1000 };
+async function serve(registry) {
+  const server = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    call: (input, auth = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/run-control/invoke`, {
+        method: 'POST',
+        headers: { authorization: auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      })
+  };
+}
+async function stop(server) {
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+}
+test('fixed-run control enforces action policy and revisions over authenticated HTTP', async () => {
+  const runs = new SqliteAgentRuns(':memory:'),
+    events = [],
+    registry = new CapabilityRegistry(event => events.push(event));
+  let server;
+  try {
+    const run = runs.create(scope, 'run', config, 0);
+    runs.create(other, 'run', config, 0);
+    let denyCancel = true;
+    const options = {
+      runs,
+      scope: { ...scope },
+      runId: 'run',
+      operationId: 'run-control',
+      path: '/run-control',
+      clock: () => 100,
+      authorize: (who, action, snapshot) => {
+        if (snapshot) {
+          assert.deepEqual(Object.keys(snapshot).sort(), ['revision', 'runId', 'status']);
+          snapshot.runId = 'tampered';
+        }
+        return who.principalId === 'operator' && (action !== 'cancel' || !denyCancel);
+      }
+    };
+    registerAgentRunControl(registry, options);
+    options.scope.tenantId = 'other';
+    options.runId = 'changed';
+    options.authorize = () => false;
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ action: 'pause', revision: run.revision }, 'bad')).status, 401);
+    assert.equal((await app.call({ action: 'pause', revision: run.revision }, 'other')).status, 403);
+    assert.equal((await app.call({ action: 'pause', revision: run.revision, runId: 'other' })).status, 400);
+    assert.equal((await app.call({ action: 'cancel', revision: run.revision })).status, 403);
+    let response = await app.call({ action: 'pause', revision: run.revision });
+    assert.equal(response.status, 200);
+    let body = (await response.json()).result;
+    assert.deepEqual(body, { runId: 'run', revision: run.revision + 1, status: 'paused', archived: false });
+    assert.equal((await app.call({ action: 'resume', revision: run.revision })).status, 409);
+    response = await app.call({ action: 'resume', revision: body.revision });
+    assert.equal(response.status, 200);
+    body = (await response.json()).result;
+    assert.equal(body.status, 'queued');
+    denyCancel = false;
+    response = await app.call({ action: 'cancel', revision: body.revision });
+    assert.equal(response.status, 200);
+    body = (await response.json()).result;
+    assert.equal(body.status, 'cancelled');
+    assert.equal((await app.call({ action: 'resume', revision: body.revision })).status, 409);
+    assert.equal(runs.get(other, 'run').status, 'queued');
+    assert.ok(events.some(event => event.outcome === 'succeeded'));
+  } finally {
+    if (server) await stop(server);
+    runs.close();
+  }
 });
-test('control bounds pending policies and fences late or stale authorizations',async()=>{
- for(const mode of ['timeout','stale']){const runs=new SqliteAgentRuns(':memory:'),registry=new CapabilityRegistry(()=>{});let server,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{
-  const run=runs.create(scope,'run',config,0);registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>100,timeoutMs:100,maxPending:1,authorize:async(_who,action,_run,s)=>{if(action==='pause'&&block){if(mode==='stale'){block=false;runs.request(scope,'run',run.revision,'cancel',100);return true;}signal=s;entered();await gate;}return true;}});const app=await serve(registry);server=app.server;if(mode==='stale'){assert.equal((await app.call({action:'pause',revision:run.revision})).status,409);assert.equal(runs.get(scope,'run').status,'cancelled');}else{const response=app.call({action:'pause',revision:run.revision});await ready;assert.equal((await response).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call({action:'pause',revision:run.revision})).status,503);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(runs.get(scope,'run').status,'queued');assert.equal((await app.call({action:'pause',revision:run.revision})).status,200);}
- }finally{release();if(server)await stop(server);runs.close();}}
+test('control bounds pending policies and fences late or stale authorizations', async () => {
+  for (const mode of ['timeout', 'stale']) {
+    const runs = new SqliteAgentRuns(':memory:'),
+      registry = new CapabilityRegistry(() => {});
+    let server,
+      release,
+      entered,
+      signal,
+      block = true;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve));
+    try {
+      const run = runs.create(scope, 'run', config, 0);
+      registerAgentRunControl(registry, {
+        runs,
+        scope,
+        runId: 'run',
+        operationId: 'run-control',
+        path: '/run-control',
+        clock: () => 100,
+        timeoutMs: 100,
+        maxPending: 1,
+        authorize: async (_who, action, _run, s) => {
+          if (action === 'pause' && block) {
+            if (mode === 'stale') {
+              block = false;
+              runs.request(scope, 'run', run.revision, 'cancel', 100);
+              return true;
+            }
+            signal = s;
+            entered();
+            await gate;
+          }
+          return true;
+        }
+      });
+      const app = await serve(registry);
+      server = app.server;
+      if (mode === 'stale') {
+        assert.equal((await app.call({ action: 'pause', revision: run.revision })).status, 409);
+        assert.equal(runs.get(scope, 'run').status, 'cancelled');
+      } else {
+        const response = app.call({ action: 'pause', revision: run.revision });
+        await ready;
+        assert.equal((await response).status, 503);
+        assert.equal(signal.aborted, true);
+        assert.equal((await app.call({ action: 'pause', revision: run.revision })).status, 503);
+        block = false;
+        release();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(runs.get(scope, 'run').status, 'queued');
+        assert.equal((await app.call({ action: 'pause', revision: run.revision })).status, 200);
+      }
+    } finally {
+      release();
+      if (server) await stop(server);
+      runs.close();
+    }
+  }
 });
-test('a lost completion audit leaves an active worker pause request visible and fences replay',async()=>{
- const runs=new SqliteAgentRuns(':memory:'),registry=new CapabilityRegistry(event=>{if(event.outcome==='succeeded')throw Error('audit unavailable');});let server;try{
-  const queued=runs.create(scope,'run',config,0),claimed=runs.claim(scope,'run',queued.revision,'worker',100,10);registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>20,authorize:()=>true});const app=await serve(registry);server=app.server;const response=await app.call({action:'pause',revision:claimed.revision});assert.equal(response.status,503);assert.equal((await response.json()).code,'CAPABILITY_OUTCOME_UNCERTAIN');const pending=runs.get(scope,'run');assert.equal(pending.status,'pause_requested');assert.equal((await app.call({action:'pause',revision:claimed.revision})).status,409);assert.equal(runs.settle(scope,'run',pending.revision,claimed.leaseToken,'stopped',30).status,'paused');
- }finally{if(server)await stop(server);runs.close();}
+test('a lost completion audit leaves an active worker pause request visible and fences replay', async () => {
+  const runs = new SqliteAgentRuns(':memory:'),
+    registry = new CapabilityRegistry(event => {
+      if (event.outcome === 'succeeded') throw Error('audit unavailable');
+    });
+  let server;
+  try {
+    const queued = runs.create(scope, 'run', config, 0),
+      claimed = runs.claim(scope, 'run', queued.revision, 'worker', 100, 10);
+    registerAgentRunControl(registry, { runs, scope, runId: 'run', operationId: 'run-control', path: '/run-control', clock: () => 20, authorize: () => true });
+    const app = await serve(registry);
+    server = app.server;
+    const response = await app.call({ action: 'pause', revision: claimed.revision });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, 'CAPABILITY_OUTCOME_UNCERTAIN');
+    const pending = runs.get(scope, 'run');
+    assert.equal(pending.status, 'pause_requested');
+    assert.equal((await app.call({ action: 'pause', revision: claimed.revision })).status, 409);
+    assert.equal(runs.settle(scope, 'run', pending.revision, claimed.leaseToken, 'stopped', 30).status, 'paused');
+  } finally {
+    if (server) await stop(server);
+    runs.close();
+  }
 });
-test('control does not bypass the deadline when resuming a paused run',async()=>{
- const runs=new SqliteAgentRuns(':memory:'),registry=new CapabilityRegistry(()=>{});let server;try{const queued=runs.create(scope,'run',config,0),paused=runs.request(scope,'run',queued.revision,'pause',100);registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>1000,authorize:()=>true});const app=await serve(registry);server=app.server;assert.equal((await app.call({action:'resume',revision:paused.revision})).status,409);assert.equal(runs.get(scope,'run').status,'paused');}finally{if(server)await stop(server);runs.close();}
+test('control does not bypass the deadline when resuming a paused run', async () => {
+  const runs = new SqliteAgentRuns(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let server;
+  try {
+    const queued = runs.create(scope, 'run', config, 0),
+      paused = runs.request(scope, 'run', queued.revision, 'pause', 100);
+    registerAgentRunControl(registry, { runs, scope, runId: 'run', operationId: 'run-control', path: '/run-control', clock: () => 1000, authorize: () => true });
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ action: 'resume', revision: paused.revision })).status, 409);
+    assert.equal(runs.get(scope, 'run').status, 'paused');
+  } finally {
+    if (server) await stop(server);
+    runs.close();
+  }
 });
-test('control evidence is atomic, immutable, tenant scoped and reauthorized',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'run-control-audit-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),registry=new CapabilityRegistry(()=>{}),db=new DatabaseSync(path);let server,history;try{
-  const first=runs.create(scope,'run',config,0),foreign=runs.create(other,'run',config,0);runs.request(other,'run',foreign.revision,'pause',100,{principalId:'foreign'});registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>100,authorize:()=>true});const app=await serve(registry);server=app.server;
-  db.exec("CREATE TRIGGER fail_control_evidence BEFORE INSERT ON agent_run_control_audit WHEN NEW.tenant_id='tenant' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");assert.equal((await app.call({action:'pause',revision:first.revision})).status,500);assert.equal(runs.get(scope,'run').status,'queued');assert.equal(runs.get(scope,'run').revision,first.revision);db.exec('DROP TRIGGER fail_control_evidence');assert.equal((await app.call({action:'pause',revision:first.revision})).status,200);assert.throws(()=>db.exec("UPDATE agent_run_control_audit SET actor_id='forged'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_run_control_audit'),/immutable/);assert.throws(()=>db.exec('INSERT OR REPLACE INTO agent_run_control_audit SELECT * FROM agent_run_control_audit'),/immutable/);
-  history=new SqliteAgentRunControlHistory(path,{scope,authorize:()=>true});assert.deepEqual((await history.list({tenantId:'tenant',principalId:'auditor'})).items,[{id:1,runId:'run',revision:2,action:'pause',previousStatus:'queued',status:'paused',principalId:'operator',observedAt:100}]);await assert.rejects(history.list({tenantId:'other',principalId:'auditor'}),/actor/);history.close();let reads=0;history=new SqliteAgentRunControlHistory(path,{scope,authorize:(_actor,action)=>action==='list'||++reads===1});await assert.rejects(history.list({tenantId:'tenant',principalId:'auditor'}),/access denied/);
- }finally{history?.close();if(server)await stop(server);db.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('control evidence is atomic, immutable, tenant scoped and reauthorized', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'run-control-audit-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    registry = new CapabilityRegistry(() => {}),
+    db = new DatabaseSync(path);
+  let server, history;
+  try {
+    const first = runs.create(scope, 'run', config, 0),
+      foreign = runs.create(other, 'run', config, 0);
+    runs.request(other, 'run', foreign.revision, 'pause', 100, { principalId: 'foreign' });
+    registerAgentRunControl(registry, { runs, scope, runId: 'run', operationId: 'run-control', path: '/run-control', clock: () => 100, authorize: () => true });
+    const app = await serve(registry);
+    server = app.server;
+    db.exec("CREATE TRIGGER fail_control_evidence BEFORE INSERT ON agent_run_control_audit WHEN NEW.tenant_id='tenant' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+    assert.equal((await app.call({ action: 'pause', revision: first.revision })).status, 500);
+    assert.equal(runs.get(scope, 'run').status, 'queued');
+    assert.equal(runs.get(scope, 'run').revision, first.revision);
+    db.exec('DROP TRIGGER fail_control_evidence');
+    assert.equal((await app.call({ action: 'pause', revision: first.revision })).status, 200);
+    assert.throws(() => db.exec("UPDATE agent_run_control_audit SET actor_id='forged'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM agent_run_control_audit'), /immutable/);
+    assert.throws(() => db.exec('INSERT OR REPLACE INTO agent_run_control_audit SELECT * FROM agent_run_control_audit'), /immutable/);
+    history = new SqliteAgentRunControlHistory(path, { scope, authorize: () => true });
+    assert.deepEqual((await history.list({ tenantId: 'tenant', principalId: 'auditor' })).items, [
+      { id: 1, runId: 'run', revision: 2, action: 'pause', previousStatus: 'queued', status: 'paused', principalId: 'operator', observedAt: 100 }
+    ]);
+    await assert.rejects(history.list({ tenantId: 'other', principalId: 'auditor' }), /actor/);
+    history.close();
+    let reads = 0;
+    history = new SqliteAgentRunControlHistory(path, { scope, authorize: (_actor, action) => action === 'list' || ++reads === 1 });
+    await assert.rejects(history.list({ tenantId: 'tenant', principalId: 'auditor' }), /access denied/);
+  } finally {
+    history?.close();
+    if (server) await stop(server);
+    db.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
-test('archiving a terminal run is separately authorized and commits actor evidence',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'run-archive-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),registry=new CapabilityRegistry(()=>{});let server,history,allow=false;try{const queued=runs.create(scope,'run',config,0);assert.throws(()=>runs.archive(scope,'run',queued.revision,10,{principalId:'operator'}),/Invalid run state/);const terminal=runs.request(scope,'run',queued.revision,'cancel',10);registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'run-control',path:'/run-control',clock:()=>100,authorize:(_who,action)=>action!=='archive'||allow});const app=await serve(registry);server=app.server;assert.equal((await app.call({action:'archive',revision:terminal.revision})).status,403);assert.equal(runs.get(scope,'run').archived,false);allow=true;const response=await app.call({action:'archive',revision:terminal.revision});assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{runId:'run',revision:terminal.revision+1,status:'cancelled',archived:true});assert.equal((await app.call({action:'archive',revision:terminal.revision})).status,409);history=new SqliteAgentRunControlHistory(path,{scope,authorize:()=>true});assert.deepEqual((await history.list({tenantId:'tenant',principalId:'auditor'})).items.map(event=>[event.action,event.previousStatus,event.status,event.principalId]),[['archive','cancelled','cancelled','operator']]);}finally{history?.close();if(server)await stop(server);runs.close();rmSync(dir,{recursive:true,force:true});}
+test('archiving a terminal run is separately authorized and commits actor evidence', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'run-archive-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    history,
+    allow = false;
+  try {
+    const queued = runs.create(scope, 'run', config, 0);
+    assert.throws(() => runs.archive(scope, 'run', queued.revision, 10, { principalId: 'operator' }), /Invalid run state/);
+    const terminal = runs.request(scope, 'run', queued.revision, 'cancel', 10);
+    registerAgentRunControl(registry, { runs, scope, runId: 'run', operationId: 'run-control', path: '/run-control', clock: () => 100, authorize: (_who, action) => action !== 'archive' || allow });
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ action: 'archive', revision: terminal.revision })).status, 403);
+    assert.equal(runs.get(scope, 'run').archived, false);
+    allow = true;
+    const response = await app.call({ action: 'archive', revision: terminal.revision });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { runId: 'run', revision: terminal.revision + 1, status: 'cancelled', archived: true });
+    assert.equal((await app.call({ action: 'archive', revision: terminal.revision })).status, 409);
+    history = new SqliteAgentRunControlHistory(path, { scope, authorize: () => true });
+    assert.deepEqual(
+      (await history.list({ tenantId: 'tenant', principalId: 'auditor' })).items.map(event => [event.action, event.previousStatus, event.status, event.principalId]),
+      [['archive', 'cancelled', 'cancelled', 'operator']]
+    );
+  } finally {
+    history?.close();
+    if (server) await stop(server);
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

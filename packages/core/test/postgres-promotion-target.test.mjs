@@ -1,41 +1,339 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID,generateKeyPairSync,createHash} from 'node:crypto';
-import {once} from 'node:events';
+import { randomUUID, generateKeyPairSync, createHash } from 'node:crypto';
+import { once } from 'node:events';
 import pg from 'pg';
-import {ApplicationStore,PostgresPromotionTarget,PostgresRemoteRollout,createControlPlane,createDataPlane,createRemoteControlConnector,createPromotionPackage,signPromotionPackage,createSignedPromotionVerifier} from '../dist/index.js';
+import {
+  ApplicationStore,
+  PostgresPromotionTarget,
+  PostgresRemoteRollout,
+  createControlPlane,
+  createDataPlane,
+  createRemoteControlConnector,
+  createPromotionPackage,
+  signPromotionPackage,
+  createSignedPromotionVerifier
+} from '../dist/index.js';
 
-const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+const definition = { id: 'demo', schemaVersion: 1, revision: 0, pages: [] },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  token = 'source-secret-at-least-32-characters-long';
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const value = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return value;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
 
-test('shared promotion target rejects invalid configuration',()=>{assert.throws(()=>new PostgresPromotionTarget({}),/configuration/);});
+test('shared promotion target rejects invalid configuration', () => {
+  assert.throws(() => new PostgresPromotionTarget({}), /configuration/);
+});
 
-test('shared promotion target refuses invalid or unbound input before database access',async()=>{
- let calls=0;const {privateKey,publicKey}=generateKeyPairSync('ed25519'),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),pkg=createPromotionPackage('dev',{version:Number.MAX_SAFE_INTEGER,definition}),evidence=verifier.verifyWithEvidence(signPromotionPackage(pkg,'prod','key',privateKey,0),'prod','demo',0).evidence,target=new PostgresPromotionTarget({enabled:true,tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod',query:async()=>{calls++;throw Error('unexpected query')},transaction:async()=>{calls++;throw Error('unexpected transaction')},authorizeSignature:()=>true});await assert.rejects(target.promoteAdvancing(pkg,0,'prod',evidence),/Invalid promotion environment/);await assert.rejects(target.promote(pkg,0,'prod'),/Invalid promotion/);assert.equal(calls,0);
+test('shared promotion target refuses invalid or unbound input before database access', async () => {
+  let calls = 0;
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
+    verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
+    pkg = createPromotionPackage('dev', { version: Number.MAX_SAFE_INTEGER, definition }),
+    evidence = verifier.verifyWithEvidence(signPromotionPackage(pkg, 'prod', 'key', privateKey, 0), 'prod', 'demo', 0).evidence,
+    target = new PostgresPromotionTarget({
+      enabled: true,
+      tenantId: 'tenant',
+      applicationId: 'demo',
+      sourceEnvironment: 'dev',
+      targetEnvironment: 'prod',
+      query: async () => {
+        calls++;
+        throw Error('unexpected query');
+      },
+      transaction: async () => {
+        calls++;
+        throw Error('unexpected transaction');
+      },
+      authorizeSignature: () => true
+    });
+  await assert.rejects(target.promoteAdvancing(pkg, 0, 'prod', evidence), /Invalid promotion environment/);
+  await assert.rejects(target.promote(pkg, 0, 'prod'), /Invalid promotion/);
+  assert.equal(calls, 0);
 });
 
 // FIX-029: an unchanged draft publishes no new version, so every further version in these tests follows a draft change.
-const publishNext=store=>{const draft=store.getDraft();store.apply(draft.revision,[{op:'addPage',page:{id:`page-${draft.revision}`,route:`/page-${draft.revision}`,title:`Page ${draft.revision}`,components:[]}}]);return store.publish(draft.revision+1);};
-test('shared signed promotions are atomic, isolated and usable by remote rollouts and Data Planes',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
- const schema='promotion_target_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),source=new ApplicationStore(definition);source.publish(0);
- const {privateKey,publicKey}=generateKeyPairSync('ed25519'),fingerprint=createHash('sha256').update(publicKey.export({type:'spki',format:'der'})).digest('hex'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),control=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);let plane,slowPlane,slowRelease,release,entered,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
- try{
-  control.listen(0,'127.0.0.1');await once(control,'listening');await admin.query(`CREATE SCHEMA "${schema}"`);const config=pool=>({enabled:true,tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod',query:(sql,args)=>pool.query(sql,args),queryWithSignal:(sql,args,signal)=>{signal.throwIfAborted();return pool.query(sql,args);},transaction:transaction(pool),authorizeSignature:evidence=>evidence.keyFingerprint===fingerprint});const first=new PostgresPromotionTarget(config(a)),second=new PostgresPromotionTarget(config(b)),other=new PostgresPromotionTarget({...config(a),tenantId:'other'});await first.initialize();await second.initialize();await other.initialize();
-  const connector=target=>createRemoteControlConnector({sourceOrigin:`http://127.0.0.1:${control.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},discovery:{authorize:async()=>{if(block){entered();await gate;}return true},audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence});const rollout1=new PostgresRemoteRollout({enabled:true,actor,connector:connector(first),query:(sql,args)=>a.query(sql,args)}),rollout2=new PostgresRemoteRollout({enabled:true,actor,connector:connector(second),query:(sql,args)=>b.query(sql,args)});await rollout1.initialize();await rollout2.initialize();
-  const pending=rollout1.runOnce();await ready;await assert.rejects(rollout2.runOnce(),/recovery/);block=false;release();assert.equal((await pending).status,'imported');assert.equal((await second.getPublished()).version,1);assert.equal((await second.getPublishedWithSignal(undefined,new AbortController().signal)).version,1);const aborted=new AbortController();aborted.abort();await assert.rejects(second.getPublishedWithSignal(undefined,aborted.signal),error=>error.name==='AbortError');assert.equal(await other.getPublished(),undefined);assert.equal((await rollout2.runOnce()).status,'unchanged');assert.equal((await first.getPublicationProvenance(1)).signature.keyId,'key');
-  plane=createDataPlane(second,{health:{timeoutMs:1000},publicationReadLimits:{timeoutMs:1000,maxPending:2}});plane.listen(0,'127.0.0.1');await once(plane,'listening');const base=`http://127.0.0.1:${plane.address().port}`;assert.equal((await fetch(base+'/health/ready')).status,200);assert.equal((await (await fetch(base+'/application')).json()).version,1);
-  publishNext(source);const pkg=createPromotionPackage('dev',source.getPublished()),signed=signer(pkg,'prod',1),evidence=verifier.verifyWithEvidence(signed,'prod','demo',1).evidence;const attempts=await Promise.allSettled([first.promoteAdvancing(pkg,1,'prod',evidence),second.promoteAdvancing(pkg,1,'prod',evidence)]);assert.equal(attempts.filter(result=>result.status==='fulfilled').length,1);assert.match(attempts.find(result=>result.status==='rejected').reason.message,/version conflict/);assert.equal((await first.getPublished()).version,2);assert.equal(await second.getPromotionFloor('dev','prod'),2);
-  let slowEntered,slow=true;const slowReady=new Promise(resolve=>slowEntered=resolve),slowGate=new Promise(resolve=>slowRelease=resolve),slowTarget=new PostgresPromotionTarget({...config(b),queryWithSignal:undefined,query:async(sql,args)=>{if(slow&&sql.includes('FROM app_mixer_promoted_publications')){slowEntered();await b.query('SELECT pg_sleep(0.5)');await slowGate;}return b.query(sql,args);}});slowPlane=createDataPlane(slowTarget,{health:{timeoutMs:1000},publicationReadLimits:{timeoutMs:100,maxPending:1}});slowPlane.listen(0,'127.0.0.1');await once(slowPlane,'listening');const slowBase=`http://127.0.0.1:${slowPlane.address().port}`,timed=fetch(slowBase+'/application');await slowReady;assert.equal((await timed).status,503);assert.equal((await fetch(slowBase+'/application')).status,503);assert.equal((await fetch(slowBase+'/health/live')).status,200);slow=false;slowRelease();let recovered;for(let i=0;i<500;i++){recovered=await fetch(slowBase+'/application');if(recovered.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(recovered.status,200);assert.equal((await recovered.json()).version,2);
-  const replayEvidence=verifier.verifyWithEvidence(signer(pkg,'prod',2),'prod','demo',2).evidence;await assert.rejects(first.promoteAdvancing(pkg,2,'prod',replayEvidence),/did not advance/);await assert.rejects(first.promote(pkg,2,'prod'),/Invalid promotion/);
-  const rogue=generateKeyPairSync('ed25519'),rogueVerifier=createSignedPromotionVerifier([{keyId:'rogue',sourceEnvironment:'dev',publicKey:rogue.publicKey}],'prod',{requireVersionBound:true}),rogueEvidence=rogueVerifier.verifyWithEvidence(signPromotionPackage(pkg,'prod','rogue',rogue.privateKey,2),'prod','demo',2).evidence;await assert.rejects(first.promoteAdvancing(pkg,2,'prod',rogueEvidence),/not authorized/);await assert.rejects(a.query("UPDATE app_mixer_promoted_publications SET definition='{}'"),/immutable/);await assert.rejects(a.query('DELETE FROM app_mixer_promoted_publications'),/immutable/);await assert.rejects(a.query('TRUNCATE app_mixer_promoted_publications'),/immutable/);
-  publishNext(source);const third=createPromotionPackage('dev',source.getPublished()),thirdEvidence=verifier.verifyWithEvidence(signer(third,'prod',2),'prod','demo',2).evidence;let allowed=true,policyChecks=0,policyEntered,policyRelease;const policyReady=new Promise(resolve=>policyEntered=resolve),policyGate=new Promise(resolve=>policyRelease=resolve),racing=new PostgresPromotionTarget({...config(a),authorizeSignature:async evidence=>{if(++policyChecks===2){policyEntered();await policyGate;}return allowed&&evidence.keyFingerprint===fingerprint;}}),policyPending=racing.promoteAdvancing(third,2,'prod',thirdEvidence);await policyReady;allowed=false;policyRelease();await assert.rejects(policyPending,/not authorized/);assert.equal((await first.getPublished()).version,2);
-  await a.query("CREATE FUNCTION reject_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'storage unavailable'; END $$");await a.query('CREATE TRIGGER reject_publication BEFORE INSERT ON app_mixer_promoted_publications FOR EACH ROW EXECUTE FUNCTION reject_publication()');await assert.rejects(first.promoteAdvancing(third,2,'prod',thirdEvidence),/storage unavailable/);assert.equal((await first.getPublished()).version,2);assert.equal(await first.getPromotionFloor('dev','prod'),2);
-  control.closeAllConnections();await new Promise(resolve=>control.close(resolve));assert.equal((await (await fetch(base+'/application')).json()).version,2);
- }finally{slowRelease?.();release?.();if(slowPlane){slowPlane.closeAllConnections();if(slowPlane.listening)await new Promise(resolve=>slowPlane.close(resolve));}if(plane){plane.closeAllConnections();if(plane.listening)await new Promise(resolve=>plane.close(resolve));}control.closeAllConnections();if(control.listening)await new Promise(resolve=>control.close(resolve));await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+const publishNext = store => {
+  const draft = store.getDraft();
+  store.apply(draft.revision, [{ op: 'addPage', page: { id: `page-${draft.revision}`, route: `/page-${draft.revision}`, title: `Page ${draft.revision}`, components: [] } }]);
+  return store.publish(draft.revision + 1);
+};
+test('shared signed promotions are atomic, isolated and usable by remote rollouts and Data Planes', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 60000 }, async () => {
+  const schema = 'promotion_target_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    a = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    b = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    source = new ApplicationStore(definition);
+  source.publish(0);
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
+    fingerprint = createHash('sha256')
+      .update(publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex'),
+    signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
+    verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
+    control = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+  let plane,
+    slowPlane,
+    slowRelease,
+    release,
+    entered,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    control.listen(0, '127.0.0.1');
+    await once(control, 'listening');
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = pool => ({
+      enabled: true,
+      tenantId: 'tenant',
+      applicationId: 'demo',
+      sourceEnvironment: 'dev',
+      targetEnvironment: 'prod',
+      query: (sql, args) => pool.query(sql, args),
+      queryWithSignal: (sql, args, signal) => {
+        signal.throwIfAborted();
+        return pool.query(sql, args);
+      },
+      transaction: transaction(pool),
+      authorizeSignature: evidence => evidence.keyFingerprint === fingerprint
+    });
+    const first = new PostgresPromotionTarget(config(a)),
+      second = new PostgresPromotionTarget(config(b)),
+      other = new PostgresPromotionTarget({ ...config(a), tenantId: 'other' });
+    await first.initialize();
+    await second.initialize();
+    await other.initialize();
+    const connector = target =>
+      createRemoteControlConnector({
+        sourceOrigin: `http://127.0.0.1:${control.address().port}`,
+        sourceToken: token,
+        sourceEnvironment: 'dev',
+        targetEnvironment: 'prod',
+        applicationId: 'demo',
+        repository: target,
+        allowLoopbackHttp: true,
+        authorize: () => true,
+        audit: () => {},
+        discovery: {
+          authorize: async () => {
+            if (block) {
+              entered();
+              await gate;
+            }
+            return true;
+          },
+          audit: () => {}
+        },
+        requireAdvancingSource: true,
+        verifyWithEvidence: verifier.verifyWithEvidence
+      });
+    const rollout1 = new PostgresRemoteRollout({ enabled: true, actor, connector: connector(first), query: (sql, args) => a.query(sql, args) }),
+      rollout2 = new PostgresRemoteRollout({ enabled: true, actor, connector: connector(second), query: (sql, args) => b.query(sql, args) });
+    await rollout1.initialize();
+    await rollout2.initialize();
+    const pending = rollout1.runOnce();
+    await ready;
+    await assert.rejects(rollout2.runOnce(), /recovery/);
+    block = false;
+    release();
+    assert.equal((await pending).status, 'imported');
+    assert.equal((await second.getPublished()).version, 1);
+    assert.equal((await second.getPublishedWithSignal(undefined, new AbortController().signal)).version, 1);
+    const aborted = new AbortController();
+    aborted.abort();
+    await assert.rejects(second.getPublishedWithSignal(undefined, aborted.signal), error => error.name === 'AbortError');
+    assert.equal(await other.getPublished(), undefined);
+    assert.equal((await rollout2.runOnce()).status, 'unchanged');
+    assert.equal((await first.getPublicationProvenance(1)).signature.keyId, 'key');
+    plane = createDataPlane(second, { health: { timeoutMs: 1000 }, publicationReadLimits: { timeoutMs: 1000, maxPending: 2 } });
+    plane.listen(0, '127.0.0.1');
+    await once(plane, 'listening');
+    const base = `http://127.0.0.1:${plane.address().port}`;
+    assert.equal((await fetch(base + '/health/ready')).status, 200);
+    assert.equal((await (await fetch(base + '/application')).json()).version, 1);
+    publishNext(source);
+    const pkg = createPromotionPackage('dev', source.getPublished()),
+      signed = signer(pkg, 'prod', 1),
+      evidence = verifier.verifyWithEvidence(signed, 'prod', 'demo', 1).evidence;
+    const attempts = await Promise.allSettled([first.promoteAdvancing(pkg, 1, 'prod', evidence), second.promoteAdvancing(pkg, 1, 'prod', evidence)]);
+    assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1);
+    assert.match(attempts.find(result => result.status === 'rejected').reason.message, /version conflict/);
+    assert.equal((await first.getPublished()).version, 2);
+    assert.equal(await second.getPromotionFloor('dev', 'prod'), 2);
+    let slowEntered,
+      slow = true;
+    const slowReady = new Promise(resolve => (slowEntered = resolve)),
+      slowGate = new Promise(resolve => (slowRelease = resolve)),
+      slowTarget = new PostgresPromotionTarget({
+        ...config(b),
+        queryWithSignal: undefined,
+        query: async (sql, args) => {
+          if (slow && sql.includes('FROM app_mixer_promoted_publications')) {
+            slowEntered();
+            await b.query('SELECT pg_sleep(0.5)');
+            await slowGate;
+          }
+          return b.query(sql, args);
+        }
+      });
+    slowPlane = createDataPlane(slowTarget, { health: { timeoutMs: 1000 }, publicationReadLimits: { timeoutMs: 100, maxPending: 1 } });
+    slowPlane.listen(0, '127.0.0.1');
+    await once(slowPlane, 'listening');
+    const slowBase = `http://127.0.0.1:${slowPlane.address().port}`,
+      timed = fetch(slowBase + '/application');
+    await slowReady;
+    assert.equal((await timed).status, 503);
+    assert.equal((await fetch(slowBase + '/application')).status, 503);
+    assert.equal((await fetch(slowBase + '/health/live')).status, 200);
+    slow = false;
+    slowRelease();
+    let recovered;
+    for (let i = 0; i < 500; i++) {
+      recovered = await fetch(slowBase + '/application');
+      if (recovered.status !== 503) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(recovered.status, 200);
+    assert.equal((await recovered.json()).version, 2);
+    const replayEvidence = verifier.verifyWithEvidence(signer(pkg, 'prod', 2), 'prod', 'demo', 2).evidence;
+    await assert.rejects(first.promoteAdvancing(pkg, 2, 'prod', replayEvidence), /did not advance/);
+    await assert.rejects(first.promote(pkg, 2, 'prod'), /Invalid promotion/);
+    const rogue = generateKeyPairSync('ed25519'),
+      rogueVerifier = createSignedPromotionVerifier([{ keyId: 'rogue', sourceEnvironment: 'dev', publicKey: rogue.publicKey }], 'prod', { requireVersionBound: true }),
+      rogueEvidence = rogueVerifier.verifyWithEvidence(signPromotionPackage(pkg, 'prod', 'rogue', rogue.privateKey, 2), 'prod', 'demo', 2).evidence;
+    await assert.rejects(first.promoteAdvancing(pkg, 2, 'prod', rogueEvidence), /not authorized/);
+    await assert.rejects(a.query("UPDATE app_mixer_promoted_publications SET definition='{}'"), /immutable/);
+    await assert.rejects(a.query('DELETE FROM app_mixer_promoted_publications'), /immutable/);
+    await assert.rejects(a.query('TRUNCATE app_mixer_promoted_publications'), /immutable/);
+    publishNext(source);
+    const third = createPromotionPackage('dev', source.getPublished()),
+      thirdEvidence = verifier.verifyWithEvidence(signer(third, 'prod', 2), 'prod', 'demo', 2).evidence;
+    let allowed = true,
+      policyChecks = 0,
+      policyEntered,
+      policyRelease;
+    const policyReady = new Promise(resolve => (policyEntered = resolve)),
+      policyGate = new Promise(resolve => (policyRelease = resolve)),
+      racing = new PostgresPromotionTarget({
+        ...config(a),
+        authorizeSignature: async evidence => {
+          if (++policyChecks === 2) {
+            policyEntered();
+            await policyGate;
+          }
+          return allowed && evidence.keyFingerprint === fingerprint;
+        }
+      }),
+      policyPending = racing.promoteAdvancing(third, 2, 'prod', thirdEvidence);
+    await policyReady;
+    allowed = false;
+    policyRelease();
+    await assert.rejects(policyPending, /not authorized/);
+    assert.equal((await first.getPublished()).version, 2);
+    await a.query("CREATE FUNCTION reject_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'storage unavailable'; END $$");
+    await a.query('CREATE TRIGGER reject_publication BEFORE INSERT ON app_mixer_promoted_publications FOR EACH ROW EXECUTE FUNCTION reject_publication()');
+    await assert.rejects(first.promoteAdvancing(third, 2, 'prod', thirdEvidence), /storage unavailable/);
+    assert.equal((await first.getPublished()).version, 2);
+    assert.equal(await first.getPromotionFloor('dev', 'prod'), 2);
+    control.closeAllConnections();
+    await new Promise(resolve => control.close(resolve));
+    assert.equal((await (await fetch(base + '/application')).json()).version, 2);
+  } finally {
+    slowRelease?.();
+    release?.();
+    if (slowPlane) {
+      slowPlane.closeAllConnections();
+      if (slowPlane.listening) await new Promise(resolve => slowPlane.close(resolve));
+    }
+    if (plane) {
+      plane.closeAllConnections();
+      if (plane.listening) await new Promise(resolve => plane.close(resolve));
+    }
+    control.closeAllConnections();
+    if (control.listening) await new Promise(resolve => control.close(resolve));
+    await Promise.allSettled([a.end(), b.end()]);
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('shared promotion target passes cancellation to host query and discards late fallback results',async()=>{
- for(const mode of ['cancellable','fallback']){let release,entered,calls=0,observed;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),query=async(_sql,args)=>{calls++;assert.deepEqual(args,['tenant','demo','prod',1]);entered();await gate;return {rows:[]};},target=new PostgresPromotionTarget({enabled:true,tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod',query,...(mode==='cancellable'?{queryWithSignal:async(sql,args,signal)=>{observed=signal;return query(sql,args);}}:{}),transaction:async()=>{},authorizeSignature:()=>true}),controller=new AbortController();try{const pending=target.getPublishedWithSignal(1,controller.signal);await ready;controller.abort();release();await assert.rejects(pending,error=>error.name==='AbortError');assert.equal(calls,1);if(mode==='cancellable')assert.equal(observed,controller.signal);await assert.rejects(target.getPublishedWithSignal(1,controller.signal),error=>error.name==='AbortError');await assert.rejects(target.getPublishedWithSignal(0,new AbortController().signal),/Invalid version/);await assert.rejects(target.getPublishedWithSignal(1,undefined),/Invalid publication signal/);assert.equal(calls,1);
- }finally{release?.();}}
- assert.throws(()=>new PostgresPromotionTarget({enabled:true,tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod',query:async()=>({rows:[]}),queryWithSignal:true,transaction:async()=>{},authorizeSignature:()=>true}),/configuration/);
+test('shared promotion target passes cancellation to host query and discards late fallback results', async () => {
+  for (const mode of ['cancellable', 'fallback']) {
+    let release,
+      entered,
+      calls = 0,
+      observed;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve)),
+      query = async (_sql, args) => {
+        calls++;
+        assert.deepEqual(args, ['tenant', 'demo', 'prod', 1]);
+        entered();
+        await gate;
+        return { rows: [] };
+      },
+      target = new PostgresPromotionTarget({
+        enabled: true,
+        tenantId: 'tenant',
+        applicationId: 'demo',
+        sourceEnvironment: 'dev',
+        targetEnvironment: 'prod',
+        query,
+        ...(mode === 'cancellable'
+          ? {
+              queryWithSignal: async (sql, args, signal) => {
+                observed = signal;
+                return query(sql, args);
+              }
+            }
+          : {}),
+        transaction: async () => {},
+        authorizeSignature: () => true
+      }),
+      controller = new AbortController();
+    try {
+      const pending = target.getPublishedWithSignal(1, controller.signal);
+      await ready;
+      controller.abort();
+      release();
+      await assert.rejects(pending, error => error.name === 'AbortError');
+      assert.equal(calls, 1);
+      if (mode === 'cancellable') assert.equal(observed, controller.signal);
+      await assert.rejects(target.getPublishedWithSignal(1, controller.signal), error => error.name === 'AbortError');
+      await assert.rejects(target.getPublishedWithSignal(0, new AbortController().signal), /Invalid version/);
+      await assert.rejects(target.getPublishedWithSignal(1, undefined), /Invalid publication signal/);
+      assert.equal(calls, 1);
+    } finally {
+      release?.();
+    }
+  }
+  assert.throws(
+    () =>
+      new PostgresPromotionTarget({
+        enabled: true,
+        tenantId: 'tenant',
+        applicationId: 'demo',
+        sourceEnvironment: 'dev',
+        targetEnvironment: 'prod',
+        query: async () => ({ rows: [] }),
+        queryWithSignal: true,
+        transaction: async () => {},
+        authorizeSignature: () => true
+      }),
+    /configuration/
+  );
 });

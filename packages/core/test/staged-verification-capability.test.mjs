@@ -1,51 +1,395 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {CapabilityRegistry,SqliteStagedOperations,registerStagedVerificationCapability,createCapabilityServer} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'operator',origin:'ui'};
-function setup(){const registry=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),store=new SqliteStagedOperations(':memory:');external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('response lost')}});return {registry,external,store};}
-async function uncertain(s){const operation=s.store.stage(scope,'pay',{secret:'private'});await assert.rejects(s.store.submit(scope,operation.id,s.external,actor),/response lost/);return operation;}
-const candidate={operationId:'verify',method:'POST',path:'/verify'};
+import { CapabilityRegistry, SqliteStagedOperations, registerStagedVerificationCapability, createCapabilityServer } from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' },
+  actor = { tenantId: 'tenant', principalId: 'operator', origin: 'ui' };
+function setup() {
+  const registry = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    store = new SqliteStagedOperations(':memory:');
+  external.register(
+    { operationId: 'pay', method: 'POST', path: '/pay' },
+    {
+      authorize: () => true,
+      validate: () => true,
+      execute: () => {
+        throw Error('response lost');
+      }
+    }
+  );
+  return { registry, external, store };
+}
+async function uncertain(s) {
+  const operation = s.store.stage(scope, 'pay', { secret: 'private' });
+  await assert.rejects(s.store.submit(scope, operation.id, s.external, actor), /response lost/);
+  return operation;
+}
+const candidate = { operationId: 'verify', method: 'POST', path: '/verify' };
 
-test('provider verification capability binds actor, operation and evidence to a host-selected verifier',async()=>{
- const s=setup();try{const op=await uncertain(s),seen=[];registerStagedVerificationCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:a=>a.principalId==='operator',authorizeOperation:(who,operation,reference)=>{seen.push([who.principalId,operation.id,reference]);operation.payload.secret='changed';return true;},verify:(who,operation)=>{assert.equal(who.principalId,'operator');assert.equal(operation.idempotencyKey,op.idempotencyKey);assert.equal(operation.payload.secret,'private');operation.payload.secret='changed';return 'applied';}});
-  await assert.rejects(s.registry.invoke('verify',{id:op.id,reference:'case',outcome:'applied'},actor),/Invalid capability input/);await assert.rejects(s.registry.invoke('verify',{id:op.id,reference:''},actor),/Invalid capability input/);await assert.rejects(s.registry.invoke('verify',{id:op.id,reference:'case'},{...actor,tenantId:'other'}),/not found/);await assert.rejects(s.registry.invoke('verify',{id:op.id,reference:'case'},{...actor,principalId:'denied'}),/forbidden/);
-  assert.deepEqual(await s.registry.invoke('verify',{id:op.id,reference:'case'},actor),{outcome:'applied'});assert.equal(s.store.get(scope,op.id).status,'succeeded');const events=s.store.listReconciliationEvidence(scope,op.id);assert.equal(events.length,1);assert.equal(events[0].principalId,'operator');assert.equal(events[0].reference,'case');assert.equal(events[0].outcome,'applied');assert.deepEqual(seen,[['operator',op.id,'case'],['operator',op.id,'case'],['operator',op.id,'case']]);
- }finally{s.store.close();}
+test('provider verification capability binds actor, operation and evidence to a host-selected verifier', async () => {
+  const s = setup();
+  try {
+    const op = await uncertain(s),
+      seen = [];
+    registerStagedVerificationCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: a => a.principalId === 'operator',
+      authorizeOperation: (who, operation, reference) => {
+        seen.push([who.principalId, operation.id, reference]);
+        operation.payload.secret = 'changed';
+        return true;
+      },
+      verify: (who, operation) => {
+        assert.equal(who.principalId, 'operator');
+        assert.equal(operation.idempotencyKey, op.idempotencyKey);
+        assert.equal(operation.payload.secret, 'private');
+        operation.payload.secret = 'changed';
+        return 'applied';
+      }
+    });
+    await assert.rejects(s.registry.invoke('verify', { id: op.id, reference: 'case', outcome: 'applied' }, actor), /Invalid capability input/);
+    await assert.rejects(s.registry.invoke('verify', { id: op.id, reference: '' }, actor), /Invalid capability input/);
+    await assert.rejects(s.registry.invoke('verify', { id: op.id, reference: 'case' }, { ...actor, tenantId: 'other' }), /not found/);
+    await assert.rejects(s.registry.invoke('verify', { id: op.id, reference: 'case' }, { ...actor, principalId: 'denied' }), /forbidden/);
+    assert.deepEqual(await s.registry.invoke('verify', { id: op.id, reference: 'case' }, actor), { outcome: 'applied' });
+    assert.equal(s.store.get(scope, op.id).status, 'succeeded');
+    const events = s.store.listReconciliationEvidence(scope, op.id);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].principalId, 'operator');
+    assert.equal(events[0].reference, 'case');
+    assert.equal(events[0].outcome, 'applied');
+    assert.deepEqual(seen, [
+      ['operator', op.id, 'case'],
+      ['operator', op.id, 'case'],
+      ['operator', op.id, 'case']
+    ]);
+  } finally {
+    s.store.close();
+  }
 });
 
-test('verification denies policy revocation and rejects stale provider results',async()=>{
- const s=setup();try{const op=await uncertain(s);let allowed=true,started,release,block=false;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);registerStagedVerificationCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>allowed,verify:async()=>{if(block){started();await gate;}else allowed=false;return 'applied';}});
-  await assert.rejects(s.registry.invoke('verify',{id:op.id,reference:'case'},actor),/forbidden/);assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);allowed=true;block=true;const pending=s.registry.invoke('verify',{id:op.id,reference:'case'},actor);await ready;s.store.reconcileWithEvidence(scope,op.id,'not_applied',{principalId:'other',reference:'other-case'});release();await assert.rejects(pending,/Stale staged verification/);assert.equal(s.store.get(scope,op.id).status,'staged');assert.equal(s.store.listReconciliationEvidence(scope,op.id).length,1);
- }finally{s.store.close();}
+test('verification denies policy revocation and rejects stale provider results', async () => {
+  const s = setup();
+  try {
+    const op = await uncertain(s);
+    let allowed = true,
+      started,
+      release,
+      block = false;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    registerStagedVerificationCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: () => allowed,
+      verify: async () => {
+        if (block) {
+          started();
+          await gate;
+        } else allowed = false;
+        return 'applied';
+      }
+    });
+    await assert.rejects(s.registry.invoke('verify', { id: op.id, reference: 'case' }, actor), /forbidden/);
+    assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+    assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+    allowed = true;
+    block = true;
+    const pending = s.registry.invoke('verify', { id: op.id, reference: 'case' }, actor);
+    await ready;
+    s.store.reconcileWithEvidence(scope, op.id, 'not_applied', { principalId: 'other', reference: 'other-case' });
+    release();
+    await assert.rejects(pending, /Stale staged verification/);
+    assert.equal(s.store.get(scope, op.id).status, 'staged');
+    assert.equal(s.store.listReconciliationEvidence(scope, op.id).length, 1);
+  } finally {
+    s.store.close();
+  }
 });
 
-test('unknown provider outcomes leave uncertainty intact and HTTP input is authenticated and scoped',async()=>{
- const s=setup();let server;try{const op=await uncertain(s),other=s.store.stage(scope,'other',{});let result='unknown';registerStagedVerificationCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true,verify:()=>result});server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(input,auth='Bearer valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/verify/invoke`,{method:'POST',headers:{'content-type':'application/json',authorization:auth},body:JSON.stringify({origin:'ui',input})});assert.equal((await call({id:op.id,reference:'case'},'bad')).status,401);assert.equal((await call({id:op.id,reference:'case',outcome:'applied'})).status,400);const response=await call({id:op.id,reference:'case'});assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{outcome:'unknown'});assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);assert.equal((await call({id:other.id,reference:'case'})).status,404);result='applied';assert.equal((await call({id:op.id,reference:'case'})).status,200);assert.equal((await call({id:op.id,reference:'case'})).status,409);assert.equal(s.store.listReconciliationEvidence(scope,op.id).length,1);
- }finally{if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));s.store.close();}
+test('unknown provider outcomes leave uncertainty intact and HTTP input is authenticated and scoped', async () => {
+  const s = setup();
+  let server;
+  try {
+    const op = await uncertain(s),
+      other = s.store.stage(scope, 'other', {});
+    let result = 'unknown';
+    registerStagedVerificationCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: () => true,
+      verify: () => result
+    });
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (input, auth = 'Bearer valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/verify/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: auth },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call({ id: op.id, reference: 'case' }, 'bad')).status, 401);
+    assert.equal((await call({ id: op.id, reference: 'case', outcome: 'applied' })).status, 400);
+    const response = await call({ id: op.id, reference: 'case' });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { outcome: 'unknown' });
+    assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+    assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+    assert.equal((await call({ id: other.id, reference: 'case' })).status, 404);
+    result = 'applied';
+    assert.equal((await call({ id: op.id, reference: 'case' })).status, 200);
+    assert.equal((await call({ id: op.id, reference: 'case' })).status, 409);
+    assert.equal(s.store.listReconciliationEvidence(scope, op.id).length, 1);
+  } finally {
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    s.store.close();
+  }
 });
 
-test('verification capability reconciles a lost provider response without submitting again',async()=>{
- const {createServer}=await import('node:http'),effects=new Map();let submissions=0,lookups=0;const provider=createServer(async(req,res)=>{if(req.method==='POST'){let body='';for await(const chunk of req)body+=chunk;submissions++;effects.set(req.headers['idempotency-key'],JSON.parse(body));res.writeHead(200);res.end('ok');}else{lookups++;const key=new URL(req.url,'http://localhost').searchParams.get('key');res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({payload:effects.get(key)??null}));}});await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${provider.address().port}`,store=new SqliteStagedOperations(':memory:'),external=new CapabilityRegistry(()=>{}),registry=new CapabilityRegistry(()=>{});
- try{external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:async input=>{await fetch(base+'/pay',{method:'POST',headers:{'idempotency-key':input.idempotencyKey},body:JSON.stringify(input.payload)});throw Error('response lost');}});const op=store.stage(scope,'pay',{amount:42});await assert.rejects(store.submit(scope,op.id,external,actor),/response lost/);registerStagedVerificationCapability(registry,store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:(_actor,_op,ref)=>ref==='receipt-case',verify:async(_actor,operation)=>{const response=await fetch(base+'/status?key='+encodeURIComponent(operation.idempotencyKey));const data=await response.json();return data.payload?.amount===operation.payload.amount?'applied':'unknown';}});assert.deepEqual(await registry.invoke('verify',{id:op.id,reference:'receipt-case'},actor),{outcome:'applied'});assert.equal(store.get(scope,op.id).status,'succeeded');assert.equal(store.listReconciliationEvidence(scope,op.id)[0].principalId,'operator');assert.equal(submissions,1);assert.equal(lookups,1);await assert.rejects(store.submit(scope,op.id,external,actor),/not staged/);
- }finally{store.close();await new Promise((resolve,reject)=>provider.close(error=>error?reject(error):resolve()));}
+test('verification capability reconciles a lost provider response without submitting again', async () => {
+  const { createServer } = await import('node:http'),
+    effects = new Map();
+  let submissions = 0,
+    lookups = 0;
+  const provider = createServer(async (req, res) => {
+    if (req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      submissions++;
+      effects.set(req.headers['idempotency-key'], JSON.parse(body));
+      res.writeHead(200);
+      res.end('ok');
+    } else {
+      lookups++;
+      const key = new URL(req.url, 'http://localhost').searchParams.get('key');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ payload: effects.get(key) ?? null }));
+    }
+  });
+  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${provider.address().port}`,
+    store = new SqliteStagedOperations(':memory:'),
+    external = new CapabilityRegistry(() => {}),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/pay' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: async input => {
+          await fetch(base + '/pay', { method: 'POST', headers: { 'idempotency-key': input.idempotencyKey }, body: JSON.stringify(input.payload) });
+          throw Error('response lost');
+        }
+      }
+    );
+    const op = store.stage(scope, 'pay', { amount: 42 });
+    await assert.rejects(store.submit(scope, op.id, external, actor), /response lost/);
+    registerStagedVerificationCapability(registry, store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: (_actor, _op, ref) => ref === 'receipt-case',
+      verify: async (_actor, operation) => {
+        const response = await fetch(base + '/status?key=' + encodeURIComponent(operation.idempotencyKey));
+        const data = await response.json();
+        return data.payload?.amount === operation.payload.amount ? 'applied' : 'unknown';
+      }
+    });
+    assert.deepEqual(await registry.invoke('verify', { id: op.id, reference: 'receipt-case' }, actor), { outcome: 'applied' });
+    assert.equal(store.get(scope, op.id).status, 'succeeded');
+    assert.equal(store.listReconciliationEvidence(scope, op.id)[0].principalId, 'operator');
+    assert.equal(submissions, 1);
+    assert.equal(lookups, 1);
+    await assert.rejects(store.submit(scope, op.id, external, actor), /not staged/);
+  } finally {
+    store.close();
+    await new Promise((resolve, reject) => provider.close(error => (error ? reject(error) : resolve())));
+  }
 });
 
-test('bounded provider verification times out, fences late results and holds its slot until settled',async()=>{
- const s=setup();let server,started,release,signal,calls=0;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);try{const op=await uncertain(s);registerStagedVerificationCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true,timeoutMs:100,maxPending:1,verify:async(_actor,_operation,abort)=>{calls++;if(calls===1){signal=abort;started();await gate;}return 'applied';}});server=createCapabilityServer(s.registry,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/verify/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{id:op.id,reference:'case'}})});
-  const first=call();await ready;const timed=await first;assert.equal(timed.status,503);assert.equal(signal.aborted,true);assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);assert.equal((await call()).status,503);assert.equal(calls,1);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);assert.equal((await call()).status,200);assert.equal(calls,2);assert.equal(s.store.get(scope,op.id).status,'succeeded');assert.equal(s.store.listReconciliationEvidence(scope,op.id).length,1);
- }finally{release?.();if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));s.store.close();}
+test('bounded provider verification times out, fences late results and holds its slot until settled', async () => {
+  const s = setup();
+  let server,
+    started,
+    release,
+    signal,
+    calls = 0;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r));
+  try {
+    const op = await uncertain(s);
+    registerStagedVerificationCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: () => true,
+      timeoutMs: 100,
+      maxPending: 1,
+      verify: async (_actor, _operation, abort) => {
+        calls++;
+        if (calls === 1) {
+          signal = abort;
+          started();
+          await gate;
+        }
+        return 'applied';
+      }
+    });
+    server = createCapabilityServer(
+      s.registry,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = () =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/verify/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: { id: op.id, reference: 'case' } })
+      });
+    const first = call();
+    await ready;
+    const timed = await first;
+    assert.equal(timed.status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+    assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+    assert.equal((await call()).status, 503);
+    assert.equal(calls, 1);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+    assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+    assert.equal((await call()).status, 200);
+    assert.equal(calls, 2);
+    assert.equal(s.store.get(scope, op.id).status, 'succeeded');
+    assert.equal(s.store.listReconciliationEvidence(scope, op.id).length, 1);
+  } finally {
+    release?.();
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    s.store.close();
+  }
 });
 
-test('verification limits require a bounded timeout and positive concurrency together',()=>{
- const s=setup(),base={candidate,applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true,verify:()=> 'unknown'};try{for(const config of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:30001,maxPending:1},{timeoutMs:100,maxPending:0},{timeoutMs:100,maxPending:101}])assert.throws(()=>registerStagedVerificationCapability(s.registry,s.store,{...base,...config}),/Invalid staged verification/);}finally{s.store.close();}
+test('verification limits require a bounded timeout and positive concurrency together', () => {
+  const s = setup(),
+    base = { candidate, applicationId: 'app', externalOperationId: 'pay', authorize: () => true, authorizeOperation: () => true, verify: () => 'unknown' };
+  try {
+    for (const config of [
+      { timeoutMs: 100 },
+      { maxPending: 1 },
+      { timeoutMs: 99, maxPending: 1 },
+      { timeoutMs: 30001, maxPending: 1 },
+      { timeoutMs: 100, maxPending: 0 },
+      { timeoutMs: 100, maxPending: 101 }
+    ])
+      assert.throws(() => registerStagedVerificationCapability(s.registry, s.store, { ...base, ...config }), /Invalid staged verification/);
+  } finally {
+    s.store.close();
+  }
 });
 
-test('verification timeout fences stalled operation authorization before and after provider lookup',async()=>{
- for(const blockedCheck of [1,3]){const s=setup();let checks=0,lookups=0,release,started,signal;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const op=await uncertain(s);registerStagedVerificationCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',timeoutMs:100,maxPending:1,authorize:()=>true,authorizeOperation:async(_actor,_operation,_reference,abort)=>{if(++checks===blockedCheck){signal=abort;started();await gate;}return true;},verify:()=>{lookups++;return 'applied';}});const input={id:op.id,reference:'case'},pending=s.registry.invoke('verify',input,actor);await ready;await assert.rejects(pending,/verification unavailable/);assert.equal(signal.aborted,true);assert.equal(lookups,blockedCheck===1?0:1);assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);await assert.rejects(s.registry.invoke('verify',input,actor),/verification unavailable/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);assert.deepEqual(await s.registry.invoke('verify',input,actor),{outcome:'applied'});assert.equal(s.store.listReconciliationEvidence(scope,op.id).length,1);
- }finally{release?.();s.store.close();}}
+test('verification timeout fences stalled operation authorization before and after provider lookup', async () => {
+  for (const blockedCheck of [1, 3]) {
+    const s = setup();
+    let checks = 0,
+      lookups = 0,
+      release,
+      started,
+      signal;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      const op = await uncertain(s);
+      registerStagedVerificationCapability(s.registry, s.store, {
+        candidate,
+        applicationId: 'app',
+        externalOperationId: 'pay',
+        timeoutMs: 100,
+        maxPending: 1,
+        authorize: () => true,
+        authorizeOperation: async (_actor, _operation, _reference, abort) => {
+          if (++checks === blockedCheck) {
+            signal = abort;
+            started();
+            await gate;
+          }
+          return true;
+        },
+        verify: () => {
+          lookups++;
+          return 'applied';
+        }
+      });
+      const input = { id: op.id, reference: 'case' },
+        pending = s.registry.invoke('verify', input, actor);
+      await ready;
+      await assert.rejects(pending, /verification unavailable/);
+      assert.equal(signal.aborted, true);
+      assert.equal(lookups, blockedCheck === 1 ? 0 : 1);
+      assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+      assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+      await assert.rejects(s.registry.invoke('verify', input, actor), /verification unavailable/);
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+      assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+      assert.deepEqual(await s.registry.invoke('verify', input, actor), { outcome: 'applied' });
+      assert.equal(s.store.listReconciliationEvidence(scope, op.id).length, 1);
+    } finally {
+      release?.();
+      s.store.close();
+    }
+  }
 });
 
-test('verification timeout also bounds repeated actor authorization',async()=>{
- const s=setup();let calls=0,release,started;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const op=await uncertain(s);registerStagedVerificationCapability(s.registry,s.store,{candidate,applicationId:'app',externalOperationId:'pay',timeoutMs:100,maxPending:1,authorize:async()=>{if(++calls===2){started();await gate;}return true;},authorizeOperation:()=>true,verify:()=> 'applied'});const pending=s.registry.invoke('verify',{id:op.id,reference:'case'},actor);await ready;await assert.rejects(pending,/verification unavailable/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.store.get(scope,op.id).status,'uncertain');assert.deepEqual(s.store.listReconciliationEvidence(scope,op.id),[]);
- }finally{release?.();s.store.close();}
+test('verification timeout also bounds repeated actor authorization', async () => {
+  const s = setup();
+  let calls = 0,
+    release,
+    started;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    const op = await uncertain(s);
+    registerStagedVerificationCapability(s.registry, s.store, {
+      candidate,
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      timeoutMs: 100,
+      maxPending: 1,
+      authorize: async () => {
+        if (++calls === 2) {
+          started();
+          await gate;
+        }
+        return true;
+      },
+      authorizeOperation: () => true,
+      verify: () => 'applied'
+    });
+    const pending = s.registry.invoke('verify', { id: op.id, reference: 'case' }, actor);
+    await ready;
+    await assert.rejects(pending, /verification unavailable/);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(s.store.get(scope, op.id).status, 'uncertain');
+    assert.deepEqual(s.store.listReconciliationEvidence(scope, op.id), []);
+  } finally {
+    release?.();
+    s.store.close();
+  }
 });

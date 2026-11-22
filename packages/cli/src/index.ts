@@ -1,16 +1,26 @@
 #!/usr/bin/env node
-import {mkdir,writeFile,access,readFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import {realpathSync,readFileSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
-import {signExtensionFiles,verifyExtensionFiles,checkExtensionFiles,checkExtensionSetFiles} from './extension-sign.js';
-export async function createProject(name:string,parent=process.cwd()):Promise<string>{
- if(!/^[a-z][a-z0-9-]{1,48}$/.test(name)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name))throw Error("Invalid project name");
- const target=resolve(parent,name);
- try{await access(target);throw Error("Target exists");}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;}
- await mkdir(target);
- const manifest={id:name,schemaVersion:1,revision:0,pages:[{id:"home",route:"/",title:"Home",components:[{id:"intro",type:"Text",props:{text:"Welcome to App Mixer"}}]}]};
- const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}header h1{margin:0;font:inherit}main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px;min-width:0;overflow-wrap:anywhere}#page-nav ul{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-wrap:wrap;gap:8px 16px}#page-nav a[aria-current]{font-weight:700;color:#17243a;text-decoration:none}#pages section{margin:12px 0;border:1px solid #c5cfdf}#pages label{display:block;margin:12px 0}#pages label>span{display:block;margin-bottom:6px;font-weight:600}#pages input,#pages textarea{width:100%;box-sizing:border-box}input{padding:10px}@media(max-width:700px){main{grid-template-columns:minmax(0,1fr)}}</style><header><h1>App Mixer</h1></header><main><section><h2>Conversation</h2><p id="chat-status" role="status">Checking agent…</p><div id="chat-log" aria-live="polite"></div><form id="chat-form"><label for="chat-input">Message</label><input id="chat-input" placeholder="Ask agent" disabled><button id="chat-send" type="submit" disabled>Send</button></form></section><section><h2>Workspace</h2><button id="refresh-publication" hidden>Refresh publication</button><p id="publication-status" role="status"></p><nav id="page-nav" aria-label="Pages" hidden></nav><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,APP_MIXER_CATALOG,ClientPublishedCache} from '/renderer.mjs';
+import { mkdir, writeFile, access, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { realpathSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { signExtensionFiles, verifyExtensionFiles, checkExtensionFiles, checkExtensionSetFiles } from './extension-sign.js';
+export async function createProject(name: string, parent = process.cwd()): Promise<string> {
+  if (!/^[a-z][a-z0-9-]{1,48}$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name)) throw Error('Invalid project name');
+  const target = resolve(parent, name);
+  try {
+    await access(target);
+    throw Error('Target exists');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+  await mkdir(target);
+  const manifest = {
+    id: name,
+    schemaVersion: 1,
+    revision: 0,
+    pages: [{ id: 'home', route: '/', title: 'Home', components: [{ id: 'intro', type: 'Text', props: { text: 'Welcome to App Mixer' } }] }]
+  };
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Mixer</title><style>body{font:16px system-ui;margin:0;background:#f2f5fa;color:#17243a}header{padding:22px;background:#142c4a;color:white}header h1{margin:0;font:inherit}main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;padding:24px}section{background:white;border-radius:12px;padding:24px;min-width:0;overflow-wrap:anywhere}#page-nav ul{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-wrap:wrap;gap:8px 16px}#page-nav a[aria-current]{font-weight:700;color:#17243a;text-decoration:none}#pages section{margin:12px 0;border:1px solid #c5cfdf}#pages label{display:block;margin:12px 0}#pages label>span{display:block;margin-bottom:6px;font-weight:600}#pages input,#pages textarea{width:100%;box-sizing:border-box}input{padding:10px}@media(max-width:700px){main{grid-template-columns:minmax(0,1fr)}}</style><header><h1>App Mixer</h1></header><main><section><h2>Conversation</h2><p id="chat-status" role="status">Checking agent…</p><div id="chat-log" aria-live="polite"></div><form id="chat-form"><label for="chat-input">Message</label><input id="chat-input" placeholder="Ask agent" disabled><button id="chat-send" type="submit" disabled>Send</button></form></section><section><h2>Workspace</h2><button id="refresh-publication" hidden>Refresh publication</button><p id="publication-status" role="status"></p><nav id="page-nav" aria-label="Pages" hidden></nav><div id="pages"></div></section></main><script type="module">import {A2UIRenderer,APP_MIXER_CATALOG,ClientPublishedCache} from '/renderer.mjs';
 import {prepareWorkspace} from '/workspace.mjs';
 import {createOfflinePublicationRuntime} from '/offline-publication-runtime.mjs';
 import {initializeOfflinePublication} from '/offline-publication-host.mjs';
@@ -59,7 +69,7 @@ try {
   await render();
 } catch(error) {host.textContent='Unable to render application: '+error.message;}
 </script><script type="module" src="/chat.mjs"></script></html>`;
- const server=String.raw`import {createServer} from 'node:http';
+  const server = String.raw`import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {once} from 'node:events';
@@ -185,7 +195,7 @@ server.headersTimeout=10000;server.requestTimeout=30000;server.keepAliveTimeout=
 server.once('error',error=>fail(error.code==='EADDRINUSE'?'PORT '+port+' is already in use on '+bind:'Cannot listen on '+bind+':'+port+': '+error.message));
 server.listen(port,bind,function(){console.log('http://127.0.0.1:'+this.address().port)});
 `;
- const capabilities=String.raw`// Trusted application code invokes only host-registered capabilities.
+  const capabilities = String.raw`// Trusted application code invokes only host-registered capabilities.
 export async function invokeCapability(operationId,input){
   if(typeof operationId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(operationId))throw Error('Invalid capability ID');
   let response,body;try{response=await fetch('/api/capabilities/'+operationId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});body=await response.json();if(!body||typeof body!=='object'||Array.isArray(body)||(response.ok&&!Object.hasOwn(body,'result')))throw Error('Invalid capability response');}catch{const error=new Error('Capability outcome uncertain');error.code='CAPABILITY_OUTCOME_UNCERTAIN';throw error;}
@@ -193,7 +203,7 @@ export async function invokeCapability(operationId,input){
   return body.result;
 }
 `;
- const chat=String.raw`const form=document.getElementById('chat-form'),input=document.getElementById('chat-input'),button=document.getElementById('chat-send'),status=document.getElementById('chat-status'),log=document.getElementById('chat-log');
+  const chat = String.raw`const form=document.getElementById('chat-form'),input=document.getElementById('chat-input'),button=document.getElementById('chat-send'),status=document.getElementById('chat-status'),log=document.getElementById('chat-log');
 const threadId=crypto.randomUUID(),history=[];
 function line(role,text){const item=document.createElement('p');item.textContent=role+': '+text;log.appendChild(item);return item;}
 try{const response=await fetch('/api/chat/status');const state=await response.json();if(state.enabled){input.disabled=false;button.disabled=false;status.textContent='Ready';}else status.textContent='Agent is not configured.';}catch{status.textContent='Agent is unavailable.';}
@@ -218,11 +228,11 @@ form.addEventListener('submit',async event=>{
   finally{input.disabled=false;button.disabled=false;input.focus();}
 });
 `;
- const extensions=String.raw`// Trusted host code only. Each entry is {id, version, scope, components},
+  const extensions = String.raw`// Trusted host code only. Each entry is {id, version, scope, components},
 // where components maps a name to {render, validate?}. No code is loaded from application definitions.
 export const installedExtensions = [];
 `;
- const workspace=String.raw`import {basicRegistry} from './renderer.mjs';
+  const workspace = String.raw`import {basicRegistry} from './renderer.mjs';
 import {installedExtensions} from './extensions.mjs';
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 export function prepareWorkspace(app){
@@ -262,23 +272,78 @@ export function prepareWorkspace(app){
   return {registry,components,pages};
 }
 `;
- const rendererSource=await readFile(new URL(import.meta.resolve('@app-mixer/web')));
- const dataEditor=await readFile(new URL('../templates/data-editor.mjs',import.meta.url));
- const publicationTracing=await readFile(new URL('../templates/publication-tracing.mjs',import.meta.url));
- const stagedEditor=await readFile(new URL('../templates/staged-editor.mjs',import.meta.url));
- const offlineRuntime=await readFile(new URL('../templates/offline-runtime.mjs',import.meta.url));
- const publicationRuntime=await readFile(new URL('../templates/offline-publication-runtime.mjs',import.meta.url));
- const publicationHost=await readFile(new URL('../templates/offline-publication-host.mjs',import.meta.url));
- const publicationSource=await readFile(new URL(import.meta.resolve('@app-mixer/web/offline-publications')));
- const shellTemplate=await readFile(new URL('../templates/offline-shell.mjs',import.meta.url),'utf8');
- const shellWorkerTemplate=await readFile(new URL('../templates/offline-shell-sw.js',import.meta.url),'utf8');
- const offlineShell=shellTemplate.replace('__APP_ID__',JSON.stringify(name)),offlineShellWorker=shellWorkerTemplate.replace('__APP_ID__',JSON.stringify(name));
- const offlineURL=new URL(import.meta.resolve('@app-mixer/web/offline'));
- const [offlineSource,offlineWorker,offlineUI]=await Promise.all([readFile(offlineURL),readFile(new URL('./offline-worker.js',offlineURL)),readFile(new URL('./offline-ui.js',offlineURL))]);
- await Promise.all([writeFile(resolve(target,'publication-tracing.mjs'),publicationTracing),writeFile(resolve(target,'offline-publications.js'),publicationSource),writeFile(resolve(target,'offline-publication-runtime.mjs'),publicationRuntime),writeFile(resolve(target,'offline-publication-host.mjs'),publicationHost),writeFile(resolve(target,'chat.mjs'),chat),writeFile(resolve(target,'capabilities.mjs'),capabilities),writeFile(resolve(target,'data-editor.mjs'),dataEditor),writeFile(resolve(target,'staged-editor.mjs'),stagedEditor),writeFile(resolve(target,'offline-runtime.mjs'),offlineRuntime),writeFile(resolve(target,'offline-shell.mjs'),offlineShell),writeFile(resolve(target,'offline-shell-sw.js'),offlineShellWorker),writeFile(resolve(target,'offline.js'),offlineSource),writeFile(resolve(target,'offline-worker.js'),offlineWorker),writeFile(resolve(target,'offline-ui.js'),offlineUI),writeFile(resolve(target,'renderer.mjs'),rendererSource),writeFile(resolve(target,'workspace.mjs'),workspace),writeFile(resolve(target,'extensions.mjs'),extensions),writeFile(resolve(target,"package.json"),JSON.stringify({name,private:true,type:"module",scripts:{dev:"node --env-file-if-exists=.env server.mjs"}},null,2)),writeFile(resolve(target,"application.json"),JSON.stringify(manifest,null,2)),writeFile(resolve(target,"index.html"),html),writeFile(resolve(target,"server.mjs"),server),writeFile(resolve(target,".gitignore"),".env"+String.fromCharCode(10)),writeFile(resolve(target,".env.example"),"PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nWORKSPACE_TRACING_PROPAGATE_AGENT=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\nCAPABILITY_TIMEOUT_MS=5000\nCAPABILITY_RESPONSE_MAX_BYTES=1048576\nCAPABILITY_REQUEST_MAX_BYTES=1048576\n# CAPABILITY_MAX_IN_FLIGHT=10\n# CAPABILITY_UPLOAD_TIMEOUT_MS=5000\n")]);
- return target;
+  const rendererSource = await readFile(new URL(import.meta.resolve('@app-mixer/web')));
+  const dataEditor = await readFile(new URL('../templates/data-editor.mjs', import.meta.url));
+  const publicationTracing = await readFile(new URL('../templates/publication-tracing.mjs', import.meta.url));
+  const stagedEditor = await readFile(new URL('../templates/staged-editor.mjs', import.meta.url));
+  const offlineRuntime = await readFile(new URL('../templates/offline-runtime.mjs', import.meta.url));
+  const publicationRuntime = await readFile(new URL('../templates/offline-publication-runtime.mjs', import.meta.url));
+  const publicationHost = await readFile(new URL('../templates/offline-publication-host.mjs', import.meta.url));
+  const publicationSource = await readFile(new URL(import.meta.resolve('@app-mixer/web/offline-publications')));
+  const shellTemplate = await readFile(new URL('../templates/offline-shell.mjs', import.meta.url), 'utf8');
+  const shellWorkerTemplate = await readFile(new URL('../templates/offline-shell-sw.js', import.meta.url), 'utf8');
+  const offlineShell = shellTemplate.replace('__APP_ID__', JSON.stringify(name)),
+    offlineShellWorker = shellWorkerTemplate.replace('__APP_ID__', JSON.stringify(name));
+  const offlineURL = new URL(import.meta.resolve('@app-mixer/web/offline'));
+  const [offlineSource, offlineWorker, offlineUI] = await Promise.all([readFile(offlineURL), readFile(new URL('./offline-worker.js', offlineURL)), readFile(new URL('./offline-ui.js', offlineURL))]);
+  await Promise.all([
+    writeFile(resolve(target, 'publication-tracing.mjs'), publicationTracing),
+    writeFile(resolve(target, 'offline-publications.js'), publicationSource),
+    writeFile(resolve(target, 'offline-publication-runtime.mjs'), publicationRuntime),
+    writeFile(resolve(target, 'offline-publication-host.mjs'), publicationHost),
+    writeFile(resolve(target, 'chat.mjs'), chat),
+    writeFile(resolve(target, 'capabilities.mjs'), capabilities),
+    writeFile(resolve(target, 'data-editor.mjs'), dataEditor),
+    writeFile(resolve(target, 'staged-editor.mjs'), stagedEditor),
+    writeFile(resolve(target, 'offline-runtime.mjs'), offlineRuntime),
+    writeFile(resolve(target, 'offline-shell.mjs'), offlineShell),
+    writeFile(resolve(target, 'offline-shell-sw.js'), offlineShellWorker),
+    writeFile(resolve(target, 'offline.js'), offlineSource),
+    writeFile(resolve(target, 'offline-worker.js'), offlineWorker),
+    writeFile(resolve(target, 'offline-ui.js'), offlineUI),
+    writeFile(resolve(target, 'renderer.mjs'), rendererSource),
+    writeFile(resolve(target, 'workspace.mjs'), workspace),
+    writeFile(resolve(target, 'extensions.mjs'), extensions),
+    writeFile(resolve(target, 'package.json'), JSON.stringify({ name, private: true, type: 'module', scripts: { dev: 'node --env-file-if-exists=.env server.mjs' } }, null, 2)),
+    writeFile(resolve(target, 'application.json'), JSON.stringify(manifest, null, 2)),
+    writeFile(resolve(target, 'index.html'), html),
+    writeFile(resolve(target, 'server.mjs'), server),
+    writeFile(resolve(target, '.gitignore'), '.env' + String.fromCharCode(10)),
+    writeFile(
+      resolve(target, '.env.example'),
+      'PORT=3000\nPUBLICATION_SCHEMA_VERSION=1\nDATA_PLANE_URL=\nWORKSPACE_TRACING_ENABLED=false\nWORKSPACE_TRACING_TRUST_INCOMING=false\nWORKSPACE_TRACING_PROPAGATE=false\nWORKSPACE_TRACING_PROPAGATE_CAPABILITIES=false\nWORKSPACE_TRACING_PROPAGATE_AGENT=false\nAGENT_URL=\nAGENT_TOKEN=\nCAPABILITY_URL=\nCAPABILITY_TOKEN=\nCAPABILITY_TIMEOUT_MS=5000\nCAPABILITY_RESPONSE_MAX_BYTES=1048576\nCAPABILITY_REQUEST_MAX_BYTES=1048576\n# CAPABILITY_MAX_IN_FLIGHT=10\n# CAPABILITY_UPLOAD_TIMEOUT_MS=5000\n'
+    )
+  ]);
+  return target;
 }
-let isMain=false;try{isMain=!!process.argv[1]&&realpathSync(resolve(process.argv[1]))===fileURLToPath(import.meta.url);}catch{}
-const USAGE=['create <name>','extension-sign <manifest.json> <package-file> <private-key.pem> <key-id> <output.json>','extension-verify <signed.json> <package-file> <public-key.pem> <key-id>','extension-check <signed.json> <package-file> <public-key.pem> <key-id> <host.json> <requirements.json>','extension-check-set <set.json> <host.json> <requirements.json>'];
-const usageText='Usage: app-mixer <command> [arguments]\n'+USAGE.map(line=>'  '+line).join('\n')+'\n  --version\n  --help';
-if(isMain){const [, , command,...args]=process.argv;const fail=(e:Error)=>{console.error(e.message);process.exitCode=1;};if((command==='--help'||command==='-h')&&args.length===0)console.log(usageText);else if(command==='--version'&&args.length===0)console.log(JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version);else if(command==='create'&&args.length===1)createProject(args[0]).then(p=>console.log('Created '+p),fail);else if(command==='extension-sign'&&args.length===5)signExtensionFiles(args[0],args[1],args[2],args[3],args[4]).then(()=>console.log('Signed extension manifest written'),fail);else if(command==='extension-verify'&&args.length===4)verifyExtensionFiles(args[0],args[1],args[2],args[3]).then(m=>console.log(`Verified ${m.id}@${m.version} (${m.scope})`),fail);else if(command==='extension-check'&&args.length===6)checkExtensionFiles(args[0],args[1],args[2],args[3],args[4],args[5]).then(m=>console.log(`Compatible ${m.id}@${m.version} (${m.scope})`),fail);else if(command==='extension-check-set'&&args.length===3)checkExtensionSetFiles(args[0],args[1],args[2]).then(m=>console.log(`Compatible extensions: ${m.length}`),fail);else{console.error(usageText);process.exitCode=1;}}
+let isMain = false;
+try {
+  isMain = !!process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url);
+} catch {}
+const USAGE = [
+  'create <name>',
+  'extension-sign <manifest.json> <package-file> <private-key.pem> <key-id> <output.json>',
+  'extension-verify <signed.json> <package-file> <public-key.pem> <key-id>',
+  'extension-check <signed.json> <package-file> <public-key.pem> <key-id> <host.json> <requirements.json>',
+  'extension-check-set <set.json> <host.json> <requirements.json>'
+];
+const usageText = 'Usage: app-mixer <command> [arguments]\n' + USAGE.map(line => '  ' + line).join('\n') + '\n  --version\n  --help';
+if (isMain) {
+  const [, , command, ...args] = process.argv;
+  const fail = (e: Error) => {
+    console.error(e.message);
+    process.exitCode = 1;
+  };
+  if ((command === '--help' || command === '-h') && args.length === 0) console.log(usageText);
+  else if (command === '--version' && args.length === 0) console.log(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+  else if (command === 'create' && args.length === 1) createProject(args[0]).then(p => console.log('Created ' + p), fail);
+  else if (command === 'extension-sign' && args.length === 5) signExtensionFiles(args[0], args[1], args[2], args[3], args[4]).then(() => console.log('Signed extension manifest written'), fail);
+  else if (command === 'extension-verify' && args.length === 4) verifyExtensionFiles(args[0], args[1], args[2], args[3]).then(m => console.log(`Verified ${m.id}@${m.version} (${m.scope})`), fail);
+  else if (command === 'extension-check' && args.length === 6)
+    checkExtensionFiles(args[0], args[1], args[2], args[3], args[4], args[5]).then(m => console.log(`Compatible ${m.id}@${m.version} (${m.scope})`), fail);
+  else if (command === 'extension-check-set' && args.length === 3) checkExtensionSetFiles(args[0], args[1], args[2]).then(m => console.log(`Compatible extensions: ${m.length}`), fail);
+  else {
+    console.error(usageText);
+    process.exitCode = 1;
+  }
+}

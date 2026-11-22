@@ -1,94 +1,367 @@
-import {readFile,stat,open} from 'node:fs/promises';
-import {createPublicKey} from 'node:crypto';
+import { readFile, stat, open } from 'node:fs/promises';
+import { createPublicKey } from 'node:crypto';
 import pg from 'pg';
-import {createDataPlane,createDataPlaneHttps,createTlsCredentialReloader,createJwtCapabilityAuthenticator,DataPlaneRequestMetrics,createMetricsServer,PostgresJwtRevocations,PostgresPublicationReleaseRegistry,createFileReleaseFloorAnchor,createFileSequenceAnchor,definitionSha256,validate,verifyPublicationRelease} from '../../packages/core/dist/index.js';
+import {
+  createDataPlane,
+  createDataPlaneHttps,
+  createTlsCredentialReloader,
+  createJwtCapabilityAuthenticator,
+  DataPlaneRequestMetrics,
+  createMetricsServer,
+  PostgresJwtRevocations,
+  PostgresPublicationReleaseRegistry,
+  createFileReleaseFloorAnchor,
+  createFileSequenceAnchor,
+  definitionSha256,
+  validate,
+  verifyPublicationRelease
+} from '../../packages/core/dist/index.js';
 // Read a file through one handle and enforce the size limit on that handle, so the check and the read cannot see
 // different files (a path checked with stat() and then read can change in between).
-const readBounded=async(path,limit,tooLarge,encoding)=>{const handle=await open(path,'r');try{if((await handle.stat()).size>limit)throw Error(tooLarge);const data=await handle.readFile();if(data.length>limit)throw Error(tooLarge);return encoding?data.toString(encoding):data;}finally{await handle.close();}};
+const readBounded = async (path, limit, tooLarge, encoding) => {
+  const handle = await open(path, 'r');
+  try {
+    if ((await handle.stat()).size > limit) throw Error(tooLarge);
+    const data = await handle.readFile();
+    if (data.length > limit) throw Error(tooLarge);
+    return encoding ? data.toString(encoding) : data;
+  } finally {
+    await handle.close();
+  }
+};
 
 // The host owns release approval and the trust roots mounted separately from the publication.
-const path=process.env.APP_MIXER_PUBLICATION_PATH;
-if(!path)throw Error('APP_MIXER_PUBLICATION_PATH is required');
-const input=JSON.parse(await readBounded(path,1024*1024+4096,'Publication too large','utf8')),mode=process.env.APP_MIXER_PUBLICATION_MODE??'signed';let publication,releaseEnvironment;
-if(mode==='signed'){
- const keyPath=process.env.APP_MIXER_RELEASE_KEYS_PATH,environment=process.env.APP_MIXER_RELEASE_ENV,applicationId=process.env.APP_MIXER_APPLICATION_ID;
- if(!keyPath||!environment||!applicationId)throw Error('Invalid release verification configuration');
- const raw=JSON.parse(await readBounded(keyPath,32768,'Invalid release verification configuration','utf8'));if(!Array.isArray(raw)||raw.length<1||raw.length>20)throw Error('Invalid release verification configuration');
- const keys=raw.map(entry=>{if(!entry||typeof entry!=='object'||Array.isArray(entry)||Object.keys(entry).sort().join(',')!=='keyId,publicKey'||typeof entry.publicKey!=='string'||entry.publicKey.length>4096||!/^-----BEGIN PUBLIC KEY-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END PUBLIC KEY-----\s*$/.test(entry.publicKey))throw Error('Invalid release verification configuration');return {keyId:entry.keyId,publicKey:createPublicKey(entry.publicKey)};});
- publication=verifyPublicationRelease(input,environment,applicationId,keys);releaseEnvironment=environment;
-}else if(mode==='unsigned'){
- if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='definition,version'||!Number.isSafeInteger(input.version)||input.version<1)throw Error('Invalid publication');validate(input.definition);publication=input;
-}else throw Error('Invalid publication mode');
+const path = process.env.APP_MIXER_PUBLICATION_PATH;
+if (!path) throw Error('APP_MIXER_PUBLICATION_PATH is required');
+const input = JSON.parse(await readBounded(path, 1024 * 1024 + 4096, 'Publication too large', 'utf8')),
+  mode = process.env.APP_MIXER_PUBLICATION_MODE ?? 'signed';
+let publication, releaseEnvironment;
+if (mode === 'signed') {
+  const keyPath = process.env.APP_MIXER_RELEASE_KEYS_PATH,
+    environment = process.env.APP_MIXER_RELEASE_ENV,
+    applicationId = process.env.APP_MIXER_APPLICATION_ID;
+  if (!keyPath || !environment || !applicationId) throw Error('Invalid release verification configuration');
+  const raw = JSON.parse(await readBounded(keyPath, 32768, 'Invalid release verification configuration', 'utf8'));
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 20) throw Error('Invalid release verification configuration');
+  const keys = raw.map(entry => {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      Array.isArray(entry) ||
+      Object.keys(entry).sort().join(',') !== 'keyId,publicKey' ||
+      typeof entry.publicKey !== 'string' ||
+      entry.publicKey.length > 4096 ||
+      !/^-----BEGIN PUBLIC KEY-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END PUBLIC KEY-----\s*$/.test(entry.publicKey)
+    )
+      throw Error('Invalid release verification configuration');
+    return { keyId: entry.keyId, publicKey: createPublicKey(entry.publicKey) };
+  });
+  publication = verifyPublicationRelease(input, environment, applicationId, keys);
+  releaseEnvironment = environment;
+} else if (mode === 'unsigned') {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).sort().join(',') !== 'definition,version' || !Number.isSafeInteger(input.version) || input.version < 1)
+    throw Error('Invalid publication');
+  validate(input.definition);
+  publication = input;
+} else throw Error('Invalid publication mode');
 // The mounted publication never changes: freeze it deeply and hand out the same object, so a request neither copies it nor serializes it again.
-const deepFreeze=value=>{if(value!==null&&typeof value==='object'&&!Object.isFrozen(value)){Object.freeze(value);for(const item of Object.values(value))deepFreeze(item);}return value;};
-const snapshot=deepFreeze(structuredClone(publication)),repository={getPublished(version){return version===undefined||version===snapshot.version?snapshot:undefined;}};
-const portText=process.env.DATA_PORT??'3002',delayText=process.env.DATA_DRAIN_DELAY_MS??'5000';
-if(!/^[1-9][0-9]{0,4}$/.test(portText)||Number(portText)>65535||!/^(0|[1-9][0-9]{0,4})$/.test(delayText)||Number(delayText)>30000)throw Error('Invalid Data Plane configuration');
-const metricsPort=process.env.APP_MIXER_METRICS_PORT;
-if(metricsPort!==undefined&&(!/^[1-9][0-9]{0,4}$/.test(metricsPort)||Number(metricsPort)>65535||metricsPort===portText))throw Error('Invalid metrics configuration');
-const accessMode=process.env.APP_MIXER_ACCESS_MODE??'jwt';let authenticate,authenticateMetrics,revocationPool,releaseTenant,keyHealth=()=>true,stopJwksReload=()=>{};
-const jwksReloadText=process.env.APP_MIXER_JWKS_RELOAD_MS;if(jwksReloadText!==undefined&&(!/^[1-9][0-9]{3,6}$/.test(jwksReloadText)||Number(jwksReloadText)>3600000||accessMode!=='jwt'))throw Error('Invalid JWKS reload configuration');
-const floorMode=process.env.APP_MIXER_RELEASE_FLOOR_MODE??'disabled',floorAnchorDir=process.env.APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR;
+const deepFreeze = value => {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const item of Object.values(value)) deepFreeze(item);
+  }
+  return value;
+};
+const snapshot = deepFreeze(structuredClone(publication)),
+  repository = {
+    getPublished(version) {
+      return version === undefined || version === snapshot.version ? snapshot : undefined;
+    }
+  };
+const portText = process.env.DATA_PORT ?? '3002',
+  delayText = process.env.DATA_DRAIN_DELAY_MS ?? '5000';
+if (!/^[1-9][0-9]{0,4}$/.test(portText) || Number(portText) > 65535 || !/^(0|[1-9][0-9]{0,4})$/.test(delayText) || Number(delayText) > 30000) throw Error('Invalid Data Plane configuration');
+const metricsPort = process.env.APP_MIXER_METRICS_PORT;
+if (metricsPort !== undefined && (!/^[1-9][0-9]{0,4}$/.test(metricsPort) || Number(metricsPort) > 65535 || metricsPort === portText)) throw Error('Invalid metrics configuration');
+const accessMode = process.env.APP_MIXER_ACCESS_MODE ?? 'jwt';
+let authenticate,
+  authenticateMetrics,
+  revocationPool,
+  releaseTenant,
+  keyHealth = () => true,
+  stopJwksReload = () => {};
+const jwksReloadText = process.env.APP_MIXER_JWKS_RELOAD_MS;
+if (jwksReloadText !== undefined && (!/^[1-9][0-9]{3,6}$/.test(jwksReloadText) || Number(jwksReloadText) > 3600000 || accessMode !== 'jwt')) throw Error('Invalid JWKS reload configuration');
+const floorMode = process.env.APP_MIXER_RELEASE_FLOOR_MODE ?? 'disabled',
+  floorAnchorDir = process.env.APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR;
 // An optional floor held in a directory outside the revocation database (a separate durable volume), so a restored database whose floor went back is refused.
-if(floorAnchorDir!==undefined&&(floorMode!=='postgres'||!/^\/[A-Za-z0-9._\/-]{1,200}$/.test(floorAnchorDir)||floorAnchorDir.split('/').includes('..')))throw Error('Invalid publication release floor configuration');
+if (floorAnchorDir !== undefined && (floorMode !== 'postgres' || !/^\/[A-Za-z0-9._\/-]{1,200}$/.test(floorAnchorDir) || floorAnchorDir.split('/').includes('..')))
+  throw Error('Invalid publication release floor configuration');
 // A failed anchor update leaves protection degraded until a later update succeeds, so it is logged (at most once a minute, with only the error code).
-let lastAnchorWarning=0;const anchorError=error=>{const now=Date.now();if(now-lastAnchorWarning>60000){lastAnchorWarning=now;console.error('Anchor update failed: '+(typeof error?.code==='string'?error.code:'error'));}};
-if(metricsPort!==undefined&&accessMode!=='jwt')throw Error('Metrics require JWT access');
+let lastAnchorWarning = 0;
+const anchorError = error => {
+  const now = Date.now();
+  if (now - lastAnchorWarning > 60000) {
+    lastAnchorWarning = now;
+    console.error('Anchor update failed: ' + (typeof error?.code === 'string' ? error.code : 'error'));
+  }
+};
+if (metricsPort !== undefined && accessMode !== 'jwt') throw Error('Metrics require JWT access');
 // The metrics listener stays on loopback (a same-pod collector) unless APP_MIXER_METRICS_BIND=0.0.0.0 opens it to the pod network for a scraper that a NetworkPolicy admits.
-const metricsBind=process.env.APP_MIXER_METRICS_BIND??'127.0.0.1';
-if(!['127.0.0.1','0.0.0.0'].includes(metricsBind)||(process.env.APP_MIXER_METRICS_BIND!==undefined&&metricsPort===undefined))throw Error('Invalid metrics configuration');
-if(accessMode==='jwt'){
- const keyPath=process.env.APP_MIXER_JWKS_PATH,issuer=process.env.APP_MIXER_JWT_ISSUER,audience=process.env.APP_MIXER_JWT_AUDIENCE,tenant=process.env.APP_MIXER_TENANT_ID,requiredScope=process.env.APP_MIXER_JWT_SCOPE??'app-mixer:publication.read',maxAge=process.env.APP_MIXER_JWT_MAX_AGE_SECONDS??'600';
- if(!keyPath||!issuer||!audience||!tenant||tenant.length>256||/[\x00-\x20\x7f]/.test(tenant)||!requiredScope||requiredScope.length>256||/[\x00-\x20\x7f]/.test(requiredScope)||!/^[1-9][0-9]{0,4}$/.test(maxAge)||Number(maxAge)>86400)throw Error('Invalid publication access configuration');
- if(metricsPort!==undefined&&requiredScope==='app-mixer:metrics.read')throw Error('Invalid metrics configuration');
- const readJwks=async()=>{const handle=await open(keyPath,'r');try{if(!(await handle.stat()).isFile())throw Error('Invalid JWKS file');const bytes=Buffer.alloc(131073);let length=0;while(length<bytes.length){const result=await handle.read(bytes,length,bytes.length-length,length);if(!result.bytesRead)break;length+=result.bytesRead;}if(length>131072)throw Error('JWKS too large');return new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,length));}finally{await handle.close();}};
- releaseTenant=tenant;let keyDocument=await readJwks();const jwks=JSON.parse(keyDocument),revocationMode=process.env.APP_MIXER_REVOCATION_MODE??'postgres';let isTokenActive;
- if(revocationMode==='postgres'){
-  const dsnPath=process.env.APP_MIXER_REVOCATION_DSN_PATH,caPath=process.env.APP_MIXER_REVOCATION_CA_PATH;
-  if(!dsnPath||!caPath)throw Error('Invalid revocation configuration');
-  const dsn=(await readBounded(dsnPath,8192,'Invalid revocation configuration','utf8')).trim(),ca=await readBounded(caPath,65536,'Invalid revocation configuration','utf8');let url;try{url=new URL(dsn);}catch{throw Error('Invalid revocation configuration');}
-  if(!['postgres:','postgresql:'].includes(url.protocol)||!url.hostname||!url.username||!url.password||!/^\/[^/]+$/.test(url.pathname)||url.search||url.hash||!ca.trim())throw Error('Invalid revocation configuration');
-  revocationPool=new pg.Pool({connectionString:dsn,ssl:{ca,rejectUnauthorized:true},max:5,connectionTimeoutMillis:2000,idleTimeoutMillis:10000,query_timeout:2000,statement_timeout:1500,application_name:'app-mixer-data-plane'});
-  revocationPool.on('error',()=>{});
-  const revocations=new PostgresJwtRevocations({issuer,query:(sql,args)=>revocationPool.query(sql,args),...(floorAnchorDir!==undefined?{epochAnchor:createFileSequenceAnchor(floorAnchorDir),onAnchorError:anchorError}:{})});isTokenActive=claims=>revocations.isTokenActive(claims);
- }else if(revocationMode!=='disabled')throw Error('Invalid revocation configuration');
- const authenticator=scope=>createJwtCapabilityAuthenticator({issuer,audience,jwks,maxTokenAgeSeconds:Number(maxAge),...(isTokenActive?{isTokenActive}:{}),resolveActor:claims=>claims.tenant_id===tenant&&typeof claims.scope==='string'&&claims.scope.split(' ').includes(scope)?{tenantId:tenant,principalId:claims.sub}:undefined});
- authenticate=authenticator(requiredScope);if(metricsPort!==undefined)authenticateMetrics=authenticator('app-mixer:metrics.read');
- if(jwksReloadText!==undefined){
-  const interval=Number(jwksReloadText),maxStale=interval*3,probe=authenticator(requiredScope),targets=[authenticate,...(authenticateMetrics?[authenticateMetrics]:[])];let lastSuccess=Date.now(),epoch=0,closed=false,timer;
-  keyHealth=()=>{const now=Date.now();return !closed&&Number.isSafeInteger(now)&&now>=lastSuccess&&now-lastSuccess<maxStale;};
-  const protect=original=>Object.assign(async req=>{if(!keyHealth())return undefined;const observed=epoch,result=await original(req);return keyHealth()&&observed===epoch?result:undefined;},{close:()=>original.close()});
-  authenticate=protect(authenticate);if(authenticateMetrics)authenticateMetrics=protect(authenticateMetrics);
-  const refresh=async()=>{try{const document=await readJwks();if(closed)return;const parsed=JSON.parse(document);if(document!==keyDocument){probe.replaceKeys(parsed);if(closed)return;for(const target of targets)target.replaceKeys(parsed);epoch++;keyDocument=document;}lastSuccess=Date.now();}catch{if(!closed)console.error('JWT key reload failed');}finally{if(!closed)timer=setTimeout(refresh,interval);}};
-  timer=setTimeout(refresh,interval);stopJwksReload=()=>{closed=true;epoch++;clearTimeout(timer);probe.close();};
- }
-}else if(accessMode!=='public')throw Error('Invalid publication access configuration');
+const metricsBind = process.env.APP_MIXER_METRICS_BIND ?? '127.0.0.1';
+if (!['127.0.0.1', '0.0.0.0'].includes(metricsBind) || (process.env.APP_MIXER_METRICS_BIND !== undefined && metricsPort === undefined)) throw Error('Invalid metrics configuration');
+if (accessMode === 'jwt') {
+  const keyPath = process.env.APP_MIXER_JWKS_PATH,
+    issuer = process.env.APP_MIXER_JWT_ISSUER,
+    audience = process.env.APP_MIXER_JWT_AUDIENCE,
+    tenant = process.env.APP_MIXER_TENANT_ID,
+    requiredScope = process.env.APP_MIXER_JWT_SCOPE ?? 'app-mixer:publication.read',
+    maxAge = process.env.APP_MIXER_JWT_MAX_AGE_SECONDS ?? '600';
+  if (
+    !keyPath ||
+    !issuer ||
+    !audience ||
+    !tenant ||
+    tenant.length > 256 ||
+    /[\x00-\x20\x7f]/.test(tenant) ||
+    !requiredScope ||
+    requiredScope.length > 256 ||
+    /[\x00-\x20\x7f]/.test(requiredScope) ||
+    !/^[1-9][0-9]{0,4}$/.test(maxAge) ||
+    Number(maxAge) > 86400
+  )
+    throw Error('Invalid publication access configuration');
+  if (metricsPort !== undefined && requiredScope === 'app-mixer:metrics.read') throw Error('Invalid metrics configuration');
+  const readJwks = async () => {
+    const handle = await open(keyPath, 'r');
+    try {
+      if (!(await handle.stat()).isFile()) throw Error('Invalid JWKS file');
+      const bytes = Buffer.alloc(131073);
+      let length = 0;
+      while (length < bytes.length) {
+        const result = await handle.read(bytes, length, bytes.length - length, length);
+        if (!result.bytesRead) break;
+        length += result.bytesRead;
+      }
+      if (length > 131072) throw Error('JWKS too large');
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length));
+    } finally {
+      await handle.close();
+    }
+  };
+  releaseTenant = tenant;
+  let keyDocument = await readJwks();
+  const jwks = JSON.parse(keyDocument),
+    revocationMode = process.env.APP_MIXER_REVOCATION_MODE ?? 'postgres';
+  let isTokenActive;
+  if (revocationMode === 'postgres') {
+    const dsnPath = process.env.APP_MIXER_REVOCATION_DSN_PATH,
+      caPath = process.env.APP_MIXER_REVOCATION_CA_PATH;
+    if (!dsnPath || !caPath) throw Error('Invalid revocation configuration');
+    const dsn = (await readBounded(dsnPath, 8192, 'Invalid revocation configuration', 'utf8')).trim(),
+      ca = await readBounded(caPath, 65536, 'Invalid revocation configuration', 'utf8');
+    let url;
+    try {
+      url = new URL(dsn);
+    } catch {
+      throw Error('Invalid revocation configuration');
+    }
+    if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !url.username || !url.password || !/^\/[^/]+$/.test(url.pathname) || url.search || url.hash || !ca.trim())
+      throw Error('Invalid revocation configuration');
+    revocationPool = new pg.Pool({
+      connectionString: dsn,
+      ssl: { ca, rejectUnauthorized: true },
+      max: 5,
+      connectionTimeoutMillis: 2000,
+      idleTimeoutMillis: 10000,
+      query_timeout: 2000,
+      statement_timeout: 1500,
+      application_name: 'app-mixer-data-plane'
+    });
+    revocationPool.on('error', () => {});
+    const revocations = new PostgresJwtRevocations({
+      issuer,
+      query: (sql, args) => revocationPool.query(sql, args),
+      ...(floorAnchorDir !== undefined ? { epochAnchor: createFileSequenceAnchor(floorAnchorDir), onAnchorError: anchorError } : {})
+    });
+    isTokenActive = claims => revocations.isTokenActive(claims);
+  } else if (revocationMode !== 'disabled') throw Error('Invalid revocation configuration');
+  const authenticator = scope =>
+    createJwtCapabilityAuthenticator({
+      issuer,
+      audience,
+      jwks,
+      maxTokenAgeSeconds: Number(maxAge),
+      ...(isTokenActive ? { isTokenActive } : {}),
+      resolveActor: claims => (claims.tenant_id === tenant && typeof claims.scope === 'string' && claims.scope.split(' ').includes(scope) ? { tenantId: tenant, principalId: claims.sub } : undefined)
+    });
+  authenticate = authenticator(requiredScope);
+  if (metricsPort !== undefined) authenticateMetrics = authenticator('app-mixer:metrics.read');
+  if (jwksReloadText !== undefined) {
+    const interval = Number(jwksReloadText),
+      maxStale = interval * 3,
+      probe = authenticator(requiredScope),
+      targets = [authenticate, ...(authenticateMetrics ? [authenticateMetrics] : [])];
+    let lastSuccess = Date.now(),
+      epoch = 0,
+      closed = false,
+      timer;
+    keyHealth = () => {
+      const now = Date.now();
+      return !closed && Number.isSafeInteger(now) && now >= lastSuccess && now - lastSuccess < maxStale;
+    };
+    const protect = original =>
+      Object.assign(
+        async req => {
+          if (!keyHealth()) return undefined;
+          const observed = epoch,
+            result = await original(req);
+          return keyHealth() && observed === epoch ? result : undefined;
+        },
+        { close: () => original.close() }
+      );
+    authenticate = protect(authenticate);
+    if (authenticateMetrics) authenticateMetrics = protect(authenticateMetrics);
+    const refresh = async () => {
+      try {
+        const document = await readJwks();
+        if (closed) return;
+        const parsed = JSON.parse(document);
+        if (document !== keyDocument) {
+          probe.replaceKeys(parsed);
+          if (closed) return;
+          for (const target of targets) target.replaceKeys(parsed);
+          epoch++;
+          keyDocument = document;
+        }
+        lastSuccess = Date.now();
+      } catch {
+        if (!closed) console.error('JWT key reload failed');
+      } finally {
+        if (!closed) timer = setTimeout(refresh, interval);
+      }
+    };
+    timer = setTimeout(refresh, interval);
+    stopJwksReload = () => {
+      closed = true;
+      epoch++;
+      clearTimeout(timer);
+      probe.close();
+    };
+  }
+} else if (accessMode !== 'public') throw Error('Invalid publication access configuration');
 let releaseAllowed;
-if(floorMode==='postgres'){
- if(!revocationPool||!authenticate||!releaseEnvironment||!releaseTenant||! /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(releaseTenant))throw Error('Invalid publication release floor configuration');
- const registry=new PostgresPublicationReleaseRegistry({query:(sql,args)=>revocationPool.query(sql,args),...(floorAnchorDir!==undefined?{floorAnchor:createFileReleaseFloorAnchor(floorAnchorDir),onAnchorError:anchorError}:{})}),releaseScope={tenantId:releaseTenant,applicationId:snapshot.definition.id,environment:releaseEnvironment},digest=definitionSha256(snapshot.definition);
- let lastReleaseWarning=0;
- // A refused or failed release check is logged (at most once a minute, without database details) so an operator can tell a rolled-back floor from an outage.
- releaseAllowed=async()=>{try{return await registry.isAllowed(releaseScope,snapshot.version,digest);}catch(error){const now=Date.now();if(now-lastReleaseWarning>60000){lastReleaseWarning=now;console.error('Release floor check failed: '+(error instanceof Error&&error.message.startsWith('Release floor')?error.message:'database error'));}throw error;}};
-}else if(floorMode!=='disabled')throw Error('Invalid publication release floor configuration');
-const metrics=metricsPort===undefined?undefined:new DataPlaneRequestMetrics();
+if (floorMode === 'postgres') {
+  if (!revocationPool || !authenticate || !releaseEnvironment || !releaseTenant || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(releaseTenant))
+    throw Error('Invalid publication release floor configuration');
+  const registry = new PostgresPublicationReleaseRegistry({
+      query: (sql, args) => revocationPool.query(sql, args),
+      ...(floorAnchorDir !== undefined ? { floorAnchor: createFileReleaseFloorAnchor(floorAnchorDir), onAnchorError: anchorError } : {})
+    }),
+    releaseScope = { tenantId: releaseTenant, applicationId: snapshot.definition.id, environment: releaseEnvironment },
+    digest = definitionSha256(snapshot.definition);
+  let lastReleaseWarning = 0;
+  // A refused or failed release check is logged (at most once a minute, without database details) so an operator can tell a rolled-back floor from an outage.
+  releaseAllowed = async () => {
+    try {
+      return await registry.isAllowed(releaseScope, snapshot.version, digest);
+    } catch (error) {
+      const now = Date.now();
+      if (now - lastReleaseWarning > 60000) {
+        lastReleaseWarning = now;
+        console.error('Release floor check failed: ' + (error instanceof Error && error.message.startsWith('Release floor') ? error.message : 'database error'));
+      }
+      throw error;
+    }
+  };
+} else if (floorMode !== 'disabled') throw Error('Invalid publication release floor configuration');
+const metrics = metricsPort === undefined ? undefined : new DataPlaneRequestMetrics();
 metrics?.setPublicationVersion(snapshot.version);
-const authTimeout=process.env.APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS??'5000',authPending=process.env.APP_MIXER_PUBLICATION_AUTH_MAX_PENDING??'100';
-if(!/^[1-9][0-9]*$/.test(authTimeout)||Number(authTimeout)<100||Number(authTimeout)>30000||!/^[1-9][0-9]*$/.test(authPending)||Number(authPending)>100)throw Error('Invalid publication authorization limits');
-const transport=process.env.APP_MIXER_TRANSPORT??'tls',planeOptions={immutablePublications:true,health:{timeoutMs:2500,...(revocationPool||jwksReloadText!==undefined?{check:async()=>{try{if(!keyHealth())return false;if(revocationPool)await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');if(releaseAllowed&&!await releaseAllowed())return false;return keyHealth();}catch{return false;}}}:{})},...(authenticate?{publicationAuthorizationLimits:{timeoutMs:Number(authTimeout),maxPending:Number(authPending)},authorizePublication:async(req,_version,signal)=>{const actor=await authenticate(req);if(signal.aborted||!actor)return false;return !releaseAllowed||await releaseAllowed();}}:{}),...(metrics?{observe:metrics.observe}:{})};let server;
+const authTimeout = process.env.APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS ?? '5000',
+  authPending = process.env.APP_MIXER_PUBLICATION_AUTH_MAX_PENDING ?? '100';
+if (!/^[1-9][0-9]*$/.test(authTimeout) || Number(authTimeout) < 100 || Number(authTimeout) > 30000 || !/^[1-9][0-9]*$/.test(authPending) || Number(authPending) > 100)
+  throw Error('Invalid publication authorization limits');
+const transport = process.env.APP_MIXER_TRANSPORT ?? 'tls',
+  planeOptions = {
+    immutablePublications: true,
+    health: {
+      timeoutMs: 2500,
+      ...(revocationPool || jwksReloadText !== undefined
+        ? {
+            check: async () => {
+              try {
+                if (!keyHealth()) return false;
+                if (revocationPool) await revocationPool.query('SELECT 1 FROM app_mixer_jwt_revocations LIMIT 1');
+                if (releaseAllowed && !(await releaseAllowed())) return false;
+                return keyHealth();
+              } catch {
+                return false;
+              }
+            }
+          }
+        : {})
+    },
+    ...(authenticate
+      ? {
+          publicationAuthorizationLimits: { timeoutMs: Number(authTimeout), maxPending: Number(authPending) },
+          authorizePublication: async (req, _version, signal) => {
+            const actor = await authenticate(req);
+            if (signal.aborted || !actor) return false;
+            return !releaseAllowed || (await releaseAllowed());
+          }
+        }
+      : {}),
+    ...(metrics ? { observe: metrics.observe } : {})
+  };
+let server;
 let tlsReloader;
-if(transport==='tls'){
- const certPath=process.env.APP_MIXER_TLS_CERT_PATH,keyPath=process.env.APP_MIXER_TLS_KEY_PATH,caPath=process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
- if(!certPath||!keyPath||(caPath!==undefined&&!caPath))throw Error('Invalid data plane transport configuration');
- const reloadText=process.env.APP_MIXER_TLS_RELOAD_MS;if(reloadText!==undefined&&(!/^[1-9][0-9]{3,7}$/.test(reloadText)||Number(reloadText)>86400000))throw Error('Invalid data plane transport configuration');
- const tlsLimit='Invalid data plane transport configuration',loadTls=async()=>({cert:await readBounded(certPath,65536,tlsLimit),key:await readBounded(keyPath,65536,tlsLimit),...(caPath?{clientCa:await readBounded(caPath,65536,tlsLimit)}:{})});
- server=createDataPlaneHttps(repository,await loadTls(),planeOptions);
- // Optional: pick up renewed Secret files (for example from cert-manager) without a restart; invalid files keep the current credentials.
- if(reloadText!==undefined){tlsReloader=createTlsCredentialReloader(server,{load:loadTls,intervalMs:Number(reloadText),clientCa:!!caPath,onReload:info=>console.log(`TLS credentials active: ${[info.subject.replaceAll('\n',', '),info.altNames].filter(Boolean).join(', ')} until ${new Date(info.validTo).toISOString()}`),onError:error=>console.error(`TLS reload rejected: ${error.message}`)});}
-}else if(transport==='http')server=createDataPlane(repository,planeOptions);else throw Error('Invalid data plane transport configuration');server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-const metricsServer=metrics?createMetricsServer({metrics,authorize:async req=>!!await authenticateMetrics(req),timeoutMs:2500,maxPending:20}):undefined;
-metricsServer?.listen(Number(metricsPort),metricsBind);
-server.on('close',()=>{stopJwksReload();tlsReloader?.stop();metricsServer?.close();authenticate?.close();authenticateMetrics?.close();if(revocationPool)void revocationPool.end().catch(()=>{});});
-server.listen(Number(portText),'0.0.0.0');
-server.once('listening',()=>console.log('Data Plane ready'));
-let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;server.beginDrain();metrics?.setDraining(true);setTimeout(()=>server.close(),Number(delayText));});
+if (transport === 'tls') {
+  const certPath = process.env.APP_MIXER_TLS_CERT_PATH,
+    keyPath = process.env.APP_MIXER_TLS_KEY_PATH,
+    caPath = process.env.APP_MIXER_TLS_CLIENT_CA_PATH;
+  if (!certPath || !keyPath || (caPath !== undefined && !caPath)) throw Error('Invalid data plane transport configuration');
+  const reloadText = process.env.APP_MIXER_TLS_RELOAD_MS;
+  if (reloadText !== undefined && (!/^[1-9][0-9]{3,7}$/.test(reloadText) || Number(reloadText) > 86400000)) throw Error('Invalid data plane transport configuration');
+  const tlsLimit = 'Invalid data plane transport configuration',
+    loadTls = async () => ({
+      cert: await readBounded(certPath, 65536, tlsLimit),
+      key: await readBounded(keyPath, 65536, tlsLimit),
+      ...(caPath ? { clientCa: await readBounded(caPath, 65536, tlsLimit) } : {})
+    });
+  server = createDataPlaneHttps(repository, await loadTls(), planeOptions);
+  // Optional: pick up renewed Secret files (for example from cert-manager) without a restart; invalid files keep the current credentials.
+  if (reloadText !== undefined) {
+    tlsReloader = createTlsCredentialReloader(server, {
+      load: loadTls,
+      intervalMs: Number(reloadText),
+      clientCa: !!caPath,
+      onReload: info => console.log(`TLS credentials active: ${[info.subject.replaceAll('\n', ', '), info.altNames].filter(Boolean).join(', ')} until ${new Date(info.validTo).toISOString()}`),
+      onError: error => console.error(`TLS reload rejected: ${error.message}`)
+    });
+  }
+} else if (transport === 'http') server = createDataPlane(repository, planeOptions);
+else throw Error('Invalid data plane transport configuration');
+server.requestTimeout = 15000;
+server.headersTimeout = 10000;
+server.keepAliveTimeout = 5000;
+const metricsServer = metrics ? createMetricsServer({ metrics, authorize: async req => !!(await authenticateMetrics(req)), timeoutMs: 2500, maxPending: 20 }) : undefined;
+metricsServer?.listen(Number(metricsPort), metricsBind);
+server.on('close', () => {
+  stopJwksReload();
+  tlsReloader?.stop();
+  metricsServer?.close();
+  authenticate?.close();
+  authenticateMetrics?.close();
+  if (revocationPool) void revocationPool.end().catch(() => {});
+});
+server.listen(Number(portText), '0.0.0.0');
+server.once('listening', () => console.log('Data Plane ready'));
+let stopping = false;
+for (const signal of ['SIGTERM', 'SIGINT'])
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    server.beginDrain();
+    metrics?.setDraining(true);
+    setTimeout(() => server.close(), Number(delayText));
+  });

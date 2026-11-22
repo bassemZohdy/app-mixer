@@ -1,75 +1,633 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {once} from 'node:events';
-import {DatabaseSync} from 'node:sqlite';
-import {SqliteAgentRuns,SqliteAgentDefinitions,SqliteAgentTriggers,SqliteAgentSchedules,AgentScheduleWorker,createAgentEventIngress,DurableAgentWorker} from '../dist/index.js';
-import {SpanKind,SpanStatusCode} from '@opentelemetry/api';
-import {TracerProvider,SimpleSpanProcessor,InMemorySpanExporter} from '@opentelemetry/sdk-trace';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
+import { SqliteAgentRuns, SqliteAgentDefinitions, SqliteAgentTriggers, SqliteAgentSchedules, AgentScheduleWorker, createAgentEventIngress, DurableAgentWorker } from '../dist/index.js';
+import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { TracerProvider, SimpleSpanProcessor, InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 
-const scope={tenantId:'tenant',agentId:'agent'},parent='00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',other='00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01',manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  parent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+  other = '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01',
+  manifest = {
+    manifestVersion: 1,
+    tenantId: 'tenant',
+    agentId: 'agent',
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    model: { provider: 'local', model: 'test' },
+    allowedCapabilities: [],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 60000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  };
 
-test('trusted run trace context survives reopening and links a worker in another process',()=>{
- const dir=mkdtempSync(join(tmpdir(),'agent-trace-parent-')),runPath=join(dir,'runs.sqlite'),definitionPath=join(dir,'definitions.sqlite'),runs=new SqliteAgentRuns(runPath),definitions=new SqliteAgentDefinitions(definitionPath);let reopened;
- try{definitions.save('tenant',manifest,0);runs.create(scope,'run',{definitionVersion:1,maxAttempts:2,deadline:Date.now()+60000,traceParent:parent});assert.equal(runs.getTraceParent(scope,'run'),parent);assert.equal(runs.getTraceParent({...scope,tenantId:'other'},'run'),undefined);runs.close();definitions.close();const child=spawnSync(process.execPath,[fileURLToPath(new URL('./fixtures/traced-worker.mjs',import.meta.url))],{env:{...process.env,TEST_RUNS:runPath,TEST_DEFINITIONS:definitionPath,TEST_RUN_ID:'run'},encoding:'utf8',timeout:30000});assert.equal(child.status,0,child.stderr);assert.deepEqual(JSON.parse(child.stdout),{traceId:'0123456789abcdef0123456789abcdef',parent:'0123456789abcdef',status:'succeeded'});reopened=new SqliteAgentRuns(runPath);assert.equal(reopened.get(scope,'run').status,'succeeded');}finally{reopened?.close();rmSync(dir,{recursive:true,force:true});}
+test('trusted run trace context survives reopening and links a worker in another process', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-trace-parent-')),
+    runPath = join(dir, 'runs.sqlite'),
+    definitionPath = join(dir, 'definitions.sqlite'),
+    runs = new SqliteAgentRuns(runPath),
+    definitions = new SqliteAgentDefinitions(definitionPath);
+  let reopened;
+  try {
+    definitions.save('tenant', manifest, 0);
+    runs.create(scope, 'run', { definitionVersion: 1, maxAttempts: 2, deadline: Date.now() + 60000, traceParent: parent });
+    assert.equal(runs.getTraceParent(scope, 'run'), parent);
+    assert.equal(runs.getTraceParent({ ...scope, tenantId: 'other' }, 'run'), undefined);
+    runs.close();
+    definitions.close();
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/traced-worker.mjs', import.meta.url))], {
+      env: { ...process.env, TEST_RUNS: runPath, TEST_DEFINITIONS: definitionPath, TEST_RUN_ID: 'run' },
+      encoding: 'utf8',
+      timeout: 30000
+    });
+    assert.equal(child.status, 0, child.stderr);
+    assert.deepEqual(JSON.parse(child.stdout), { traceId: '0123456789abcdef0123456789abcdef', parent: '0123456789abcdef', status: 'succeeded' });
+    reopened = new SqliteAgentRuns(runPath);
+    assert.equal(reopened.get(scope, 'run').status, 'succeeded');
+  } finally {
+    reopened?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('trace context creation is atomic, immutable and rejects malformed parents',()=>{
- const dir=mkdtempSync(join(tmpdir(),'agent-trace-atomic-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path);let db;
- try{const config={definitionVersion:1,maxAttempts:1,deadline:1000};for(const bad of ['00-'+ '0'.repeat(32)+'-0123456789abcdef-01',parent.toUpperCase(),parent+'-extra','invalid'])assert.throws(()=>runs.create(scope,'bad',{...config,traceParent:bad},0),/configuration/);assert.equal(runs.get(scope,'bad'),undefined);db=new DatabaseSync(path);db.exec("CREATE TRIGGER fail_trace BEFORE INSERT ON agent_run_trace_context BEGIN SELECT RAISE(ABORT,'trace write failed'); END");assert.throws(()=>runs.create(scope,'atomic',{...config,traceParent:parent},0),/trace write failed/);assert.equal(runs.get(scope,'atomic'),undefined);db.exec('DROP TRIGGER fail_trace');runs.create(scope,'valid',{...config,traceParent:parent},0);assert.throws(()=>db.exec("UPDATE agent_run_trace_context SET trace_parent='bad'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_run_trace_context'),/immutable/);}finally{db?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('trace context creation is atomic, immutable and rejects malformed parents', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-trace-atomic-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let db;
+  try {
+    const config = { definitionVersion: 1, maxAttempts: 1, deadline: 1000 };
+    for (const bad of ['00-' + '0'.repeat(32) + '-0123456789abcdef-01', parent.toUpperCase(), parent + '-extra', 'invalid'])
+      assert.throws(() => runs.create(scope, 'bad', { ...config, traceParent: bad }, 0), /configuration/);
+    assert.equal(runs.get(scope, 'bad'), undefined);
+    db = new DatabaseSync(path);
+    db.exec("CREATE TRIGGER fail_trace BEFORE INSERT ON agent_run_trace_context BEGIN SELECT RAISE(ABORT,'trace write failed'); END");
+    assert.throws(() => runs.create(scope, 'atomic', { ...config, traceParent: parent }, 0), /trace write failed/);
+    assert.equal(runs.get(scope, 'atomic'), undefined);
+    db.exec('DROP TRIGGER fail_trace');
+    runs.create(scope, 'valid', { ...config, traceParent: parent }, 0);
+    assert.throws(() => db.exec("UPDATE agent_run_trace_context SET trace_parent='bad'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM agent_run_trace_context'), /immutable/);
+  } finally {
+    db?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('authorized ingress stores the first trusted context atomically and ignores invalid tracing',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'agent-trace-event-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let chosen=parent,authorized=true,calls=0;const ingress=createAgentEventIngress({triggers,definitions,maxPending:10,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>authorized,traceParent:()=>{calls++;return chosen;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=id=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:id,eventType:'event',payload:{}})});let response=await post('first');assert.equal(response.status,202);const first=await response.json();chosen=other;response=await post('first');assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal(runs.getTraceParent(scope,first.runId),parent);chosen='invalid';response=await post('second');assert.equal(response.status,202);assert.equal(runs.getTraceParent(scope,(await response.json()).runId),undefined);authorized=false;assert.equal((await post('denied')).status,403);assert.equal(calls,3);}finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();triggers.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('authorized ingress stores the first trusted context atomically and ignores invalid tracing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-trace-event-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let chosen = parent,
+    authorized = true,
+    calls = 0;
+  const ingress = createAgentEventIngress({
+    triggers,
+    definitions,
+    maxPending: 10,
+    authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+    authorize: () => authorized,
+    traceParent: () => {
+      calls++;
+      return chosen;
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = id => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId: id, eventType: 'event', payload: {} }) });
+    let response = await post('first');
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    chosen = other;
+    response = await post('first');
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal(runs.getTraceParent(scope, first.runId), parent);
+    chosen = 'invalid';
+    response = await post('second');
+    assert.equal(response.status, 202);
+    assert.equal(runs.getTraceParent(scope, (await response.json()).runId), undefined);
+    authorized = false;
+    assert.equal((await post('denied')).status, 403);
+    assert.equal(calls, 3);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    triggers.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('accepted event producer span links the durable worker and excludes event data',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'agent-trace-enqueue-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),definitions=new SqliteAgentDefinitions(':memory:'),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('test');definitions.save('tenant',manifest,0);
- let allowed=true;const ingress=createAgentEventIngress({triggers,definitions,maxPending:10,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>allowed,traceParent:()=>parent,tracing:{tracer,propagateToRun:true}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const post=(eventId,payload={private:'confidential'})=>fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','traceparent':other},body:JSON.stringify({agentId:'agent',eventId,eventType:'private-type',payload})});let response=await post('private-id');assert.equal(response.status,202);const {runId}=await response.json(),stored=runs.getTraceParent(scope,runId),producer=exporter.getFinishedSpans()[0];assert.equal(producer.name,'agent.event.enqueue');assert.equal(producer.kind,SpanKind.PRODUCER);assert.equal(producer.parentSpanContext.spanId,'0123456789abcdef');assert.equal(stored,`00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`);
- response=await post('private-id');assert.equal(response.status,200);assert.equal(runs.getTraceParent(scope,runId),stored);assert.equal(exporter.getFinishedSpans()[1].attributes['app_mixer.agent.event.outcome'],'duplicate');response=await post('private-id',{private:'changed'});assert.equal(response.status,409);assert.equal(exporter.getFinishedSpans()[2].status.code,SpanStatusCode.ERROR);allowed=false;assert.equal((await post('denied')).status,403);assert.equal(exporter.getFinishedSpans().length,3);
- const worker=new DurableAgentWorker({runs,definitions,workerId:'worker',leaseMs:600,pollMs:25,authorizeStart:()=>true,execute:async()=> 'succeeded',tracing:{tracer,usePersistedParent:true}});assert.equal((await worker.runOnce(scope,runId)).status,'succeeded');const child=exporter.getFinishedSpans().find(s=>s.name==='agent.run');assert.equal(child.parentSpanContext.spanId,producer.spanContext().spanId);assert.equal(child.spanContext().traceId,producer.spanContext().traceId);const serialized=JSON.stringify(exporter.getFinishedSpans().map(s=>({name:s.name,attributes:s.attributes,events:s.events})));for(const value of ['private-id','confidential','private-type','sender','source',runId])assert.equal(serialized.includes(value),false);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));await provider.shutdown();definitions.close();triggers.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('accepted event producer span links the durable worker and excludes event data', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-trace-enqueue-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    definitions = new SqliteAgentDefinitions(':memory:'),
+    exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }),
+    tracer = provider.getTracer('test');
+  definitions.save('tenant', manifest, 0);
+  let allowed = true;
+  const ingress = createAgentEventIngress({
+    triggers,
+    definitions,
+    maxPending: 10,
+    authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+    authorize: () => allowed,
+    traceParent: () => parent,
+    tracing: { tracer, propagateToRun: true }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const post = (eventId, payload = { private: 'confidential' }) =>
+      fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', traceparent: other },
+        body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'private-type', payload })
+      });
+    let response = await post('private-id');
+    assert.equal(response.status, 202);
+    const { runId } = await response.json(),
+      stored = runs.getTraceParent(scope, runId),
+      producer = exporter.getFinishedSpans()[0];
+    assert.equal(producer.name, 'agent.event.enqueue');
+    assert.equal(producer.kind, SpanKind.PRODUCER);
+    assert.equal(producer.parentSpanContext.spanId, '0123456789abcdef');
+    assert.equal(stored, `00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`);
+    response = await post('private-id');
+    assert.equal(response.status, 200);
+    assert.equal(runs.getTraceParent(scope, runId), stored);
+    assert.equal(exporter.getFinishedSpans()[1].attributes['app_mixer.agent.event.outcome'], 'duplicate');
+    response = await post('private-id', { private: 'changed' });
+    assert.equal(response.status, 409);
+    assert.equal(exporter.getFinishedSpans()[2].status.code, SpanStatusCode.ERROR);
+    allowed = false;
+    assert.equal((await post('denied')).status, 403);
+    assert.equal(exporter.getFinishedSpans().length, 3);
+    const worker = new DurableAgentWorker({
+      runs,
+      definitions,
+      workerId: 'worker',
+      leaseMs: 600,
+      pollMs: 25,
+      authorizeStart: () => true,
+      execute: async () => 'succeeded',
+      tracing: { tracer, usePersistedParent: true }
+    });
+    assert.equal((await worker.runOnce(scope, runId)).status, 'succeeded');
+    const child = exporter.getFinishedSpans().find(s => s.name === 'agent.run');
+    assert.equal(child.parentSpanContext.spanId, producer.spanContext().spanId);
+    assert.equal(child.spanContext().traceId, producer.spanContext().traceId);
+    const serialized = JSON.stringify(exporter.getFinishedSpans().map(s => ({ name: s.name, attributes: s.attributes, events: s.events })));
+    for (const value of ['private-id', 'confidential', 'private-type', 'sender', 'source', runId]) assert.equal(serialized.includes(value), false);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    await provider.shutdown();
+    definitions.close();
+    triggers.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('ingress continues with trusted parent when tracing fails',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'agent-trace-fail-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const options={triggers,definitions,maxPending:10,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,traceParent:()=>parent};assert.throws(()=>createAgentEventIngress({...options,tracing:{tracer:{startSpan(){}},propagateToRun:'yes'}}),/Invalid/);const ingress=createAgentEventIngress({...options,tracing:{tracer:{startSpan(){throw Error('unavailable');}},propagateToRun:true}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const response=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'one',eventType:'event',payload:{}})});assert.equal(response.status,202);assert.equal(runs.getTraceParent(scope,(await response.json()).runId),parent);}finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();triggers.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('ingress continues with trusted parent when tracing fails', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-trace-fail-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const options = { triggers, definitions, maxPending: 10, authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }), authorize: () => true, traceParent: () => parent };
+  assert.throws(() => createAgentEventIngress({ ...options, tracing: { tracer: { startSpan() {} }, propagateToRun: 'yes' } }), /Invalid/);
+  const ingress = createAgentEventIngress({
+    ...options,
+    tracing: {
+      tracer: {
+        startSpan() {
+          throw Error('unavailable');
+        }
+      },
+      propagateToRun: true
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const response = await fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'one', eventType: 'event', payload: {} })
+    });
+    assert.equal(response.status, 202);
+    assert.equal(runs.getTraceParent(scope, (await response.json()).runId), parent);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    triggers.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('ingress does not trust request headers or propagate producer spans by default',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'agent-trace-default-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),definitions=new SqliteAgentDefinitions(':memory:'),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]});definitions.save('tenant',manifest,0);const ingress=createAgentEventIngress({triggers,definitions,maxPending:10,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,tracing:{tracer:provider.getTracer('test')}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const response=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json',traceparent:parent},body:JSON.stringify({agentId:'agent',eventId:'one',eventType:'event',payload:{}})});assert.equal(response.status,202);assert.equal(runs.getTraceParent(scope,(await response.json()).runId),undefined);const span=exporter.getFinishedSpans()[0];assert.equal(span.parentSpanContext,undefined);assert.notEqual(span.spanContext().traceId,parent.split('-')[1]);}finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));await provider.shutdown();definitions.close();triggers.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('ingress does not trust request headers or propagate producer spans by default', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-trace-default-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    definitions = new SqliteAgentDefinitions(':memory:'),
+    exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  definitions.save('tenant', manifest, 0);
+  const ingress = createAgentEventIngress({
+    triggers,
+    definitions,
+    maxPending: 10,
+    authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+    authorize: () => true,
+    tracing: { tracer: provider.getTracer('test') }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const response = await fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', traceparent: parent },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'one', eventType: 'event', payload: {} })
+    });
+    assert.equal(response.status, 202);
+    assert.equal(runs.getTraceParent(scope, (await response.json()).runId), undefined);
+    const span = exporter.getFinishedSpans()[0];
+    assert.equal(span.parentSpanContext, undefined);
+    assert.notEqual(span.spanContext().traceId, parent.split('-')[1]);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    await provider.shutdown();
+    definitions.close();
+    triggers.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('scheduled trace context links a worker in a separate process after reopening',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'scheduled-trace-parent-')),runPath=join(dir,'runs.sqlite'),definitionPath=join(dir,'definitions.sqlite'),runs=new SqliteAgentRuns(runPath),triggers=new SqliteAgentTriggers(runPath),schedules=new SqliteAgentSchedules(runPath),definitions=new SqliteAgentDefinitions(definitionPath),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]});let scheduler,reopened;
- try{definitions.save('tenant',manifest,0);const now=Date.now();schedules.save(scope,'private-schedule',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,now);scheduler=new AgentScheduleWorker({schedules,scope,definitions,authorize:()=>true,maxPending:5,maxPerPass:1,pollMs:100,clock:()=>now+1000,onError:error=>{throw error;},tracing:{tracer:provider.getTracer('scheduler'),propagateToRun:true}});assert.equal(await scheduler.runOnce(),1);await scheduler.stop();const runId=runs.list(scope)[0].runId,producer=exporter.getFinishedSpans()[0],expected=`00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;assert.equal(runs.getTraceParent(scope,runId),expected);assert.equal(runs.getTraceParent({...scope,tenantId:'other'},runId),undefined);schedules.close();triggers.close();runs.close();definitions.close();const child=spawnSync(process.execPath,[fileURLToPath(new URL('./fixtures/traced-worker.mjs',import.meta.url))],{env:{...process.env,TEST_RUNS:runPath,TEST_DEFINITIONS:definitionPath,TEST_RUN_ID:runId},encoding:'utf8',timeout:30000});assert.equal(child.status,0,child.stderr||String(child.error));assert.deepEqual(JSON.parse(child.stdout),{traceId:producer.spanContext().traceId,parent:producer.spanContext().spanId,status:'succeeded'});reopened=new SqliteAgentRuns(runPath);assert.equal(reopened.get(scope,runId).status,'succeeded');assert.equal(reopened.getTraceParent(scope,runId),expected);assert.equal(JSON.stringify(producer.attributes).includes('private-schedule'),false);
- }finally{await scheduler?.stop();reopened?.close();await provider.shutdown();try{schedules.close();}catch{}try{triggers.close();}catch{}try{runs.close();}catch{}try{definitions.close();}catch{}rmSync(dir,{recursive:true,force:true});}
+test('scheduled trace context links a worker in a separate process after reopening', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scheduled-trace-parent-')),
+    runPath = join(dir, 'runs.sqlite'),
+    definitionPath = join(dir, 'definitions.sqlite'),
+    runs = new SqliteAgentRuns(runPath),
+    triggers = new SqliteAgentTriggers(runPath),
+    schedules = new SqliteAgentSchedules(runPath),
+    definitions = new SqliteAgentDefinitions(definitionPath),
+    exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  let scheduler, reopened;
+  try {
+    definitions.save('tenant', manifest, 0);
+    const now = Date.now();
+    schedules.save(scope, 'private-schedule', { enabled: true, principalId: 'scheduler', rule: { kind: 'interval', intervalMs: 1000 } }, 0, now);
+    scheduler = new AgentScheduleWorker({
+      schedules,
+      scope,
+      definitions,
+      authorize: () => true,
+      maxPending: 5,
+      maxPerPass: 1,
+      pollMs: 100,
+      clock: () => now + 1000,
+      onError: error => {
+        throw error;
+      },
+      tracing: { tracer: provider.getTracer('scheduler'), propagateToRun: true }
+    });
+    assert.equal(await scheduler.runOnce(), 1);
+    await scheduler.stop();
+    const runId = runs.list(scope)[0].runId,
+      producer = exporter.getFinishedSpans()[0],
+      expected = `00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;
+    assert.equal(runs.getTraceParent(scope, runId), expected);
+    assert.equal(runs.getTraceParent({ ...scope, tenantId: 'other' }, runId), undefined);
+    schedules.close();
+    triggers.close();
+    runs.close();
+    definitions.close();
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/traced-worker.mjs', import.meta.url))], {
+      env: { ...process.env, TEST_RUNS: runPath, TEST_DEFINITIONS: definitionPath, TEST_RUN_ID: runId },
+      encoding: 'utf8',
+      timeout: 30000
+    });
+    assert.equal(child.status, 0, child.stderr || String(child.error));
+    assert.deepEqual(JSON.parse(child.stdout), { traceId: producer.spanContext().traceId, parent: producer.spanContext().spanId, status: 'succeeded' });
+    reopened = new SqliteAgentRuns(runPath);
+    assert.equal(reopened.get(scope, runId).status, 'succeeded');
+    assert.equal(reopened.getTraceParent(scope, runId), expected);
+    assert.equal(JSON.stringify(producer.attributes).includes('private-schedule'), false);
+  } finally {
+    await scheduler?.stop();
+    reopened?.close();
+    await provider.shutdown();
+    try {
+      schedules.close();
+    } catch {}
+    try {
+      triggers.close();
+    } catch {}
+    try {
+      runs.close();
+    } catch {}
+    try {
+      definitions.close();
+    } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('authenticated event producer links a worker in another process after reopening',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'event-trace-cross-process-')),runPath=join(dir,'runs.sqlite'),definitionPath=join(dir,'definitions.sqlite'),runs=new SqliteAgentRuns(runPath),triggers=new SqliteAgentTriggers(runPath),definitions=new SqliteAgentDefinitions(definitionPath),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]});let ingress,reopened,closed=false;
- try{definitions.save('tenant',manifest,0);ingress=createAgentEventIngress({triggers,definitions,maxPending:5,authenticate:req=>req.headers.authorization==='Bearer trusted'?{tenantId:'tenant',principalId:'sender',sourceId:'source'}:undefined,authorize:()=>true,traceParent:()=>parent,tracing:{tracer:provider.getTracer('ingress'),propagateToRun:true}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');const url=`http://127.0.0.1:${ingress.address().port}/events`,post=token=>fetch(url,{method:'POST',headers:{'content-type':'application/json',authorization:token,traceparent:other},body:JSON.stringify({agentId:'agent',eventId:'private-event',eventType:'event',payload:{private:'secret'}})});assert.equal((await post('Bearer invalid')).status,401);let response=await post('Bearer trusted');assert.equal(response.status,202);const {runId}=await response.json(),producer=exporter.getFinishedSpans()[0];assert.equal(producer.parentSpanContext.spanId,parent.split('-')[2]);const expected=`00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;assert.equal(runs.getTraceParent(scope,runId),expected);assert.equal(runs.getTraceParent({...scope,tenantId:'other'},runId),undefined);response=await post('Bearer trusted');assert.equal(response.status,200);assert.equal((await response.json()).runId,runId);assert.equal(runs.getTraceParent(scope,runId),expected);ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));ingress=undefined;triggers.close();runs.close();definitions.close();closed=true;
-  const child=spawnSync(process.execPath,[fileURLToPath(new URL('./fixtures/traced-worker.mjs',import.meta.url))],{env:{...process.env,TEST_RUNS:runPath,TEST_DEFINITIONS:definitionPath,TEST_RUN_ID:runId},encoding:'utf8',timeout:30000});assert.equal(child.status,0,child.stderr||String(child.error));assert.deepEqual(JSON.parse(child.stdout),{traceId:producer.spanContext().traceId,parent:producer.spanContext().spanId,status:'succeeded'});reopened=new SqliteAgentRuns(runPath);assert.equal(reopened.get(scope,runId).status,'succeeded');assert.equal(reopened.getTraceParent(scope,runId),expected);for(const value of ['private-event','secret','sender','source',runId])assert.equal(JSON.stringify(producer.attributes).includes(value),false);
- }finally{if(ingress){ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));}reopened?.close();await provider.shutdown();if(!closed){try{triggers.close();}catch{}try{runs.close();}catch{}try{definitions.close();}catch{}}rmSync(dir,{recursive:true,force:true});}
+test('authenticated event producer links a worker in another process after reopening', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'event-trace-cross-process-')),
+    runPath = join(dir, 'runs.sqlite'),
+    definitionPath = join(dir, 'definitions.sqlite'),
+    runs = new SqliteAgentRuns(runPath),
+    triggers = new SqliteAgentTriggers(runPath),
+    definitions = new SqliteAgentDefinitions(definitionPath),
+    exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  let ingress,
+    reopened,
+    closed = false;
+  try {
+    definitions.save('tenant', manifest, 0);
+    ingress = createAgentEventIngress({
+      triggers,
+      definitions,
+      maxPending: 5,
+      authenticate: req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' } : undefined),
+      authorize: () => true,
+      traceParent: () => parent,
+      tracing: { tracer: provider.getTracer('ingress'), propagateToRun: true }
+    });
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = token =>
+        fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: token, traceparent: other },
+          body: JSON.stringify({ agentId: 'agent', eventId: 'private-event', eventType: 'event', payload: { private: 'secret' } })
+        });
+    assert.equal((await post('Bearer invalid')).status, 401);
+    let response = await post('Bearer trusted');
+    assert.equal(response.status, 202);
+    const { runId } = await response.json(),
+      producer = exporter.getFinishedSpans()[0];
+    assert.equal(producer.parentSpanContext.spanId, parent.split('-')[2]);
+    const expected = `00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;
+    assert.equal(runs.getTraceParent(scope, runId), expected);
+    assert.equal(runs.getTraceParent({ ...scope, tenantId: 'other' }, runId), undefined);
+    response = await post('Bearer trusted');
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, runId);
+    assert.equal(runs.getTraceParent(scope, runId), expected);
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    ingress = undefined;
+    triggers.close();
+    runs.close();
+    definitions.close();
+    closed = true;
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/traced-worker.mjs', import.meta.url))], {
+      env: { ...process.env, TEST_RUNS: runPath, TEST_DEFINITIONS: definitionPath, TEST_RUN_ID: runId },
+      encoding: 'utf8',
+      timeout: 30000
+    });
+    assert.equal(child.status, 0, child.stderr || String(child.error));
+    assert.deepEqual(JSON.parse(child.stdout), { traceId: producer.spanContext().traceId, parent: producer.spanContext().spanId, status: 'succeeded' });
+    reopened = new SqliteAgentRuns(runPath);
+    assert.equal(reopened.get(scope, runId).status, 'succeeded');
+    assert.equal(reopened.getTraceParent(scope, runId), expected);
+    for (const value of ['private-event', 'secret', 'sender', 'source', runId]) assert.equal(JSON.stringify(producer.attributes).includes(value), false);
+  } finally {
+    if (ingress) {
+      ingress.closeAllConnections();
+      await new Promise(resolve => ingress.close(resolve));
+    }
+    reopened?.close();
+    await provider.shutdown();
+    if (!closed) {
+      try {
+        triggers.close();
+      } catch {}
+      try {
+        runs.close();
+      } catch {}
+      try {
+        definitions.close();
+      } catch {}
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('scheduled producer links configured operation spans and metrics in another process',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'configured-schedule-trace-')),runPath=join(dir,'runs.sqlite'),definitionPath=join(dir,'definitions.sqlite'),runs=new SqliteAgentRuns(runPath),triggers=new SqliteAgentTriggers(runPath),schedules=new SqliteAgentSchedules(runPath),definitions=new SqliteAgentDefinitions(definitionPath),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]});let scheduler,reopened,closed=false;
- try{definitions.save('tenant',{...manifest,allowedCapabilities:['lookup']},0);const now=Date.now();schedules.save(scope,'private-schedule',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,now);scheduler=new AgentScheduleWorker({schedules,scope,definitions,authorize:()=>true,maxPending:5,maxPerPass:1,pollMs:100,clock:()=>now+1000,onError:error=>{throw error;},tracing:{tracer:provider.getTracer('scheduler'),propagateToRun:true}});assert.equal(await scheduler.runOnce(),1);await scheduler.stop();const runId=runs.list(scope)[0].runId,producer=exporter.getFinishedSpans()[0],expected=`00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;assert.equal(runs.getTraceParent(scope,runId),expected);schedules.close();triggers.close();runs.close();definitions.close();closed=true;const child=spawnSync(process.execPath,[fileURLToPath(new URL('./fixtures/traced-configured-worker.mjs',import.meta.url))],{env:{...process.env,TEST_RUNS:runPath,TEST_DEFINITIONS:definitionPath,TEST_RUN_ID:runId},encoding:'utf8',timeout:45000});assert.equal(child.status,0,child.stderr||String(child.error));const result=JSON.parse(child.stdout),worker=result.spans.find(span=>span.name==='agent.run'),operations=result.spans.filter(span=>span.name==='agent.model'||span.name==='agent.capability');assert.equal(result.status,'succeeded');assert.equal(result.calls,1);assert.equal(result.turns,2);assert.equal(worker.traceId,producer.spanContext().traceId);assert.equal(worker.parent,producer.spanContext().spanId);assert.equal(operations.length,3);for(const span of operations){assert.equal(span.traceId,worker.traceId);assert.equal(span.parent,worker.spanId);assert.equal(span.attributes['app_mixer.agent.operation.outcome'],'succeeded');assert.deepEqual(span.events,[]);}assert.deepEqual(result.counts.map(row=>row.count),[2,0,1,0]);const safe=JSON.stringify(result.spans.map(span=>({name:span.name,attributes:span.attributes,events:span.events})));for(const secret of ['private-schedule',runId,'thread-secret','prompt-secret','argument-secret','tool-result-secret','output-secret','call-secret','lookup'])assert.equal(safe.includes(secret),false);reopened=new SqliteAgentRuns(runPath);assert.equal(reopened.get(scope,runId).status,'succeeded');assert.equal(reopened.getTraceParent(scope,runId),expected);
- }finally{await scheduler?.stop();reopened?.close();await provider.shutdown();if(!closed){try{schedules.close();}catch{}try{triggers.close();}catch{}try{runs.close();}catch{}try{definitions.close();}catch{}}rmSync(dir,{recursive:true,force:true});}
+test('scheduled producer links configured operation spans and metrics in another process', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'configured-schedule-trace-')),
+    runPath = join(dir, 'runs.sqlite'),
+    definitionPath = join(dir, 'definitions.sqlite'),
+    runs = new SqliteAgentRuns(runPath),
+    triggers = new SqliteAgentTriggers(runPath),
+    schedules = new SqliteAgentSchedules(runPath),
+    definitions = new SqliteAgentDefinitions(definitionPath),
+    exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  let scheduler,
+    reopened,
+    closed = false;
+  try {
+    definitions.save('tenant', { ...manifest, allowedCapabilities: ['lookup'] }, 0);
+    const now = Date.now();
+    schedules.save(scope, 'private-schedule', { enabled: true, principalId: 'scheduler', rule: { kind: 'interval', intervalMs: 1000 } }, 0, now);
+    scheduler = new AgentScheduleWorker({
+      schedules,
+      scope,
+      definitions,
+      authorize: () => true,
+      maxPending: 5,
+      maxPerPass: 1,
+      pollMs: 100,
+      clock: () => now + 1000,
+      onError: error => {
+        throw error;
+      },
+      tracing: { tracer: provider.getTracer('scheduler'), propagateToRun: true }
+    });
+    assert.equal(await scheduler.runOnce(), 1);
+    await scheduler.stop();
+    const runId = runs.list(scope)[0].runId,
+      producer = exporter.getFinishedSpans()[0],
+      expected = `00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;
+    assert.equal(runs.getTraceParent(scope, runId), expected);
+    schedules.close();
+    triggers.close();
+    runs.close();
+    definitions.close();
+    closed = true;
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/traced-configured-worker.mjs', import.meta.url))], {
+      env: { ...process.env, TEST_RUNS: runPath, TEST_DEFINITIONS: definitionPath, TEST_RUN_ID: runId },
+      encoding: 'utf8',
+      timeout: 45000
+    });
+    assert.equal(child.status, 0, child.stderr || String(child.error));
+    const result = JSON.parse(child.stdout),
+      worker = result.spans.find(span => span.name === 'agent.run'),
+      operations = result.spans.filter(span => span.name === 'agent.model' || span.name === 'agent.capability');
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.calls, 1);
+    assert.equal(result.turns, 2);
+    assert.equal(worker.traceId, producer.spanContext().traceId);
+    assert.equal(worker.parent, producer.spanContext().spanId);
+    assert.equal(operations.length, 3);
+    for (const span of operations) {
+      assert.equal(span.traceId, worker.traceId);
+      assert.equal(span.parent, worker.spanId);
+      assert.equal(span.attributes['app_mixer.agent.operation.outcome'], 'succeeded');
+      assert.deepEqual(span.events, []);
+    }
+    assert.deepEqual(
+      result.counts.map(row => row.count),
+      [2, 0, 1, 0]
+    );
+    const safe = JSON.stringify(result.spans.map(span => ({ name: span.name, attributes: span.attributes, events: span.events })));
+    for (const secret of ['private-schedule', runId, 'thread-secret', 'prompt-secret', 'argument-secret', 'tool-result-secret', 'output-secret', 'call-secret', 'lookup'])
+      assert.equal(safe.includes(secret), false);
+    reopened = new SqliteAgentRuns(runPath);
+    assert.equal(reopened.get(scope, runId).status, 'succeeded');
+    assert.equal(reopened.getTraceParent(scope, runId), expected);
+  } finally {
+    await scheduler?.stop();
+    reopened?.close();
+    await provider.shutdown();
+    if (!closed) {
+      try {
+        schedules.close();
+      } catch {}
+      try {
+        triggers.close();
+      } catch {}
+      try {
+        runs.close();
+      } catch {}
+      try {
+        definitions.close();
+      } catch {}
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('authenticated ingress links configured operation spans in another process',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'configured-ingress-trace-')),runPath=join(dir,'runs.sqlite'),definitionPath=join(dir,'definitions.sqlite'),runs=new SqliteAgentRuns(runPath),triggers=new SqliteAgentTriggers(runPath),definitions=new SqliteAgentDefinitions(definitionPath),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]});let ingress,reopened,closed=false;
- try{definitions.save('tenant',{...manifest,allowedCapabilities:['lookup']},0);ingress=createAgentEventIngress({triggers,definitions,maxPending:5,authenticate:req=>req.headers.authorization==='Bearer trusted'?{tenantId:'tenant',principalId:'sender',sourceId:'source'}:undefined,authorize:()=>true,traceParent:()=>parent,tracing:{tracer:provider.getTracer('ingress'),propagateToRun:true}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');const response=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer trusted',traceparent:other},body:JSON.stringify({agentId:'agent',eventId:'private-event',eventType:'event',payload:{private:'event-secret'}})});assert.equal(response.status,202);const {runId}=await response.json(),producer=exporter.getFinishedSpans()[0],expected=`00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;assert.equal(runs.getTraceParent(scope,runId),expected);ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));ingress=undefined;triggers.close();runs.close();definitions.close();closed=true;const child=spawnSync(process.execPath,[fileURLToPath(new URL('./fixtures/traced-configured-worker.mjs',import.meta.url))],{env:{...process.env,TEST_RUNS:runPath,TEST_DEFINITIONS:definitionPath,TEST_RUN_ID:runId},encoding:'utf8',timeout:45000});assert.equal(child.status,0,child.stderr||String(child.error));const result=JSON.parse(child.stdout),worker=result.spans.find(span=>span.name==='agent.run'),operations=result.spans.filter(span=>span.name==='agent.model'||span.name==='agent.capability');assert.equal(result.status,'succeeded');assert.equal(result.calls,1);assert.equal(result.turns,2);assert.equal(worker.traceId,producer.spanContext().traceId);assert.equal(worker.parent,producer.spanContext().spanId);assert.equal(operations.length,3);for(const span of operations){assert.equal(span.traceId,worker.traceId);assert.equal(span.parent,worker.spanId);}assert.deepEqual(result.counts.map(row=>row.count),[2,0,1,0]);const safe=JSON.stringify(result.spans.map(span=>({name:span.name,attributes:span.attributes,events:span.events})));for(const secret of ['private-event','event-secret',runId,'thread-secret','prompt-secret','argument-secret','tool-result-secret','output-secret','call-secret','lookup'])assert.equal(safe.includes(secret),false);reopened=new SqliteAgentRuns(runPath);assert.equal(reopened.get(scope,runId).status,'succeeded');
- }finally{if(ingress){ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));}reopened?.close();await provider.shutdown();if(!closed){try{triggers.close();}catch{}try{runs.close();}catch{}try{definitions.close();}catch{}}rmSync(dir,{recursive:true,force:true});}
+test('authenticated ingress links configured operation spans in another process', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'configured-ingress-trace-')),
+    runPath = join(dir, 'runs.sqlite'),
+    definitionPath = join(dir, 'definitions.sqlite'),
+    runs = new SqliteAgentRuns(runPath),
+    triggers = new SqliteAgentTriggers(runPath),
+    definitions = new SqliteAgentDefinitions(definitionPath),
+    exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  let ingress,
+    reopened,
+    closed = false;
+  try {
+    definitions.save('tenant', { ...manifest, allowedCapabilities: ['lookup'] }, 0);
+    ingress = createAgentEventIngress({
+      triggers,
+      definitions,
+      maxPending: 5,
+      authenticate: req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' } : undefined),
+      authorize: () => true,
+      traceParent: () => parent,
+      tracing: { tracer: provider.getTracer('ingress'), propagateToRun: true }
+    });
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+    const response = await fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer trusted', traceparent: other },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'private-event', eventType: 'event', payload: { private: 'event-secret' } })
+    });
+    assert.equal(response.status, 202);
+    const { runId } = await response.json(),
+      producer = exporter.getFinishedSpans()[0],
+      expected = `00-${producer.spanContext().traceId}-${producer.spanContext().spanId}-01`;
+    assert.equal(runs.getTraceParent(scope, runId), expected);
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    ingress = undefined;
+    triggers.close();
+    runs.close();
+    definitions.close();
+    closed = true;
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/traced-configured-worker.mjs', import.meta.url))], {
+      env: { ...process.env, TEST_RUNS: runPath, TEST_DEFINITIONS: definitionPath, TEST_RUN_ID: runId },
+      encoding: 'utf8',
+      timeout: 45000
+    });
+    assert.equal(child.status, 0, child.stderr || String(child.error));
+    const result = JSON.parse(child.stdout),
+      worker = result.spans.find(span => span.name === 'agent.run'),
+      operations = result.spans.filter(span => span.name === 'agent.model' || span.name === 'agent.capability');
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.calls, 1);
+    assert.equal(result.turns, 2);
+    assert.equal(worker.traceId, producer.spanContext().traceId);
+    assert.equal(worker.parent, producer.spanContext().spanId);
+    assert.equal(operations.length, 3);
+    for (const span of operations) {
+      assert.equal(span.traceId, worker.traceId);
+      assert.equal(span.parent, worker.spanId);
+    }
+    assert.deepEqual(
+      result.counts.map(row => row.count),
+      [2, 0, 1, 0]
+    );
+    const safe = JSON.stringify(result.spans.map(span => ({ name: span.name, attributes: span.attributes, events: span.events })));
+    for (const secret of ['private-event', 'event-secret', runId, 'thread-secret', 'prompt-secret', 'argument-secret', 'tool-result-secret', 'output-secret', 'call-secret', 'lookup'])
+      assert.equal(safe.includes(secret), false);
+    reopened = new SqliteAgentRuns(runPath);
+    assert.equal(reopened.get(scope, runId).status, 'succeeded');
+  } finally {
+    if (ingress) {
+      ingress.closeAllConnections();
+      await new Promise(resolve => ingress.close(resolve));
+    }
+    reopened?.close();
+    await provider.shutdown();
+    if (!closed) {
+      try {
+        triggers.close();
+      } catch {}
+      try {
+        runs.close();
+      } catch {}
+      try {
+        definitions.close();
+      } catch {}
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

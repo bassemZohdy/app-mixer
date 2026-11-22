@@ -1,428 +1,3274 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {once} from 'node:events';
-import {createHmac} from 'node:crypto';
-import {createTwilioMessageWebhookAdapter,createPaddleWebhookAdapter} from '../dist/index.js';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentTriggerRetention,AgentTriggerRetentionWorker,SqliteAgentDefinitions,DurableAgentWorker,createAgentEventIngress,AgentIngressMetrics,createAgentMetricsServer,createSignedWebhookAuthenticator,createGithubWebhookAdapter,createStripeWebhookAdapter,createSlackWebhookAdapter,createShopifyWebhookAdapter,createGitlabWebhookAdapter} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},event={sourceId:'source',principalId:'sender',eventId:'evt',eventType:'order.created',payload:{order:'one'}};
-const manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
-const settings={definitionVersion:1,maxAttempts:2,deadline:10000,maxPending:2};
-function setup(){const dir=mkdtempSync(join(tmpdir(),'app-mixer-events-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path);return {dir,path,runs,triggers};}
-function close(s){s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
-
-test('ingress supports asynchronous definition reads and rejects a change during recheck',async()=>{const s=setup(),store=new SqliteAgentDefinitions(':memory:');store.save('tenant',manifest,0);let block=false,started,release,reads=0;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),definitions={get:async(tenant,agent)=>{if(block&&++reads===2){started();await gate;}return store.get(tenant,agent);}},ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:5,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,clock:()=>1000});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=eventId=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId,eventType:'event',payload:{}})});assert.equal((await post('first')).status,202);block=true;const pending=post('second');await ready;store.save('tenant',{...manifest,lifecycle:{...manifest.lifecycle,enabled:false}},1);release();assert.equal((await pending).status,403);assert.equal(s.runs.list(scope).length,1);}finally{await new Promise(r=>ingress.close(r));store.close();close(s)}});
-
-test('Twilio incoming messages verify all form fields, authorize and acknowledge durable retries',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);
- const accountSid='AC'+'a'.repeat(32),authToken='1'.repeat(32),prior='2'.repeat(32),publicUrl='https://example.test/events?channel=sms',identity={tenantId:'tenant',principalId:'sender',sourceId:'twilio'},adapter=createTwilioMessageWebhookAdapter({identity,agentId:'agent',accountSid,url:publicUrl,authToken,previousAuthTokens:[prior]});
- let allowed=true;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,...adapter,authorize:(_identity,event)=>allowed&&event.payload.To==='+15550000000'});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,params={AccountSid:accountSid,MessageSid:'SM'+'b'.repeat(32),From:'+15551111111',To:'+15550000000',Body:'hello + world',FutureField:'new'},body=new URLSearchParams(params).toString(),signature=(values=params,key=authToken,url=publicUrl)=>createHmac('sha1',key).update(Object.keys(values).sort().reduce((text,name)=>text+name+values[name],url)).digest('base64'),post=(data=body,sig=signature(),type='application/x-www-form-urlencoded')=>fetch(endpoint,{method:'POST',headers:{'content-type':type,'x-twilio-signature':sig},body:data});
-  assert.equal((await post(body,'AAAAAAAAAAAAAAAAAAAAAAAAAAA=')).status,401);assert.equal((await post(body,signature(params,authToken,'https://wrong.test/events'))).status,401);assert.equal((await post(body.replace('FutureField=new','FutureField=changed'))).status,401);assert.equal((await post(body,signature(),'application/json')).status,415);
-  allowed=false;assert.equal((await post()).status,403);allowed=true;let response=await post(body,signature(params,prior));assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/^text\/xml/);assert.match(await response.text(),/<Response><\/Response>/);response=await post();assert.equal(response.status,200);assert.equal(s.runs.list(scope).length,1);
-  const changed={...params,Body:'different'};assert.equal((await post(new URLSearchParams(changed).toString(),signature(changed))).status,409);const other={...params,MessageSid:'MM'+'c'.repeat(32)};assert.equal((await post(new URLSearchParams(other).toString(),signature(other))).status,429);
-  assert.equal((await post(body+'&Body=duplicate',signature())).status,401);assert.equal((await post(body+'&bad=%FF',signature())).status,401);const invalid={...params,AccountSid:'AC'+'d'.repeat(32)};assert.equal((await post(new URLSearchParams(invalid).toString(),signature(invalid))).status,400);
-  assert.equal(adapter.authenticateRaw({rawHeaders:['X-Twilio-Signature',signature(),'x-twilio-signature',signature()]},Buffer.from(body)),undefined);
-  const req={rawHeaders:['X-Twilio-Signature',signature()]};assert.deepEqual(adapter.authenticateRaw(req,Buffer.from(body)),identity);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(body+'x'),identity,req),/Invalid/);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(body),identity,req),/Invalid/);
- }finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('Twilio configuration requires a fixed account, endpoint and protected form ingress',()=>{
- const base={identity:{tenantId:'tenant',principalId:'sender',sourceId:'twilio'},agentId:'agent',accountSid:'AC'+'a'.repeat(32),url:'https://example.test/events',authToken:'1'.repeat(32)};
- for(const bad of [{...base,url:'http://example.test/events'},{...base,url:'https://example.test/events#fragment'},{...base,authToken:'short'},{...base,accountSid:'bad'},{...base,previousAuthTokens:[base.authToken]}])assert.throws(()=>createTwilioMessageWebhookAdapter(bad),/configuration/);
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');try{assert.throws(()=>createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:()=>base.identity,authorize:()=>true,contentType:'application/x-www-form-urlencoded',acknowledgement:'twiml'}),/Invalid event ingress/);}finally{definitions.close();close(s);}
-});
-
-test('event deduplication, tenant isolation and bounded backlog survive restart',()=>{
- const s=setup();let second;try{
-  const first=s.triggers.enqueue(scope,event,settings,1);assert.equal(first.duplicate,false);second=new SqliteAgentTriggers(s.path);
-  assert.deepEqual(second.enqueue(scope,{...event,payload:{order:'one'}},settings,2),{runId:first.runId,duplicate:true});assert.equal(s.runs.get(scope,first.runId).status,'queued');assert.deepEqual(second.get(scope,first.runId).payload,{order:'one'});
-  assert.throws(()=>second.enqueue(scope,{...event,payload:{order:'two'}},settings,2),/identity conflict/);assert.throws(()=>second.enqueue(scope,{...event,principalId:'other'},settings,2),/identity conflict/);assert.equal(second.get({...scope,tenantId:'other'},first.runId),undefined);
-  second.enqueue(scope,{...event,eventId:'evt2'},settings,2);assert.throws(()=>second.enqueue(scope,{...event,eventId:'evt3'},settings,2),/backlog full/);assert.equal(second.enqueue(scope,event,settings,2).duplicate,true);
-  const other=second.enqueue({...scope,tenantId:'other'},event,settings,2);assert.notEqual(other.runId,first.runId);
- }finally{second?.close();close(s);}
-});
-
-test('authorized redaction removes terminal payload while preserving scoped deduplication',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'admin'},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:who=>who.principalId==='admin'});let reopened,db;
- try{const first=s.triggers.enqueue(scope,event,settings,1),other=s.triggers.enqueue({...scope,tenantId:'other'},event,settings,1);await assert.rejects(retention.redact(actor,first.runId,10),/not terminal/);await assert.rejects(retention.redact({...actor,principalId:'denied'},first.runId,10),/access denied/);await assert.rejects(retention.redact({...actor,tenantId:'other'},first.runId,10),/Invalid/);assert.deepEqual(s.triggers.get(scope,first.runId).payload,event.payload);
-  const run=s.runs.get(scope,first.runId);s.runs.request(scope,first.runId,run.revision,'cancel',2);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_redaction BEFORE INSERT ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'redaction failed'); END");await assert.rejects(retention.redact(actor,first.runId,10),/redaction failed/);assert.deepEqual(s.triggers.get(scope,first.runId).payload,event.payload);assert.equal(await retention.getRedaction(actor,first.runId),undefined);db.exec('DROP TRIGGER reject_redaction');
-  assert.equal(await retention.redact(actor,first.runId,10),true);assert.equal(await retention.redact(actor,first.runId,11),false);assert.deepEqual(await retention.getRedaction(actor,first.runId),{actorId:'admin',redactedAt:10});await assert.rejects(retention.getRedaction({...actor,principalId:'denied'},first.runId),/access denied/);assert.throws(()=>db.exec('UPDATE agent_trigger_redactions SET actor_id=\'other\''),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_trigger_redactions'),/immutable/);assert.equal(s.triggers.get(scope,first.runId).payload,null);assert.equal(s.triggers.get(scope,first.runId).payloadRedacted,true);assert.deepEqual(s.triggers.get({...scope,tenantId:'other'},other.runId).payload,event.payload);const nullRun=s.triggers.enqueue(scope,{...event,eventId:'null-event',payload:null},settings,3);assert.equal(s.triggers.get(scope,nullRun.runId).payload,null);assert.equal(s.triggers.get(scope,nullRun.runId).payloadRedacted,undefined);
-  reopened=new SqliteAgentTriggers(s.path);assert.deepEqual(reopened.enqueue(scope,event,settings,3),{runId:first.runId,duplicate:true});assert.throws(()=>reopened.enqueue(scope,{...event,payload:{order:'two'}},settings,3),/identity conflict/);assert.throws(()=>reopened.enqueue(scope,{...event,principalId:'other'},settings,3),/identity conflict/);assert.equal(reopened.get(scope,first.runId).payloadRedacted,true);
- }finally{db?.close();reopened?.close();retention.close();close(s);}
-});
-
-test('inbox failure rolls back the queued run atomically',()=>{
- const s=setup();let db;try{db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER fail_inbox BEFORE INSERT ON agent_trigger_inbox BEGIN SELECT RAISE(ABORT,'test failure'); END;");assert.throws(()=>s.triggers.enqueue(scope,event,settings,1),/test failure/);assert.equal(s.runs.list(scope).length,0);}finally{db?.close();close(s);}
-});
-
-test('ingress authenticates and authorizes event source before enqueueing a worker run',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let allow=true;
- const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:req=>req.headers.authorization==='Bearer trusted'?{tenantId:'tenant',principalId:'sender',sourceId:'source'}:undefined,authorize:(identity,request)=>allow&&identity.sourceId==='source'&&request.eventType==='order.created'});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,payload={agentId:'agent',eventId:'evt',eventType:'order.created',payload:{order:'one'}},post=(value,token='trusted')=>({method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(value)});
-  assert.equal((await fetch(url,post(payload,'bad'))).status,401);assert.equal((await fetch(url,post({...payload,tenantId:'other'}))).status,400);allow=false;assert.equal((await fetch(url,post(payload))).status,403);assert.equal(s.runs.list(scope).length,0);allow=true;
-  const created=await fetch(url,post(payload));assert.equal(created.status,202);const {runId}=await created.json();assert.equal((await fetch(url,post(payload))).status,200);assert.equal((await fetch(url,post({...payload,payload:{order:'two'}}))).status,409);assert.equal((await fetch(url,post({...payload,eventId:'another'}))).status,429);
-  let observed;const worker=new DurableAgentWorker({runs:s.runs,definitions,workerId:'worker',leaseMs:1000,pollMs:100,authorizeStart:()=>true,execute:async run=>{observed=s.triggers.get(scope,run.runId);return 'succeeded';}});assert.equal((await worker.runOnce(scope,runId)).status,'succeeded');assert.equal(observed.payload.order,'one');assert.equal(observed.principalId,'sender');
-  assert.equal((await fetch(url,post({...payload,eventId:'another'}))).status,202);
- }finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('definition changes during authorization deny event creation',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let ready,proceed;const started=new Promise(r=>ready=r),gate=new Promise(r=>proceed=r);
- const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:async()=>{ready();await gate;return true;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const pending=fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'evt',eventType:'order.created',payload:{}})});await started;definitions.save('tenant',{...manifest,lifecycle:{...manifest.lifecycle,enabled:false}},1);proceed();assert.equal((await pending).status,403);assert.equal(s.runs.list(scope).length,0);}
- finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-
-test('concurrency limit is atomic across connections and released after settlement',()=>{
- const s=setup();let other;try{other=new SqliteAgentRuns(s.path);s.runs.create(scope,'one',{definitionVersion:1,maxAttempts:1,deadline:1000},0);other.create(scope,'two',{definitionVersion:1,maxAttempts:1,deadline:1000},0);let first=s.runs.claim(scope,'one',1,'worker-a',100,10,1);assert.throws(()=>other.claim(scope,'two',1,'worker-b',100,10,1),/concurrency limit/);first=s.runs.settle(scope,'one',first.revision,first.leaseToken,'succeeded',11);assert.equal(first.status,'succeeded');assert.equal(other.claim(scope,'two',1,'worker-b',100,12,1).status,'running');}
- finally{other?.close();close(s);}
-});
-
-
-test('HTTP ingress reserves internal schedule source identifiers',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'schedule.forged'}),authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const response=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'order.created',payload:{}})});assert.equal(response.status,401);assert.equal(s.runs.list(scope).length,0);}finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-
-test('signed webhooks bind exact bytes, source and time, and deduplicate accepted deliveries',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const key=Buffer.alloc(32,42),original=Buffer.from(key),now=1700000000000,auth=createSignedWebhookAuthenticator({sources:[{tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:key}],clock:()=>now});key.fill(0);
- let authorizations=0;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticateRaw:auth,authorize:(identity)=>{authorizations++;return identity.sourceId==='provider';},clock:()=>now});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({agentId:'agent',eventId:'evt',eventType:'order.created',payload:{order:'one'}}),signed=(data=body,timestamp='1700000000',source='provider')=>{const signature=createHmac('sha256',original).update(`v1\n${timestamp}\n${source}\n`).update(data).digest('hex');return {'content-type':'application/json','x-app-mixer-source':source,'x-app-mixer-timestamp':timestamp,'x-app-mixer-signature':`v1=${signature}`};},post=(data,headers)=>fetch(url,{method:'POST',headers,body:data});
-  assert.equal((await post(body,signed())).status,202);assert.equal((await post(body,signed())).status,200);assert.equal((await post(body+' ',signed())).status,401);assert.equal((await post(body,signed(body,'1699999699'))).status,401);assert.equal((await post(body,signed(body,'1700000301'))).status,401);assert.equal((await post(body,signed(body,'1700000000','unknown'))).status,401);assert.equal((await post(body,{...signed(),'x-app-mixer-signature':'v1='+'0'.repeat(64)})).status,401);assert.equal(authorizations,2);assert.equal(s.runs.list(scope).length,1);
- }finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('signed webhook configuration rejects weak keys, reserved and duplicate sources',()=>{
- const source={tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:Buffer.alloc(32)};
- assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,secret:Buffer.alloc(31)}]}),/configuration/);assert.throws(()=>createSignedWebhookAuthenticator({sources:[source,source]}),/configuration/);assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,sourceId:'schedule.foo'}]}),/configuration/);
-});
-
-
-test('webhook key rotation accepts an overlap and rejects retired keys without losing deduplication',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const old=Buffer.alloc(32,42),next=Buffer.alloc(32,43),other=Buffer.alloc(32,44),now=1700000000000,source={tenantId:'tenant',principalId:'sender',sourceId:'provider'},body=JSON.stringify({agentId:'agent',eventId:'evt',eventType:'order.created',payload:{order:'one'}});let ingress;
- const launch=async auth=>{ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticateRaw:auth,authorize:()=>true,clock:()=>now});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');};
- const post=key=>fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','x-app-mixer-source':'provider','x-app-mixer-timestamp':'1700000000','x-app-mixer-signature':'v1='+createHmac('sha256',key).update('v1\n1700000000\nprovider\n').update(body).digest('hex')},body});
- try{const mutableOld=Buffer.from(old),mutableNext=Buffer.from(next),previous=[mutableOld],auth=createSignedWebhookAuthenticator({sources:[{...source,secret:mutableNext,previousSecrets:previous},{...source,sourceId:'other',secret:other}],clock:()=>now});mutableOld.fill(0);mutableNext.fill(0);previous.length=0;await launch(auth);assert.equal((await post(old)).status,202);assert.equal((await post(next)).status,200);assert.equal((await post(other)).status,401);await new Promise(r=>ingress.close(r));ingress=null;await launch(createSignedWebhookAuthenticator({sources:[{...source,secret:next}],clock:()=>now}));assert.equal((await post(old)).status,401);assert.equal((await post(next)).status,200);assert.equal(s.runs.list(scope).length,1);}finally{if(ingress)await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('webhook rotation rejects invalid or duplicate previous keys',()=>{
- const source={tenantId:'tenant',principalId:'sender',sourceId:'provider',secret:Buffer.alloc(32,1)},k=Buffer.alloc(32,2);for(const previousSecrets of [null,'bad',[Buffer.alloc(31)],[k,k],[Buffer.alloc(32,1)],[k,Buffer.alloc(32,3),Buffer.alloc(32,4)]])assert.throws(()=>createSignedWebhookAuthenticator({sources:[{...source,previousSecrets}]}),/configuration/);
-});
-
-
-test('GitHub webhook adapter verifies raw body and ignores unsigned delivery headers',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const secret=Buffer.alloc(32,9),prior=Buffer.alloc(32,8),adapter=createGithubWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'github'},agentId:'agent',eventType:'github.webhook',secret,previousSecrets:[prior]}),original=Buffer.from(secret);secret.fill(0);let seen=0;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:(identity,event)=>{seen++;return identity.sourceId==='github'&&event.eventType==='github.webhook'&&event.payload.repository?.id===42;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({action:'opened',repository:{id:42},issue:{number:4}}),sign=(key,data)=>'sha256='+createHmac('sha256',key).update(data).digest('hex'),post=(payload,signature,extra={})=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-hub-signature-256':signature,...extra},body:payload});let response=await post(body,sign(prior,body),{'x-github-event':'issues','x-github-delivery':'one'});assert.equal(response.status,202);const first=await response.json();response=await post(body,sign(original,body),{'x-github-event':'push','x-github-delivery':'different'});assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal((await post(body+' ',sign(original,body))).status,401);assert.equal((await post(body,'sha256='+'0'.repeat(64))).status,401);const denied=JSON.stringify({repository:{id:99}});assert.equal((await post(denied,sign(original,denied))).status,403);assert.equal((await post('[]',sign(original,'[]'))).status,400);assert.equal(seen,3);const record=s.triggers.get(scope,first.runId);assert.equal(record.eventType,'github.webhook');assert.deepEqual(record.payload,JSON.parse(body));assert.match(record.eventId,/^sha256:[0-9a-f]{64}$/);assert.equal(adapter.authenticateRaw({rawHeaders:['X-Hub-Signature-256',sign(original,body),'x-hub-signature-256',sign(original,body)]},Buffer.from(body)),undefined);assert.equal(s.runs.list(scope).length,1);}finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('GitHub webhook adapter validates configuration and ingress mapping',()=>{
- const base={identity:{tenantId:'tenant',principalId:'sender',sourceId:'github'},agentId:'agent',eventType:'github.webhook',secret:Buffer.alloc(32,3)};for(const bad of [{...base,secret:Buffer.alloc(31)},{...base,identity:{...base.identity,sourceId:'schedule.fake'}},{...base,previousSecrets:[Buffer.alloc(32,3)]},{...base,previousSecrets:[Buffer.alloc(32,4),Buffer.alloc(32,5),Buffer.alloc(32,6)]}])assert.throws(()=>createGithubWebhookAdapter(bad),/configuration/);
- const adapter=createGithubWebhookAdapter(base);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([0xff])),/encoded data/);const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');try{assert.throws(()=>createAgentEventIngress({triggers:s.triggers,definitions,maxPending:1,authenticate:()=>undefined,authorize:()=>true,mapAuthenticatedBody:adapter.mapAuthenticatedBody}),/Invalid event ingress/);}finally{definitions.close();close(s);}
-});
-
-test('Shopify HTTPS webhook authenticates exact body and ignores unsigned metadata',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const secret=Buffer.alloc(32,9),previous=Buffer.alloc(32,8),original=Buffer.from(secret),adapter=createShopifyWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'shopify'},agentId:'agent',eventType:'shopify.webhook',secret,previousSecrets:[previous]});secret.fill(0);let seen=0;
- const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:(identity,event)=>{seen++;return identity.sourceId==='shopify'&&event.payload.id===42;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({id:42,title:'Product'}),sign=(key,data)=>createHmac('sha256',key).update(data).digest('base64'),post=(payload,signature,extra={})=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-shopify-hmac-sha256':signature,...extra},body:payload});let response=await post(body,sign(previous,body),{'x-shopify-shop-domain':'a.myshopify.com','x-shopify-topic':'products/update','x-shopify-webhook-id':'one'});assert.equal(response.status,202);const first=await response.json();response=await post(body,sign(original,body),{'x-shopify-shop-domain':'b.myshopify.com','x-shopify-topic':'orders/create','x-shopify-webhook-id':'other'});assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal((await post(body+' ',sign(original,body))).status,401);assert.equal((await post(body,Buffer.alloc(32).toString('base64'))).status,401);const denied=JSON.stringify({id:99});assert.equal((await post(denied,sign(original,denied))).status,403);assert.equal((await post('[]',sign(original,'[]'))).status,400);assert.equal(seen,3);assert.equal(s.runs.list(scope).length,1);assert.match(s.triggers.get(scope,first.runId).eventId,/^sha256:[0-9a-f]{64}$/);const signature=sign(original,body);assert.equal(adapter.authenticateRaw({rawHeaders:['X-Shopify-Hmac-Sha256',signature,'x-shopify-hmac-sha256',signature]},Buffer.from(body)),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['x-shopify-hmac-sha256',signature.slice(0,-1)]},Buffer.from(body)),undefined);}finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('Shopify webhook adapter rejects invalid configuration and payloads',()=>{
- const base={identity:{tenantId:'tenant',principalId:'sender',sourceId:'shopify'},agentId:'agent',eventType:'shopify.webhook',secret:Buffer.alloc(32,3)};for(const bad of [{...base,secret:Buffer.alloc(31)},{...base,identity:{...base.identity,sourceId:'schedule.fake'}},{...base,previousSecrets:[Buffer.alloc(32,3)]},{...base,previousSecrets:[Buffer.alloc(32,4),Buffer.alloc(32,5),Buffer.alloc(32,6)]}])assert.throws(()=>createShopifyWebhookAdapter(bad),/configuration/);
- const adapter=createShopifyWebhookAdapter(base);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([255])));assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from('null')));assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from('[]')));
-});
-
-test('Stripe snapshot webhooks verify signatures and deduplicate signed event IDs',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const current='whsec_abcdefghijklmnopqrstuvwx',previous='whsec_zyxwvutsrqponmlkjihgfedc',now=1700000000,adapter=createStripeWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'stripe'},agentId:'agent',secret:current,previousSecrets:[previous],clock:()=>now*1000}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:(identity,event)=>identity.sourceId==='stripe'&&event.eventType==='payment_intent.succeeded'&&event.payload.account==='acct_allowed'&&event.payload.livemode===true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({id:'evt_123',object:'event',type:'payment_intent.succeeded',account:'acct_allowed',livemode:true,data:{object:{id:'pi_1'}}}),signature=(key,time,data)=>createHmac('sha256',key).update(time+'.').update(data).digest('hex'),post=(payload,header)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','stripe-signature':header},body:payload});let response=await post(body,`t=${now},v1=${signature(previous,now,body)},v1=${signature(current,now,body)},v0=ignored`);assert.equal(response.status,202);const first=await response.json();response=await post(body,`t=${now-1},v1=${signature(current,now-1,body)}`);assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal((await post(body+' ',`t=${now},v1=${signature(current,now,body)}`)).status,401);assert.equal((await post(body,`t=${now-301},v1=${signature(current,now-301,body)}`)).status,401);assert.equal((await post(body,`t=${now+301},v1=${signature(current,now+301,body)}`)).status,401);assert.equal((await post(body,`t=${now},v0=${signature(current,now,body)}`)).status,401);const changed=body.replace('pi_1','pi_2');assert.equal((await post(changed,`t=${now},v1=${signature(current,now,changed)}`)).status,409);const denied=body.replace('acct_allowed','acct_other');assert.equal((await post(denied,`t=${now},v1=${signature(current,now,denied)}`)).status,403);assert.equal(s.runs.list(scope).length,1);assert.equal(s.triggers.get(scope,first.runId).eventId,'evt_123');}finally{await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Stripe webhook configuration and ambiguous security headers fail closed',()=>{
- const options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'stripe'},agentId:'agent',secret:'whsec_abcdefghijklmnopqrstuvwx',clock:()=>1700000000000};for(const bad of [{...options,secret:'short'},{...options,previousSecrets:[options.secret]},{...options,toleranceSeconds:0},{...options,identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createStripeWebhookAdapter(bad),/configuration/);
- const adapter=createStripeWebhookAdapter(options),body=Buffer.from('{"id":"evt_1","object":"event","type":"invoice.paid"}'),sig=createHmac('sha256',options.secret).update('1700000000.').update(body).digest('hex'),header=`t=1700000000,v1=${sig}`;assert.ok(adapter.authenticateRaw({rawHeaders:['Stripe-Signature',header]},body));for(const headers of [['Stripe-Signature',header,'stripe-signature',header],['Stripe-Signature',header+',t=1700000000'],['Stripe-Signature','t=1700000000,v1=bad']])assert.equal(adapter.authenticateRaw({rawHeaders:headers},body),undefined);for(const invalid of ['{}','{"id":"evt_1","object":"other","type":"x"}','{"id":"bad","object":"event","type":"x"}'])assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(invalid)),/Invalid/);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([0xff])));
-});
-
-
-test('mapped event data is snapshotted before asynchronous authorization',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),mapped={agentId:'agent',eventId:'event',eventType:'custom.event',payload:{value:'original'}};const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticateRaw:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),mapAuthenticatedBody:()=>mapped,authorize:async(_identity,event)=>{assert.equal(event.payload.value,'original');started();await gate;return true;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const pending=fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});await ready;mapped.payload.value='changed';mapped.eventId='changed';resume();const response=await pending;assert.equal(response.status,202);const result=await response.json(),stored=s.triggers.get(scope,result.runId);assert.equal(stored.eventId,'event');assert.equal(stored.payload.value,'original');}finally{resume();await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-
-test('Slack signed Events API requests verify challenges, authorize and deduplicate',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const current='a'.repeat(32),previous='b'.repeat(32),now=1700000000,adapter=createSlackWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'slack'},agentId:'agent',appId:'A123',teamId:'T123',secret:current,previousSecrets:[previous],clock:()=>now*1000});let authCalls=0;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:(identity,event)=>{authCalls++;return identity.sourceId==='slack'&&event.eventType==='reaction_added'&&event.payload.event.channel==='C123';}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{
-  const url=`http://127.0.0.1:${ingress.address().port}/events`,sign=(key,time,body)=>'v0='+createHmac('sha256',key).update(`v0:${time}:`).update(body).digest('hex'),post=(body,key=current,time=now,signed=body)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-slack-request-timestamp':String(time),'x-slack-signature':sign(key,time,signed)},body});
-  const challenge=JSON.stringify({type:'url_verification',challenge:'hello',token:'deprecated'});assert.equal((await post(challenge,current,now,'wrong')).status,401);let response=await post(challenge);assert.equal(response.status,200);assert.deepEqual(await response.json(),{challenge:'hello'});assert.equal(authCalls,0);assert.equal(s.runs.list(scope).length,0);
-  const body=JSON.stringify({type:'event_callback',api_app_id:'A123',team_id:'T123',event_id:'Ev123',token:'deprecated-secret',event:{type:'reaction_added',channel:'C123'}});response=await post(body,previous);assert.equal(response.status,202);const first=await response.json();response=await post(body,current,now-1);assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal((await post(body,current,now-301)).status,401);assert.equal((await post(body,current,now+301)).status,401);assert.equal((await post(body+' ',current,now,body)).status,401);assert.equal((await post(body.replace('C123','C999'))).status,403);assert.equal((await post(body.replace('T123','T999'))).status,400);assert.equal((await post(body.replace('A123','A999'))).status,400);assert.equal((await post(body.replace('C123','C124').replace('reaction_added','other'))).status,403);
-  const conflict=body.replace('deprecated-secret','other-secret').replace('C123','C123').replace('reaction_added','reaction_added').replace('"channel":"C123"','"channel":"C123","user":"U1"');assert.equal((await post(conflict)).status,409);const record=s.triggers.get(scope,first.runId);assert.equal(record.eventId,'Ev123');assert.equal(record.payload.token,undefined);assert.equal(s.runs.list(scope).length,1);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Slack verifier rejects malformed configuration and ambiguous security headers',()=>{
- const options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'slack'},agentId:'agent',appId:'A123',teamId:'T123',secret:'a'.repeat(32),clock:()=>1700000000000};for(const bad of [{...options,secret:'short'},{...options,teamId:'other'},{...options,previousSecrets:[options.secret]},{...options,toleranceSeconds:0},{...options,identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createSlackWebhookAdapter(bad),/configuration/);
- const adapter=createSlackWebhookAdapter(options),body=Buffer.from('{}'),timestamp='1700000000',sig='v0='+createHmac('sha256',options.secret).update(`v0:${timestamp}:`).update(body).digest('hex');assert.ok(adapter.authenticateRaw({rawHeaders:['X-Slack-Request-Timestamp',timestamp,'X-Slack-Signature',sig]},body));for(const headers of [['X-Slack-Request-Timestamp',timestamp,'x-slack-request-timestamp',timestamp,'X-Slack-Signature',sig],['X-Slack-Request-Timestamp',timestamp,'X-Slack-Signature',sig,'x-slack-signature',sig],['X-Slack-Request-Timestamp',timestamp,'X-Slack-Signature','v0=bad']])assert.equal(adapter.authenticateRaw({rawHeaders:headers},body),undefined);assert.throws(()=>adapter.challengeAuthenticatedBody(Buffer.from('{"type":"url_verification","challenge":""}')),/challenge/);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([255])));
-});
-
-
-test('GitLab signed deliveries authorize, deduplicate and reject tampering',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const key=Buffer.alloc(32,5),old=Buffer.alloc(32,6),now=1700000000,adapter=createGitlabWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'gitlab'},agentId:'agent',eventType:'gitlab.push',signingToken:'whsec_'+key.toString('base64'),previousSigningTokens:['whsec_'+old.toString('base64')],clock:()=>now*1000}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:4,...adapter,authorize:(identity,event)=>identity.sourceId==='gitlab'&&event.eventType==='gitlab.push'&&event.payload.project.id===42});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({object_kind:'push',project:{id:42}}),sign=(key,id,time,payload)=>'v1,'+createHmac('sha256',key).update(`${id}.${time}.`).update(payload).digest('base64'),post=(payload,id,time,signature,extra={})=>fetch(url,{method:'POST',headers:{'content-type':'application/json','webhook-id':id,'webhook-timestamp':String(time),'webhook-signature':signature,...extra},body:payload});let response=await post(body,'delivery-1',now,sign(old,'delivery-1',now,body));assert.equal(response.status,202);const first=await response.json();response=await post(body,'delivery-1',now+1,sign(key,'delivery-1',now+1,body),{'x-gitlab-event':'Forged Hook'});assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal((await post(body,'delivery-2',now,sign(key,'delivery-1',now,body))).status,401);assert.equal((await post(body+' ','delivery-1',now,sign(key,'delivery-1',now,body))).status,401);assert.equal((await post(body,'delivery-1',now-301,sign(key,'delivery-1',now-301,body))).status,401);const changed=JSON.stringify({object_kind:'push',project:{id:42},changed:true});assert.equal((await post(changed,'delivery-1',now,sign(key,'delivery-1',now,changed))).status,409);const denied=JSON.stringify({project:{id:7}});assert.equal((await post(denied,'delivery-3',now,sign(key,'delivery-3',now,denied))).status,403);assert.equal((await post('[]','delivery-4',now,sign(key,'delivery-4',now,'[]'))).status,400);assert.equal(s.runs.list(scope).length,1);
- }finally{await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('GitLab verifier rejects ambiguous headers and binds mapping to the verified request',()=>{
- const key=Buffer.alloc(32,5),options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'gitlab'},agentId:'agent',eventType:'gitlab.push',signingToken:'whsec_'+key.toString('base64'),clock:()=>1700000000000};for(const bad of [{...options,signingToken:'whsec_short'},{...options,previousSigningTokens:[options.signingToken]},{...options,toleranceSeconds:0},{...options,identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createGitlabWebhookAdapter(bad),/configuration/);
- const adapter=createGitlabWebhookAdapter(options),body=Buffer.from('{}'),stamp='1700000000',signature='v1,'+createHmac('sha256',key).update(`abc.${stamp}.`).update(body).digest('base64'),headers=['Webhook-Id','abc','Webhook-Timestamp',stamp,'Webhook-Signature',signature],req={rawHeaders:headers};assert.ok(adapter.authenticateRaw(req,body));assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from('{ }'),options.identity,req),/Invalid/);assert.throws(()=>adapter.mapAuthenticatedBody(body,options.identity,req),/Invalid/);for(const duplicate of ['webhook-id','webhook-timestamp','webhook-signature'])assert.equal(adapter.authenticateRaw({rawHeaders:[...headers,duplicate,'duplicate']},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['webhook-id','abc','webhook-timestamp',stamp,'webhook-signature',signature.slice(0,-1)]},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['webhook-id','abc','webhook-timestamp',String(Number(stamp)+301),'webhook-signature',signature]},body),undefined);
-});
-
-test('Standard Webhooks verify the reference vector, rotation, replay window and signed message IDs',async()=>{
- const {createStandardWebhookAdapter}=await import('../dist/index.js'),identity={tenantId:'tenant',principalId:'sender',sourceId:'svix'},raw=headers=>({rawHeaders:Object.entries(headers).flat()});
- const vector=createStandardWebhookAdapter({identity,agentId:'agent',secret:'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw',clock:()=>1614265330000}),vectorHeaders={'webhook-id':'msg_p5jXN8AQM9LWM0D4loKWxJek','webhook-timestamp':'1614265330','webhook-signature':'v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE='},vectorBody=Buffer.from('{"test": 2432232314}');
- assert.deepEqual(vector.authenticateRaw(raw(vectorHeaders),vectorBody),identity);assert.equal(vector.authenticateRaw(raw({...vectorHeaders,'webhook-id':'msg_other'}),vectorBody),undefined);assert.equal(vector.authenticateRaw(raw({...vectorHeaders,'webhook-signature':'v1a,'+vectorHeaders['webhook-signature'].slice(3)}),vectorBody),undefined);assert.equal(vector.authenticateRaw({rawHeaders:[...Object.entries(vectorHeaders).flat(),'Webhook-Id','msg_p5jXN8AQM9LWM0D4loKWxJek']},vectorBody),undefined);
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const current='whsec_'+Buffer.alloc(32,7).toString('base64'),previous='whsec_'+Buffer.alloc(24,5).toString('base64'),now=1700000000,adapter=createStandardWebhookAdapter({identity,agentId:'agent',secret:current,previousSecrets:[previous],clock:()=>now*1000}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:(source,event)=>source.sourceId==='svix'&&event.eventType==='invoice.paid'&&event.payload.data.account==='allowed'});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,body=JSON.stringify({type:'invoice.paid',timestamp:'2023-11-14T22:13:20Z',data:{account:'allowed',invoice:'inv_1'}}),sign=(secret,msg,time,data)=>'v1,'+createHmac('sha256',Buffer.from(secret.slice(6),'base64')).update(`${msg}.${time}.${data}`).digest('base64'),post=(payload,msg,time,signature)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','webhook-id':msg,'webhook-timestamp':String(time),'webhook-signature':signature},body:payload});
-  let response=await post(body,'msg_1',now,`v1a,ignored ${sign(previous,'msg_1',now,body)}`);assert.equal(response.status,202);const first=await response.json();
-  response=await post(body,'msg_1',now-10,sign(current,'msg_1',now-10,body));assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);
-  assert.equal((await post(body+' ','msg_1',now,sign(current,'msg_1',now,body))).status,401);assert.equal((await post(body,'msg_1',now-301,sign(current,'msg_1',now-301,body))).status,401);assert.equal((await post(body,'msg_1',now+301,sign(current,'msg_1',now+301,body))).status,401);assert.equal((await post(body,'msg_2',now,sign(current,'msg_1',now,body))).status,401);assert.equal((await post(body,'msg_1',now,'v1,not-base64')).status,401);
-  const changed=body.replace('inv_1','inv_2');assert.equal((await post(changed,'msg_1',now,sign(current,'msg_1',now,changed))).status,409);const denied=body.replace('allowed','other');assert.equal((await post(denied,'msg_3',now,sign(current,'msg_3',now,denied))).status,403);const untyped=JSON.stringify({data:{account:'allowed'}});assert.equal((await post(untyped,'msg_4',now,sign(current,'msg_4',now,untyped))).status,400);
-  assert.equal(s.runs.list(scope).length,1);assert.equal(s.triggers.get(scope,first.runId).eventId,'msg_1');
- }finally{await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
- for(const bad of [{identity,agentId:'agent',secret:'whsec_short'},{identity,agentId:'agent',secret:'sk_'+Buffer.alloc(32).toString('base64')},{identity,agentId:'agent',secret:'whsec_'+Buffer.alloc(65).toString('base64')},{identity:{...identity,sourceId:'schedule.fake'},agentId:'agent',secret:'whsec_'+Buffer.alloc(32,1).toString('base64')},{identity,agentId:'agent',secret:'whsec_'+Buffer.alloc(32,1).toString('base64'),previousSecrets:['whsec_'+Buffer.alloc(32,1).toString('base64')]},{identity,agentId:'agent',secret:'whsec_'+Buffer.alloc(32,1).toString('base64'),toleranceSeconds:0}])assert.throws(()=>createStandardWebhookAdapter(bad),/Invalid Standard Webhooks configuration/);
-});
-
-test('event ingress limits in-flight work across disconnects without replaying or leaking capacity',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let release,entered,block=true,calls=0;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),options={triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:async()=>{calls++;if(block){entered();await gate;}return true;}};for(const maxInFlight of [0,-1,1.5,10001,'1'])assert.throws(()=>createAgentEventIngress({...options,maxInFlight}),/Invalid event ingress/);const ingress=createAgentEventIngress(options);ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=(eventId,signal)=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId,eventType:'event',payload:{}}),signal}),abort=new AbortController(),pending=post('first',abort.signal).catch(error=>error);await ready;assert.equal((await post('second')).status,503);assert.equal(calls,1);abort.abort();await pending;assert.equal((await post('second')).status,503);assert.equal(calls,1);block=false;release();for(let i=0;i<100&&s.runs.list(scope).length<1;i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(s.runs.list(scope).length,1);assert.equal((await post('first')).status,200);assert.equal((await post('second')).status,202);assert.equal(s.runs.list(scope).length,2);
- }finally{release?.();ingress.closeAllConnections();await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('ingress deadlines fence late authentication and authorization results while retaining capacity',async()=>{
- for(const phase of ['authenticate','authorize','definition']){const s=setup(),store=new SqliteAgentDefinitions(':memory:');store.save('tenant',manifest,0);let release,entered,blocked=true,reads=0,signal;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),pause=async()=>{if(blocked){entered();await gate;}},definitions={get:async(...args)=>{if(phase==='definition'&&++reads===2)await pause();return store.get(...args);}},options={triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,requestTimeoutMs:100,authenticate:async()=>{if(phase==='authenticate')await pause();return {tenantId:'tenant',principalId:'sender',sourceId:'source'};},authorize:async()=>{if(phase==='authorize')await pause();return true;}};for(const requestTimeoutMs of [0,99,30001,1.5])assert.throws(()=>createAgentEventIngress({...options,requestTimeoutMs}),/Invalid event ingress/);assert.throws(()=>createAgentEventIngress({...options,maxInFlight:undefined}),/Invalid event ingress/);const ingress=createAgentEventIngress(options);ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=id=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:id,eventType:'event',payload:{}})}),pending=post('late');await ready;const timed=await pending;assert.equal(timed.status,503);assert.equal((await timed.json()).error,'Event ingress timeout');assert.equal((await post('busy')).status,503);assert.equal(s.runs.list(scope).length,0);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));let result;for(let i=0;i<100;i++){result=await post('accepted');if(result.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(result.status,202);assert.equal(s.runs.list(scope).length,1);assert.equal(s.triggers.get(scope,(await result.json()).runId).eventId,'accepted');
- }finally{release?.();ingress.closeAllConnections();await new Promise(r=>ingress.close(r));store.close();close(s);}}
-});
-
-test('ingress deadline ends an incomplete body and releases its slot',async()=>{
- const {request}=await import('node:http'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,requestTimeoutMs:100,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');let client;try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,response=new Promise((resolve,reject)=>{client=request(endpoint,{method:'POST',headers:{'content-type':'application/json','content-length':'200'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});client.on('error',reject);client.write('{');});assert.equal(await response,503);let result;for(let i=0;i<100;i++){result=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'after',eventType:'event',payload:{}})});if(result.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(result.status,202);assert.equal(s.runs.list(scope).length,1);
- }finally{client?.destroy();ingress.closeAllConnections();await new Promise(r=>ingress.close(r));definitions.close();close(s);}
-});
-
-test('ingress deadline signals cooperative host callbacks before fencing their late result',async()=>{
- for(const phase of ['authenticate','authenticateRaw','authorize','traceParent']){const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let blocking=true,observed,entered;const ready=new Promise(resolve=>entered=resolve),identity={tenantId:'tenant',principalId:'sender',sourceId:'source'},pause=async signal=>{assert.ok(signal instanceof AbortSignal);if(blocking){observed=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}},options={triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,requestTimeoutMs:100,authorize:async(_identity,_event,_definition,signal)=>{if(phase==='authorize')await pause(signal);return true;},traceParent:async(_request,_identity,_event,signal)=>{if(phase==='traceParent')await pause(signal);return undefined;},...(phase==='authenticateRaw'?{authenticateRaw:async(_request,_body,signal)=>{await pause(signal);return identity;}}:{authenticate:async(_request,signal)=>{if(phase==='authenticate')await pause(signal);return identity;}})},ingress=createAgentEventIngress(options);ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=eventId=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId,eventType:'event',payload:{}})}),pending=post('timed');await ready;assert.equal((await pending).status,503);assert.equal(observed.aborted,true);assert.equal(s.runs.list(scope).length,0);blocking=false;let result;for(let i=0;i<100;i++){result=await post('accepted');if(result.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(result.status,202);assert.equal(s.runs.list(scope).length,1);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}}
-});
-
-test('signal-aware definition lookup aborts at either check and retains its configured binding',async()=>{
- for(const blockedRead of [1,2]){const s=setup(),store=new SqliteAgentDefinitions(':memory:');store.save('tenant',manifest,0);let reads=0,blocking=true,observed,entered;const ready=new Promise(resolve=>entered=resolve),definitions={marker:'host-bound',get(){throw Error('legacy lookup should not be used');},async getWithSignal(tenant,agent,signal){assert.equal(this.marker,'host-bound');assert.ok(signal instanceof AbortSignal);if(blocking&&++reads===blockedRead){observed=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return store.get(tenant,agent);}},options={triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,requestTimeoutMs:100,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true};assert.throws(()=>createAgentEventIngress({...options,definitions:{get:()=>undefined,getWithSignal:true}}),/Invalid event ingress/);const ingress=createAgentEventIngress(options);definitions.getWithSignal=()=>{throw Error('replaced lookup');};ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=eventId=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId,eventType:'event',payload:{}})}),pending=post('timed');await ready;assert.equal((await pending).status,503);assert.equal(observed.aborted,true);assert.equal(s.runs.list(scope).length,0);blocking=false;let result;for(let i=0;i<100;i++){result=await post('accepted');if(result.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(result.status,202);assert.equal(s.runs.list(scope).length,1);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));store.close();close(s);}}
-});
-
-test('ingress observations classify responses without identifiers or payloads',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const observations=[],options={triggers:s.triggers,definitions,maxPending:2,authenticate:req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'private-user',sourceId:'private-source'}:undefined,authorize:()=>true,observe:value=>observations.push(value)};assert.throws(()=>createAgentEventIngress({...options,observe:true}),/Invalid event ingress/);const ingress=createAgentEventIngress(options);ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=token=>fetch(url,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({agentId:'agent',eventId:'private-event',eventType:'event',payload:{secret:'private-payload'}})});assert.equal((await post('bad')).status,401);assert.equal((await post('valid')).status,202);assert.equal((await post('valid')).status,200);assert.deepEqual(observations.map(value=>[value.outcome,value.status]),[['rejected',401],['accepted',202],['completed',200]]);for(const value of observations){assert.deepEqual(Object.keys(value).sort(),['durationMs','outcome','status']);assert.ok(Number.isFinite(value.durationMs)&&value.durationMs>=0);}assert.doesNotMatch(JSON.stringify(observations),/private|tenant|agent|Bearer/);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('ingress observations record saturation and deadlines and tolerate observer failures',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let entered,release,calls=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),observations=[],metrics=new AgentIngressMetrics({authorize:()=>true}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,maxInFlight:1,requestTimeoutMs:100,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:async()=>{entered();await gate;return true;},observe:observation=>{observations.push(observation);metrics.observe(observation);if(++calls===1)throw Error('observer failure');return Promise.reject(Error('async observer failure'));}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=()=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'event',payload:{}})}),pending=post();await ready;assert.equal((await post()).status,503);assert.equal((await pending).status,503);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(observations.map(item=>[item.outcome,item.status,item.reason]),[['unavailable',503,'busy'],['unavailable',503,'timeout']]);const text=await metrics.render({tenantId:'tenant',principalId:'admin'});assert.match(text,/app_mixer_agent_ingress_unavailable_total\{reason="busy"\} 1/);assert.match(text,/app_mixer_agent_ingress_unavailable_total\{reason="timeout"\} 1/);assert.match(text,/app_mixer_agent_ingress_unavailable_total\{reason="other"\} 0/);assert.equal(s.runs.list(scope).length,0);
- }finally{release?.();ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('ingress observes a disconnected client once without claiming an HTTP outcome',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),observations=[],ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:async()=>{entered();await gate;return true;},observe:value=>observations.push(value)});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const abort=new AbortController(),pending=fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',signal:abort.signal,headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'event',payload:{}})}).catch(error=>error);await ready;abort.abort();await pending;for(let i=0;i<100&&!observations.length;i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(observations.length,1);assert.equal(observations[0].outcome,'disconnected');assert.equal(Object.hasOwn(observations[0],'status'),false);release();for(let i=0;i<100&&!s.runs.list(scope).length;i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(s.runs.list(scope).length,1);assert.equal(observations.length,1);
- }finally{release?.();ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('authenticated metrics server exposes authorized process-wide ingress response counters',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const metrics=new AgentIngressMetrics({authorize:actor=>actor.principalId==='metrics-admin'}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,authenticate:req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'sender',sourceId:'source'}:undefined,authorize:()=>true,observe:metrics.observe}),scrape=createAgentMetricsServer({metrics,authenticate:req=>req.headers.authorization==='Bearer admin'?{tenantId:'tenant',principalId:'metrics-admin'}:req.headers.authorization==='Bearer denied'?{tenantId:'tenant',principalId:'other'}:undefined,timeoutMs:1000,maxPending:2});ingress.listen(0,'127.0.0.1');scrape.listen(0,'127.0.0.1');await Promise.all([once(ingress,'listening'),once(scrape,'listening')]);try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,post=token=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({agentId:'agent',eventId:'private-id',eventType:'event',payload:{secret:'private-data'}})});assert.equal((await post('bad')).status,401);assert.equal((await post('valid')).status,202);assert.equal((await post('valid')).status,200);const url=`http://127.0.0.1:${scrape.address().port}/metrics`,get=token=>fetch(url,{headers:{authorization:'Bearer '+token}});assert.equal((await get('invalid')).status,401);assert.equal((await get('denied')).status,403);const response=await get('admin');assert.equal(response.status,200);const body=await response.text();assert.match(body,/app_mixer_agent_ingress_requests_total\{outcome="accepted"\} 1/);assert.match(body,/app_mixer_agent_ingress_requests_total\{outcome="completed"\} 1/);assert.match(body,/app_mixer_agent_ingress_requests_total\{outcome="rejected"\} 1/);assert.match(body,/app_mixer_agent_ingress_response_seconds_count 3/);assert.doesNotMatch(body,/private|tenant|sender|source/);
- }finally{ingress.closeAllConnections();scrape.closeAllConnections();await Promise.all([new Promise(resolve=>ingress.close(resolve)),new Promise(resolve=>scrape.close(resolve))]);definitions.close();close(s);}
-});
-
-test('ingress metrics recheck process-wide access and reject malformed observations',async()=>{
- let checks=0,allowed=true,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),metrics=new AgentIngressMetrics({authorize:async()=>{if(++checks===2){entered();await gate;}return allowed;}});for(const observation of [{outcome:'tenant',durationMs:1},{outcome:'accepted',durationMs:-1},{outcome:'accepted',durationMs:Infinity},{outcome:'accepted',reason:'busy',durationMs:1},{outcome:'unavailable',reason:'untrusted',durationMs:1}])assert.throws(()=>metrics.observe(observation),/Invalid ingress observation/);metrics.observe({outcome:'accepted',status:202,durationMs:250});const pending=metrics.render({tenantId:'tenant',principalId:'auditor'});await ready;allowed=false;release();await assert.rejects(pending,/access denied/);assert.throws(()=>new AgentIngressMetrics({authorize:1}),/configuration/);
-});
-
-test('ingress metrics classify unexpected server errors separately from capacity and timeout',async()=>{
- const s=setup(),metrics=new AgentIngressMetrics({authorize:()=>true}),ingress=createAgentEventIngress({triggers:s.triggers,definitions:{get:()=>{throw Error('secret backend failure');}},maxPending:1,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,observe:metrics.observe});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const result=await fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'event',payload:{}})});assert.equal(result.status,500);metrics.observe({outcome:'unavailable',status:503,durationMs:0});const text=await metrics.render({tenantId:'tenant',principalId:'admin'});assert.match(text,/app_mixer_agent_ingress_unavailable_total\{reason="other"\} 2/);assert.doesNotMatch(text,/secret backend/);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));close(s);}
-});
-
-test('opt-in ingress disconnect cancellation fences late callbacks and releases capacity',async()=>{
- for(const phase of ['authenticate','authenticateRaw','definition','authorize','traceParent']){const s=setup(),store=new SqliteAgentDefinitions(':memory:');store.save('tenant',manifest,0);let entered,release,signal,blocking=true,reads=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),pause=async seen=>{if(blocking){signal=seen;entered();await gate;}},identity={tenantId:'tenant',principalId:'sender',sourceId:'source'},definitions={get:store.get.bind(store),async getWithSignal(tenant,agent,seen){if(phase==='definition'&&++reads===2)await pause(seen);return store.get(tenant,agent);}},config={triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,abortOnDisconnect:true,authorize:async(_identity,_event,_definition,seen)=>{if(phase==='authorize')await pause(seen);return true;},traceParent:async(_req,_identity,_event,seen)=>{if(phase==='traceParent')await pause(seen);return undefined;},...(phase==='authenticateRaw'?{authenticateRaw:async(_req,_raw,seen)=>{await pause(seen);return identity;}}:{authenticate:async(_req,seen)=>{if(phase==='authenticate')await pause(seen);return identity;}})};assert.throws(()=>createAgentEventIngress({...config,abortOnDisconnect:'yes'}),/Invalid event ingress/);const ingress=createAgentEventIngress(config);ingress.listen(0,'127.0.0.1');await once(ingress,'listening');const abort=new AbortController();try{const url=`http://127.0.0.1:${ingress.address().port}/events`,post=(eventId,extra={})=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId,eventType:'event',payload:{}}),...extra}),pending=post('disconnected',{signal:abort.signal}).catch(error=>error);await ready;abort.abort();await pending;for(let i=0;i<100&&!signal.aborted;i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(signal.aborted,true,phase);assert.equal((await post('busy')).status,503);assert.equal(s.runs.list(scope).length,0);blocking=false;release();let result;for(let i=0;i<100;i++){result=await post('accepted');if(result.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(result.status,202);const runs=s.runs.list(scope);assert.equal(runs.length,1);assert.equal(s.triggers.get(scope,(await result.json()).runId).eventId,'accepted');
- }finally{abort.abort();release();ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));store.close();s.triggers.close();s.runs.close();}}
-});
-
-test('disconnect cancellation stops an incomplete event body and permits a later delivery',async()=>{
- const {request}=await import('node:http'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let observed,entered;const ready=new Promise(resolve=>entered=resolve),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:5,maxInFlight:1,abortOnDisconnect:true,authenticate:(_req,signal)=>{observed=signal;entered();return {tenantId:'tenant',principalId:'sender',sourceId:'source'};},authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');let client;try{const url=`http://127.0.0.1:${ingress.address().port}/events`;client=request(url,{method:'POST',headers:{'content-type':'application/json','content-length':'200'}});client.on('error',()=>{});client.write('{');await ready;client.destroy();for(let i=0;i<100&&!observed.aborted;i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(observed.aborted,true);let response;for(let i=0;i<100;i++){response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'retry',eventType:'event',payload:{}})});if(response.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(response.status,202);assert.equal(s.runs.list(scope).length,1);
- }finally{client?.destroy();ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();s.triggers.close();s.runs.close();}
-});
-
-test('trigger retention discovers terminal unredacted runs under separate scoped authorization',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'admin'},otherScope={tenantId:'other',agentId:'agent'};let allowed=true,calls=0,block=false,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true,authorizeDiscovery:async(who,selected)=>{calls++;assert.equal(who.principalId,'admin');assert.deepEqual(selected,scope);who.principalId='forged';selected.tenantId='forged';if(block&&calls===2){entered();await gate;}return allowed;}});try{const created=[];for(let i=0;i<4;i++){const item=s.triggers.enqueue(scope,{...event,eventId:'evt-'+i},{...settings,maxPending:10},1);created.push(item.runId);}const foreign=s.triggers.enqueue(otherScope,event,settings,1);for(const runId of created.slice(0,3)){const run=s.runs.get(scope,runId);s.runs.request(scope,runId,run.revision,'cancel',2);}const foreignRun=s.runs.get(otherScope,foreign.runId);s.runs.request(otherScope,foreign.runId,foreignRun.revision,'cancel',2);await retention.redact(actor,created[0],3);const expected=created.slice(1,3).sort(),first=await retention.listCandidates(actor,{limit:1});assert.deepEqual(first.items,[{runId:expected[0],status:'cancelled'}]);assert.equal(first.nextAfter,expected[0]);const second=await retention.listCandidates(actor,{after:first.nextAfter,limit:1});assert.deepEqual(second.items,[{runId:expected[1],status:'cancelled'}]);assert.equal(second.nextAfter,undefined);assert.equal(JSON.stringify([first,second]).includes('order'),false);await assert.rejects(retention.listCandidates({...actor,tenantId:'other'}),/Invalid/);for(const options of [{limit:0},{limit:101},{after:'bad id'}])await assert.rejects(retention.listCandidates(actor,options),/Invalid/);allowed=false;await assert.rejects(retention.listCandidates(actor),/discovery access denied/);allowed=true;calls=0;block=true;const pending=retention.listCandidates(actor);await ready;allowed=false;release();await assert.rejects(pending,/discovery access denied/);const disabled=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true});try{await assert.rejects(disabled.listCandidates(actor),/Invalid trigger retention discovery/);}finally{disabled.close();}
- }finally{release();retention.close();close(s);}
-});
-
-test('trigger receipt times support bounded cutoff discovery without guessing legacy ages',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'admin'},db=new DatabaseSync(s.path);let retention;try{const ids=[];for(const [i,now] of [10,20,30].entries()){const result=s.triggers.enqueue(scope,{...event,eventId:'received-'+i},{...settings,maxPending:10},now);ids.push(result.runId);const run=s.runs.get(scope,result.runId);s.runs.request(scope,result.runId,run.revision,'cancel',now+1);}assert.deepEqual(s.triggers.enqueue(scope,{...event,eventId:'received-0'},{...settings,maxPending:10},40),{runId:ids[0],duplicate:true});assert.equal(db.prepare('SELECT received_at FROM agent_trigger_receipts WHERE run_id=?').get(ids[0]).received_at,10);for(const sql of ['UPDATE agent_trigger_receipts SET received_at=0','DELETE FROM agent_trigger_receipts',`INSERT OR REPLACE INTO agent_trigger_receipts VALUES ('tenant','agent','${ids[0]}',0)`])assert.throws(()=>db.exec(sql),/immutable/);db.exec('DROP TRIGGER agent_trigger_receipts_no_delete');db.prepare('DELETE FROM agent_trigger_receipts WHERE run_id=?').run(ids[2]);retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});const all=(await retention.listCandidates(actor,{includeReceivedAt:true})).items;assert.equal(all.length,3);assert.equal(all.find(row=>row.runId===ids[0]).receivedAt,10);assert.equal(all.find(row=>row.runId===ids[1]).receivedAt,20);assert.equal(Object.hasOwn(all.find(row=>row.runId===ids[2]),'receivedAt'),false);assert.deepEqual((await retention.listCandidates(actor,{receivedBefore:20})).items,[{runId:ids[0],status:'cancelled',receivedAt:10}]);assert.deepEqual((await retention.listCandidates(actor,{receivedBefore:10})).items,[]);assert.equal((await retention.listCandidates(actor,{receivedBefore:31})).items.length,2);for(const options of [{receivedBefore:-1},{receivedBefore:1.5},{includeReceivedAt:'yes'}])await assert.rejects(retention.listCandidates(actor,options),/Invalid/);
- }finally{retention?.close();db.close();close(s);}
-});
-
-test('receipt insertion failure rolls back a new trigger and its run',()=>{
- const s=setup(),db=new DatabaseSync(s.path);try{db.exec("CREATE TRIGGER fail_trigger_receipt BEFORE INSERT ON agent_trigger_receipts BEGIN SELECT RAISE(ABORT,'receipt unavailable'); END");assert.throws(()=>s.triggers.enqueue(scope,event,settings,1),/receipt unavailable/);assert.equal(s.runs.list(scope).length,0);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agent_trigger_inbox').get().n,0);db.exec('DROP TRIGGER fail_trigger_receipt');assert.equal(s.triggers.enqueue(scope,event,settings,2).duplicate,false);}finally{db.close();close(s);}
-});
-
-test('trigger retention worker redacts only authorized, old terminal inputs over bounded passes',async()=>{
- const s=setup(),db=new DatabaseSync(s.path),actor={tenantId:'tenant',principalId:'cleaner'},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});let now=100;try{const ids=[];for(const [i,time] of [10,11,12,75,13,14].entries()){const item=s.triggers.enqueue(scope,{...event,eventId:'worker-'+i},{...settings,maxPending:10},time);ids.push(item.runId);if(i!==4){const run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',time+1);}}db.exec('DROP TRIGGER agent_trigger_receipts_no_delete');db.prepare('DELETE FROM agent_trigger_receipts WHERE run_id=?').run(ids[5]);const foreign=s.triggers.enqueue({...scope,tenantId:'other'},event,settings,10),seen=[],errors=[],settingsWorker={retention,actor,authorize:(who,candidate)=>{seen.push(candidate.runId);who.principalId='forged';candidate.runId='forged';return seen.at(-1)!==ids[1];},minAgeMs:50,maxPerPass:1,pollMs:100,clock:()=>now,onError:(error,runId)=>errors.push({error,runId})},worker=new AgentTriggerRetentionWorker(settingsWorker);settingsWorker.minAgeMs=1;settingsWorker.actor.principalId='changed';for(let i=0;i<4;i++)await worker.runOnce();assert.equal(s.triggers.get(scope,ids[0]).payloadRedacted,true);assert.equal(s.triggers.get(scope,ids[1]).payloadRedacted,undefined);assert.equal(s.triggers.get(scope,ids[2]).payloadRedacted,true);for(const index of [3,4,5])assert.equal(s.triggers.get(scope,ids[index]).payloadRedacted,undefined);assert.equal(s.triggers.get({...scope,tenantId:'other'},foreign.runId).payloadRedacted,undefined);assert.deepEqual(errors,[]);assert.deepEqual(s.triggers.enqueue(scope,{...event,eventId:'worker-0'},{...settings,maxPending:10},90),{runId:ids[0],duplicate:true});now=126;for(let i=0;i<4;i++)await worker.runOnce();assert.equal(s.triggers.get(scope,ids[3]).payloadRedacted,true);await worker.stop();
- }finally{retention.close();db.close();close(s);}
-});
-
-test('stopping trigger retention fences late discovery, worker and store authorization results',async()=>{
- for(const phase of ['worker','store','discovery']){const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'};let block=false,entered,release;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),pause=async()=>{if(block){entered();await gate;}return true;},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:async()=>phase==='store'?pause():true,authorizeDiscovery:()=>phase==='discovery'?pause():true});try{const item=s.triggers.enqueue(scope,event,settings,10),run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',11);const worker=new AgentTriggerRetentionWorker({retention,actor,authorize:()=>phase==='worker'?pause():true,minAgeMs:20,maxPerPass:5,pollMs:100,clock:()=>100,onError:()=>{throw Error('unexpected');}});block=true;const pending=worker.runOnce();await ready;assert.throws(()=>worker.runOnce(),/already running/);const stopping=worker.stop();release();await stopping;assert.equal(await pending,0);assert.equal(s.triggers.get(scope,item.runId).payloadRedacted,undefined);block=false;assert.equal(await worker.runOnce(),1);assert.equal(s.triggers.get(scope,item.runId).payloadRedacted,true);await worker.stop();}finally{release();retention.close();close(s);}}
-});
-
-test('trigger retention worker rechecks age after policy delay and isolates per-run failures',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});let now=100,started,release,blocked=true;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),errors=[];try{const first=s.triggers.enqueue(scope,{...event,eventId:'one'},{...settings,maxPending:5},10),second=s.triggers.enqueue(scope,{...event,eventId:'two'},{...settings,maxPending:5},11);for(const item of [first,second]){const run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',12);}const worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:50,maxPerPass:10,pollMs:100,clock:()=>now,authorize:async(_who,candidate,signal)=>{assert.ok(signal instanceof AbortSignal);if(blocked){blocked=false;started();await gate;}if(candidate.runId===second.runId)throw Error('policy unavailable');return true;},onError:(error,runId)=>{errors.push([error.message,runId]);return Promise.reject(Error('observer failure'));}});const pending=worker.runOnce();await ready;now=30;release();assert.equal(await pending,0);assert.equal(s.triggers.get(scope,first.runId).payloadRedacted,undefined);assert.deepEqual(errors,[['policy unavailable',second.runId]]);now=100;assert.equal(await worker.runOnce(),1);assert.equal(s.triggers.get(scope,first.runId).payloadRedacted,true);assert.equal(s.triggers.get(scope,second.runId).payloadRedacted,undefined);await worker.stop();
- }finally{release();retention.close();close(s);}
-});
-
-test('trigger retention polling stops without starting later passes',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});let worker;try{const first=s.triggers.enqueue(scope,{...event,eventId:'first'},settings,10),run=s.runs.get(scope,first.runId);s.runs.request(scope,first.runId,run.revision,'cancel',11);worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:20,maxPerPass:1,pollMs:100,clock:()=>100,authorize:()=>true,onError:()=>{}});worker.start();for(let i=0;i<100&&!s.triggers.get(scope,first.runId).payloadRedacted;i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(s.triggers.get(scope,first.runId).payloadRedacted,true);await worker.stop();const second=s.triggers.enqueue(scope,{...event,eventId:'second'},settings,12),run2=s.runs.get(scope,second.runId);s.runs.request(scope,second.runId,run2.revision,'cancel',13);await new Promise(resolve=>setTimeout(resolve,150));assert.equal(s.triggers.get(scope,second.runId).payloadRedacted,undefined);}finally{await worker?.stop();retention.close();close(s);}
-});
-
-test('trigger retention verifies receipt age again after store authorization',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'};let now=100,blocking=true,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:async()=>{if(blocking){entered();await gate;}return true;},authorizeDiscovery:()=>true});try{const item=s.triggers.enqueue(scope,event,settings,10),run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',11);const worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:50,maxPerPass:5,pollMs:100,clock:()=>now,authorize:()=>true,onError:()=>{}}),pending=worker.runOnce();await ready;now=30;blocking=false;release();assert.equal(await pending,0);assert.equal(s.triggers.get(scope,item.runId).payloadRedacted,undefined);now=101;assert.equal(await worker.runOnce(),1);assert.deepEqual(await retention.getRedaction(actor,item.runId),{actorId:'cleaner',redactedAt:101});await worker.stop();}finally{release();retention.close();close(s);}
-});
-
-test('completion-age retention skips recently finished and legacy runs while preserving receipt behavior',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'},db=new DatabaseSync(s.path);let retention;try{const events=[];for(let i=0;i<3;i++){const result=s.triggers.enqueue(scope,{...event,eventId:'completion-'+i},{...settings,maxPending:10},10);events.push(result.runId);const run=s.runs.get(scope,result.runId);s.runs.request(scope,result.runId,run.revision,'cancel',[30,90,31][i]);}db.exec('DROP TRIGGER agent_run_terminal_no_delete');db.prepare('DELETE FROM agent_run_terminal_times WHERE run_id=?').run(events[2]);retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:()=>true,authorizeDiscovery:()=>true});const all=(await retention.listCandidates(actor,{includeCompletedAt:true})).items;assert.equal(all.find(row=>row.runId===events[0]).completedAt,30);assert.equal(all.find(row=>row.runId===events[1]).completedAt,90);assert.equal(Object.hasOwn(all.find(row=>row.runId===events[2]),'completedAt'),false);assert.deepEqual((await retention.listCandidates(actor,{completedBefore:50})).items,[{runId:events[0],status:'cancelled',completedAt:30}]);assert.deepEqual((await retention.listCandidates(actor,{completedBefore:30})).items,[]);assert.deepEqual((await retention.listCandidates(actor,{completedBefore:50,receivedBefore:10})).items,[]);for(const options of [{completedBefore:-1},{completedBefore:1.5},{includeCompletedAt:'yes'}])await assert.rejects(retention.listCandidates(actor,options),/Invalid/);const worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:50,ageFrom:'completion',maxPerPass:10,pollMs:100,clock:()=>100,authorize:()=>true,onError:()=>{}});assert.equal(await worker.runOnce(),1);assert.equal(s.triggers.get(scope,events[0]).payloadRedacted,true);assert.equal(s.triggers.get(scope,events[1]).payloadRedacted,undefined);assert.equal(s.triggers.get(scope,events[2]).payloadRedacted,undefined);await worker.stop();
- }finally{retention?.close();db.close();close(s);}
-});
-
-test('terminal timestamps roll back the run transition if their insert fails',()=>{
- const s=setup(),db=new DatabaseSync(s.path);try{const item=s.triggers.enqueue(scope,event,settings,10),run=s.runs.get(scope,item.runId);db.exec("CREATE TRIGGER fail_terminal_time BEFORE INSERT ON agent_run_terminal_times BEGIN SELECT RAISE(ABORT,'terminal time unavailable'); END");assert.throws(()=>s.runs.request(scope,item.runId,run.revision,'cancel',20),/terminal time unavailable/);assert.equal(s.runs.get(scope,item.runId).status,'queued');db.exec('DROP TRIGGER fail_terminal_time');s.runs.request(scope,item.runId,run.revision,'cancel',21);assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get(item.runId).completed_at,21);for(const sql of ['UPDATE agent_run_terminal_times SET completed_at=0','DELETE FROM agent_run_terminal_times',`INSERT OR REPLACE INTO agent_run_terminal_times VALUES ('tenant','agent','${item.runId}',0)`])assert.throws(()=>db.exec(sql),/immutable/);
- }finally{db.close();close(s);}
-});
-
-test('completion timestamps cover success, failure, cancellation, expiry and reconciliation',()=>{
- const s=setup(),db=new DatabaseSync(s.path),create=name=>s.runs.create(scope,name,{definitionVersion:1,maxAttempts:2,deadline:100},1),claim=run=>s.runs.claim(scope,run.runId,run.revision,'worker',20,10);try{for(const outcome of ['succeeded','failed']){const running=claim(create(outcome)),settled=s.runs.settle(scope,running.runId,running.revision,running.leaseToken,outcome,12);assert.equal(settled.status,outcome);assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get(outcome).completed_at,12);}const running=claim(create('stopped')),requested=s.runs.request(scope,'stopped',running.revision,'cancel',11);s.runs.settle(scope,'stopped',requested.revision,running.leaseToken,'stopped',13);assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('stopped').completed_at,13);const expired=create('expired');s.runs.expireDeadline(scope,'expired',expired.revision,100);assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('expired').completed_at,100);const held=claim(create('reconciled')),uncertain=s.runs.recoverExpired(scope,'reconciled',held.revision,30);s.runs.reconcile(scope,'reconciled',uncertain.revision,'succeeded',31);assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('reconciled').completed_at,31);const terminal=s.runs.get(scope,'succeeded');s.runs.archive(scope,'succeeded',terminal.revision);assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('succeeded').completed_at,12);
- }finally{db.close();close(s);}
-});
-
-test('completion-age redaction rechecks eligibility after delayed authorization',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'};let now=100,entered,release,blocking=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:async()=>{if(blocking){entered();await gate;}return true;},authorizeDiscovery:()=>true});try{const item=s.triggers.enqueue(scope,event,settings,10),run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',20);const worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:50,ageFrom:'completion',maxPerPass:5,pollMs:100,clock:()=>now,authorize:()=>true,onError:()=>{}}),pending=worker.runOnce();await ready;now=60;blocking=false;release();assert.equal(await pending,0);assert.equal(s.triggers.get(scope,item.runId).payloadRedacted,undefined);now=100;assert.equal(await worker.runOnce(),1);await worker.stop();}finally{release();retention.close();close(s);}
-});
-
-test('trigger retention stop signals cooperative discovery and store policies',async()=>{
- for(const phase of ['discovery','redact']){const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'};let blocking=true,entered,seen;const ready=new Promise(resolve=>entered=resolve),pause=async signal=>{if(blocking){assert.ok(signal instanceof AbortSignal);seen=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return true;},retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:(_actor,_action,_run,signal)=>phase==='redact'?pause(signal):true,authorizeDiscovery:(_actor,_scope,signal)=>phase==='discovery'?pause(signal):true});try{const item=s.triggers.enqueue(scope,event,settings,10),run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',11);const errors=[],worker=new AgentTriggerRetentionWorker({retention,actor,minAgeMs:20,maxPerPass:5,pollMs:100,clock:()=>100,authorize:()=>true,onError:error=>errors.push(error)}),pending=worker.runOnce();await ready;await worker.stop();assert.equal(seen.aborted,true);assert.equal(await pending,0);assert.equal(s.triggers.get(scope,item.runId).payloadRedacted,undefined);assert.deepEqual(errors,[]);blocking=false;assert.equal(await worker.runOnce(),1);await worker.stop();}finally{retention.close();close(s);}}
-});
-
-test('direct retention cancellation is reported consistently when policy rejects on abort',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'cleaner'};let entered;const ready=new Promise(resolve=>entered=resolve),retention=new SqliteAgentTriggerRetention(s.path,{scope,authorize:(_actor,_action,_run,signal)=>new Promise((_resolve,reject)=>{entered();signal.addEventListener('abort',()=>reject(Error('policy aborted')),{once:true});}),authorizeDiscovery:()=>true}),controller=new AbortController();try{const item=s.triggers.enqueue(scope,event,settings,10),run=s.runs.get(scope,item.runId);s.runs.request(scope,item.runId,run.revision,'cancel',11);const pending=retention.redact(actor,item.runId,100,controller.signal);await ready;controller.abort();await assert.rejects(pending,/Trigger retention cancelled/);assert.equal(s.triggers.get(scope,item.runId).payloadRedacted,undefined);const already=new AbortController();already.abort();await assert.rejects(retention.listCandidates(actor,{},already.signal),/Trigger retention cancelled/);
- }finally{controller.abort();retention.close();close(s);}
-});
-
-
-test('Paddle webhook verifies signed notifications and acknowledges durable event retries',async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const now=1700000000,secret='paddle-secret-abcdefghijklmnop',prior='paddle-secret-zyxwvutsrqponml',observations=[],adapter=createPaddleWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'paddle'},agentId:'agent',secret,previousSecrets:[prior],clock:()=>now*1000}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,...adapter,observe:value=>observations.push(value),authorize:(_identity,event)=>event.eventType==='subscription.created'&&event.payload.data.customer_id==='ctm_allowed'});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,event={event_id:'evt_123',event_type:'subscription.created',notification_id:'ntf_first',occurred_at:'2026-01-01T00:00:00Z',data:{customer_id:'ctm_allowed'}},signature=(key,time,body)=>createHmac('sha256',key).update(time+':').update(body).digest('hex'),post=(body,header)=>fetch(url,{method:'POST',headers:{'content-type':'application/json','paddle-signature':header},body}),body=JSON.stringify(event);
-  let response=await post(body,`ts=${now};h1=${signature(prior,now,body)};h1=${signature(secret,now,body)}`);assert.equal(response.status,200);const first=await response.json();assert.equal(first.duplicate,false);
-  const retry=JSON.stringify({...event,notification_id:'ntf_second'});response=await post(retry,`ts=${now};h1=${signature(secret,now,retry)}`);assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal(s.runs.list(scope).length,1);assert.equal(s.triggers.get(scope,first.runId).payload.notification_id,undefined);
-  assert.equal((await post(body+' ',`ts=${now};h1=${signature(secret,now,body)}`)).status,401);assert.equal((await post(body,`ts=${now-6};h1=${signature(secret,now-6,body)}`)).status,401);assert.equal((await post(body,`ts=${now+6};h1=${signature(secret,now+6,body)}`)).status,401);
-  const changed=JSON.stringify({...event,data:{customer_id:'ctm_allowed',value:2}});assert.equal((await post(changed,`ts=${now};h1=${signature(secret,now,changed)}`)).status,409);const denied=JSON.stringify({...event,event_id:'evt_456',data:{customer_id:'ctm_other'}});assert.equal((await post(denied,`ts=${now};h1=${signature(secret,now,denied)}`)).status,403);assert.deepEqual(observations.slice(0,2).map(item=>item.outcome),['accepted','completed']);
- }finally{await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Paddle webhook rejects ambiguous signatures and invalid event envelopes',()=>{
- const options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'paddle'},agentId:'agent',secret:'paddle-secret-abcdefghijklmnop',clock:()=>1700000000000};for(const bad of [{...options,secret:'short'},{...options,previousSecrets:[options.secret]},{...options,toleranceSeconds:0},{...options,identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createPaddleWebhookAdapter(bad),/configuration/);const adapter=createPaddleWebhookAdapter(options),body=Buffer.from('{"event_id":"evt_1","event_type":"customer.created","notification_id":"ntf_1","data":{}}'),sig=createHmac('sha256',options.secret).update('1700000000:').update(body).digest('hex'),header=`ts=1700000000;h1=${sig}`;assert.ok(adapter.authenticateRaw({rawHeaders:['Paddle-Signature',header]},body));for(const headers of [['Paddle-Signature',header,'paddle-signature',header],['Paddle-Signature',header+';ts=1700000000'],['Paddle-Signature','ts=1700000000;h1=bad']])assert.equal(adapter.authenticateRaw({rawHeaders:headers},body),undefined);for(const invalid of ['{}','{"event_id":"bad","event_type":"x","notification_id":"ntf_1","data":{}}','{"event_id":"evt_1","event_type":"x","notification_id":"bad","data":{}}'])assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(invalid)),/Invalid/);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([0xff])));
-});
-
-test('Linear webhook verifies raw signatures, binds events and acknowledges durable retries',{timeout:15000},async()=>{
- const {createLinearWebhookAdapter}=await import('../dist/index.js'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const now=1700000000000,secret='a'.repeat(32),old='b'.repeat(32),observations=[],adapter=createLinearWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'linear'},agentId:'agent',organizationId:'org-1',webhookId:'hook-1',eventType:'Issue',secret,previousSecrets:[old],clock:()=>now}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,observe:value=>observations.push(value),authorize:(_identity,event)=>event.payload.data.teamId==='allowed'});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const url=`http://127.0.0.1:${ingress.address().port}/events`,payload={organizationId:'org-1',webhookId:'hook-1',webhookTimestamp:now,type:'Issue',action:'create',data:{id:'issue-1',teamId:'allowed'}},sig=(key,body)=>createHmac('sha256',key).update(body).digest('hex'),post=(body,signature,headers={})=>fetch(url,{method:'POST',headers:{'content-type':'application/json','linear-signature':signature,...headers},body}),body=JSON.stringify(payload);
-  let response=await post(body,sig(old,body));assert.equal(response.status,200);const first=await response.json();assert.equal(first.duplicate,false);response=await post(body,sig(secret,body),{'linear-delivery':'different'});assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal(s.runs.list(scope).length,1);assert.equal(s.triggers.get(scope,first.runId).eventType,'linear.Issue.create');assert.deepEqual(observations.slice(0,2).map(value=>value.outcome),['accepted','completed']);const refreshed=JSON.stringify({data:{teamId:'allowed',id:'issue-1'},action:'create',type:'Issue',webhookTimestamp:now-1000,webhookId:'hook-1',organizationId:'org-1'});response=await post(refreshed,sig(secret,refreshed));assert.equal(response.status,200);assert.equal((await response.json()).runId,first.runId);assert.equal(s.runs.list(scope).length,1);assert.equal(s.triggers.get(scope,first.runId).payload.webhookTimestamp,undefined);
-  assert.equal((await post(body+' ',sig(secret,body))).status,401);for(const change of [{webhookTimestamp:now-60001},{webhookTimestamp:now+60001}]){const bad=JSON.stringify({...payload,...change});assert.equal((await post(bad,sig(secret,bad))).status,401);}for(const change of [{organizationId:'other'},{webhookId:'other'},{type:'Comment'},{action:'archive'}]){const bad=JSON.stringify({...payload,...change});assert.equal((await post(bad,sig(secret,bad))).status,400);}const denied=JSON.stringify({...payload,data:{id:'issue-2',teamId:'other'}});assert.equal((await post(denied,sig(secret,denied))).status,403);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Linear webhook rejects ambiguous signatures and invalid configuration',async()=>{
- const {createLinearWebhookAdapter}=await import('../dist/index.js'),options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'linear'},agentId:'agent',organizationId:'org',webhookId:'hook',eventType:'Issue',secret:'a'.repeat(32),clock:()=>100000};for(const change of [{secret:'short'},{previousSecrets:[options.secret]},{eventType:'bad type'},{toleranceMs:0},{identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createLinearWebhookAdapter({...options,...change}),/configuration/);const adapter=createLinearWebhookAdapter(options),body=Buffer.from('{"webhookTimestamp":100000}'),sig=createHmac('sha256',options.secret).update(body).digest('hex');assert.ok(adapter.authenticateRaw({rawHeaders:['Linear-Signature',sig]},body));assert.equal(adapter.authenticateRaw({rawHeaders:['Linear-Signature',sig,'linear-signature',sig]},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['Linear-Signature','bad']},body),undefined);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([255])));
-});
-
-test('Square webhook verifies URL-bound signatures and enqueues only authorized merchant events',{timeout:15000},async()=>{
- const {createSquareWebhookAdapter}=await import('../dist/index.js'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const current='current-square-signing-key',old='previous-square-signing-key',notificationUrl='https://example.com/webhook?tenant=one',identity={tenantId:'tenant',principalId:'sender',sourceId:'square'},config={identity,agentId:'agent',merchantId:'merchant-1',notificationUrl,eventTypes:['customer.created'],signatureKey:current,previousSignatureKeys:[old]},adapter=createSquareWebhookAdapter(config);config.eventTypes[0]='customer.deleted';config.identity.tenantId='other';let authorized=true;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:()=>authorized});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,payload={merchant_id:'merchant-1',type:'customer.created',event_id:'b1f76d3a-58b3-4e2b-93b4-3580309384aa',created_at:'2025-01-01T00:00:00Z',data:{type:'customer',id:'customer-1',object:{customer:{id:'customer-1'}}}},body=JSON.stringify(payload),sign=(bytes,secret=current,url=notificationUrl)=>createHmac('sha256',secret).update(url).update(bytes).digest('base64'),post=(bytes,signature)=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-square-hmacsha256-signature':signature},body:bytes});
-  assert.equal((await post(body+' ',sign(body))).status,401);assert.equal((await post(body,sign(body,current,'https://wrong.example/webhook'))).status,401);const first=await post(body,sign(body,old));assert.equal(first.status,202);const receipt=await first.json();const retry=await post(body,sign(body));assert.equal(retry.status,200);assert.equal((await retry.json()).runId,receipt.runId);assert.equal(s.runs.list(scope).length,1);const stored=s.triggers.get(scope,receipt.runId);assert.equal(stored.eventType,'square.customer.created');assert.equal(stored.eventId,'square.'+payload.event_id);assert.deepEqual(stored.payload,payload);const changed=JSON.stringify({...payload,data:{type:'customer',id:'changed'}});assert.equal((await post(changed,sign(changed))).status,409);
-  for(const change of [{merchant_id:'other'},{type:'customer.deleted'},{event_id:''},{data:null}]){const bytes=JSON.stringify({...payload,...change});assert.equal((await post(bytes,sign(bytes))).status,400);}authorized=false;const other=JSON.stringify({...payload,event_id:'another-event'});assert.equal((await post(other,sign(other))).status,403);assert.equal(s.runs.list(scope).length,1);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Square webhook uses the published signature vector and rejects ambiguous configuration and headers',async()=>{
- const {createSquareWebhookAdapter}=await import('../dist/index.js'),options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'square'},agentId:'agent',merchantId:'merchant',notificationUrl:'https://example.com/webhook',eventTypes:['customer.created'],signatureKey:'asdf1234'},adapter=createSquareWebhookAdapter(options),body=Buffer.from('{"hello":"world"}'),signature='2kRE5qRU2tR+tBGlDwMEw2avJ7QM4ikPYD/PJ3bd9Og=';assert.ok(adapter.authenticateRaw({rawHeaders:['X-Square-HmacSha256-Signature',signature]},body));assert.equal(adapter.authenticateRaw({rawHeaders:['x-square-hmacsha256-signature',signature,'X-Square-HmacSha256-Signature',signature]},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['x-square-hmacsha256-signature',signature.slice(0,-1)+'A']},body),undefined);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([255])));for(const change of [{notificationUrl:'http://example.com/webhook'},{notificationUrl:'https://user@example.com/webhook'},{notificationUrl:'https://example.com/webhook#fragment'},{eventTypes:[]},{eventTypes:['bad type']},{previousSignatureKeys:['asdf1234']},{signatureKey:'short'},{identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createSquareWebhookAdapter({...options,...change}),/configuration/);
-});
-
-test('Square optional signed event age bounds stale and future replay without trusting delivery headers',async()=>{
- const {createSquareWebhookAdapter}=await import('../dist/index.js'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let now=1735689600000;const notificationUrl='https://example.com/webhook',secret='square-secret-abcdefghijklmnop',config={identity:{tenantId:'tenant',principalId:'sender',sourceId:'square'},agentId:'agent',merchantId:'merchant',notificationUrl,eventTypes:['customer.created'],signatureKey:secret,maxAgeMs:86400000,futureSkewMs:60000,clock:()=>now},adapter=createSquareWebhookAdapter(config);config.maxAgeMs=60000;config.clock=()=>0;const sign=body=>createHmac('sha256',secret).update(notificationUrl).update(body).digest('base64'),body=timestamp=>Buffer.from(JSON.stringify({merchant_id:'merchant',type:'customer.created',event_id:'event-1',created_at:timestamp,data:{type:'customer',id:'customer-1'}})),authenticate=value=>adapter.authenticateRaw({rawHeaders:['x-square-hmacsha256-signature',sign(value),'square-initial-delivery-timestamp','forged']},value);
- try{
-  const recent=body(new Date(now).toISOString()),oldBoundary=body(new Date(now-86400000).toISOString()),futureBoundary=body(new Date(now+60000).toISOString());assert.ok(authenticate(recent));assert.ok(authenticate(oldBoundary));assert.ok(authenticate(futureBoundary));assert.equal(authenticate(body(new Date(now-86400001).toISOString())),undefined);assert.equal(authenticate(body(new Date(now+60001).toISOString())),undefined);assert.ok(authenticate(body('2024-12-31T16:00:00-08:00')));for(const value of ['2025-02-30T00:00:00Z','2025-01-01T00:00:00','not-a-time',null])assert.equal(authenticate(body(value)),undefined);const missing=Buffer.from('{"data":{}}');assert.equal(authenticate(missing),undefined);now+=86400001;assert.throws(()=>adapter.mapAuthenticatedBody(recent),/Invalid Square/);now=1735689600000;
-  const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:2,...adapter,authorize:()=>true});ingress.listen(0,'127.0.0.1');const {once}=await import('node:events');await once(ingress,'listening');try{const post=value=>fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','x-square-hmacsha256-signature':sign(value),'square-initial-delivery-timestamp':'fresh'},body:value});assert.equal((await post(body(new Date(now-86400001).toISOString()))).status,401);const first=await post(recent);assert.equal(first.status,202);const receipt=await first.json();const retry=await post(recent);assert.equal(retry.status,200);assert.equal((await retry.json()).runId,receipt.runId);assert.equal(s.runs.list(scope).length,1);}finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));}
-  for(const change of [{maxAgeMs:59999},{maxAgeMs:604800001},{futureSkewMs:-1},{futureSkewMs:300001},{maxAgeMs:undefined},{clock:'bad'}])assert.throws(()=>createSquareWebhookAdapter({...config,...change}),/configuration/);
- }finally{definitions.close();close(s);}
-});
-
-test('Notion signed events bind workspace, subscription and integration and deduplicate retries',{timeout:15000},async()=>{
- const {createNotionWebhookAdapter}=await import('../dist/index.js'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const identity={tenantId:'tenant',principalId:'sender',sourceId:'notion'},workspaceId='11111111-1111-4111-8111-111111111111',subscriptionId='22222222-2222-4222-8222-222222222222',integrationId='33333333-3333-4333-8333-333333333333',eventId='44444444-4444-4444-8444-444444444444',secret='secret_notion_verification_token',previous='secret_old_verification_token',config={identity,agentId:'agent',workspaceId,subscriptionId,integrationId,eventTypes:['page.created'],verificationToken:secret,previousVerificationTokens:[previous]},adapter=createNotionWebhookAdapter(config);config.eventTypes[0]='page.deleted';config.identity.tenantId='other';let authorized=true;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:()=>authorized});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,payload={id:eventId,timestamp:'2025-01-01T00:00:00Z',workspace_id:workspaceId,subscription_id:subscriptionId,integration_id:integrationId,type:'page.created',attempt_number:1,entity:{id:eventId,type:'page'},data:{parent:{id:workspaceId,type:'page'}}},sign=(body,key=secret)=>'sha256='+createHmac('sha256',key).update(body).digest('hex'),post=(body,signature=sign(body))=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-notion-signature':signature},body});const firstBody=JSON.stringify(payload);
-  assert.equal((await post(firstBody+' ',sign(firstBody))).status,401);const first=await post(firstBody,sign(firstBody,previous));assert.equal(first.status,202);const receipt=await first.json(),retry=await post(JSON.stringify({...payload,attempt_number:2}));assert.equal(retry.status,200);assert.equal((await retry.json()).runId,receipt.runId);const stored=s.triggers.get(scope,receipt.runId);assert.equal(stored.eventType,'notion.page.created');assert.equal(stored.eventId,'notion.'+eventId);assert.equal(Object.hasOwn(stored.payload,'attempt_number'),false);assert.equal(s.runs.list(scope).length,1);
-  const changed=JSON.stringify({...payload,attempt_number:3,data:{parent:{id:integrationId,type:'page'}}});assert.equal((await post(changed)).status,409);for(const update of [{workspace_id:integrationId},{subscription_id:integrationId},{integration_id:workspaceId},{type:'page.deleted'},{id:'bad'},{attempt_number:0},{attempt_number:9},{timestamp:'2025-02-30T00:00:00Z'},{entity:null},{entity:{id:'bad',type:'page'}},{entity:{id:eventId,type:''}},{data:[]}]){const body=JSON.stringify({...payload,...update});assert.equal((await post(body)).status,400,JSON.stringify(update));}authorized=false;const body=JSON.stringify({...payload,id:'55555555-5555-4555-8555-555555555555'});assert.equal((await post(body)).status,403);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Notion adapter rejects ambiguous signatures, malformed payloads and unsafe configuration',async()=>{
- const {createNotionWebhookAdapter}=await import('../dist/index.js'),options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'notion'},agentId:'agent',workspaceId:'11111111-1111-4111-8111-111111111111',subscriptionId:'22222222-2222-4222-8222-222222222222',integrationId:'33333333-3333-4333-8333-333333333333',eventTypes:['page.created'],verificationToken:'secret_notion_verification_token'},adapter=createNotionWebhookAdapter(options),body=Buffer.from('{"test":1}'),signature='sha256='+createHmac('sha256',options.verificationToken).update(body).digest('hex');assert.ok(adapter.authenticateRaw({rawHeaders:['X-Notion-Signature',signature]},body));assert.equal(adapter.authenticateRaw({rawHeaders:['X-Notion-Signature',signature,'x-notion-signature',signature]},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['X-Notion-Signature','sha256=bad']},body),undefined);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([255])));for(const change of [{verificationToken:'short'},{previousVerificationTokens:[options.verificationToken]},{eventTypes:[]},{eventTypes:['bad type']},{workspaceId:'bad'},{subscriptionId:'bad'},{integrationId:'bad'},{identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createNotionWebhookAdapter({...options,...change}),/configuration/);
-});
-
-test('Notion optional event-age policy rejects stale and future deliveries across verification and mapping',async()=>{
- const {createNotionWebhookAdapter}=await import('../dist/index.js');let now=1735689600000;const options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'notion'},agentId:'agent',workspaceId:'11111111-1111-4111-8111-111111111111',subscriptionId:'22222222-2222-4222-8222-222222222222',integrationId:'33333333-3333-4333-8333-333333333333',eventTypes:['page.created'],verificationToken:'secret_notion_verification_token',maxAgeMs:86400000,futureSkewMs:60000,clock:()=>now},adapter=createNotionWebhookAdapter(options);options.maxAgeMs=60000;options.clock=()=>0;const body=timestamp=>Buffer.from(JSON.stringify({id:'44444444-4444-4444-8444-444444444444',timestamp,workspace_id:options.workspaceId,subscription_id:options.subscriptionId,integration_id:options.integrationId,type:'page.created',attempt_number:1,entity:{id:options.workspaceId,type:'page'},data:{}})),authenticate=value=>adapter.authenticateRaw({rawHeaders:['x-notion-signature','sha256='+createHmac('sha256',options.verificationToken).update(value).digest('hex')]},value);
- const recent=body(new Date(now).toISOString());assert.ok(authenticate(recent));assert.ok(authenticate(body(new Date(now-86400000).toISOString())));assert.ok(authenticate(body(new Date(now+60000).toISOString())));assert.equal(authenticate(body(new Date(now-86400001).toISOString())),undefined);assert.equal(authenticate(body(new Date(now+60001).toISOString())),undefined);for(const value of ['2025-02-30T00:00:00Z','2025-01-01T00:00:00',null])assert.equal(authenticate(body(value)),undefined);now+=86400001;assert.throws(()=>adapter.mapAuthenticatedBody(recent),/Invalid Notion/);for(const change of [{maxAgeMs:59999},{maxAgeMs:604800001},{futureSkewMs:-1},{futureSkewMs:300001},{maxAgeMs:undefined},{clock:'bad'}])assert.throws(()=>createNotionWebhookAdapter({...options,...change}),/configuration/);
-});
-
-test('Notion event-age policy is enforced by authenticated HTTP ingress',async()=>{
- const {createNotionWebhookAdapter}=await import('../dist/index.js'),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);const now=1735689600000,secret='secret_notion_verification_token',workspaceId='11111111-1111-4111-8111-111111111111',subscriptionId='22222222-2222-4222-8222-222222222222',integrationId='33333333-3333-4333-8333-333333333333',adapter=createNotionWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'notion'},agentId:'agent',workspaceId,subscriptionId,integrationId,eventTypes:['page.created'],verificationToken:secret,maxAgeMs:86400000,clock:()=>now}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const event={id:'44444444-4444-4444-8444-444444444444',workspace_id:workspaceId,subscription_id:subscriptionId,integration_id:integrationId,type:'page.created',attempt_number:1,entity:{id:workspaceId,type:'page'},data:{}},post=timestamp=>{const body=JSON.stringify({...event,timestamp});return fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','x-notion-signature':'sha256='+createHmac('sha256',secret).update(body).digest('hex')},body});};assert.equal((await post(new Date(now-86400001).toISOString())).status,401);assert.equal((await post(new Date(now).toISOString())).status,202);assert.equal(s.runs.list(scope).length,1);}finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Notion signature verification interoperates with the official SDK on exact Unicode bytes',async()=>{
- const {createNotionWebhookAdapter}=await import('../dist/index.js'),{signWebhookPayload,verifyWebhookSignature}=await import('@notionhq/client'),verificationToken='secret_notion_verification_token',adapter=createNotionWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'notion'},agentId:'agent',workspaceId:'11111111-1111-4111-8111-111111111111',subscriptionId:'22222222-2222-4222-8222-222222222222',integrationId:'33333333-3333-4333-8333-333333333333',eventTypes:['page.created'],verificationToken});const body=Buffer.from('{"title":"مرحبا 🌍","value":1}'),signature=await signWebhookPayload({body,verificationToken});assert.ok(adapter.authenticateRaw({rawHeaders:['X-Notion-Signature',signature]},body));assert.equal(await verifyWebhookSignature({body,signature,verificationToken}),true);const changed=Buffer.concat([body,Buffer.from(' ')]);assert.equal(adapter.authenticateRaw({rawHeaders:['x-notion-signature',signature]},changed),undefined);assert.equal(await verifyWebhookSignature({body:changed,signature,verificationToken}),false);
-});
-
-test('Discord signed webhook events acknowledge pings and durable retries with empty 204 responses',{timeout:15000},async()=>{
- const {createDiscordWebhookAdapter}=await import('../dist/index.js'),{generateKeyPairSync,sign}=await import('node:crypto'),current=generateKeyPairSync('ed25519'),old=generateKeyPairSync('ed25519'),raw=pair=>pair.publicKey.export({type:'spki',format:'der'}).subarray(-32),now=1735689600000,options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'discord'},agentId:'agent',applicationId:'123456789012345678',publicKey:raw(current),previousPublicKeys:[raw(old)],eventTypes:['APPLICATION_AUTHORIZED'],clock:()=>now},adapter=createDiscordWebhookAdapter(options),s=setup(),definitions=new SqliteAgentDefinitions(':memory:'),observations=[];definitions.save('tenant',manifest,0);let authorized=true;const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:()=>authorized,observe:value=>observations.push(value)});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,timestamp=String(now/1000),signature=(body,pair=current,time=timestamp)=>sign(null,Buffer.concat([Buffer.from(time),Buffer.from(body)]),pair.privateKey).toString('hex'),post=(body,sig=signature(body),time=timestamp)=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-signature-ed25519':sig,'x-signature-timestamp':time},body}),ping=JSON.stringify({version:1,application_id:options.applicationId,type:0}),event=JSON.stringify({version:1,application_id:options.applicationId,type:1,event:{type:'APPLICATION_AUTHORIZED',timestamp:'2024-10-18T14:42:53.064834',data:{user:{id:'123'}}}});
-  let response=await post(ping,signature(ping,old));assert.equal(response.status,204);assert.equal(await response.text(),'');assert.equal(s.runs.list(scope).length,0);assert.equal((await post(ping+' ',signature(ping))).status,401);assert.equal((await post(ping,signature(ping,current,String(now/1000-901)),String(now/1000-901))).status,401);
-  response=await post(event);assert.equal(response.status,204);assert.equal(await response.text(),'');assert.equal(s.runs.list(scope).length,1);response=await post(event);assert.equal(response.status,204);assert.equal(s.runs.list(scope).length,1);const [run]=s.runs.list(scope),stored=s.triggers.get(scope,run.runId);assert.equal(stored.eventType,'discord.APPLICATION_AUTHORIZED');assert.deepEqual(stored.payload,JSON.parse(event));assert.equal(observations.find(x=>x.status===204&&x.outcome==='accepted')?.status,204);
-  for(const value of [{version:1,application_id:'9',type:0},{version:1,application_id:options.applicationId,type:1,event:{type:'ENTITLEMENT_CREATE',timestamp:'now'}},{version:1,application_id:options.applicationId,type:2}]){const body=JSON.stringify(value);assert.equal((await post(body)).status,400);}authorized=false;const other=JSON.stringify({...JSON.parse(event),event:{...JSON.parse(event).event,timestamp:'later'}});assert.equal((await post(other)).status,403);
- }finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Discord webhook rejects duplicate signature headers and unsafe configuration',async()=>{
- const {createDiscordWebhookAdapter}=await import('../dist/index.js'),{generateKeyPairSync,sign}=await import('node:crypto'),pair=generateKeyPairSync('ed25519'),key=pair.publicKey.export({type:'spki',format:'der'}).subarray(-32),options={identity:{tenantId:'tenant',principalId:'sender',sourceId:'discord'},agentId:'agent',applicationId:'123456789012345678',publicKey:key,eventTypes:['APPLICATION_AUTHORIZED'],clock:()=>100000},adapter=createDiscordWebhookAdapter(options),body=Buffer.from('{"test":true}'),sig=sign(null,Buffer.concat([Buffer.from('100'),body]),pair.privateKey).toString('hex'),headers=['x-signature-ed25519',sig,'x-signature-timestamp','100'];assert.ok(adapter.authenticateRaw({rawHeaders:headers},body));assert.equal(adapter.authenticateRaw({rawHeaders:[...headers,'X-Signature-Timestamp','100']},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:[...headers,'X-Signature-Ed25519',sig]},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['x-signature-ed25519','00','x-signature-timestamp','100']},body),undefined);for(const change of [{publicKey:new Uint8Array(31)},{previousPublicKeys:[key]},{eventTypes:[]},{eventTypes:['bad']},{applicationId:'bad'},{toleranceSeconds:0},{toleranceSeconds:3601},{identity:{...options.identity,sourceId:'schedule.bad'}}])assert.throws(()=>createDiscordWebhookAdapter({...options,...change}),/configuration/);
-});
-
-test('Discord host-derived event keys deduplicate equivalent encodings and reject conflicting payloads',async()=>{
- const {createDiscordWebhookAdapter}=await import('../dist/index.js'),{generateKeyPairSync,sign}=await import('node:crypto'),pair=generateKeyPairSync('ed25519'),publicKey=pair.publicKey.export({type:'spki',format:'der'}).subarray(-32),identity={tenantId:'tenant',principalId:'sender',sourceId:'discord'},options={identity,agentId:'agent',applicationId:'123456789012345678',publicKey,eventTypes:['ENTITLEMENT_CREATE'],eventKey:payload=>{const event=payload.event,key=event.type+':'+event.data.id+':'+event.timestamp;event.data.id='mutated';return key;}},adapter=createDiscordWebhookAdapter(options),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);options.eventKey=()=>{throw Error('replacement');};const ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,...adapter,authorize:()=>true});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');try{const payload={version:1,application_id:options.applicationId,type:1,event:{type:'ENTITLEMENT_CREATE',timestamp:'2024-10-18T18:41:21.109604',data:{id:'123',sku_id:'456'}}},post=body=>{const timestamp=String(Math.floor(Date.now()/1000)),signature=sign(null,Buffer.concat([Buffer.from(timestamp),Buffer.from(body)]),pair.privateKey).toString('hex');return fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','x-signature-timestamp':timestamp,'x-signature-ed25519':signature},body});};assert.equal((await post(JSON.stringify(payload))).status,204);assert.equal((await post(JSON.stringify(payload,null,2))).status,204);assert.equal(s.runs.list(scope).length,1);const [run]=s.runs.list(scope);assert.equal(s.triggers.get(scope,run.runId).payload.event.data.id,'123');const changed=structuredClone(payload);changed.event.data.sku_id='different';assert.equal((await post(JSON.stringify(changed))).status,409);assert.equal(s.runs.list(scope).length,1);}finally{ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Discord event keys fail closed for invalid or asynchronous host results',async()=>{
- const {createDiscordWebhookAdapter}=await import('../dist/index.js'),{generateKeyPairSync}=await import('node:crypto'),pair=generateKeyPairSync('ed25519'),base={identity:{tenantId:'tenant',principalId:'sender',sourceId:'discord'},agentId:'agent',applicationId:'123456789012345678',publicKey:pair.publicKey.export({type:'spki',format:'der'}).subarray(-32),eventTypes:['ENTITLEMENT_CREATE']},body=Buffer.from(JSON.stringify({version:1,application_id:base.applicationId,type:1,event:{type:'ENTITLEMENT_CREATE',timestamp:'now',data:{id:'123'}}}));assert.throws(()=>createDiscordWebhookAdapter({...base,eventKey:'bad'}),/configuration/);for(const eventKey of [()=>'',()=>null,()=>Promise.reject(Error('late')),()=> 'a'.repeat(1025),()=> 'bad\nkey'])assert.throws(()=>createDiscordWebhookAdapter({...base,eventKey}).mapAuthenticatedBody(body),/Invalid Discord event key/);await new Promise(resolve=>setImmediate(resolve));
-});
-
-test('Discord ingress deadlines prevent late enqueue and allow a later acknowledged retry',async()=>{
- const {createDiscordWebhookAdapter}=await import('../dist/index.js'),{generateKeyPairSync,sign}=await import('node:crypto'),pair=generateKeyPairSync('ed25519'),publicKey=pair.publicKey.export({type:'spki',format:'der'}).subarray(-32),s=setup(),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let release,entered,blocked=true;const waiting=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),adapter=createDiscordWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'discord'},agentId:'agent',applicationId:'123456789012345678',publicKey,eventTypes:['APPLICATION_AUTHORIZED']}),ingress=createAgentEventIngress({triggers:s.triggers,definitions,maxPending:3,maxInFlight:2,requestTimeoutMs:100,abortOnDisconnect:true,...adapter,authorize:async(_source,_event,_definition,signal)=>{if(blocked){entered();await gate;assert.equal(signal.aborted,true);}return true;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const body=JSON.stringify({version:1,application_id:'123456789012345678',type:1,event:{type:'APPLICATION_AUTHORIZED',timestamp:'2024-10-18T14:42:53.064834',data:{user:{id:'123'}}}}),post=()=>{const timestamp=String(Math.floor(Date.now()/1000)),signature=sign(null,Buffer.concat([Buffer.from(timestamp),Buffer.from(body)]),pair.privateKey).toString('hex');return fetch(`http://127.0.0.1:${ingress.address().port}/events`,{method:'POST',headers:{'content-type':'application/json','x-signature-timestamp':timestamp,'x-signature-ed25519':signature},body});};const pending=post();await waiting;assert.equal((await pending).status,503);assert.equal(s.runs.list(scope).length,0);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.runs.list(scope).length,0);const retry=await post();assert.equal(retry.status,204);assert.equal(await retry.text(),'');assert.equal(s.runs.list(scope).length,1);}finally{release();ingress.closeAllConnections();await new Promise(resolve=>ingress.close(resolve));definitions.close();close(s);}
-});
-
-test('Discord signature verification interoperates with TweetNaCl on exact Unicode bytes',async()=>{
- const {createDiscordWebhookAdapter}=await import('../dist/index.js'),{default:nacl}=await import('tweetnacl'),pair=nacl.sign.keyPair.fromSeed(Uint8Array.from({length:32},(_,i)=>i)),now=1735689600000,timestamp=String(now/1000),body=Buffer.from('{"name":"مرحبا 🌍"}'),signature=Buffer.from(nacl.sign.detached(Buffer.concat([Buffer.from(timestamp),body]),pair.secretKey)).toString('hex'),adapter=createDiscordWebhookAdapter({identity:{tenantId:'tenant',principalId:'sender',sourceId:'discord'},agentId:'agent',applicationId:'123456789012345678',publicKey:pair.publicKey,eventTypes:['APPLICATION_AUTHORIZED'],clock:()=>now});const headers=['X-Signature-Ed25519',signature,'X-Signature-Timestamp',timestamp];assert.ok(adapter.authenticateRaw({rawHeaders:headers},body));assert.equal(adapter.authenticateRaw({rawHeaders:headers},Buffer.concat([body,Buffer.from(' ')])),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['X-Signature-Ed25519',signature,'X-Signature-Timestamp',String(Number(timestamp)+1)]},body),undefined);assert.ok(nacl.sign.detached.verify(Buffer.concat([Buffer.from(timestamp),body]),Buffer.from(signature,'hex'),pair.publicKey));
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { once } from 'node:events';
+import { createHmac } from 'node:crypto';
+import { createTwilioMessageWebhookAdapter, createPaddleWebhookAdapter } from '../dist/index.js';
+import {
+  SqliteAgentRuns,
+  SqliteAgentTriggers,
+  SqliteAgentTriggerRetention,
+  AgentTriggerRetentionWorker,
+  SqliteAgentDefinitions,
+  DurableAgentWorker,
+  createAgentEventIngress,
+  AgentIngressMetrics,
+  createAgentMetricsServer,
+  createSignedWebhookAuthenticator,
+  createGithubWebhookAdapter,
+  createStripeWebhookAdapter,
+  createSlackWebhookAdapter,
+  createShopifyWebhookAdapter,
+  createGitlabWebhookAdapter
+} from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  event = { sourceId: 'source', principalId: 'sender', eventId: 'evt', eventType: 'order.created', payload: { order: 'one' } };
+const manifest = {
+  manifestVersion: 1,
+  tenantId: 'tenant',
+  agentId: 'agent',
+  name: 'Agent',
+  owner: { kind: 'organization', id: 'org' },
+  administrators: ['admin'],
+  servicePrincipalId: 'svc',
+  model: { provider: 'local', model: 'test' },
+  allowedCapabilities: [],
+  lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 60000 },
+  quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+};
+const settings = { definitionVersion: 1, maxAttempts: 2, deadline: 10000, maxPending: 2 };
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), 'app-mixer-events-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path);
+  return { dir, path, runs, triggers };
+}
+function close(s) {
+  s.triggers.close();
+  s.runs.close();
+  rmSync(s.dir, { recursive: true, force: true });
+}
+
+test('ingress supports asynchronous definition reads and rejects a change during recheck', async () => {
+  const s = setup(),
+    store = new SqliteAgentDefinitions(':memory:');
+  store.save('tenant', manifest, 0);
+  let block = false,
+    started,
+    release,
+    reads = 0;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r)),
+    definitions = {
+      get: async (tenant, agent) => {
+        if (block && ++reads === 2) {
+          started();
+          await gate;
+        }
+        return store.get(tenant, agent);
+      }
+    },
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 5,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: () => true,
+      clock: () => 1000
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = eventId => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'event', payload: {} }) });
+    assert.equal((await post('first')).status, 202);
+    block = true;
+    const pending = post('second');
+    await ready;
+    store.save('tenant', { ...manifest, lifecycle: { ...manifest.lifecycle, enabled: false } }, 1);
+    release();
+    assert.equal((await pending).status, 403);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    store.close();
+    close(s);
+  }
+});
+
+test('Twilio incoming messages verify all form fields, authorize and acknowledge durable retries', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const accountSid = 'AC' + 'a'.repeat(32),
+    authToken = '1'.repeat(32),
+    prior = '2'.repeat(32),
+    publicUrl = 'https://example.test/events?channel=sms',
+    identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'twilio' },
+    adapter = createTwilioMessageWebhookAdapter({ identity, agentId: 'agent', accountSid, url: publicUrl, authToken, previousAuthTokens: [prior] });
+  let allowed = true;
+  const ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 1, ...adapter, authorize: (_identity, event) => allowed && event.payload.To === '+15550000000' });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      params = { AccountSid: accountSid, MessageSid: 'SM' + 'b'.repeat(32), From: '+15551111111', To: '+15550000000', Body: 'hello + world', FutureField: 'new' },
+      body = new URLSearchParams(params).toString(),
+      signature = (values = params, key = authToken, url = publicUrl) =>
+        createHmac('sha1', key)
+          .update(
+            Object.keys(values)
+              .sort()
+              .reduce((text, name) => text + name + values[name], url)
+          )
+          .digest('base64'),
+      post = (data = body, sig = signature(), type = 'application/x-www-form-urlencoded') =>
+        fetch(endpoint, { method: 'POST', headers: { 'content-type': type, 'x-twilio-signature': sig }, body: data });
+    assert.equal((await post(body, 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=')).status, 401);
+    assert.equal((await post(body, signature(params, authToken, 'https://wrong.test/events'))).status, 401);
+    assert.equal((await post(body.replace('FutureField=new', 'FutureField=changed'))).status, 401);
+    assert.equal((await post(body, signature(), 'application/json')).status, 415);
+    allowed = false;
+    assert.equal((await post()).status, 403);
+    allowed = true;
+    let response = await post(body, signature(params, prior));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/xml/);
+    assert.match(await response.text(), /<Response><\/Response>/);
+    response = await post();
+    assert.equal(response.status, 200);
+    assert.equal(s.runs.list(scope).length, 1);
+    const changed = { ...params, Body: 'different' };
+    assert.equal((await post(new URLSearchParams(changed).toString(), signature(changed))).status, 409);
+    const other = { ...params, MessageSid: 'MM' + 'c'.repeat(32) };
+    assert.equal((await post(new URLSearchParams(other).toString(), signature(other))).status, 429);
+    assert.equal((await post(body + '&Body=duplicate', signature())).status, 401);
+    assert.equal((await post(body + '&bad=%FF', signature())).status, 401);
+    const invalid = { ...params, AccountSid: 'AC' + 'd'.repeat(32) };
+    assert.equal((await post(new URLSearchParams(invalid).toString(), signature(invalid))).status, 400);
+    assert.equal(adapter.authenticateRaw({ rawHeaders: ['X-Twilio-Signature', signature(), 'x-twilio-signature', signature()] }, Buffer.from(body)), undefined);
+    const req = { rawHeaders: ['X-Twilio-Signature', signature()] };
+    assert.deepEqual(adapter.authenticateRaw(req, Buffer.from(body)), identity);
+    assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from(body + 'x'), identity, req), /Invalid/);
+    assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from(body), identity, req), /Invalid/);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Twilio configuration requires a fixed account, endpoint and protected form ingress', () => {
+  const base = {
+    identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'twilio' },
+    agentId: 'agent',
+    accountSid: 'AC' + 'a'.repeat(32),
+    url: 'https://example.test/events',
+    authToken: '1'.repeat(32)
+  };
+  for (const bad of [
+    { ...base, url: 'http://example.test/events' },
+    { ...base, url: 'https://example.test/events#fragment' },
+    { ...base, authToken: 'short' },
+    { ...base, accountSid: 'bad' },
+    { ...base, previousAuthTokens: [base.authToken] }
+  ])
+    assert.throws(() => createTwilioMessageWebhookAdapter(bad), /configuration/);
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  try {
+    assert.throws(
+      () =>
+        createAgentEventIngress({
+          triggers: s.triggers,
+          definitions,
+          maxPending: 1,
+          authenticate: () => base.identity,
+          authorize: () => true,
+          contentType: 'application/x-www-form-urlencoded',
+          acknowledgement: 'twiml'
+        }),
+      /Invalid event ingress/
+    );
+  } finally {
+    definitions.close();
+    close(s);
+  }
+});
+
+test('event deduplication, tenant isolation and bounded backlog survive restart', () => {
+  const s = setup();
+  let second;
+  try {
+    const first = s.triggers.enqueue(scope, event, settings, 1);
+    assert.equal(first.duplicate, false);
+    second = new SqliteAgentTriggers(s.path);
+    assert.deepEqual(second.enqueue(scope, { ...event, payload: { order: 'one' } }, settings, 2), { runId: first.runId, duplicate: true });
+    assert.equal(s.runs.get(scope, first.runId).status, 'queued');
+    assert.deepEqual(second.get(scope, first.runId).payload, { order: 'one' });
+    assert.throws(() => second.enqueue(scope, { ...event, payload: { order: 'two' } }, settings, 2), /identity conflict/);
+    assert.throws(() => second.enqueue(scope, { ...event, principalId: 'other' }, settings, 2), /identity conflict/);
+    assert.equal(second.get({ ...scope, tenantId: 'other' }, first.runId), undefined);
+    second.enqueue(scope, { ...event, eventId: 'evt2' }, settings, 2);
+    assert.throws(() => second.enqueue(scope, { ...event, eventId: 'evt3' }, settings, 2), /backlog full/);
+    assert.equal(second.enqueue(scope, event, settings, 2).duplicate, true);
+    const other = second.enqueue({ ...scope, tenantId: 'other' }, event, settings, 2);
+    assert.notEqual(other.runId, first.runId);
+  } finally {
+    second?.close();
+    close(s);
+  }
+});
+
+test('authorized redaction removes terminal payload while preserving scoped deduplication', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'admin' },
+    retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: who => who.principalId === 'admin' });
+  let reopened, db;
+  try {
+    const first = s.triggers.enqueue(scope, event, settings, 1),
+      other = s.triggers.enqueue({ ...scope, tenantId: 'other' }, event, settings, 1);
+    await assert.rejects(retention.redact(actor, first.runId, 10), /not terminal/);
+    await assert.rejects(retention.redact({ ...actor, principalId: 'denied' }, first.runId, 10), /access denied/);
+    await assert.rejects(retention.redact({ ...actor, tenantId: 'other' }, first.runId, 10), /Invalid/);
+    assert.deepEqual(s.triggers.get(scope, first.runId).payload, event.payload);
+    const run = s.runs.get(scope, first.runId);
+    s.runs.request(scope, first.runId, run.revision, 'cancel', 2);
+    db = new DatabaseSync(s.path);
+    db.exec("CREATE TRIGGER reject_redaction BEFORE INSERT ON agent_trigger_redactions BEGIN SELECT RAISE(ABORT,'redaction failed'); END");
+    await assert.rejects(retention.redact(actor, first.runId, 10), /redaction failed/);
+    assert.deepEqual(s.triggers.get(scope, first.runId).payload, event.payload);
+    assert.equal(await retention.getRedaction(actor, first.runId), undefined);
+    db.exec('DROP TRIGGER reject_redaction');
+    assert.equal(await retention.redact(actor, first.runId, 10), true);
+    assert.equal(await retention.redact(actor, first.runId, 11), false);
+    assert.deepEqual(await retention.getRedaction(actor, first.runId), { actorId: 'admin', redactedAt: 10 });
+    await assert.rejects(retention.getRedaction({ ...actor, principalId: 'denied' }, first.runId), /access denied/);
+    assert.throws(() => db.exec("UPDATE agent_trigger_redactions SET actor_id='other'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM agent_trigger_redactions'), /immutable/);
+    assert.equal(s.triggers.get(scope, first.runId).payload, null);
+    assert.equal(s.triggers.get(scope, first.runId).payloadRedacted, true);
+    assert.deepEqual(s.triggers.get({ ...scope, tenantId: 'other' }, other.runId).payload, event.payload);
+    const nullRun = s.triggers.enqueue(scope, { ...event, eventId: 'null-event', payload: null }, settings, 3);
+    assert.equal(s.triggers.get(scope, nullRun.runId).payload, null);
+    assert.equal(s.triggers.get(scope, nullRun.runId).payloadRedacted, undefined);
+    reopened = new SqliteAgentTriggers(s.path);
+    assert.deepEqual(reopened.enqueue(scope, event, settings, 3), { runId: first.runId, duplicate: true });
+    assert.throws(() => reopened.enqueue(scope, { ...event, payload: { order: 'two' } }, settings, 3), /identity conflict/);
+    assert.throws(() => reopened.enqueue(scope, { ...event, principalId: 'other' }, settings, 3), /identity conflict/);
+    assert.equal(reopened.get(scope, first.runId).payloadRedacted, true);
+  } finally {
+    db?.close();
+    reopened?.close();
+    retention.close();
+    close(s);
+  }
+});
+
+test('inbox failure rolls back the queued run atomically', () => {
+  const s = setup();
+  let db;
+  try {
+    db = new DatabaseSync(s.path);
+    db.exec("CREATE TRIGGER fail_inbox BEFORE INSERT ON agent_trigger_inbox BEGIN SELECT RAISE(ABORT,'test failure'); END;");
+    assert.throws(() => s.triggers.enqueue(scope, event, settings, 1), /test failure/);
+    assert.equal(s.runs.list(scope).length, 0);
+  } finally {
+    db?.close();
+    close(s);
+  }
+});
+
+test('ingress authenticates and authorizes event source before enqueueing a worker run', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let allow = true;
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 1,
+    authenticate: req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' } : undefined),
+    authorize: (identity, request) => allow && identity.sourceId === 'source' && request.eventType === 'order.created'
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      payload = { agentId: 'agent', eventId: 'evt', eventType: 'order.created', payload: { order: 'one' } },
+      post = (value, token = 'trusted') => ({ method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(value) });
+    assert.equal((await fetch(url, post(payload, 'bad'))).status, 401);
+    assert.equal((await fetch(url, post({ ...payload, tenantId: 'other' }))).status, 400);
+    allow = false;
+    assert.equal((await fetch(url, post(payload))).status, 403);
+    assert.equal(s.runs.list(scope).length, 0);
+    allow = true;
+    const created = await fetch(url, post(payload));
+    assert.equal(created.status, 202);
+    const { runId } = await created.json();
+    assert.equal((await fetch(url, post(payload))).status, 200);
+    assert.equal((await fetch(url, post({ ...payload, payload: { order: 'two' } }))).status, 409);
+    assert.equal((await fetch(url, post({ ...payload, eventId: 'another' }))).status, 429);
+    let observed;
+    const worker = new DurableAgentWorker({
+      runs: s.runs,
+      definitions,
+      workerId: 'worker',
+      leaseMs: 1000,
+      pollMs: 100,
+      authorizeStart: () => true,
+      execute: async run => {
+        observed = s.triggers.get(scope, run.runId);
+        return 'succeeded';
+      }
+    });
+    assert.equal((await worker.runOnce(scope, runId)).status, 'succeeded');
+    assert.equal(observed.payload.order, 'one');
+    assert.equal(observed.principalId, 'sender');
+    assert.equal((await fetch(url, post({ ...payload, eventId: 'another' }))).status, 202);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('definition changes during authorization deny event creation', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let ready, proceed;
+  const started = new Promise(r => (ready = r)),
+    gate = new Promise(r => (proceed = r));
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 2,
+    authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+    authorize: async () => {
+      ready();
+      await gate;
+      return true;
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const pending = fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'evt', eventType: 'order.created', payload: {} })
+    });
+    await started;
+    definitions.save('tenant', { ...manifest, lifecycle: { ...manifest.lifecycle, enabled: false } }, 1);
+    proceed();
+    assert.equal((await pending).status, 403);
+    assert.equal(s.runs.list(scope).length, 0);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('concurrency limit is atomic across connections and released after settlement', () => {
+  const s = setup();
+  let other;
+  try {
+    other = new SqliteAgentRuns(s.path);
+    s.runs.create(scope, 'one', { definitionVersion: 1, maxAttempts: 1, deadline: 1000 }, 0);
+    other.create(scope, 'two', { definitionVersion: 1, maxAttempts: 1, deadline: 1000 }, 0);
+    let first = s.runs.claim(scope, 'one', 1, 'worker-a', 100, 10, 1);
+    assert.throws(() => other.claim(scope, 'two', 1, 'worker-b', 100, 10, 1), /concurrency limit/);
+    first = s.runs.settle(scope, 'one', first.revision, first.leaseToken, 'succeeded', 11);
+    assert.equal(first.status, 'succeeded');
+    assert.equal(other.claim(scope, 'two', 1, 'worker-b', 100, 12, 1).status, 'running');
+  } finally {
+    other?.close();
+    close(s);
+  }
+});
+
+test('HTTP ingress reserves internal schedule source identifiers', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 1,
+    authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'schedule.forged' }),
+    authorize: () => true
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const response = await fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'event', eventType: 'order.created', payload: {} })
+    });
+    assert.equal(response.status, 401);
+    assert.equal(s.runs.list(scope).length, 0);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('signed webhooks bind exact bytes, source and time, and deduplicate accepted deliveries', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const key = Buffer.alloc(32, 42),
+    original = Buffer.from(key),
+    now = 1700000000000,
+    auth = createSignedWebhookAuthenticator({ sources: [{ tenantId: 'tenant', principalId: 'sender', sourceId: 'provider', secret: key }], clock: () => now });
+  key.fill(0);
+  let authorizations = 0;
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 2,
+    authenticateRaw: auth,
+    authorize: identity => {
+      authorizations++;
+      return identity.sourceId === 'provider';
+    },
+    clock: () => now
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      body = JSON.stringify({ agentId: 'agent', eventId: 'evt', eventType: 'order.created', payload: { order: 'one' } }),
+      signed = (data = body, timestamp = '1700000000', source = 'provider') => {
+        const signature = createHmac('sha256', original).update(`v1\n${timestamp}\n${source}\n`).update(data).digest('hex');
+        return { 'content-type': 'application/json', 'x-app-mixer-source': source, 'x-app-mixer-timestamp': timestamp, 'x-app-mixer-signature': `v1=${signature}` };
+      },
+      post = (data, headers) => fetch(url, { method: 'POST', headers, body: data });
+    assert.equal((await post(body, signed())).status, 202);
+    assert.equal((await post(body, signed())).status, 200);
+    assert.equal((await post(body + ' ', signed())).status, 401);
+    assert.equal((await post(body, signed(body, '1699999699'))).status, 401);
+    assert.equal((await post(body, signed(body, '1700000301'))).status, 401);
+    assert.equal((await post(body, signed(body, '1700000000', 'unknown'))).status, 401);
+    assert.equal((await post(body, { ...signed(), 'x-app-mixer-signature': 'v1=' + '0'.repeat(64) })).status, 401);
+    assert.equal(authorizations, 2);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('signed webhook configuration rejects weak keys, reserved and duplicate sources', () => {
+  const source = { tenantId: 'tenant', principalId: 'sender', sourceId: 'provider', secret: Buffer.alloc(32) };
+  assert.throws(() => createSignedWebhookAuthenticator({ sources: [{ ...source, secret: Buffer.alloc(31) }] }), /configuration/);
+  assert.throws(() => createSignedWebhookAuthenticator({ sources: [source, source] }), /configuration/);
+  assert.throws(() => createSignedWebhookAuthenticator({ sources: [{ ...source, sourceId: 'schedule.foo' }] }), /configuration/);
+});
+
+test('webhook key rotation accepts an overlap and rejects retired keys without losing deduplication', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const old = Buffer.alloc(32, 42),
+    next = Buffer.alloc(32, 43),
+    other = Buffer.alloc(32, 44),
+    now = 1700000000000,
+    source = { tenantId: 'tenant', principalId: 'sender', sourceId: 'provider' },
+    body = JSON.stringify({ agentId: 'agent', eventId: 'evt', eventType: 'order.created', payload: { order: 'one' } });
+  let ingress;
+  const launch = async auth => {
+    ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 2, authenticateRaw: auth, authorize: () => true, clock: () => now });
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+  };
+  const post = key =>
+    fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-app-mixer-source': 'provider',
+        'x-app-mixer-timestamp': '1700000000',
+        'x-app-mixer-signature': 'v1=' + createHmac('sha256', key).update('v1\n1700000000\nprovider\n').update(body).digest('hex')
+      },
+      body
+    });
+  try {
+    const mutableOld = Buffer.from(old),
+      mutableNext = Buffer.from(next),
+      previous = [mutableOld],
+      auth = createSignedWebhookAuthenticator({
+        sources: [
+          { ...source, secret: mutableNext, previousSecrets: previous },
+          { ...source, sourceId: 'other', secret: other }
+        ],
+        clock: () => now
+      });
+    mutableOld.fill(0);
+    mutableNext.fill(0);
+    previous.length = 0;
+    await launch(auth);
+    assert.equal((await post(old)).status, 202);
+    assert.equal((await post(next)).status, 200);
+    assert.equal((await post(other)).status, 401);
+    await new Promise(r => ingress.close(r));
+    ingress = null;
+    await launch(createSignedWebhookAuthenticator({ sources: [{ ...source, secret: next }], clock: () => now }));
+    assert.equal((await post(old)).status, 401);
+    assert.equal((await post(next)).status, 200);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    if (ingress) await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('webhook rotation rejects invalid or duplicate previous keys', () => {
+  const source = { tenantId: 'tenant', principalId: 'sender', sourceId: 'provider', secret: Buffer.alloc(32, 1) },
+    k = Buffer.alloc(32, 2);
+  for (const previousSecrets of [null, 'bad', [Buffer.alloc(31)], [k, k], [Buffer.alloc(32, 1)], [k, Buffer.alloc(32, 3), Buffer.alloc(32, 4)]])
+    assert.throws(() => createSignedWebhookAuthenticator({ sources: [{ ...source, previousSecrets }] }), /configuration/);
+});
+
+test('GitHub webhook adapter verifies raw body and ignores unsigned delivery headers', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const secret = Buffer.alloc(32, 9),
+    prior = Buffer.alloc(32, 8),
+    adapter = createGithubWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'github' },
+      agentId: 'agent',
+      eventType: 'github.webhook',
+      secret,
+      previousSecrets: [prior]
+    }),
+    original = Buffer.from(secret);
+  secret.fill(0);
+  let seen = 0;
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 3,
+    ...adapter,
+    authorize: (identity, event) => {
+      seen++;
+      return identity.sourceId === 'github' && event.eventType === 'github.webhook' && event.payload.repository?.id === 42;
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      body = JSON.stringify({ action: 'opened', repository: { id: 42 }, issue: { number: 4 } }),
+      sign = (key, data) => 'sha256=' + createHmac('sha256', key).update(data).digest('hex'),
+      post = (payload, signature, extra = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature, ...extra }, body: payload });
+    let response = await post(body, sign(prior, body), { 'x-github-event': 'issues', 'x-github-delivery': 'one' });
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    response = await post(body, sign(original, body), { 'x-github-event': 'push', 'x-github-delivery': 'different' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal((await post(body + ' ', sign(original, body))).status, 401);
+    assert.equal((await post(body, 'sha256=' + '0'.repeat(64))).status, 401);
+    const denied = JSON.stringify({ repository: { id: 99 } });
+    assert.equal((await post(denied, sign(original, denied))).status, 403);
+    assert.equal((await post('[]', sign(original, '[]'))).status, 400);
+    assert.equal(seen, 3);
+    const record = s.triggers.get(scope, first.runId);
+    assert.equal(record.eventType, 'github.webhook');
+    assert.deepEqual(record.payload, JSON.parse(body));
+    assert.match(record.eventId, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(adapter.authenticateRaw({ rawHeaders: ['X-Hub-Signature-256', sign(original, body), 'x-hub-signature-256', sign(original, body)] }, Buffer.from(body)), undefined);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('GitHub webhook adapter validates configuration and ingress mapping', () => {
+  const base = { identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'github' }, agentId: 'agent', eventType: 'github.webhook', secret: Buffer.alloc(32, 3) };
+  for (const bad of [
+    { ...base, secret: Buffer.alloc(31) },
+    { ...base, identity: { ...base.identity, sourceId: 'schedule.fake' } },
+    { ...base, previousSecrets: [Buffer.alloc(32, 3)] },
+    { ...base, previousSecrets: [Buffer.alloc(32, 4), Buffer.alloc(32, 5), Buffer.alloc(32, 6)] }
+  ])
+    assert.throws(() => createGithubWebhookAdapter(bad), /configuration/);
+  const adapter = createGithubWebhookAdapter(base);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([0xff])), /encoded data/);
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  try {
+    assert.throws(
+      () => createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 1, authenticate: () => undefined, authorize: () => true, mapAuthenticatedBody: adapter.mapAuthenticatedBody }),
+      /Invalid event ingress/
+    );
+  } finally {
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Shopify HTTPS webhook authenticates exact body and ignores unsigned metadata', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const secret = Buffer.alloc(32, 9),
+    previous = Buffer.alloc(32, 8),
+    original = Buffer.from(secret),
+    adapter = createShopifyWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'shopify' },
+      agentId: 'agent',
+      eventType: 'shopify.webhook',
+      secret,
+      previousSecrets: [previous]
+    });
+  secret.fill(0);
+  let seen = 0;
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 3,
+    ...adapter,
+    authorize: (identity, event) => {
+      seen++;
+      return identity.sourceId === 'shopify' && event.payload.id === 42;
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      body = JSON.stringify({ id: 42, title: 'Product' }),
+      sign = (key, data) => createHmac('sha256', key).update(data).digest('base64'),
+      post = (payload, signature, extra = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': signature, ...extra }, body: payload });
+    let response = await post(body, sign(previous, body), { 'x-shopify-shop-domain': 'a.myshopify.com', 'x-shopify-topic': 'products/update', 'x-shopify-webhook-id': 'one' });
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    response = await post(body, sign(original, body), { 'x-shopify-shop-domain': 'b.myshopify.com', 'x-shopify-topic': 'orders/create', 'x-shopify-webhook-id': 'other' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal((await post(body + ' ', sign(original, body))).status, 401);
+    assert.equal((await post(body, Buffer.alloc(32).toString('base64'))).status, 401);
+    const denied = JSON.stringify({ id: 99 });
+    assert.equal((await post(denied, sign(original, denied))).status, 403);
+    assert.equal((await post('[]', sign(original, '[]'))).status, 400);
+    assert.equal(seen, 3);
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.match(s.triggers.get(scope, first.runId).eventId, /^sha256:[0-9a-f]{64}$/);
+    const signature = sign(original, body);
+    assert.equal(adapter.authenticateRaw({ rawHeaders: ['X-Shopify-Hmac-Sha256', signature, 'x-shopify-hmac-sha256', signature] }, Buffer.from(body)), undefined);
+    assert.equal(adapter.authenticateRaw({ rawHeaders: ['x-shopify-hmac-sha256', signature.slice(0, -1)] }, Buffer.from(body)), undefined);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Shopify webhook adapter rejects invalid configuration and payloads', () => {
+  const base = { identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'shopify' }, agentId: 'agent', eventType: 'shopify.webhook', secret: Buffer.alloc(32, 3) };
+  for (const bad of [
+    { ...base, secret: Buffer.alloc(31) },
+    { ...base, identity: { ...base.identity, sourceId: 'schedule.fake' } },
+    { ...base, previousSecrets: [Buffer.alloc(32, 3)] },
+    { ...base, previousSecrets: [Buffer.alloc(32, 4), Buffer.alloc(32, 5), Buffer.alloc(32, 6)] }
+  ])
+    assert.throws(() => createShopifyWebhookAdapter(bad), /configuration/);
+  const adapter = createShopifyWebhookAdapter(base);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([255])));
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from('null')));
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from('[]')));
+});
+
+test('Stripe snapshot webhooks verify signatures and deduplicate signed event IDs', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const current = 'whsec_abcdefghijklmnopqrstuvwx',
+    previous = 'whsec_zyxwvutsrqponmlkjihgfedc',
+    now = 1700000000,
+    adapter = createStripeWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'stripe' },
+      agentId: 'agent',
+      secret: current,
+      previousSecrets: [previous],
+      clock: () => now * 1000
+    }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 3,
+      ...adapter,
+      authorize: (identity, event) => identity.sourceId === 'stripe' && event.eventType === 'payment_intent.succeeded' && event.payload.account === 'acct_allowed' && event.payload.livemode === true
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      body = JSON.stringify({ id: 'evt_123', object: 'event', type: 'payment_intent.succeeded', account: 'acct_allowed', livemode: true, data: { object: { id: 'pi_1' } } }),
+      signature = (key, time, data) =>
+        createHmac('sha256', key)
+          .update(time + '.')
+          .update(data)
+          .digest('hex'),
+      post = (payload, header) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': header }, body: payload });
+    let response = await post(body, `t=${now},v1=${signature(previous, now, body)},v1=${signature(current, now, body)},v0=ignored`);
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    response = await post(body, `t=${now - 1},v1=${signature(current, now - 1, body)}`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal((await post(body + ' ', `t=${now},v1=${signature(current, now, body)}`)).status, 401);
+    assert.equal((await post(body, `t=${now - 301},v1=${signature(current, now - 301, body)}`)).status, 401);
+    assert.equal((await post(body, `t=${now + 301},v1=${signature(current, now + 301, body)}`)).status, 401);
+    assert.equal((await post(body, `t=${now},v0=${signature(current, now, body)}`)).status, 401);
+    const changed = body.replace('pi_1', 'pi_2');
+    assert.equal((await post(changed, `t=${now},v1=${signature(current, now, changed)}`)).status, 409);
+    const denied = body.replace('acct_allowed', 'acct_other');
+    assert.equal((await post(denied, `t=${now},v1=${signature(current, now, denied)}`)).status, 403);
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal(s.triggers.get(scope, first.runId).eventId, 'evt_123');
+  } finally {
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Stripe webhook configuration and ambiguous security headers fail closed', () => {
+  const options = { identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'stripe' }, agentId: 'agent', secret: 'whsec_abcdefghijklmnopqrstuvwx', clock: () => 1700000000000 };
+  for (const bad of [
+    { ...options, secret: 'short' },
+    { ...options, previousSecrets: [options.secret] },
+    { ...options, toleranceSeconds: 0 },
+    { ...options, identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createStripeWebhookAdapter(bad), /configuration/);
+  const adapter = createStripeWebhookAdapter(options),
+    body = Buffer.from('{"id":"evt_1","object":"event","type":"invoice.paid"}'),
+    sig = createHmac('sha256', options.secret).update('1700000000.').update(body).digest('hex'),
+    header = `t=1700000000,v1=${sig}`;
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['Stripe-Signature', header] }, body));
+  for (const headers of [
+    ['Stripe-Signature', header, 'stripe-signature', header],
+    ['Stripe-Signature', header + ',t=1700000000'],
+    ['Stripe-Signature', 't=1700000000,v1=bad']
+  ])
+    assert.equal(adapter.authenticateRaw({ rawHeaders: headers }, body), undefined);
+  for (const invalid of ['{}', '{"id":"evt_1","object":"other","type":"x"}', '{"id":"bad","object":"event","type":"x"}'])
+    assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from(invalid)), /Invalid/);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([0xff])));
+});
+
+test('mapped event data is snapshotted before asynchronous authorization', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let started, resume;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (resume = r)),
+    mapped = { agentId: 'agent', eventId: 'event', eventType: 'custom.event', payload: { value: 'original' } };
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 2,
+    authenticateRaw: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+    mapAuthenticatedBody: () => mapped,
+    authorize: async (_identity, event) => {
+      assert.equal(event.payload.value, 'original');
+      started();
+      await gate;
+      return true;
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const pending = fetch(`http://127.0.0.1:${ingress.address().port}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    await ready;
+    mapped.payload.value = 'changed';
+    mapped.eventId = 'changed';
+    resume();
+    const response = await pending;
+    assert.equal(response.status, 202);
+    const result = await response.json(),
+      stored = s.triggers.get(scope, result.runId);
+    assert.equal(stored.eventId, 'event');
+    assert.equal(stored.payload.value, 'original');
+  } finally {
+    resume();
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Slack signed Events API requests verify challenges, authorize and deduplicate', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const current = 'a'.repeat(32),
+    previous = 'b'.repeat(32),
+    now = 1700000000,
+    adapter = createSlackWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'slack' },
+      agentId: 'agent',
+      appId: 'A123',
+      teamId: 'T123',
+      secret: current,
+      previousSecrets: [previous],
+      clock: () => now * 1000
+    });
+  let authCalls = 0;
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 3,
+    ...adapter,
+    authorize: (identity, event) => {
+      authCalls++;
+      return identity.sourceId === 'slack' && event.eventType === 'reaction_added' && event.payload.event.channel === 'C123';
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      sign = (key, time, body) => 'v0=' + createHmac('sha256', key).update(`v0:${time}:`).update(body).digest('hex'),
+      post = (body, key = current, time = now, signed = body) =>
+        fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-slack-request-timestamp': String(time), 'x-slack-signature': sign(key, time, signed) }, body });
+    const challenge = JSON.stringify({ type: 'url_verification', challenge: 'hello', token: 'deprecated' });
+    assert.equal((await post(challenge, current, now, 'wrong')).status, 401);
+    let response = await post(challenge);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { challenge: 'hello' });
+    assert.equal(authCalls, 0);
+    assert.equal(s.runs.list(scope).length, 0);
+    const body = JSON.stringify({ type: 'event_callback', api_app_id: 'A123', team_id: 'T123', event_id: 'Ev123', token: 'deprecated-secret', event: { type: 'reaction_added', channel: 'C123' } });
+    response = await post(body, previous);
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    response = await post(body, current, now - 1);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal((await post(body, current, now - 301)).status, 401);
+    assert.equal((await post(body, current, now + 301)).status, 401);
+    assert.equal((await post(body + ' ', current, now, body)).status, 401);
+    assert.equal((await post(body.replace('C123', 'C999'))).status, 403);
+    assert.equal((await post(body.replace('T123', 'T999'))).status, 400);
+    assert.equal((await post(body.replace('A123', 'A999'))).status, 400);
+    assert.equal((await post(body.replace('C123', 'C124').replace('reaction_added', 'other'))).status, 403);
+    const conflict = body.replace('deprecated-secret', 'other-secret').replace('C123', 'C123').replace('reaction_added', 'reaction_added').replace('"channel":"C123"', '"channel":"C123","user":"U1"');
+    assert.equal((await post(conflict)).status, 409);
+    const record = s.triggers.get(scope, first.runId);
+    assert.equal(record.eventId, 'Ev123');
+    assert.equal(record.payload.token, undefined);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Slack verifier rejects malformed configuration and ambiguous security headers', () => {
+  const options = { identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'slack' }, agentId: 'agent', appId: 'A123', teamId: 'T123', secret: 'a'.repeat(32), clock: () => 1700000000000 };
+  for (const bad of [
+    { ...options, secret: 'short' },
+    { ...options, teamId: 'other' },
+    { ...options, previousSecrets: [options.secret] },
+    { ...options, toleranceSeconds: 0 },
+    { ...options, identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createSlackWebhookAdapter(bad), /configuration/);
+  const adapter = createSlackWebhookAdapter(options),
+    body = Buffer.from('{}'),
+    timestamp = '1700000000',
+    sig = 'v0=' + createHmac('sha256', options.secret).update(`v0:${timestamp}:`).update(body).digest('hex');
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['X-Slack-Request-Timestamp', timestamp, 'X-Slack-Signature', sig] }, body));
+  for (const headers of [
+    ['X-Slack-Request-Timestamp', timestamp, 'x-slack-request-timestamp', timestamp, 'X-Slack-Signature', sig],
+    ['X-Slack-Request-Timestamp', timestamp, 'X-Slack-Signature', sig, 'x-slack-signature', sig],
+    ['X-Slack-Request-Timestamp', timestamp, 'X-Slack-Signature', 'v0=bad']
+  ])
+    assert.equal(adapter.authenticateRaw({ rawHeaders: headers }, body), undefined);
+  assert.throws(() => adapter.challengeAuthenticatedBody(Buffer.from('{"type":"url_verification","challenge":""}')), /challenge/);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([255])));
+});
+
+test('GitLab signed deliveries authorize, deduplicate and reject tampering', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const key = Buffer.alloc(32, 5),
+    old = Buffer.alloc(32, 6),
+    now = 1700000000,
+    adapter = createGitlabWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'gitlab' },
+      agentId: 'agent',
+      eventType: 'gitlab.push',
+      signingToken: 'whsec_' + key.toString('base64'),
+      previousSigningTokens: ['whsec_' + old.toString('base64')],
+      clock: () => now * 1000
+    }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 4,
+      ...adapter,
+      authorize: (identity, event) => identity.sourceId === 'gitlab' && event.eventType === 'gitlab.push' && event.payload.project.id === 42
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      body = JSON.stringify({ object_kind: 'push', project: { id: 42 } }),
+      sign = (key, id, time, payload) => 'v1,' + createHmac('sha256', key).update(`${id}.${time}.`).update(payload).digest('base64'),
+      post = (payload, id, time, signature, extra = {}) =>
+        fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'webhook-id': id, 'webhook-timestamp': String(time), 'webhook-signature': signature, ...extra }, body: payload });
+    let response = await post(body, 'delivery-1', now, sign(old, 'delivery-1', now, body));
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    response = await post(body, 'delivery-1', now + 1, sign(key, 'delivery-1', now + 1, body), { 'x-gitlab-event': 'Forged Hook' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal((await post(body, 'delivery-2', now, sign(key, 'delivery-1', now, body))).status, 401);
+    assert.equal((await post(body + ' ', 'delivery-1', now, sign(key, 'delivery-1', now, body))).status, 401);
+    assert.equal((await post(body, 'delivery-1', now - 301, sign(key, 'delivery-1', now - 301, body))).status, 401);
+    const changed = JSON.stringify({ object_kind: 'push', project: { id: 42 }, changed: true });
+    assert.equal((await post(changed, 'delivery-1', now, sign(key, 'delivery-1', now, changed))).status, 409);
+    const denied = JSON.stringify({ project: { id: 7 } });
+    assert.equal((await post(denied, 'delivery-3', now, sign(key, 'delivery-3', now, denied))).status, 403);
+    assert.equal((await post('[]', 'delivery-4', now, sign(key, 'delivery-4', now, '[]'))).status, 400);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('GitLab verifier rejects ambiguous headers and binds mapping to the verified request', () => {
+  const key = Buffer.alloc(32, 5),
+    options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'gitlab' },
+      agentId: 'agent',
+      eventType: 'gitlab.push',
+      signingToken: 'whsec_' + key.toString('base64'),
+      clock: () => 1700000000000
+    };
+  for (const bad of [
+    { ...options, signingToken: 'whsec_short' },
+    { ...options, previousSigningTokens: [options.signingToken] },
+    { ...options, toleranceSeconds: 0 },
+    { ...options, identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createGitlabWebhookAdapter(bad), /configuration/);
+  const adapter = createGitlabWebhookAdapter(options),
+    body = Buffer.from('{}'),
+    stamp = '1700000000',
+    signature = 'v1,' + createHmac('sha256', key).update(`abc.${stamp}.`).update(body).digest('base64'),
+    headers = ['Webhook-Id', 'abc', 'Webhook-Timestamp', stamp, 'Webhook-Signature', signature],
+    req = { rawHeaders: headers };
+  assert.ok(adapter.authenticateRaw(req, body));
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from('{ }'), options.identity, req), /Invalid/);
+  assert.throws(() => adapter.mapAuthenticatedBody(body, options.identity, req), /Invalid/);
+  for (const duplicate of ['webhook-id', 'webhook-timestamp', 'webhook-signature']) assert.equal(adapter.authenticateRaw({ rawHeaders: [...headers, duplicate, 'duplicate'] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['webhook-id', 'abc', 'webhook-timestamp', stamp, 'webhook-signature', signature.slice(0, -1)] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['webhook-id', 'abc', 'webhook-timestamp', String(Number(stamp) + 301), 'webhook-signature', signature] }, body), undefined);
+});
+
+test('Standard Webhooks verify the reference vector, rotation, replay window and signed message IDs', async () => {
+  const { createStandardWebhookAdapter } = await import('../dist/index.js'),
+    identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'svix' },
+    raw = headers => ({ rawHeaders: Object.entries(headers).flat() });
+  const vector = createStandardWebhookAdapter({ identity, agentId: 'agent', secret: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw', clock: () => 1614265330000 }),
+    vectorHeaders = { 'webhook-id': 'msg_p5jXN8AQM9LWM0D4loKWxJek', 'webhook-timestamp': '1614265330', 'webhook-signature': 'v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=' },
+    vectorBody = Buffer.from('{"test": 2432232314}');
+  assert.deepEqual(vector.authenticateRaw(raw(vectorHeaders), vectorBody), identity);
+  assert.equal(vector.authenticateRaw(raw({ ...vectorHeaders, 'webhook-id': 'msg_other' }), vectorBody), undefined);
+  assert.equal(vector.authenticateRaw(raw({ ...vectorHeaders, 'webhook-signature': 'v1a,' + vectorHeaders['webhook-signature'].slice(3) }), vectorBody), undefined);
+  assert.equal(vector.authenticateRaw({ rawHeaders: [...Object.entries(vectorHeaders).flat(), 'Webhook-Id', 'msg_p5jXN8AQM9LWM0D4loKWxJek'] }, vectorBody), undefined);
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const current = 'whsec_' + Buffer.alloc(32, 7).toString('base64'),
+    previous = 'whsec_' + Buffer.alloc(24, 5).toString('base64'),
+    now = 1700000000,
+    adapter = createStandardWebhookAdapter({ identity, agentId: 'agent', secret: current, previousSecrets: [previous], clock: () => now * 1000 }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 3,
+      ...adapter,
+      authorize: (source, event) => source.sourceId === 'svix' && event.eventType === 'invoice.paid' && event.payload.data.account === 'allowed'
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      body = JSON.stringify({ type: 'invoice.paid', timestamp: '2023-11-14T22:13:20Z', data: { account: 'allowed', invoice: 'inv_1' } }),
+      sign = (secret, msg, time, data) =>
+        'v1,' +
+        createHmac('sha256', Buffer.from(secret.slice(6), 'base64'))
+          .update(`${msg}.${time}.${data}`)
+          .digest('base64'),
+      post = (payload, msg, time, signature) =>
+        fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'webhook-id': msg, 'webhook-timestamp': String(time), 'webhook-signature': signature }, body: payload });
+    let response = await post(body, 'msg_1', now, `v1a,ignored ${sign(previous, 'msg_1', now, body)}`);
+    assert.equal(response.status, 202);
+    const first = await response.json();
+    response = await post(body, 'msg_1', now - 10, sign(current, 'msg_1', now - 10, body));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal((await post(body + ' ', 'msg_1', now, sign(current, 'msg_1', now, body))).status, 401);
+    assert.equal((await post(body, 'msg_1', now - 301, sign(current, 'msg_1', now - 301, body))).status, 401);
+    assert.equal((await post(body, 'msg_1', now + 301, sign(current, 'msg_1', now + 301, body))).status, 401);
+    assert.equal((await post(body, 'msg_2', now, sign(current, 'msg_1', now, body))).status, 401);
+    assert.equal((await post(body, 'msg_1', now, 'v1,not-base64')).status, 401);
+    const changed = body.replace('inv_1', 'inv_2');
+    assert.equal((await post(changed, 'msg_1', now, sign(current, 'msg_1', now, changed))).status, 409);
+    const denied = body.replace('allowed', 'other');
+    assert.equal((await post(denied, 'msg_3', now, sign(current, 'msg_3', now, denied))).status, 403);
+    const untyped = JSON.stringify({ data: { account: 'allowed' } });
+    assert.equal((await post(untyped, 'msg_4', now, sign(current, 'msg_4', now, untyped))).status, 400);
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal(s.triggers.get(scope, first.runId).eventId, 'msg_1');
+  } finally {
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+  for (const bad of [
+    { identity, agentId: 'agent', secret: 'whsec_short' },
+    { identity, agentId: 'agent', secret: 'sk_' + Buffer.alloc(32).toString('base64') },
+    { identity, agentId: 'agent', secret: 'whsec_' + Buffer.alloc(65).toString('base64') },
+    { identity: { ...identity, sourceId: 'schedule.fake' }, agentId: 'agent', secret: 'whsec_' + Buffer.alloc(32, 1).toString('base64') },
+    { identity, agentId: 'agent', secret: 'whsec_' + Buffer.alloc(32, 1).toString('base64'), previousSecrets: ['whsec_' + Buffer.alloc(32, 1).toString('base64')] },
+    { identity, agentId: 'agent', secret: 'whsec_' + Buffer.alloc(32, 1).toString('base64'), toleranceSeconds: 0 }
+  ])
+    assert.throws(() => createStandardWebhookAdapter(bad), /Invalid Standard Webhooks configuration/);
+});
+
+test('event ingress limits in-flight work across disconnects without replaying or leaking capacity', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let release,
+    entered,
+    block = true,
+    calls = 0;
+  const ready = new Promise(r => (entered = r)),
+    gate = new Promise(r => (release = r)),
+    options = {
+      triggers: s.triggers,
+      definitions,
+      maxPending: 5,
+      maxInFlight: 1,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: async () => {
+        calls++;
+        if (block) {
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    };
+  for (const maxInFlight of [0, -1, 1.5, 10001, '1']) assert.throws(() => createAgentEventIngress({ ...options, maxInFlight }), /Invalid event ingress/);
+  const ingress = createAgentEventIngress(options);
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = (eventId, signal) =>
+        fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'event', payload: {} }), signal }),
+      abort = new AbortController(),
+      pending = post('first', abort.signal).catch(error => error);
+    await ready;
+    assert.equal((await post('second')).status, 503);
+    assert.equal(calls, 1);
+    abort.abort();
+    await pending;
+    assert.equal((await post('second')).status, 503);
+    assert.equal(calls, 1);
+    block = false;
+    release();
+    for (let i = 0; i < 100 && s.runs.list(scope).length < 1; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal((await post('first')).status, 200);
+    assert.equal((await post('second')).status, 202);
+    assert.equal(s.runs.list(scope).length, 2);
+  } finally {
+    release?.();
+    ingress.closeAllConnections();
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('ingress deadlines fence late authentication and authorization results while retaining capacity', async () => {
+  for (const phase of ['authenticate', 'authorize', 'definition']) {
+    const s = setup(),
+      store = new SqliteAgentDefinitions(':memory:');
+    store.save('tenant', manifest, 0);
+    let release,
+      entered,
+      blocked = true,
+      reads = 0,
+      signal;
+    const ready = new Promise(r => (entered = r)),
+      gate = new Promise(r => (release = r)),
+      pause = async () => {
+        if (blocked) {
+          entered();
+          await gate;
+        }
+      },
+      definitions = {
+        get: async (...args) => {
+          if (phase === 'definition' && ++reads === 2) await pause();
+          return store.get(...args);
+        }
+      },
+      options = {
+        triggers: s.triggers,
+        definitions,
+        maxPending: 5,
+        maxInFlight: 1,
+        requestTimeoutMs: 100,
+        authenticate: async () => {
+          if (phase === 'authenticate') await pause();
+          return { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' };
+        },
+        authorize: async () => {
+          if (phase === 'authorize') await pause();
+          return true;
+        }
+      };
+    for (const requestTimeoutMs of [0, 99, 30001, 1.5]) assert.throws(() => createAgentEventIngress({ ...options, requestTimeoutMs }), /Invalid event ingress/);
+    assert.throws(() => createAgentEventIngress({ ...options, maxInFlight: undefined }), /Invalid event ingress/);
+    const ingress = createAgentEventIngress(options);
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+    try {
+      const url = `http://127.0.0.1:${ingress.address().port}/events`,
+        post = id => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId: id, eventType: 'event', payload: {} }) }),
+        pending = post('late');
+      await ready;
+      const timed = await pending;
+      assert.equal(timed.status, 503);
+      assert.equal((await timed.json()).error, 'Event ingress timeout');
+      assert.equal((await post('busy')).status, 503);
+      assert.equal(s.runs.list(scope).length, 0);
+      blocked = false;
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+      let result;
+      for (let i = 0; i < 100; i++) {
+        result = await post('accepted');
+        if (result.status !== 503) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(result.status, 202);
+      assert.equal(s.runs.list(scope).length, 1);
+      assert.equal(s.triggers.get(scope, (await result.json()).runId).eventId, 'accepted');
+    } finally {
+      release?.();
+      ingress.closeAllConnections();
+      await new Promise(r => ingress.close(r));
+      store.close();
+      close(s);
+    }
+  }
+});
+
+test('ingress deadline ends an incomplete body and releases its slot', async () => {
+  const { request } = await import('node:http'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const ingress = createAgentEventIngress({
+    triggers: s.triggers,
+    definitions,
+    maxPending: 5,
+    maxInFlight: 1,
+    requestTimeoutMs: 100,
+    authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+    authorize: () => true
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  let client;
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      response = new Promise((resolve, reject) => {
+        client = request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': '200' } }, res => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        });
+        client.on('error', reject);
+        client.write('{');
+      });
+    assert.equal(await response, 503);
+    let result;
+    for (let i = 0; i < 100; i++) {
+      result = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId: 'agent', eventId: 'after', eventType: 'event', payload: {} })
+      });
+      if (result.status !== 503) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(result.status, 202);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    client?.destroy();
+    ingress.closeAllConnections();
+    await new Promise(r => ingress.close(r));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('ingress deadline signals cooperative host callbacks before fencing their late result', async () => {
+  for (const phase of ['authenticate', 'authenticateRaw', 'authorize', 'traceParent']) {
+    const s = setup(),
+      definitions = new SqliteAgentDefinitions(':memory:');
+    definitions.save('tenant', manifest, 0);
+    let blocking = true,
+      observed,
+      entered;
+    const ready = new Promise(resolve => (entered = resolve)),
+      identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' },
+      pause = async signal => {
+        assert.ok(signal instanceof AbortSignal);
+        if (blocking) {
+          observed = signal;
+          entered();
+          await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+        }
+      },
+      options = {
+        triggers: s.triggers,
+        definitions,
+        maxPending: 5,
+        maxInFlight: 1,
+        requestTimeoutMs: 100,
+        authorize: async (_identity, _event, _definition, signal) => {
+          if (phase === 'authorize') await pause(signal);
+          return true;
+        },
+        traceParent: async (_request, _identity, _event, signal) => {
+          if (phase === 'traceParent') await pause(signal);
+          return undefined;
+        },
+        ...(phase === 'authenticateRaw'
+          ? {
+              authenticateRaw: async (_request, _body, signal) => {
+                await pause(signal);
+                return identity;
+              }
+            }
+          : {
+              authenticate: async (_request, signal) => {
+                if (phase === 'authenticate') await pause(signal);
+                return identity;
+              }
+            })
+      },
+      ingress = createAgentEventIngress(options);
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+    try {
+      const url = `http://127.0.0.1:${ingress.address().port}/events`,
+        post = eventId => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'event', payload: {} }) }),
+        pending = post('timed');
+      await ready;
+      assert.equal((await pending).status, 503);
+      assert.equal(observed.aborted, true);
+      assert.equal(s.runs.list(scope).length, 0);
+      blocking = false;
+      let result;
+      for (let i = 0; i < 100; i++) {
+        result = await post('accepted');
+        if (result.status !== 503) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(result.status, 202);
+      assert.equal(s.runs.list(scope).length, 1);
+    } finally {
+      ingress.closeAllConnections();
+      await new Promise(resolve => ingress.close(resolve));
+      definitions.close();
+      close(s);
+    }
+  }
+});
+
+test('signal-aware definition lookup aborts at either check and retains its configured binding', async () => {
+  for (const blockedRead of [1, 2]) {
+    const s = setup(),
+      store = new SqliteAgentDefinitions(':memory:');
+    store.save('tenant', manifest, 0);
+    let reads = 0,
+      blocking = true,
+      observed,
+      entered;
+    const ready = new Promise(resolve => (entered = resolve)),
+      definitions = {
+        marker: 'host-bound',
+        get() {
+          throw Error('legacy lookup should not be used');
+        },
+        async getWithSignal(tenant, agent, signal) {
+          assert.equal(this.marker, 'host-bound');
+          assert.ok(signal instanceof AbortSignal);
+          if (blocking && ++reads === blockedRead) {
+            observed = signal;
+            entered();
+            await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+          }
+          return store.get(tenant, agent);
+        }
+      },
+      options = {
+        triggers: s.triggers,
+        definitions,
+        maxPending: 5,
+        maxInFlight: 1,
+        requestTimeoutMs: 100,
+        authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+        authorize: () => true
+      };
+    assert.throws(() => createAgentEventIngress({ ...options, definitions: { get: () => undefined, getWithSignal: true } }), /Invalid event ingress/);
+    const ingress = createAgentEventIngress(options);
+    definitions.getWithSignal = () => {
+      throw Error('replaced lookup');
+    };
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+    try {
+      const url = `http://127.0.0.1:${ingress.address().port}/events`,
+        post = eventId => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'event', payload: {} }) }),
+        pending = post('timed');
+      await ready;
+      assert.equal((await pending).status, 503);
+      assert.equal(observed.aborted, true);
+      assert.equal(s.runs.list(scope).length, 0);
+      blocking = false;
+      let result;
+      for (let i = 0; i < 100; i++) {
+        result = await post('accepted');
+        if (result.status !== 503) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(result.status, 202);
+      assert.equal(s.runs.list(scope).length, 1);
+    } finally {
+      ingress.closeAllConnections();
+      await new Promise(resolve => ingress.close(resolve));
+      store.close();
+      close(s);
+    }
+  }
+});
+
+test('ingress observations classify responses without identifiers or payloads', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const observations = [],
+    options = {
+      triggers: s.triggers,
+      definitions,
+      maxPending: 2,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'private-user', sourceId: 'private-source' } : undefined),
+      authorize: () => true,
+      observe: value => observations.push(value)
+    };
+  assert.throws(() => createAgentEventIngress({ ...options, observe: true }), /Invalid event ingress/);
+  const ingress = createAgentEventIngress(options);
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = token =>
+        fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+          body: JSON.stringify({ agentId: 'agent', eventId: 'private-event', eventType: 'event', payload: { secret: 'private-payload' } })
+        });
+    assert.equal((await post('bad')).status, 401);
+    assert.equal((await post('valid')).status, 202);
+    assert.equal((await post('valid')).status, 200);
+    assert.deepEqual(
+      observations.map(value => [value.outcome, value.status]),
+      [
+        ['rejected', 401],
+        ['accepted', 202],
+        ['completed', 200]
+      ]
+    );
+    for (const value of observations) {
+      assert.deepEqual(Object.keys(value).sort(), ['durationMs', 'outcome', 'status']);
+      assert.ok(Number.isFinite(value.durationMs) && value.durationMs >= 0);
+    }
+    assert.doesNotMatch(JSON.stringify(observations), /private|tenant|agent|Bearer/);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('ingress observations record saturation and deadlines and tolerate observer failures', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let entered,
+    release,
+    calls = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    observations = [],
+    metrics = new AgentIngressMetrics({ authorize: () => true }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 2,
+      maxInFlight: 1,
+      requestTimeoutMs: 100,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: async () => {
+        entered();
+        await gate;
+        return true;
+      },
+      observe: observation => {
+        observations.push(observation);
+        metrics.observe(observation);
+        if (++calls === 1) throw Error('observer failure');
+        return Promise.reject(Error('async observer failure'));
+      }
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = () => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId: 'event', eventType: 'event', payload: {} }) }),
+      pending = post();
+    await ready;
+    assert.equal((await post()).status, 503);
+    assert.equal((await pending).status, 503);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(
+      observations.map(item => [item.outcome, item.status, item.reason]),
+      [
+        ['unavailable', 503, 'busy'],
+        ['unavailable', 503, 'timeout']
+      ]
+    );
+    const text = await metrics.render({ tenantId: 'tenant', principalId: 'admin' });
+    assert.match(text, /app_mixer_agent_ingress_unavailable_total\{reason="busy"\} 1/);
+    assert.match(text, /app_mixer_agent_ingress_unavailable_total\{reason="timeout"\} 1/);
+    assert.match(text, /app_mixer_agent_ingress_unavailable_total\{reason="other"\} 0/);
+    assert.equal(s.runs.list(scope).length, 0);
+  } finally {
+    release?.();
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('ingress observes a disconnected client once without claiming an HTTP outcome', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let entered, release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    observations = [],
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 2,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: async () => {
+        entered();
+        await gate;
+        return true;
+      },
+      observe: value => observations.push(value)
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const abort = new AbortController(),
+      pending = fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+        method: 'POST',
+        signal: abort.signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId: 'agent', eventId: 'event', eventType: 'event', payload: {} })
+      }).catch(error => error);
+    await ready;
+    abort.abort();
+    await pending;
+    for (let i = 0; i < 100 && !observations.length; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0].outcome, 'disconnected');
+    assert.equal(Object.hasOwn(observations[0], 'status'), false);
+    release();
+    for (let i = 0; i < 100 && !s.runs.list(scope).length; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal(observations.length, 1);
+  } finally {
+    release?.();
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('authenticated metrics server exposes authorized process-wide ingress response counters', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const metrics = new AgentIngressMetrics({ authorize: actor => actor.principalId === 'metrics-admin' }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 2,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' } : undefined),
+      authorize: () => true,
+      observe: metrics.observe
+    }),
+    scrape = createAgentMetricsServer({
+      metrics,
+      authenticate: req =>
+        req.headers.authorization === 'Bearer admin'
+          ? { tenantId: 'tenant', principalId: 'metrics-admin' }
+          : req.headers.authorization === 'Bearer denied'
+            ? { tenantId: 'tenant', principalId: 'other' }
+            : undefined,
+      timeoutMs: 1000,
+      maxPending: 2
+    });
+  ingress.listen(0, '127.0.0.1');
+  scrape.listen(0, '127.0.0.1');
+  await Promise.all([once(ingress, 'listening'), once(scrape, 'listening')]);
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      post = token =>
+        fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+          body: JSON.stringify({ agentId: 'agent', eventId: 'private-id', eventType: 'event', payload: { secret: 'private-data' } })
+        });
+    assert.equal((await post('bad')).status, 401);
+    assert.equal((await post('valid')).status, 202);
+    assert.equal((await post('valid')).status, 200);
+    const url = `http://127.0.0.1:${scrape.address().port}/metrics`,
+      get = token => fetch(url, { headers: { authorization: 'Bearer ' + token } });
+    assert.equal((await get('invalid')).status, 401);
+    assert.equal((await get('denied')).status, 403);
+    const response = await get('admin');
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /app_mixer_agent_ingress_requests_total\{outcome="accepted"\} 1/);
+    assert.match(body, /app_mixer_agent_ingress_requests_total\{outcome="completed"\} 1/);
+    assert.match(body, /app_mixer_agent_ingress_requests_total\{outcome="rejected"\} 1/);
+    assert.match(body, /app_mixer_agent_ingress_response_seconds_count 3/);
+    assert.doesNotMatch(body, /private|tenant|sender|source/);
+  } finally {
+    ingress.closeAllConnections();
+    scrape.closeAllConnections();
+    await Promise.all([new Promise(resolve => ingress.close(resolve)), new Promise(resolve => scrape.close(resolve))]);
+    definitions.close();
+    close(s);
+  }
+});
+
+test('ingress metrics recheck process-wide access and reject malformed observations', async () => {
+  let checks = 0,
+    allowed = true,
+    entered,
+    release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    metrics = new AgentIngressMetrics({
+      authorize: async () => {
+        if (++checks === 2) {
+          entered();
+          await gate;
+        }
+        return allowed;
+      }
+    });
+  for (const observation of [
+    { outcome: 'tenant', durationMs: 1 },
+    { outcome: 'accepted', durationMs: -1 },
+    { outcome: 'accepted', durationMs: Infinity },
+    { outcome: 'accepted', reason: 'busy', durationMs: 1 },
+    { outcome: 'unavailable', reason: 'untrusted', durationMs: 1 }
+  ])
+    assert.throws(() => metrics.observe(observation), /Invalid ingress observation/);
+  metrics.observe({ outcome: 'accepted', status: 202, durationMs: 250 });
+  const pending = metrics.render({ tenantId: 'tenant', principalId: 'auditor' });
+  await ready;
+  allowed = false;
+  release();
+  await assert.rejects(pending, /access denied/);
+  assert.throws(() => new AgentIngressMetrics({ authorize: 1 }), /configuration/);
+});
+
+test('ingress metrics classify unexpected server errors separately from capacity and timeout', async () => {
+  const s = setup(),
+    metrics = new AgentIngressMetrics({ authorize: () => true }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions: {
+        get: () => {
+          throw Error('secret backend failure');
+        }
+      },
+      maxPending: 1,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: () => true,
+      observe: metrics.observe
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const result = await fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'event', eventType: 'event', payload: {} })
+    });
+    assert.equal(result.status, 500);
+    metrics.observe({ outcome: 'unavailable', status: 503, durationMs: 0 });
+    const text = await metrics.render({ tenantId: 'tenant', principalId: 'admin' });
+    assert.match(text, /app_mixer_agent_ingress_unavailable_total\{reason="other"\} 2/);
+    assert.doesNotMatch(text, /secret backend/);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    close(s);
+  }
+});
+
+test('opt-in ingress disconnect cancellation fences late callbacks and releases capacity', async () => {
+  for (const phase of ['authenticate', 'authenticateRaw', 'definition', 'authorize', 'traceParent']) {
+    const s = setup(),
+      store = new SqliteAgentDefinitions(':memory:');
+    store.save('tenant', manifest, 0);
+    let entered,
+      release,
+      signal,
+      blocking = true,
+      reads = 0;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      pause = async seen => {
+        if (blocking) {
+          signal = seen;
+          entered();
+          await gate;
+        }
+      },
+      identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' },
+      definitions = {
+        get: store.get.bind(store),
+        async getWithSignal(tenant, agent, seen) {
+          if (phase === 'definition' && ++reads === 2) await pause(seen);
+          return store.get(tenant, agent);
+        }
+      },
+      config = {
+        triggers: s.triggers,
+        definitions,
+        maxPending: 5,
+        maxInFlight: 1,
+        abortOnDisconnect: true,
+        authorize: async (_identity, _event, _definition, seen) => {
+          if (phase === 'authorize') await pause(seen);
+          return true;
+        },
+        traceParent: async (_req, _identity, _event, seen) => {
+          if (phase === 'traceParent') await pause(seen);
+          return undefined;
+        },
+        ...(phase === 'authenticateRaw'
+          ? {
+              authenticateRaw: async (_req, _raw, seen) => {
+                await pause(seen);
+                return identity;
+              }
+            }
+          : {
+              authenticate: async (_req, seen) => {
+                if (phase === 'authenticate') await pause(seen);
+                return identity;
+              }
+            })
+      };
+    assert.throws(() => createAgentEventIngress({ ...config, abortOnDisconnect: 'yes' }), /Invalid event ingress/);
+    const ingress = createAgentEventIngress(config);
+    ingress.listen(0, '127.0.0.1');
+    await once(ingress, 'listening');
+    const abort = new AbortController();
+    try {
+      const url = `http://127.0.0.1:${ingress.address().port}/events`,
+        post = (eventId, extra = {}) =>
+          fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'event', payload: {} }), ...extra }),
+        pending = post('disconnected', { signal: abort.signal }).catch(error => error);
+      await ready;
+      abort.abort();
+      await pending;
+      for (let i = 0; i < 100 && !signal.aborted; i++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(signal.aborted, true, phase);
+      assert.equal((await post('busy')).status, 503);
+      assert.equal(s.runs.list(scope).length, 0);
+      blocking = false;
+      release();
+      let result;
+      for (let i = 0; i < 100; i++) {
+        result = await post('accepted');
+        if (result.status !== 503) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(result.status, 202);
+      const runs = s.runs.list(scope);
+      assert.equal(runs.length, 1);
+      assert.equal(s.triggers.get(scope, (await result.json()).runId).eventId, 'accepted');
+    } finally {
+      abort.abort();
+      release();
+      ingress.closeAllConnections();
+      await new Promise(resolve => ingress.close(resolve));
+      store.close();
+      s.triggers.close();
+      s.runs.close();
+    }
+  }
+});
+
+test('disconnect cancellation stops an incomplete event body and permits a later delivery', async () => {
+  const { request } = await import('node:http'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let observed, entered;
+  const ready = new Promise(resolve => (entered = resolve)),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 5,
+      maxInFlight: 1,
+      abortOnDisconnect: true,
+      authenticate: (_req, signal) => {
+        observed = signal;
+        entered();
+        return { tenantId: 'tenant', principalId: 'sender', sourceId: 'source' };
+      },
+      authorize: () => true
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  let client;
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`;
+    client = request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': '200' } });
+    client.on('error', () => {});
+    client.write('{');
+    await ready;
+    client.destroy();
+    for (let i = 0; i < 100 && !observed.aborted; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(observed.aborted, true);
+    let response;
+    for (let i = 0; i < 100; i++) {
+      response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId: 'retry', eventType: 'event', payload: {} }) });
+      if (response.status !== 503) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(response.status, 202);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    client?.destroy();
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    s.triggers.close();
+    s.runs.close();
+  }
+});
+
+test('trigger retention discovers terminal unredacted runs under separate scoped authorization', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'admin' },
+    otherScope = { tenantId: 'other', agentId: 'agent' };
+  let allowed = true,
+    calls = 0,
+    block = false,
+    entered,
+    release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    retention = new SqliteAgentTriggerRetention(s.path, {
+      scope,
+      authorize: () => true,
+      authorizeDiscovery: async (who, selected) => {
+        calls++;
+        assert.equal(who.principalId, 'admin');
+        assert.deepEqual(selected, scope);
+        who.principalId = 'forged';
+        selected.tenantId = 'forged';
+        if (block && calls === 2) {
+          entered();
+          await gate;
+        }
+        return allowed;
+      }
+    });
+  try {
+    const created = [];
+    for (let i = 0; i < 4; i++) {
+      const item = s.triggers.enqueue(scope, { ...event, eventId: 'evt-' + i }, { ...settings, maxPending: 10 }, 1);
+      created.push(item.runId);
+    }
+    const foreign = s.triggers.enqueue(otherScope, event, settings, 1);
+    for (const runId of created.slice(0, 3)) {
+      const run = s.runs.get(scope, runId);
+      s.runs.request(scope, runId, run.revision, 'cancel', 2);
+    }
+    const foreignRun = s.runs.get(otherScope, foreign.runId);
+    s.runs.request(otherScope, foreign.runId, foreignRun.revision, 'cancel', 2);
+    await retention.redact(actor, created[0], 3);
+    const expected = created.slice(1, 3).sort(),
+      first = await retention.listCandidates(actor, { limit: 1 });
+    assert.deepEqual(first.items, [{ runId: expected[0], status: 'cancelled' }]);
+    assert.equal(first.nextAfter, expected[0]);
+    const second = await retention.listCandidates(actor, { after: first.nextAfter, limit: 1 });
+    assert.deepEqual(second.items, [{ runId: expected[1], status: 'cancelled' }]);
+    assert.equal(second.nextAfter, undefined);
+    assert.equal(JSON.stringify([first, second]).includes('order'), false);
+    await assert.rejects(retention.listCandidates({ ...actor, tenantId: 'other' }), /Invalid/);
+    for (const options of [{ limit: 0 }, { limit: 101 }, { after: 'bad id' }]) await assert.rejects(retention.listCandidates(actor, options), /Invalid/);
+    allowed = false;
+    await assert.rejects(retention.listCandidates(actor), /discovery access denied/);
+    allowed = true;
+    calls = 0;
+    block = true;
+    const pending = retention.listCandidates(actor);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /discovery access denied/);
+    const disabled = new SqliteAgentTriggerRetention(s.path, { scope, authorize: () => true });
+    try {
+      await assert.rejects(disabled.listCandidates(actor), /Invalid trigger retention discovery/);
+    } finally {
+      disabled.close();
+    }
+  } finally {
+    release();
+    retention.close();
+    close(s);
+  }
+});
+
+test('trigger receipt times support bounded cutoff discovery without guessing legacy ages', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'admin' },
+    db = new DatabaseSync(s.path);
+  let retention;
+  try {
+    const ids = [];
+    for (const [i, now] of [10, 20, 30].entries()) {
+      const result = s.triggers.enqueue(scope, { ...event, eventId: 'received-' + i }, { ...settings, maxPending: 10 }, now);
+      ids.push(result.runId);
+      const run = s.runs.get(scope, result.runId);
+      s.runs.request(scope, result.runId, run.revision, 'cancel', now + 1);
+    }
+    assert.deepEqual(s.triggers.enqueue(scope, { ...event, eventId: 'received-0' }, { ...settings, maxPending: 10 }, 40), { runId: ids[0], duplicate: true });
+    assert.equal(db.prepare('SELECT received_at FROM agent_trigger_receipts WHERE run_id=?').get(ids[0]).received_at, 10);
+    for (const sql of [
+      'UPDATE agent_trigger_receipts SET received_at=0',
+      'DELETE FROM agent_trigger_receipts',
+      `INSERT OR REPLACE INTO agent_trigger_receipts VALUES ('tenant','agent','${ids[0]}',0)`
+    ])
+      assert.throws(() => db.exec(sql), /immutable/);
+    db.exec('DROP TRIGGER agent_trigger_receipts_no_delete');
+    db.prepare('DELETE FROM agent_trigger_receipts WHERE run_id=?').run(ids[2]);
+    retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: () => true, authorizeDiscovery: () => true });
+    const all = (await retention.listCandidates(actor, { includeReceivedAt: true })).items;
+    assert.equal(all.length, 3);
+    assert.equal(all.find(row => row.runId === ids[0]).receivedAt, 10);
+    assert.equal(all.find(row => row.runId === ids[1]).receivedAt, 20);
+    assert.equal(
+      Object.hasOwn(
+        all.find(row => row.runId === ids[2]),
+        'receivedAt'
+      ),
+      false
+    );
+    assert.deepEqual((await retention.listCandidates(actor, { receivedBefore: 20 })).items, [{ runId: ids[0], status: 'cancelled', receivedAt: 10 }]);
+    assert.deepEqual((await retention.listCandidates(actor, { receivedBefore: 10 })).items, []);
+    assert.equal((await retention.listCandidates(actor, { receivedBefore: 31 })).items.length, 2);
+    for (const options of [{ receivedBefore: -1 }, { receivedBefore: 1.5 }, { includeReceivedAt: 'yes' }]) await assert.rejects(retention.listCandidates(actor, options), /Invalid/);
+  } finally {
+    retention?.close();
+    db.close();
+    close(s);
+  }
+});
+
+test('receipt insertion failure rolls back a new trigger and its run', () => {
+  const s = setup(),
+    db = new DatabaseSync(s.path);
+  try {
+    db.exec("CREATE TRIGGER fail_trigger_receipt BEFORE INSERT ON agent_trigger_receipts BEGIN SELECT RAISE(ABORT,'receipt unavailable'); END");
+    assert.throws(() => s.triggers.enqueue(scope, event, settings, 1), /receipt unavailable/);
+    assert.equal(s.runs.list(scope).length, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agent_trigger_inbox').get().n, 0);
+    db.exec('DROP TRIGGER fail_trigger_receipt');
+    assert.equal(s.triggers.enqueue(scope, event, settings, 2).duplicate, false);
+  } finally {
+    db.close();
+    close(s);
+  }
+});
+
+test('trigger retention worker redacts only authorized, old terminal inputs over bounded passes', async () => {
+  const s = setup(),
+    db = new DatabaseSync(s.path),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' },
+    retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: () => true, authorizeDiscovery: () => true });
+  let now = 100;
+  try {
+    const ids = [];
+    for (const [i, time] of [10, 11, 12, 75, 13, 14].entries()) {
+      const item = s.triggers.enqueue(scope, { ...event, eventId: 'worker-' + i }, { ...settings, maxPending: 10 }, time);
+      ids.push(item.runId);
+      if (i !== 4) {
+        const run = s.runs.get(scope, item.runId);
+        s.runs.request(scope, item.runId, run.revision, 'cancel', time + 1);
+      }
+    }
+    db.exec('DROP TRIGGER agent_trigger_receipts_no_delete');
+    db.prepare('DELETE FROM agent_trigger_receipts WHERE run_id=?').run(ids[5]);
+    const foreign = s.triggers.enqueue({ ...scope, tenantId: 'other' }, event, settings, 10),
+      seen = [],
+      errors = [],
+      settingsWorker = {
+        retention,
+        actor,
+        authorize: (who, candidate) => {
+          seen.push(candidate.runId);
+          who.principalId = 'forged';
+          candidate.runId = 'forged';
+          return seen.at(-1) !== ids[1];
+        },
+        minAgeMs: 50,
+        maxPerPass: 1,
+        pollMs: 100,
+        clock: () => now,
+        onError: (error, runId) => errors.push({ error, runId })
+      },
+      worker = new AgentTriggerRetentionWorker(settingsWorker);
+    settingsWorker.minAgeMs = 1;
+    settingsWorker.actor.principalId = 'changed';
+    for (let i = 0; i < 4; i++) await worker.runOnce();
+    assert.equal(s.triggers.get(scope, ids[0]).payloadRedacted, true);
+    assert.equal(s.triggers.get(scope, ids[1]).payloadRedacted, undefined);
+    assert.equal(s.triggers.get(scope, ids[2]).payloadRedacted, true);
+    for (const index of [3, 4, 5]) assert.equal(s.triggers.get(scope, ids[index]).payloadRedacted, undefined);
+    assert.equal(s.triggers.get({ ...scope, tenantId: 'other' }, foreign.runId).payloadRedacted, undefined);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(s.triggers.enqueue(scope, { ...event, eventId: 'worker-0' }, { ...settings, maxPending: 10 }, 90), { runId: ids[0], duplicate: true });
+    now = 126;
+    for (let i = 0; i < 4; i++) await worker.runOnce();
+    assert.equal(s.triggers.get(scope, ids[3]).payloadRedacted, true);
+    await worker.stop();
+  } finally {
+    retention.close();
+    db.close();
+    close(s);
+  }
+});
+
+test('stopping trigger retention fences late discovery, worker and store authorization results', async () => {
+  for (const phase of ['worker', 'store', 'discovery']) {
+    const s = setup(),
+      actor = { tenantId: 'tenant', principalId: 'cleaner' };
+    let block = false,
+      entered,
+      release;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve)),
+      pause = async () => {
+        if (block) {
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: async () => (phase === 'store' ? pause() : true), authorizeDiscovery: () => (phase === 'discovery' ? pause() : true) });
+    try {
+      const item = s.triggers.enqueue(scope, event, settings, 10),
+        run = s.runs.get(scope, item.runId);
+      s.runs.request(scope, item.runId, run.revision, 'cancel', 11);
+      const worker = new AgentTriggerRetentionWorker({
+        retention,
+        actor,
+        authorize: () => (phase === 'worker' ? pause() : true),
+        minAgeMs: 20,
+        maxPerPass: 5,
+        pollMs: 100,
+        clock: () => 100,
+        onError: () => {
+          throw Error('unexpected');
+        }
+      });
+      block = true;
+      const pending = worker.runOnce();
+      await ready;
+      assert.throws(() => worker.runOnce(), /already running/);
+      const stopping = worker.stop();
+      release();
+      await stopping;
+      assert.equal(await pending, 0);
+      assert.equal(s.triggers.get(scope, item.runId).payloadRedacted, undefined);
+      block = false;
+      assert.equal(await worker.runOnce(), 1);
+      assert.equal(s.triggers.get(scope, item.runId).payloadRedacted, true);
+      await worker.stop();
+    } finally {
+      release();
+      retention.close();
+      close(s);
+    }
+  }
+});
+
+test('trigger retention worker rechecks age after policy delay and isolates per-run failures', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' },
+    retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: () => true, authorizeDiscovery: () => true });
+  let now = 100,
+    started,
+    release,
+    blocked = true;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    errors = [];
+  try {
+    const first = s.triggers.enqueue(scope, { ...event, eventId: 'one' }, { ...settings, maxPending: 5 }, 10),
+      second = s.triggers.enqueue(scope, { ...event, eventId: 'two' }, { ...settings, maxPending: 5 }, 11);
+    for (const item of [first, second]) {
+      const run = s.runs.get(scope, item.runId);
+      s.runs.request(scope, item.runId, run.revision, 'cancel', 12);
+    }
+    const worker = new AgentTriggerRetentionWorker({
+      retention,
+      actor,
+      minAgeMs: 50,
+      maxPerPass: 10,
+      pollMs: 100,
+      clock: () => now,
+      authorize: async (_who, candidate, signal) => {
+        assert.ok(signal instanceof AbortSignal);
+        if (blocked) {
+          blocked = false;
+          started();
+          await gate;
+        }
+        if (candidate.runId === second.runId) throw Error('policy unavailable');
+        return true;
+      },
+      onError: (error, runId) => {
+        errors.push([error.message, runId]);
+        return Promise.reject(Error('observer failure'));
+      }
+    });
+    const pending = worker.runOnce();
+    await ready;
+    now = 30;
+    release();
+    assert.equal(await pending, 0);
+    assert.equal(s.triggers.get(scope, first.runId).payloadRedacted, undefined);
+    assert.deepEqual(errors, [['policy unavailable', second.runId]]);
+    now = 100;
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(s.triggers.get(scope, first.runId).payloadRedacted, true);
+    assert.equal(s.triggers.get(scope, second.runId).payloadRedacted, undefined);
+    await worker.stop();
+  } finally {
+    release();
+    retention.close();
+    close(s);
+  }
+});
+
+test('trigger retention polling stops without starting later passes', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' },
+    retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: () => true, authorizeDiscovery: () => true });
+  let worker;
+  try {
+    const first = s.triggers.enqueue(scope, { ...event, eventId: 'first' }, settings, 10),
+      run = s.runs.get(scope, first.runId);
+    s.runs.request(scope, first.runId, run.revision, 'cancel', 11);
+    worker = new AgentTriggerRetentionWorker({ retention, actor, minAgeMs: 20, maxPerPass: 1, pollMs: 100, clock: () => 100, authorize: () => true, onError: () => {} });
+    worker.start();
+    for (let i = 0; i < 100 && !s.triggers.get(scope, first.runId).payloadRedacted; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(s.triggers.get(scope, first.runId).payloadRedacted, true);
+    await worker.stop();
+    const second = s.triggers.enqueue(scope, { ...event, eventId: 'second' }, settings, 12),
+      run2 = s.runs.get(scope, second.runId);
+    s.runs.request(scope, second.runId, run2.revision, 'cancel', 13);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(s.triggers.get(scope, second.runId).payloadRedacted, undefined);
+  } finally {
+    await worker?.stop();
+    retention.close();
+    close(s);
+  }
+});
+
+test('trigger retention verifies receipt age again after store authorization', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' };
+  let now = 100,
+    blocking = true,
+    entered,
+    release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    retention = new SqliteAgentTriggerRetention(s.path, {
+      scope,
+      authorize: async () => {
+        if (blocking) {
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      authorizeDiscovery: () => true
+    });
+  try {
+    const item = s.triggers.enqueue(scope, event, settings, 10),
+      run = s.runs.get(scope, item.runId);
+    s.runs.request(scope, item.runId, run.revision, 'cancel', 11);
+    const worker = new AgentTriggerRetentionWorker({ retention, actor, minAgeMs: 50, maxPerPass: 5, pollMs: 100, clock: () => now, authorize: () => true, onError: () => {} }),
+      pending = worker.runOnce();
+    await ready;
+    now = 30;
+    blocking = false;
+    release();
+    assert.equal(await pending, 0);
+    assert.equal(s.triggers.get(scope, item.runId).payloadRedacted, undefined);
+    now = 101;
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(await retention.getRedaction(actor, item.runId), { actorId: 'cleaner', redactedAt: 101 });
+    await worker.stop();
+  } finally {
+    release();
+    retention.close();
+    close(s);
+  }
+});
+
+test('completion-age retention skips recently finished and legacy runs while preserving receipt behavior', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' },
+    db = new DatabaseSync(s.path);
+  let retention;
+  try {
+    const events = [];
+    for (let i = 0; i < 3; i++) {
+      const result = s.triggers.enqueue(scope, { ...event, eventId: 'completion-' + i }, { ...settings, maxPending: 10 }, 10);
+      events.push(result.runId);
+      const run = s.runs.get(scope, result.runId);
+      s.runs.request(scope, result.runId, run.revision, 'cancel', [30, 90, 31][i]);
+    }
+    db.exec('DROP TRIGGER agent_run_terminal_no_delete');
+    db.prepare('DELETE FROM agent_run_terminal_times WHERE run_id=?').run(events[2]);
+    retention = new SqliteAgentTriggerRetention(s.path, { scope, authorize: () => true, authorizeDiscovery: () => true });
+    const all = (await retention.listCandidates(actor, { includeCompletedAt: true })).items;
+    assert.equal(all.find(row => row.runId === events[0]).completedAt, 30);
+    assert.equal(all.find(row => row.runId === events[1]).completedAt, 90);
+    assert.equal(
+      Object.hasOwn(
+        all.find(row => row.runId === events[2]),
+        'completedAt'
+      ),
+      false
+    );
+    assert.deepEqual((await retention.listCandidates(actor, { completedBefore: 50 })).items, [{ runId: events[0], status: 'cancelled', completedAt: 30 }]);
+    assert.deepEqual((await retention.listCandidates(actor, { completedBefore: 30 })).items, []);
+    assert.deepEqual((await retention.listCandidates(actor, { completedBefore: 50, receivedBefore: 10 })).items, []);
+    for (const options of [{ completedBefore: -1 }, { completedBefore: 1.5 }, { includeCompletedAt: 'yes' }]) await assert.rejects(retention.listCandidates(actor, options), /Invalid/);
+    const worker = new AgentTriggerRetentionWorker({ retention, actor, minAgeMs: 50, ageFrom: 'completion', maxPerPass: 10, pollMs: 100, clock: () => 100, authorize: () => true, onError: () => {} });
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(s.triggers.get(scope, events[0]).payloadRedacted, true);
+    assert.equal(s.triggers.get(scope, events[1]).payloadRedacted, undefined);
+    assert.equal(s.triggers.get(scope, events[2]).payloadRedacted, undefined);
+    await worker.stop();
+  } finally {
+    retention?.close();
+    db.close();
+    close(s);
+  }
+});
+
+test('terminal timestamps roll back the run transition if their insert fails', () => {
+  const s = setup(),
+    db = new DatabaseSync(s.path);
+  try {
+    const item = s.triggers.enqueue(scope, event, settings, 10),
+      run = s.runs.get(scope, item.runId);
+    db.exec("CREATE TRIGGER fail_terminal_time BEFORE INSERT ON agent_run_terminal_times BEGIN SELECT RAISE(ABORT,'terminal time unavailable'); END");
+    assert.throws(() => s.runs.request(scope, item.runId, run.revision, 'cancel', 20), /terminal time unavailable/);
+    assert.equal(s.runs.get(scope, item.runId).status, 'queued');
+    db.exec('DROP TRIGGER fail_terminal_time');
+    s.runs.request(scope, item.runId, run.revision, 'cancel', 21);
+    assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get(item.runId).completed_at, 21);
+    for (const sql of [
+      'UPDATE agent_run_terminal_times SET completed_at=0',
+      'DELETE FROM agent_run_terminal_times',
+      `INSERT OR REPLACE INTO agent_run_terminal_times VALUES ('tenant','agent','${item.runId}',0)`
+    ])
+      assert.throws(() => db.exec(sql), /immutable/);
+  } finally {
+    db.close();
+    close(s);
+  }
+});
+
+test('completion timestamps cover success, failure, cancellation, expiry and reconciliation', () => {
+  const s = setup(),
+    db = new DatabaseSync(s.path),
+    create = name => s.runs.create(scope, name, { definitionVersion: 1, maxAttempts: 2, deadline: 100 }, 1),
+    claim = run => s.runs.claim(scope, run.runId, run.revision, 'worker', 20, 10);
+  try {
+    for (const outcome of ['succeeded', 'failed']) {
+      const running = claim(create(outcome)),
+        settled = s.runs.settle(scope, running.runId, running.revision, running.leaseToken, outcome, 12);
+      assert.equal(settled.status, outcome);
+      assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get(outcome).completed_at, 12);
+    }
+    const running = claim(create('stopped')),
+      requested = s.runs.request(scope, 'stopped', running.revision, 'cancel', 11);
+    s.runs.settle(scope, 'stopped', requested.revision, running.leaseToken, 'stopped', 13);
+    assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('stopped').completed_at, 13);
+    const expired = create('expired');
+    s.runs.expireDeadline(scope, 'expired', expired.revision, 100);
+    assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('expired').completed_at, 100);
+    const held = claim(create('reconciled')),
+      uncertain = s.runs.recoverExpired(scope, 'reconciled', held.revision, 30);
+    s.runs.reconcile(scope, 'reconciled', uncertain.revision, 'succeeded', 31);
+    assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('reconciled').completed_at, 31);
+    const terminal = s.runs.get(scope, 'succeeded');
+    s.runs.archive(scope, 'succeeded', terminal.revision);
+    assert.equal(db.prepare('SELECT completed_at FROM agent_run_terminal_times WHERE run_id=?').get('succeeded').completed_at, 12);
+  } finally {
+    db.close();
+    close(s);
+  }
+});
+
+test('completion-age redaction rechecks eligibility after delayed authorization', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' };
+  let now = 100,
+    entered,
+    release,
+    blocking = true;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    retention = new SqliteAgentTriggerRetention(s.path, {
+      scope,
+      authorize: async () => {
+        if (blocking) {
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      authorizeDiscovery: () => true
+    });
+  try {
+    const item = s.triggers.enqueue(scope, event, settings, 10),
+      run = s.runs.get(scope, item.runId);
+    s.runs.request(scope, item.runId, run.revision, 'cancel', 20);
+    const worker = new AgentTriggerRetentionWorker({ retention, actor, minAgeMs: 50, ageFrom: 'completion', maxPerPass: 5, pollMs: 100, clock: () => now, authorize: () => true, onError: () => {} }),
+      pending = worker.runOnce();
+    await ready;
+    now = 60;
+    blocking = false;
+    release();
+    assert.equal(await pending, 0);
+    assert.equal(s.triggers.get(scope, item.runId).payloadRedacted, undefined);
+    now = 100;
+    assert.equal(await worker.runOnce(), 1);
+    await worker.stop();
+  } finally {
+    release();
+    retention.close();
+    close(s);
+  }
+});
+
+test('trigger retention stop signals cooperative discovery and store policies', async () => {
+  for (const phase of ['discovery', 'redact']) {
+    const s = setup(),
+      actor = { tenantId: 'tenant', principalId: 'cleaner' };
+    let blocking = true,
+      entered,
+      seen;
+    const ready = new Promise(resolve => (entered = resolve)),
+      pause = async signal => {
+        if (blocking) {
+          assert.ok(signal instanceof AbortSignal);
+          seen = signal;
+          entered();
+          await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+        }
+        return true;
+      },
+      retention = new SqliteAgentTriggerRetention(s.path, {
+        scope,
+        authorize: (_actor, _action, _run, signal) => (phase === 'redact' ? pause(signal) : true),
+        authorizeDiscovery: (_actor, _scope, signal) => (phase === 'discovery' ? pause(signal) : true)
+      });
+    try {
+      const item = s.triggers.enqueue(scope, event, settings, 10),
+        run = s.runs.get(scope, item.runId);
+      s.runs.request(scope, item.runId, run.revision, 'cancel', 11);
+      const errors = [],
+        worker = new AgentTriggerRetentionWorker({ retention, actor, minAgeMs: 20, maxPerPass: 5, pollMs: 100, clock: () => 100, authorize: () => true, onError: error => errors.push(error) }),
+        pending = worker.runOnce();
+      await ready;
+      await worker.stop();
+      assert.equal(seen.aborted, true);
+      assert.equal(await pending, 0);
+      assert.equal(s.triggers.get(scope, item.runId).payloadRedacted, undefined);
+      assert.deepEqual(errors, []);
+      blocking = false;
+      assert.equal(await worker.runOnce(), 1);
+      await worker.stop();
+    } finally {
+      retention.close();
+      close(s);
+    }
+  }
+});
+
+test('direct retention cancellation is reported consistently when policy rejects on abort', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'cleaner' };
+  let entered;
+  const ready = new Promise(resolve => (entered = resolve)),
+    retention = new SqliteAgentTriggerRetention(s.path, {
+      scope,
+      authorize: (_actor, _action, _run, signal) =>
+        new Promise((_resolve, reject) => {
+          entered();
+          signal.addEventListener('abort', () => reject(Error('policy aborted')), { once: true });
+        }),
+      authorizeDiscovery: () => true
+    }),
+    controller = new AbortController();
+  try {
+    const item = s.triggers.enqueue(scope, event, settings, 10),
+      run = s.runs.get(scope, item.runId);
+    s.runs.request(scope, item.runId, run.revision, 'cancel', 11);
+    const pending = retention.redact(actor, item.runId, 100, controller.signal);
+    await ready;
+    controller.abort();
+    await assert.rejects(pending, /Trigger retention cancelled/);
+    assert.equal(s.triggers.get(scope, item.runId).payloadRedacted, undefined);
+    const already = new AbortController();
+    already.abort();
+    await assert.rejects(retention.listCandidates(actor, {}, already.signal), /Trigger retention cancelled/);
+  } finally {
+    controller.abort();
+    retention.close();
+    close(s);
+  }
+});
+
+test('Paddle webhook verifies signed notifications and acknowledges durable event retries', async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const now = 1700000000,
+    secret = 'paddle-secret-abcdefghijklmnop',
+    prior = 'paddle-secret-zyxwvutsrqponml',
+    observations = [],
+    adapter = createPaddleWebhookAdapter({ identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'paddle' }, agentId: 'agent', secret, previousSecrets: [prior], clock: () => now * 1000 }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 2,
+      ...adapter,
+      observe: value => observations.push(value),
+      authorize: (_identity, event) => event.eventType === 'subscription.created' && event.payload.data.customer_id === 'ctm_allowed'
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      event = { event_id: 'evt_123', event_type: 'subscription.created', notification_id: 'ntf_first', occurred_at: '2026-01-01T00:00:00Z', data: { customer_id: 'ctm_allowed' } },
+      signature = (key, time, body) =>
+        createHmac('sha256', key)
+          .update(time + ':')
+          .update(body)
+          .digest('hex'),
+      post = (body, header) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'paddle-signature': header }, body }),
+      body = JSON.stringify(event);
+    let response = await post(body, `ts=${now};h1=${signature(prior, now, body)};h1=${signature(secret, now, body)}`);
+    assert.equal(response.status, 200);
+    const first = await response.json();
+    assert.equal(first.duplicate, false);
+    const retry = JSON.stringify({ ...event, notification_id: 'ntf_second' });
+    response = await post(retry, `ts=${now};h1=${signature(secret, now, retry)}`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal(s.triggers.get(scope, first.runId).payload.notification_id, undefined);
+    assert.equal((await post(body + ' ', `ts=${now};h1=${signature(secret, now, body)}`)).status, 401);
+    assert.equal((await post(body, `ts=${now - 6};h1=${signature(secret, now - 6, body)}`)).status, 401);
+    assert.equal((await post(body, `ts=${now + 6};h1=${signature(secret, now + 6, body)}`)).status, 401);
+    const changed = JSON.stringify({ ...event, data: { customer_id: 'ctm_allowed', value: 2 } });
+    assert.equal((await post(changed, `ts=${now};h1=${signature(secret, now, changed)}`)).status, 409);
+    const denied = JSON.stringify({ ...event, event_id: 'evt_456', data: { customer_id: 'ctm_other' } });
+    assert.equal((await post(denied, `ts=${now};h1=${signature(secret, now, denied)}`)).status, 403);
+    assert.deepEqual(
+      observations.slice(0, 2).map(item => item.outcome),
+      ['accepted', 'completed']
+    );
+  } finally {
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Paddle webhook rejects ambiguous signatures and invalid event envelopes', () => {
+  const options = { identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'paddle' }, agentId: 'agent', secret: 'paddle-secret-abcdefghijklmnop', clock: () => 1700000000000 };
+  for (const bad of [
+    { ...options, secret: 'short' },
+    { ...options, previousSecrets: [options.secret] },
+    { ...options, toleranceSeconds: 0 },
+    { ...options, identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createPaddleWebhookAdapter(bad), /configuration/);
+  const adapter = createPaddleWebhookAdapter(options),
+    body = Buffer.from('{"event_id":"evt_1","event_type":"customer.created","notification_id":"ntf_1","data":{}}'),
+    sig = createHmac('sha256', options.secret).update('1700000000:').update(body).digest('hex'),
+    header = `ts=1700000000;h1=${sig}`;
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['Paddle-Signature', header] }, body));
+  for (const headers of [
+    ['Paddle-Signature', header, 'paddle-signature', header],
+    ['Paddle-Signature', header + ';ts=1700000000'],
+    ['Paddle-Signature', 'ts=1700000000;h1=bad']
+  ])
+    assert.equal(adapter.authenticateRaw({ rawHeaders: headers }, body), undefined);
+  for (const invalid of ['{}', '{"event_id":"bad","event_type":"x","notification_id":"ntf_1","data":{}}', '{"event_id":"evt_1","event_type":"x","notification_id":"bad","data":{}}'])
+    assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from(invalid)), /Invalid/);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([0xff])));
+});
+
+test('Linear webhook verifies raw signatures, binds events and acknowledges durable retries', { timeout: 15000 }, async () => {
+  const { createLinearWebhookAdapter } = await import('../dist/index.js'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const now = 1700000000000,
+    secret = 'a'.repeat(32),
+    old = 'b'.repeat(32),
+    observations = [],
+    adapter = createLinearWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'linear' },
+      agentId: 'agent',
+      organizationId: 'org-1',
+      webhookId: 'hook-1',
+      eventType: 'Issue',
+      secret,
+      previousSecrets: [old],
+      clock: () => now
+    }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 3,
+      ...adapter,
+      observe: value => observations.push(value),
+      authorize: (_identity, event) => event.payload.data.teamId === 'allowed'
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const url = `http://127.0.0.1:${ingress.address().port}/events`,
+      payload = { organizationId: 'org-1', webhookId: 'hook-1', webhookTimestamp: now, type: 'Issue', action: 'create', data: { id: 'issue-1', teamId: 'allowed' } },
+      sig = (key, body) => createHmac('sha256', key).update(body).digest('hex'),
+      post = (body, signature, headers = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'linear-signature': signature, ...headers }, body }),
+      body = JSON.stringify(payload);
+    let response = await post(body, sig(old, body));
+    assert.equal(response.status, 200);
+    const first = await response.json();
+    assert.equal(first.duplicate, false);
+    response = await post(body, sig(secret, body), { 'linear-delivery': 'different' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal(s.triggers.get(scope, first.runId).eventType, 'linear.Issue.create');
+    assert.deepEqual(
+      observations.slice(0, 2).map(value => value.outcome),
+      ['accepted', 'completed']
+    );
+    const refreshed = JSON.stringify({ data: { teamId: 'allowed', id: 'issue-1' }, action: 'create', type: 'Issue', webhookTimestamp: now - 1000, webhookId: 'hook-1', organizationId: 'org-1' });
+    response = await post(refreshed, sig(secret, refreshed));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).runId, first.runId);
+    assert.equal(s.runs.list(scope).length, 1);
+    assert.equal(s.triggers.get(scope, first.runId).payload.webhookTimestamp, undefined);
+    assert.equal((await post(body + ' ', sig(secret, body))).status, 401);
+    for (const change of [{ webhookTimestamp: now - 60001 }, { webhookTimestamp: now + 60001 }]) {
+      const bad = JSON.stringify({ ...payload, ...change });
+      assert.equal((await post(bad, sig(secret, bad))).status, 401);
+    }
+    for (const change of [{ organizationId: 'other' }, { webhookId: 'other' }, { type: 'Comment' }, { action: 'archive' }]) {
+      const bad = JSON.stringify({ ...payload, ...change });
+      assert.equal((await post(bad, sig(secret, bad))).status, 400);
+    }
+    const denied = JSON.stringify({ ...payload, data: { id: 'issue-2', teamId: 'other' } });
+    assert.equal((await post(denied, sig(secret, denied))).status, 403);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Linear webhook rejects ambiguous signatures and invalid configuration', async () => {
+  const { createLinearWebhookAdapter } = await import('../dist/index.js'),
+    options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'linear' },
+      agentId: 'agent',
+      organizationId: 'org',
+      webhookId: 'hook',
+      eventType: 'Issue',
+      secret: 'a'.repeat(32),
+      clock: () => 100000
+    };
+  for (const change of [{ secret: 'short' }, { previousSecrets: [options.secret] }, { eventType: 'bad type' }, { toleranceMs: 0 }, { identity: { ...options.identity, sourceId: 'schedule.bad' } }])
+    assert.throws(() => createLinearWebhookAdapter({ ...options, ...change }), /configuration/);
+  const adapter = createLinearWebhookAdapter(options),
+    body = Buffer.from('{"webhookTimestamp":100000}'),
+    sig = createHmac('sha256', options.secret).update(body).digest('hex');
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['Linear-Signature', sig] }, body));
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['Linear-Signature', sig, 'linear-signature', sig] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['Linear-Signature', 'bad'] }, body), undefined);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([255])));
+});
+
+test('Square webhook verifies URL-bound signatures and enqueues only authorized merchant events', { timeout: 15000 }, async () => {
+  const { createSquareWebhookAdapter } = await import('../dist/index.js'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const current = 'current-square-signing-key',
+    old = 'previous-square-signing-key',
+    notificationUrl = 'https://example.com/webhook?tenant=one',
+    identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'square' },
+    config = { identity, agentId: 'agent', merchantId: 'merchant-1', notificationUrl, eventTypes: ['customer.created'], signatureKey: current, previousSignatureKeys: [old] },
+    adapter = createSquareWebhookAdapter(config);
+  config.eventTypes[0] = 'customer.deleted';
+  config.identity.tenantId = 'other';
+  let authorized = true;
+  const ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 3, ...adapter, authorize: () => authorized });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      payload = {
+        merchant_id: 'merchant-1',
+        type: 'customer.created',
+        event_id: 'b1f76d3a-58b3-4e2b-93b4-3580309384aa',
+        created_at: '2025-01-01T00:00:00Z',
+        data: { type: 'customer', id: 'customer-1', object: { customer: { id: 'customer-1' } } }
+      },
+      body = JSON.stringify(payload),
+      sign = (bytes, secret = current, url = notificationUrl) => createHmac('sha256', secret).update(url).update(bytes).digest('base64'),
+      post = (bytes, signature) => fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-square-hmacsha256-signature': signature }, body: bytes });
+    assert.equal((await post(body + ' ', sign(body))).status, 401);
+    assert.equal((await post(body, sign(body, current, 'https://wrong.example/webhook'))).status, 401);
+    const first = await post(body, sign(body, old));
+    assert.equal(first.status, 202);
+    const receipt = await first.json();
+    const retry = await post(body, sign(body));
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json()).runId, receipt.runId);
+    assert.equal(s.runs.list(scope).length, 1);
+    const stored = s.triggers.get(scope, receipt.runId);
+    assert.equal(stored.eventType, 'square.customer.created');
+    assert.equal(stored.eventId, 'square.' + payload.event_id);
+    assert.deepEqual(stored.payload, payload);
+    const changed = JSON.stringify({ ...payload, data: { type: 'customer', id: 'changed' } });
+    assert.equal((await post(changed, sign(changed))).status, 409);
+    for (const change of [{ merchant_id: 'other' }, { type: 'customer.deleted' }, { event_id: '' }, { data: null }]) {
+      const bytes = JSON.stringify({ ...payload, ...change });
+      assert.equal((await post(bytes, sign(bytes))).status, 400);
+    }
+    authorized = false;
+    const other = JSON.stringify({ ...payload, event_id: 'another-event' });
+    assert.equal((await post(other, sign(other))).status, 403);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Square webhook uses the published signature vector and rejects ambiguous configuration and headers', async () => {
+  const { createSquareWebhookAdapter } = await import('../dist/index.js'),
+    options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'square' },
+      agentId: 'agent',
+      merchantId: 'merchant',
+      notificationUrl: 'https://example.com/webhook',
+      eventTypes: ['customer.created'],
+      signatureKey: 'asdf1234'
+    },
+    adapter = createSquareWebhookAdapter(options),
+    body = Buffer.from('{"hello":"world"}'),
+    signature = '2kRE5qRU2tR+tBGlDwMEw2avJ7QM4ikPYD/PJ3bd9Og=';
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['X-Square-HmacSha256-Signature', signature] }, body));
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['x-square-hmacsha256-signature', signature, 'X-Square-HmacSha256-Signature', signature] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['x-square-hmacsha256-signature', signature.slice(0, -1) + 'A'] }, body), undefined);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([255])));
+  for (const change of [
+    { notificationUrl: 'http://example.com/webhook' },
+    { notificationUrl: 'https://user@example.com/webhook' },
+    { notificationUrl: 'https://example.com/webhook#fragment' },
+    { eventTypes: [] },
+    { eventTypes: ['bad type'] },
+    { previousSignatureKeys: ['asdf1234'] },
+    { signatureKey: 'short' },
+    { identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createSquareWebhookAdapter({ ...options, ...change }), /configuration/);
+});
+
+test('Square optional signed event age bounds stale and future replay without trusting delivery headers', async () => {
+  const { createSquareWebhookAdapter } = await import('../dist/index.js'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let now = 1735689600000;
+  const notificationUrl = 'https://example.com/webhook',
+    secret = 'square-secret-abcdefghijklmnop',
+    config = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'square' },
+      agentId: 'agent',
+      merchantId: 'merchant',
+      notificationUrl,
+      eventTypes: ['customer.created'],
+      signatureKey: secret,
+      maxAgeMs: 86400000,
+      futureSkewMs: 60000,
+      clock: () => now
+    },
+    adapter = createSquareWebhookAdapter(config);
+  config.maxAgeMs = 60000;
+  config.clock = () => 0;
+  const sign = body => createHmac('sha256', secret).update(notificationUrl).update(body).digest('base64'),
+    body = timestamp => Buffer.from(JSON.stringify({ merchant_id: 'merchant', type: 'customer.created', event_id: 'event-1', created_at: timestamp, data: { type: 'customer', id: 'customer-1' } })),
+    authenticate = value => adapter.authenticateRaw({ rawHeaders: ['x-square-hmacsha256-signature', sign(value), 'square-initial-delivery-timestamp', 'forged'] }, value);
+  try {
+    const recent = body(new Date(now).toISOString()),
+      oldBoundary = body(new Date(now - 86400000).toISOString()),
+      futureBoundary = body(new Date(now + 60000).toISOString());
+    assert.ok(authenticate(recent));
+    assert.ok(authenticate(oldBoundary));
+    assert.ok(authenticate(futureBoundary));
+    assert.equal(authenticate(body(new Date(now - 86400001).toISOString())), undefined);
+    assert.equal(authenticate(body(new Date(now + 60001).toISOString())), undefined);
+    assert.ok(authenticate(body('2024-12-31T16:00:00-08:00')));
+    for (const value of ['2025-02-30T00:00:00Z', '2025-01-01T00:00:00', 'not-a-time', null]) assert.equal(authenticate(body(value)), undefined);
+    const missing = Buffer.from('{"data":{}}');
+    assert.equal(authenticate(missing), undefined);
+    now += 86400001;
+    assert.throws(() => adapter.mapAuthenticatedBody(recent), /Invalid Square/);
+    now = 1735689600000;
+    const ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 2, ...adapter, authorize: () => true });
+    ingress.listen(0, '127.0.0.1');
+    const { once } = await import('node:events');
+    await once(ingress, 'listening');
+    try {
+      const post = value =>
+        fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-square-hmacsha256-signature': sign(value), 'square-initial-delivery-timestamp': 'fresh' },
+          body: value
+        });
+      assert.equal((await post(body(new Date(now - 86400001).toISOString()))).status, 401);
+      const first = await post(recent);
+      assert.equal(first.status, 202);
+      const receipt = await first.json();
+      const retry = await post(recent);
+      assert.equal(retry.status, 200);
+      assert.equal((await retry.json()).runId, receipt.runId);
+      assert.equal(s.runs.list(scope).length, 1);
+    } finally {
+      ingress.closeAllConnections();
+      await new Promise(resolve => ingress.close(resolve));
+    }
+    for (const change of [{ maxAgeMs: 59999 }, { maxAgeMs: 604800001 }, { futureSkewMs: -1 }, { futureSkewMs: 300001 }, { maxAgeMs: undefined }, { clock: 'bad' }])
+      assert.throws(() => createSquareWebhookAdapter({ ...config, ...change }), /configuration/);
+  } finally {
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Notion signed events bind workspace, subscription and integration and deduplicate retries', { timeout: 15000 }, async () => {
+  const { createNotionWebhookAdapter } = await import('../dist/index.js'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'notion' },
+    workspaceId = '11111111-1111-4111-8111-111111111111',
+    subscriptionId = '22222222-2222-4222-8222-222222222222',
+    integrationId = '33333333-3333-4333-8333-333333333333',
+    eventId = '44444444-4444-4444-8444-444444444444',
+    secret = 'secret_notion_verification_token',
+    previous = 'secret_old_verification_token',
+    config = { identity, agentId: 'agent', workspaceId, subscriptionId, integrationId, eventTypes: ['page.created'], verificationToken: secret, previousVerificationTokens: [previous] },
+    adapter = createNotionWebhookAdapter(config);
+  config.eventTypes[0] = 'page.deleted';
+  config.identity.tenantId = 'other';
+  let authorized = true;
+  const ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 3, ...adapter, authorize: () => authorized });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      payload = {
+        id: eventId,
+        timestamp: '2025-01-01T00:00:00Z',
+        workspace_id: workspaceId,
+        subscription_id: subscriptionId,
+        integration_id: integrationId,
+        type: 'page.created',
+        attempt_number: 1,
+        entity: { id: eventId, type: 'page' },
+        data: { parent: { id: workspaceId, type: 'page' } }
+      },
+      sign = (body, key = secret) => 'sha256=' + createHmac('sha256', key).update(body).digest('hex'),
+      post = (body, signature = sign(body)) => fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-notion-signature': signature }, body });
+    const firstBody = JSON.stringify(payload);
+    assert.equal((await post(firstBody + ' ', sign(firstBody))).status, 401);
+    const first = await post(firstBody, sign(firstBody, previous));
+    assert.equal(first.status, 202);
+    const receipt = await first.json(),
+      retry = await post(JSON.stringify({ ...payload, attempt_number: 2 }));
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json()).runId, receipt.runId);
+    const stored = s.triggers.get(scope, receipt.runId);
+    assert.equal(stored.eventType, 'notion.page.created');
+    assert.equal(stored.eventId, 'notion.' + eventId);
+    assert.equal(Object.hasOwn(stored.payload, 'attempt_number'), false);
+    assert.equal(s.runs.list(scope).length, 1);
+    const changed = JSON.stringify({ ...payload, attempt_number: 3, data: { parent: { id: integrationId, type: 'page' } } });
+    assert.equal((await post(changed)).status, 409);
+    for (const update of [
+      { workspace_id: integrationId },
+      { subscription_id: integrationId },
+      { integration_id: workspaceId },
+      { type: 'page.deleted' },
+      { id: 'bad' },
+      { attempt_number: 0 },
+      { attempt_number: 9 },
+      { timestamp: '2025-02-30T00:00:00Z' },
+      { entity: null },
+      { entity: { id: 'bad', type: 'page' } },
+      { entity: { id: eventId, type: '' } },
+      { data: [] }
+    ]) {
+      const body = JSON.stringify({ ...payload, ...update });
+      assert.equal((await post(body)).status, 400, JSON.stringify(update));
+    }
+    authorized = false;
+    const body = JSON.stringify({ ...payload, id: '55555555-5555-4555-8555-555555555555' });
+    assert.equal((await post(body)).status, 403);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Notion adapter rejects ambiguous signatures, malformed payloads and unsafe configuration', async () => {
+  const { createNotionWebhookAdapter } = await import('../dist/index.js'),
+    options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'notion' },
+      agentId: 'agent',
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      subscriptionId: '22222222-2222-4222-8222-222222222222',
+      integrationId: '33333333-3333-4333-8333-333333333333',
+      eventTypes: ['page.created'],
+      verificationToken: 'secret_notion_verification_token'
+    },
+    adapter = createNotionWebhookAdapter(options),
+    body = Buffer.from('{"test":1}'),
+    signature = 'sha256=' + createHmac('sha256', options.verificationToken).update(body).digest('hex');
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['X-Notion-Signature', signature] }, body));
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['X-Notion-Signature', signature, 'x-notion-signature', signature] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['X-Notion-Signature', 'sha256=bad'] }, body), undefined);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([255])));
+  for (const change of [
+    { verificationToken: 'short' },
+    { previousVerificationTokens: [options.verificationToken] },
+    { eventTypes: [] },
+    { eventTypes: ['bad type'] },
+    { workspaceId: 'bad' },
+    { subscriptionId: 'bad' },
+    { integrationId: 'bad' },
+    { identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createNotionWebhookAdapter({ ...options, ...change }), /configuration/);
+});
+
+test('Notion optional event-age policy rejects stale and future deliveries across verification and mapping', async () => {
+  const { createNotionWebhookAdapter } = await import('../dist/index.js');
+  let now = 1735689600000;
+  const options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'notion' },
+      agentId: 'agent',
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      subscriptionId: '22222222-2222-4222-8222-222222222222',
+      integrationId: '33333333-3333-4333-8333-333333333333',
+      eventTypes: ['page.created'],
+      verificationToken: 'secret_notion_verification_token',
+      maxAgeMs: 86400000,
+      futureSkewMs: 60000,
+      clock: () => now
+    },
+    adapter = createNotionWebhookAdapter(options);
+  options.maxAgeMs = 60000;
+  options.clock = () => 0;
+  const body = timestamp =>
+      Buffer.from(
+        JSON.stringify({
+          id: '44444444-4444-4444-8444-444444444444',
+          timestamp,
+          workspace_id: options.workspaceId,
+          subscription_id: options.subscriptionId,
+          integration_id: options.integrationId,
+          type: 'page.created',
+          attempt_number: 1,
+          entity: { id: options.workspaceId, type: 'page' },
+          data: {}
+        })
+      ),
+    authenticate = value => adapter.authenticateRaw({ rawHeaders: ['x-notion-signature', 'sha256=' + createHmac('sha256', options.verificationToken).update(value).digest('hex')] }, value);
+  const recent = body(new Date(now).toISOString());
+  assert.ok(authenticate(recent));
+  assert.ok(authenticate(body(new Date(now - 86400000).toISOString())));
+  assert.ok(authenticate(body(new Date(now + 60000).toISOString())));
+  assert.equal(authenticate(body(new Date(now - 86400001).toISOString())), undefined);
+  assert.equal(authenticate(body(new Date(now + 60001).toISOString())), undefined);
+  for (const value of ['2025-02-30T00:00:00Z', '2025-01-01T00:00:00', null]) assert.equal(authenticate(body(value)), undefined);
+  now += 86400001;
+  assert.throws(() => adapter.mapAuthenticatedBody(recent), /Invalid Notion/);
+  for (const change of [{ maxAgeMs: 59999 }, { maxAgeMs: 604800001 }, { futureSkewMs: -1 }, { futureSkewMs: 300001 }, { maxAgeMs: undefined }, { clock: 'bad' }])
+    assert.throws(() => createNotionWebhookAdapter({ ...options, ...change }), /configuration/);
+});
+
+test('Notion event-age policy is enforced by authenticated HTTP ingress', async () => {
+  const { createNotionWebhookAdapter } = await import('../dist/index.js'),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  const now = 1735689600000,
+    secret = 'secret_notion_verification_token',
+    workspaceId = '11111111-1111-4111-8111-111111111111',
+    subscriptionId = '22222222-2222-4222-8222-222222222222',
+    integrationId = '33333333-3333-4333-8333-333333333333',
+    adapter = createNotionWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'notion' },
+      agentId: 'agent',
+      workspaceId,
+      subscriptionId,
+      integrationId,
+      eventTypes: ['page.created'],
+      verificationToken: secret,
+      maxAgeMs: 86400000,
+      clock: () => now
+    }),
+    ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 3, ...adapter, authorize: () => true });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const event = {
+        id: '44444444-4444-4444-8444-444444444444',
+        workspace_id: workspaceId,
+        subscription_id: subscriptionId,
+        integration_id: integrationId,
+        type: 'page.created',
+        attempt_number: 1,
+        entity: { id: workspaceId, type: 'page' },
+        data: {}
+      },
+      post = timestamp => {
+        const body = JSON.stringify({ ...event, timestamp });
+        return fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-notion-signature': 'sha256=' + createHmac('sha256', secret).update(body).digest('hex') },
+          body
+        });
+      };
+    assert.equal((await post(new Date(now - 86400001).toISOString())).status, 401);
+    assert.equal((await post(new Date(now).toISOString())).status, 202);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Notion signature verification interoperates with the official SDK on exact Unicode bytes', async () => {
+  const { createNotionWebhookAdapter } = await import('../dist/index.js'),
+    { signWebhookPayload, verifyWebhookSignature } = await import('@notionhq/client'),
+    verificationToken = 'secret_notion_verification_token',
+    adapter = createNotionWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'notion' },
+      agentId: 'agent',
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      subscriptionId: '22222222-2222-4222-8222-222222222222',
+      integrationId: '33333333-3333-4333-8333-333333333333',
+      eventTypes: ['page.created'],
+      verificationToken
+    });
+  const body = Buffer.from('{"title":"مرحبا 🌍","value":1}'),
+    signature = await signWebhookPayload({ body, verificationToken });
+  assert.ok(adapter.authenticateRaw({ rawHeaders: ['X-Notion-Signature', signature] }, body));
+  assert.equal(await verifyWebhookSignature({ body, signature, verificationToken }), true);
+  const changed = Buffer.concat([body, Buffer.from(' ')]);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['x-notion-signature', signature] }, changed), undefined);
+  assert.equal(await verifyWebhookSignature({ body: changed, signature, verificationToken }), false);
+});
+
+test('Discord signed webhook events acknowledge pings and durable retries with empty 204 responses', { timeout: 15000 }, async () => {
+  const { createDiscordWebhookAdapter } = await import('../dist/index.js'),
+    { generateKeyPairSync, sign } = await import('node:crypto'),
+    current = generateKeyPairSync('ed25519'),
+    old = generateKeyPairSync('ed25519'),
+    raw = pair => pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32),
+    now = 1735689600000,
+    options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'discord' },
+      agentId: 'agent',
+      applicationId: '123456789012345678',
+      publicKey: raw(current),
+      previousPublicKeys: [raw(old)],
+      eventTypes: ['APPLICATION_AUTHORIZED'],
+      clock: () => now
+    },
+    adapter = createDiscordWebhookAdapter(options),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:'),
+    observations = [];
+  definitions.save('tenant', manifest, 0);
+  let authorized = true;
+  const ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 3, ...adapter, authorize: () => authorized, observe: value => observations.push(value) });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      timestamp = String(now / 1000),
+      signature = (body, pair = current, time = timestamp) => sign(null, Buffer.concat([Buffer.from(time), Buffer.from(body)]), pair.privateKey).toString('hex'),
+      post = (body, sig = signature(body), time = timestamp) =>
+        fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-signature-ed25519': sig, 'x-signature-timestamp': time }, body }),
+      ping = JSON.stringify({ version: 1, application_id: options.applicationId, type: 0 }),
+      event = JSON.stringify({
+        version: 1,
+        application_id: options.applicationId,
+        type: 1,
+        event: { type: 'APPLICATION_AUTHORIZED', timestamp: '2024-10-18T14:42:53.064834', data: { user: { id: '123' } } }
+      });
+    let response = await post(ping, signature(ping, old));
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), '');
+    assert.equal(s.runs.list(scope).length, 0);
+    assert.equal((await post(ping + ' ', signature(ping))).status, 401);
+    assert.equal((await post(ping, signature(ping, current, String(now / 1000 - 901)), String(now / 1000 - 901))).status, 401);
+    response = await post(event);
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), '');
+    assert.equal(s.runs.list(scope).length, 1);
+    response = await post(event);
+    assert.equal(response.status, 204);
+    assert.equal(s.runs.list(scope).length, 1);
+    const [run] = s.runs.list(scope),
+      stored = s.triggers.get(scope, run.runId);
+    assert.equal(stored.eventType, 'discord.APPLICATION_AUTHORIZED');
+    assert.deepEqual(stored.payload, JSON.parse(event));
+    assert.equal(observations.find(x => x.status === 204 && x.outcome === 'accepted')?.status, 204);
+    for (const value of [
+      { version: 1, application_id: '9', type: 0 },
+      { version: 1, application_id: options.applicationId, type: 1, event: { type: 'ENTITLEMENT_CREATE', timestamp: 'now' } },
+      { version: 1, application_id: options.applicationId, type: 2 }
+    ]) {
+      const body = JSON.stringify(value);
+      assert.equal((await post(body)).status, 400);
+    }
+    authorized = false;
+    const other = JSON.stringify({ ...JSON.parse(event), event: { ...JSON.parse(event).event, timestamp: 'later' } });
+    assert.equal((await post(other)).status, 403);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Discord webhook rejects duplicate signature headers and unsafe configuration', async () => {
+  const { createDiscordWebhookAdapter } = await import('../dist/index.js'),
+    { generateKeyPairSync, sign } = await import('node:crypto'),
+    pair = generateKeyPairSync('ed25519'),
+    key = pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32),
+    options = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'discord' },
+      agentId: 'agent',
+      applicationId: '123456789012345678',
+      publicKey: key,
+      eventTypes: ['APPLICATION_AUTHORIZED'],
+      clock: () => 100000
+    },
+    adapter = createDiscordWebhookAdapter(options),
+    body = Buffer.from('{"test":true}'),
+    sig = sign(null, Buffer.concat([Buffer.from('100'), body]), pair.privateKey).toString('hex'),
+    headers = ['x-signature-ed25519', sig, 'x-signature-timestamp', '100'];
+  assert.ok(adapter.authenticateRaw({ rawHeaders: headers }, body));
+  assert.equal(adapter.authenticateRaw({ rawHeaders: [...headers, 'X-Signature-Timestamp', '100'] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: [...headers, 'X-Signature-Ed25519', sig] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['x-signature-ed25519', '00', 'x-signature-timestamp', '100'] }, body), undefined);
+  for (const change of [
+    { publicKey: new Uint8Array(31) },
+    { previousPublicKeys: [key] },
+    { eventTypes: [] },
+    { eventTypes: ['bad'] },
+    { applicationId: 'bad' },
+    { toleranceSeconds: 0 },
+    { toleranceSeconds: 3601 },
+    { identity: { ...options.identity, sourceId: 'schedule.bad' } }
+  ])
+    assert.throws(() => createDiscordWebhookAdapter({ ...options, ...change }), /configuration/);
+});
+
+test('Discord host-derived event keys deduplicate equivalent encodings and reject conflicting payloads', async () => {
+  const { createDiscordWebhookAdapter } = await import('../dist/index.js'),
+    { generateKeyPairSync, sign } = await import('node:crypto'),
+    pair = generateKeyPairSync('ed25519'),
+    publicKey = pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32),
+    identity = { tenantId: 'tenant', principalId: 'sender', sourceId: 'discord' },
+    options = {
+      identity,
+      agentId: 'agent',
+      applicationId: '123456789012345678',
+      publicKey,
+      eventTypes: ['ENTITLEMENT_CREATE'],
+      eventKey: payload => {
+        const event = payload.event,
+          key = event.type + ':' + event.data.id + ':' + event.timestamp;
+        event.data.id = 'mutated';
+        return key;
+      }
+    },
+    adapter = createDiscordWebhookAdapter(options),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  options.eventKey = () => {
+    throw Error('replacement');
+  };
+  const ingress = createAgentEventIngress({ triggers: s.triggers, definitions, maxPending: 3, ...adapter, authorize: () => true });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const payload = { version: 1, application_id: options.applicationId, type: 1, event: { type: 'ENTITLEMENT_CREATE', timestamp: '2024-10-18T18:41:21.109604', data: { id: '123', sku_id: '456' } } },
+      post = body => {
+        const timestamp = String(Math.floor(Date.now() / 1000)),
+          signature = sign(null, Buffer.concat([Buffer.from(timestamp), Buffer.from(body)]), pair.privateKey).toString('hex');
+        return fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-signature-timestamp': timestamp, 'x-signature-ed25519': signature },
+          body
+        });
+      };
+    assert.equal((await post(JSON.stringify(payload))).status, 204);
+    assert.equal((await post(JSON.stringify(payload, null, 2))).status, 204);
+    assert.equal(s.runs.list(scope).length, 1);
+    const [run] = s.runs.list(scope);
+    assert.equal(s.triggers.get(scope, run.runId).payload.event.data.id, '123');
+    const changed = structuredClone(payload);
+    changed.event.data.sku_id = 'different';
+    assert.equal((await post(JSON.stringify(changed))).status, 409);
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Discord event keys fail closed for invalid or asynchronous host results', async () => {
+  const { createDiscordWebhookAdapter } = await import('../dist/index.js'),
+    { generateKeyPairSync } = await import('node:crypto'),
+    pair = generateKeyPairSync('ed25519'),
+    base = {
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'discord' },
+      agentId: 'agent',
+      applicationId: '123456789012345678',
+      publicKey: pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32),
+      eventTypes: ['ENTITLEMENT_CREATE']
+    },
+    body = Buffer.from(JSON.stringify({ version: 1, application_id: base.applicationId, type: 1, event: { type: 'ENTITLEMENT_CREATE', timestamp: 'now', data: { id: '123' } } }));
+  assert.throws(() => createDiscordWebhookAdapter({ ...base, eventKey: 'bad' }), /configuration/);
+  for (const eventKey of [() => '', () => null, () => Promise.reject(Error('late')), () => 'a'.repeat(1025), () => 'bad\nkey'])
+    assert.throws(() => createDiscordWebhookAdapter({ ...base, eventKey }).mapAuthenticatedBody(body), /Invalid Discord event key/);
+  await new Promise(resolve => setImmediate(resolve));
+});
+
+test('Discord ingress deadlines prevent late enqueue and allow a later acknowledged retry', async () => {
+  const { createDiscordWebhookAdapter } = await import('../dist/index.js'),
+    { generateKeyPairSync, sign } = await import('node:crypto'),
+    pair = generateKeyPairSync('ed25519'),
+    publicKey = pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32),
+    s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let release,
+    entered,
+    blocked = true;
+  const waiting = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    adapter = createDiscordWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'discord' },
+      agentId: 'agent',
+      applicationId: '123456789012345678',
+      publicKey,
+      eventTypes: ['APPLICATION_AUTHORIZED']
+    }),
+    ingress = createAgentEventIngress({
+      triggers: s.triggers,
+      definitions,
+      maxPending: 3,
+      maxInFlight: 2,
+      requestTimeoutMs: 100,
+      abortOnDisconnect: true,
+      ...adapter,
+      authorize: async (_source, _event, _definition, signal) => {
+        if (blocked) {
+          entered();
+          await gate;
+          assert.equal(signal.aborted, true);
+        }
+        return true;
+      }
+    });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const body = JSON.stringify({
+        version: 1,
+        application_id: '123456789012345678',
+        type: 1,
+        event: { type: 'APPLICATION_AUTHORIZED', timestamp: '2024-10-18T14:42:53.064834', data: { user: { id: '123' } } }
+      }),
+      post = () => {
+        const timestamp = String(Math.floor(Date.now() / 1000)),
+          signature = sign(null, Buffer.concat([Buffer.from(timestamp), Buffer.from(body)]), pair.privateKey).toString('hex');
+        return fetch(`http://127.0.0.1:${ingress.address().port}/events`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-signature-timestamp': timestamp, 'x-signature-ed25519': signature },
+          body
+        });
+      };
+    const pending = post();
+    await waiting;
+    assert.equal((await pending).status, 503);
+    assert.equal(s.runs.list(scope).length, 0);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(s.runs.list(scope).length, 0);
+    const retry = await post();
+    assert.equal(retry.status, 204);
+    assert.equal(await retry.text(), '');
+    assert.equal(s.runs.list(scope).length, 1);
+  } finally {
+    release();
+    ingress.closeAllConnections();
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    close(s);
+  }
+});
+
+test('Discord signature verification interoperates with TweetNaCl on exact Unicode bytes', async () => {
+  const { createDiscordWebhookAdapter } = await import('../dist/index.js'),
+    { default: nacl } = await import('tweetnacl'),
+    pair = nacl.sign.keyPair.fromSeed(Uint8Array.from({ length: 32 }, (_, i) => i)),
+    now = 1735689600000,
+    timestamp = String(now / 1000),
+    body = Buffer.from('{"name":"مرحبا 🌍"}'),
+    signature = Buffer.from(nacl.sign.detached(Buffer.concat([Buffer.from(timestamp), body]), pair.secretKey)).toString('hex'),
+    adapter = createDiscordWebhookAdapter({
+      identity: { tenantId: 'tenant', principalId: 'sender', sourceId: 'discord' },
+      agentId: 'agent',
+      applicationId: '123456789012345678',
+      publicKey: pair.publicKey,
+      eventTypes: ['APPLICATION_AUTHORIZED'],
+      clock: () => now
+    });
+  const headers = ['X-Signature-Ed25519', signature, 'X-Signature-Timestamp', timestamp];
+  assert.ok(adapter.authenticateRaw({ rawHeaders: headers }, body));
+  assert.equal(adapter.authenticateRaw({ rawHeaders: headers }, Buffer.concat([body, Buffer.from(' ')])), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['X-Signature-Ed25519', signature, 'X-Signature-Timestamp', String(Number(timestamp) + 1)] }, body), undefined);
+  assert.ok(nacl.sign.detached.verify(Buffer.concat([Buffer.from(timestamp), body]), Buffer.from(signature, 'hex'), pair.publicKey));
 });

@@ -1,59 +1,866 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID,generateKeyPairSync} from 'node:crypto';
+import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import pg from 'pg';
-import {SignJWT} from 'jose';
-import {CapabilityRegistry,createCapabilityServer,createJwtCapabilityAuthenticator,PostgresJwtRevocations} from '../../core/dist/index.js';
-import {PostgresAgentDefinitions,registerAgentDefinitionControl,registerAgentDefinitionStatus,registerAgentDefinitionHistory,registerAgentDefinitionWrite,registerAgentDefinitionRead} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'},manifest=(tenantId='tenant')=>({manifestVersion:1,tenantId,agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',instructions:'private instructions',model:{provider:'local',model:'model',credentialRef:'secret-ref'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}});
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
-async function serve(registry){const server=createCapabilityServer(registry,req=>req.headers.authorization==='valid'?actor:req.headers.authorization==='other'?{...actor,tenantId:'other'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));return {server,call:(input,auth='valid',operation='control')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`,{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})})};}
-test('definition control rejects invalid configuration',()=>{assert.throws(()=>registerAgentDefinitionControl(new CapabilityRegistry(()=>{}),{}),/Invalid definition control/);});
-test('signed and revocable identities protect shared definition controls',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_identity_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{}),issuer='https://identity.example.test/',audience='agent-admin',time=1700000000000;let server,auth;try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:who=>who.principalId==='operator',clock:()=>time});await definitions.initialize();await definitions.save(actor,manifest(),0);const revocations=new PostgresJwtRevocations({issuer,query:(sql,args)=>pool.query(sql,args),clock:()=>time});await revocations.initialize();const pair=generateKeyPairSync('rsa',{modulusLength:2048}),jwk={...pair.publicKey.export({format:'jwk'}),kid:'key',alg:'RS256',use:'sig'};auth=createJwtCapabilityAuthenticator({issuer,audience,jwks:{keys:[jwk]},maxTokenAgeSeconds:600,clock:()=>time,isTokenActive:claims=>revocations.isTokenActive(claims),resolveActor:claims=>typeof claims.tenant==='string'&&typeof claims.sub==='string'?{tenantId:claims.tenant,principalId:claims.sub}:undefined});registerAgentDefinitionControl(registry,{definitions,scope,operationId:'control',path:'/control',authorize:who=>who.principalId==='operator'});server=createCapabilityServer(registry,auth,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const sign=(changes={})=>new SignJWT({iss:issuer,aud:audience,sub:'operator',tenant:'tenant',client_id:'client',jti:'token-1',iat:time/1000,exp:time/1000+300,...changes}).setProtectedHeader({alg:'RS256',kid:'key',typ:'at+jwt'}).sign(pair.privateKey),call=async(token,input)=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/control/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});
-  assert.equal((await call(await sign({aud:'wrong'}),{version:1,enabled:false})).status,401);assert.equal((await call(await sign({tenant:'other'}),{version:1,enabled:false})).status,403);assert.equal((await call(await sign({sub:'other'}),{version:1,enabled:false})).status,403);const token=await sign();assert.equal((await call(token,{version:1,enabled:false})).status,200);assert.equal((await definitions.get(actor,'agent')).manifest.lifecycle.enabled,false);assert.deepEqual((await definitions.history(actor,'agent')).items.map(item=>item.principalId),['operator','operator']);await revocations.revoke('token-1',time+300000);assert.equal((await call(token,{version:2,enabled:true})).status,401);assert.equal((await definitions.get(actor,'agent')).version,2);
- }finally{auth?.close();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+import { SignJWT } from 'jose';
+import { CapabilityRegistry, createCapabilityServer, createJwtCapabilityAuthenticator, PostgresJwtRevocations } from '../../core/dist/index.js';
+import {
+  PostgresAgentDefinitions,
+  registerAgentDefinitionControl,
+  registerAgentDefinitionStatus,
+  registerAgentDefinitionHistory,
+  registerAgentDefinitionWrite,
+  registerAgentDefinitionRead
+} from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  manifest = (tenantId = 'tenant') => ({
+    manifestVersion: 1,
+    tenantId,
+    agentId: 'agent',
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    instructions: 'private instructions',
+    model: { provider: 'local', model: 'model', credentialRef: 'secret-ref' },
+    allowedCapabilities: ['lookup'],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 1000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  });
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+async function serve(registry) {
+  const server = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    call: (input, auth = 'valid', operation = 'control') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {
+        method: 'POST',
+        headers: { authorization: auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      })
+  };
+}
+test('definition control rejects invalid configuration', () => {
+  assert.throws(() => registerAgentDefinitionControl(new CapabilityRegistry(() => {}), {}), /Invalid definition control/);
 });
-test('full definition reads require separate authorization and fence concurrent edits',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_read_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,mode='normal',reads=0,storeAllowed=true;try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:(_who,action)=>action!=='read'||storeAllowed});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionRead(registry,{definitions,scope,operationId:'read',path:'/read',authorize:async(_who,action,value)=>{if(action==='read'){reads++;assert.equal(value.manifest.instructions,'private instructions');value.manifest.name='tampered';if(mode==='revoke'&&reads===2)return false;if(mode==='change'&&reads===1)await definitions.save(actor,{...manifest(),name:'Changed'},1);}return true;}});const app=await serve(registry);server=app.server;assert.equal((await app.call({query:{}},'bad','read')).status,401);assert.equal((await app.call({query:{}},'other','read')).status,403);assert.equal((await app.call({query:{agentId:'other'}},'valid','read')).status,400);const response=await app.call({query:{}},'valid','read');assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{version:1,manifest:manifest()});reads=0;mode='revoke';assert.equal((await app.call({query:{}},'valid','read')).status,403);reads=0;mode='change';assert.equal((await app.call({query:{}},'valid','read')).status,409);mode='normal';storeAllowed=false;assert.equal((await app.call({query:{}},'valid','read')).status,403);}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('signed and revocable identities protect shared definition controls', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_identity_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {}),
+    issuer = 'https://identity.example.test/',
+    audience = 'agent-admin',
+    time = 1700000000000;
+  let server, auth;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: who => who.principalId === 'operator',
+      clock: () => time
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    const revocations = new PostgresJwtRevocations({ issuer, query: (sql, args) => pool.query(sql, args), clock: () => time });
+    await revocations.initialize();
+    const pair = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+      jwk = { ...pair.publicKey.export({ format: 'jwk' }), kid: 'key', alg: 'RS256', use: 'sig' };
+    auth = createJwtCapabilityAuthenticator({
+      issuer,
+      audience,
+      jwks: { keys: [jwk] },
+      maxTokenAgeSeconds: 600,
+      clock: () => time,
+      isTokenActive: claims => revocations.isTokenActive(claims),
+      resolveActor: claims => (typeof claims.tenant === 'string' && typeof claims.sub === 'string' ? { tenantId: claims.tenant, principalId: claims.sub } : undefined)
+    });
+    registerAgentDefinitionControl(registry, { definitions, scope, operationId: 'control', path: '/control', authorize: who => who.principalId === 'operator' });
+    server = createCapabilityServer(registry, auth, () => {});
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const sign = (changes = {}) =>
+        new SignJWT({ iss: issuer, aud: audience, sub: 'operator', tenant: 'tenant', client_id: 'client', jti: 'token-1', iat: time / 1000, exp: time / 1000 + 300, ...changes })
+          .setProtectedHeader({ alg: 'RS256', kid: 'key', typ: 'at+jwt' })
+          .sign(pair.privateKey),
+      call = async (token, input) =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/control/invoke`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input })
+        });
+    assert.equal((await call(await sign({ aud: 'wrong' }), { version: 1, enabled: false })).status, 401);
+    assert.equal((await call(await sign({ tenant: 'other' }), { version: 1, enabled: false })).status, 403);
+    assert.equal((await call(await sign({ sub: 'other' }), { version: 1, enabled: false })).status, 403);
+    const token = await sign();
+    assert.equal((await call(token, { version: 1, enabled: false })).status, 200);
+    assert.equal((await definitions.get(actor, 'agent')).manifest.lifecycle.enabled, false);
+    assert.deepEqual(
+      (await definitions.history(actor, 'agent')).items.map(item => item.principalId),
+      ['operator', 'operator']
+    );
+    await revocations.revoke('token-1', time + 300000);
+    assert.equal((await call(token, { version: 2, enabled: true })).status, 401);
+    assert.equal((await definitions.get(actor, 'agent')).version, 2);
+  } finally {
+    auth?.close();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('full definition read times out and discards a late database result',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_read_timeout_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),queryWithSignal:async(sql,args,s)=>{if(block){signal=s;entered();await gate;}return pool.query(sql,args);},transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionRead(registry,{definitions,scope,operationId:'read',path:'/read',timeoutMs:100,maxPending:1,authorize:()=>true});const app=await serve(registry);server=app.server;const pending=app.call({query:{}},'valid','read');await ready;assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call({query:{}},'valid','read')).status,503);block=false;release();let status=503;for(let i=0;i<100&&status===503;i++){await new Promise(resolve=>setTimeout(resolve,20));status=(await app.call({query:{}},'valid','read')).status;}assert.equal(status,200);}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('full definition reads require separate authorization and fence concurrent edits', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_read_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    mode = 'normal',
+    reads = 0,
+    storeAllowed = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: (_who, action) => action !== 'read' || storeAllowed
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionRead(registry, {
+      definitions,
+      scope,
+      operationId: 'read',
+      path: '/read',
+      authorize: async (_who, action, value) => {
+        if (action === 'read') {
+          reads++;
+          assert.equal(value.manifest.instructions, 'private instructions');
+          value.manifest.name = 'tampered';
+          if (mode === 'revoke' && reads === 2) return false;
+          if (mode === 'change' && reads === 1) await definitions.save(actor, { ...manifest(), name: 'Changed' }, 1);
+        }
+        return true;
+      }
+    });
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ query: {} }, 'bad', 'read')).status, 401);
+    assert.equal((await app.call({ query: {} }, 'other', 'read')).status, 403);
+    assert.equal((await app.call({ query: { agentId: 'other' } }, 'valid', 'read')).status, 400);
+    const response = await app.call({ query: {} }, 'valid', 'read');
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { version: 1, manifest: manifest() });
+    reads = 0;
+    mode = 'revoke';
+    assert.equal((await app.call({ query: {} }, 'valid', 'read')).status, 403);
+    reads = 0;
+    mode = 'change';
+    assert.equal((await app.call({ query: {} }, 'valid', 'read')).status, 409);
+    mode = 'normal';
+    storeAllowed = false;
+    assert.equal((await app.call({ query: {} }, 'valid', 'read')).status, 403);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition write creates and updates only the fixed agent under independent policy and quota limits',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_write_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,allowed=true;try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:()=>({maxTokensPerRun:100}),clock:()=>100});await definitions.initialize();registerAgentDefinitionWrite(registry,{definitions,scope,operationId:'write',path:'/write',authorize:(_who,action,value)=>{if(value)value.name='policy cannot mutate';return action!=='write'||allowed;}});const app=await serve(registry);server=app.server;const create={expectedVersion:0,manifest:manifest()};assert.equal((await app.call(create,'bad','write')).status,401);assert.equal((await app.call(create,'other','write')).status,403);assert.equal((await app.call({...create,manifest:{...manifest(),agentId:'other'}},'valid','write')).status,400);assert.equal((await app.call({...create,manifest:manifest('other')},'valid','write')).status,400);assert.equal((await app.call({...create,extra:true},'valid','write')).status,400);allowed=false;assert.equal((await app.call(create,'valid','write')).status,403);allowed=true;const response=await app.call(create,'valid','write');assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{agentId:'agent',version:1});assert.equal((await definitions.get(actor,'agent')).manifest.name,'Agent');assert.equal((await app.call(create,'valid','write')).status,409);assert.equal((await app.call({expectedVersion:1,manifest:{...manifest(),quotas:{...manifest().quotas,maxTokensPerRun:101}}},'valid','write')).status,409);const updated=await app.call({expectedVersion:1,manifest:{...manifest(),name:'Updated'}},'valid','write');assert.deepEqual((await updated.json()).result,{agentId:'agent',version:2});assert.deepEqual((await definitions.history(actor,'agent')).items.map(event=>[event.version,event.principalId]),[[1,'operator'],[2,'operator']]);assert.equal(await definitions.get({...actor,tenantId:'other'},'agent'),undefined);}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('full definition read times out and discards a late database result', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_read_timeout_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    release,
+    entered,
+    signal,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      queryWithSignal: async (sql, args, s) => {
+        if (block) {
+          signal = s;
+          entered();
+          await gate;
+        }
+        return pool.query(sql, args);
+      },
+      transaction: transaction(pool),
+      authorize: () => true
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionRead(registry, { definitions, scope, operationId: 'read', path: '/read', timeoutMs: 100, maxPending: 1, authorize: () => true });
+    const app = await serve(registry);
+    server = app.server;
+    const pending = app.call({ query: {} }, 'valid', 'read');
+    await ready;
+    assert.equal((await pending).status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal((await app.call({ query: {} }, 'valid', 'read')).status, 503);
+    block = false;
+    release();
+    let status = 503;
+    for (let i = 0; i < 100 && status === 503; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      status = (await app.call({ query: {} }, 'valid', 'read')).status;
+    }
+    assert.equal(status, 200);
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition write fences a late policy decision and concurrent update',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- for(const mode of ['timeout','race']){const schema='agent_write_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionWrite(registry,{definitions,scope,operationId:'write',path:'/write',timeoutMs:mode==='timeout'?100:1000,maxPending:1,authorize:async(_who,action,_value,s)=>{if(action==='write'&&block){signal=s;entered();await gate;}return true;}});const app=await serve(registry);server=app.server;const pending=app.call({expectedVersion:1,manifest:{...manifest(),name:'Requested'}},'valid','write');await ready;if(mode==='race'){await definitions.save(actor,{...manifest(),name:'Concurrent'},1);block=false;release();assert.equal((await pending).status,409);assert.equal((await definitions.get(actor,'agent')).manifest.name,'Concurrent');}else{assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call({expectedVersion:1,manifest:manifest()},'valid','write')).status,503);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await definitions.get(actor,'agent')).version,1);assert.equal((await app.call({expectedVersion:1,manifest:manifest()},'valid','write')).status,200);}}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}}
+test('definition write creates and updates only the fixed agent under independent policy and quota limits', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_write_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    allowed = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: () => true,
+      tenantLimits: () => ({ maxTokensPerRun: 100 }),
+      clock: () => 100
+    });
+    await definitions.initialize();
+    registerAgentDefinitionWrite(registry, {
+      definitions,
+      scope,
+      operationId: 'write',
+      path: '/write',
+      authorize: (_who, action, value) => {
+        if (value) value.name = 'policy cannot mutate';
+        return action !== 'write' || allowed;
+      }
+    });
+    const app = await serve(registry);
+    server = app.server;
+    const create = { expectedVersion: 0, manifest: manifest() };
+    assert.equal((await app.call(create, 'bad', 'write')).status, 401);
+    assert.equal((await app.call(create, 'other', 'write')).status, 403);
+    assert.equal((await app.call({ ...create, manifest: { ...manifest(), agentId: 'other' } }, 'valid', 'write')).status, 400);
+    assert.equal((await app.call({ ...create, manifest: manifest('other') }, 'valid', 'write')).status, 400);
+    assert.equal((await app.call({ ...create, extra: true }, 'valid', 'write')).status, 400);
+    allowed = false;
+    assert.equal((await app.call(create, 'valid', 'write')).status, 403);
+    allowed = true;
+    const response = await app.call(create, 'valid', 'write');
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { agentId: 'agent', version: 1 });
+    assert.equal((await definitions.get(actor, 'agent')).manifest.name, 'Agent');
+    assert.equal((await app.call(create, 'valid', 'write')).status, 409);
+    assert.equal((await app.call({ expectedVersion: 1, manifest: { ...manifest(), quotas: { ...manifest().quotas, maxTokensPerRun: 101 } } }, 'valid', 'write')).status, 409);
+    const updated = await app.call({ expectedVersion: 1, manifest: { ...manifest(), name: 'Updated' } }, 'valid', 'write');
+    assert.deepEqual((await updated.json()).result, { agentId: 'agent', version: 2 });
+    assert.deepEqual(
+      (await definitions.history(actor, 'agent')).items.map(event => [event.version, event.principalId]),
+      [
+        [1, 'operator'],
+        [2, 'operator']
+      ]
+    );
+    assert.equal(await definitions.get({ ...actor, tenantId: 'other' }, 'agent'), undefined);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition write reports an uncertain result if completion audit fails after commit',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_write_uncertain_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let server,fail=true;try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true}),registry=new CapabilityRegistry(event=>{if(fail&&event.outcome==='succeeded')throw Error('audit unavailable');});await definitions.initialize();registerAgentDefinitionWrite(registry,{definitions,scope,operationId:'write',path:'/write',authorize:()=>true});const app=await serve(registry);server=app.server;const input={expectedVersion:0,manifest:manifest()},response=await app.call(input,'valid','write');assert.equal(response.status,503);assert.equal((await response.json()).code,'CAPABILITY_OUTCOME_UNCERTAIN');assert.equal((await definitions.get(actor,'agent')).version,1);assert.deepEqual((await definitions.history(actor,'agent')).items.map(event=>event.principalId),['operator']);fail=false;assert.equal((await app.call(input,'valid','write')).status,409);assert.equal((await definitions.history(actor,'agent')).items.length,1);}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition write fences a late policy decision and concurrent update', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  for (const mode of ['timeout', 'race']) {
+    const schema = 'agent_write_' + randomUUID().replaceAll('-', ''),
+      url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+      admin = new pg.Pool({ connectionString: url }),
+      pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+      registry = new CapabilityRegistry(() => {});
+    let server,
+      release,
+      entered,
+      signal,
+      block = true;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve));
+    try {
+      await admin.query(`CREATE SCHEMA "${schema}"`);
+      const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+      await definitions.initialize();
+      await definitions.save(actor, manifest(), 0);
+      registerAgentDefinitionWrite(registry, {
+        definitions,
+        scope,
+        operationId: 'write',
+        path: '/write',
+        timeoutMs: mode === 'timeout' ? 100 : 1000,
+        maxPending: 1,
+        authorize: async (_who, action, _value, s) => {
+          if (action === 'write' && block) {
+            signal = s;
+            entered();
+            await gate;
+          }
+          return true;
+        }
+      });
+      const app = await serve(registry);
+      server = app.server;
+      const pending = app.call({ expectedVersion: 1, manifest: { ...manifest(), name: 'Requested' } }, 'valid', 'write');
+      await ready;
+      if (mode === 'race') {
+        await definitions.save(actor, { ...manifest(), name: 'Concurrent' }, 1);
+        block = false;
+        release();
+        assert.equal((await pending).status, 409);
+        assert.equal((await definitions.get(actor, 'agent')).manifest.name, 'Concurrent');
+      } else {
+        assert.equal((await pending).status, 503);
+        assert.equal(signal.aborted, true);
+        assert.equal((await app.call({ expectedVersion: 1, manifest: manifest() }, 'valid', 'write')).status, 503);
+        block = false;
+        release();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal((await definitions.get(actor, 'agent')).version, 1);
+        assert.equal((await app.call({ expectedVersion: 1, manifest: manifest() }, 'valid', 'write')).status, 200);
+      }
+    } finally {
+      release();
+      if (server) {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+      await pool.end();
+      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await admin.end();
+    }
+  }
 });
-test('definition audit endpoint paginates and separately rechecks access',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_history_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,outer=true,inner=true;try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:(_actor,action)=>action!=='audit'||inner,clock:()=>100});await definitions.initialize();await definitions.save(actor,manifest(),0);await definitions.save(actor,{...manifest(),name:'Second'},1);await definitions.save({...actor,tenantId:'other'},manifest('other'),0);registerAgentDefinitionHistory(registry,{definitions,scope,operationId:'history',path:'/history',limit:1,authorize:()=>outer});const app=await serve(registry);server=app.server;assert.equal((await app.call({query:{}},'bad','history')).status,401);assert.equal((await app.call({query:{}},'other','history')).status,403);assert.equal((await app.call({query:{limit:100}},'valid','history')).status,400);const first=(await (await app.call({query:{}},'valid','history')).json()).result;assert.deepEqual(first,{items:[{agentId:'agent',version:1,principalId:'operator',observedAt:100}],nextAfter:1});const second=(await (await app.call({query:{after:1}},'valid','history')).json()).result;assert.deepEqual(second,{items:[{agentId:'agent',version:2,principalId:'operator',observedAt:100}]});inner=false;assert.equal((await app.call({query:{}},'valid','history')).status,403);inner=true;outer=false;assert.equal((await app.call({query:{}},'valid','history')).status,403);}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition write reports an uncertain result if completion audit fails after commit', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_write_uncertain_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let server,
+    fail = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true }),
+      registry = new CapabilityRegistry(event => {
+        if (fail && event.outcome === 'succeeded') throw Error('audit unavailable');
+      });
+    await definitions.initialize();
+    registerAgentDefinitionWrite(registry, { definitions, scope, operationId: 'write', path: '/write', authorize: () => true });
+    const app = await serve(registry);
+    server = app.server;
+    const input = { expectedVersion: 0, manifest: manifest() },
+      response = await app.call(input, 'valid', 'write');
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, 'CAPABILITY_OUTCOME_UNCERTAIN');
+    assert.equal((await definitions.get(actor, 'agent')).version, 1);
+    assert.deepEqual(
+      (await definitions.history(actor, 'agent')).items.map(event => event.principalId),
+      ['operator']
+    );
+    fail = false;
+    assert.equal((await app.call(input, 'valid', 'write')).status, 409);
+    assert.equal((await definitions.history(actor, 'agent')).items.length, 1);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition audit endpoint times out without returning a late page',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_history_timeout_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:async(_actor,action,_id,_manifest,provided)=>{if(action==='audit'&&block){signal=provided;entered();await gate;}return true;}});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionHistory(registry,{definitions,scope,operationId:'history',path:'/history',limit:1,authorize:()=>true,timeoutMs:100,maxPending:1});const app=await serve(registry);server=app.server;const pending=app.call({query:{}},'valid','history');await ready;assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call({query:{}},'valid','history')).status,503);block=false;release();let status=503;for(let i=0;i<100&&status===503;i++){await new Promise(resolve=>setTimeout(resolve,20));status=(await app.call({query:{}},'valid','history')).status;}assert.equal(status,200);}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition audit endpoint paginates and separately rechecks access', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_history_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    outer = true,
+    inner = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: (_actor, action) => action !== 'audit' || inner,
+      clock: () => 100
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    await definitions.save(actor, { ...manifest(), name: 'Second' }, 1);
+    await definitions.save({ ...actor, tenantId: 'other' }, manifest('other'), 0);
+    registerAgentDefinitionHistory(registry, { definitions, scope, operationId: 'history', path: '/history', limit: 1, authorize: () => outer });
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ query: {} }, 'bad', 'history')).status, 401);
+    assert.equal((await app.call({ query: {} }, 'other', 'history')).status, 403);
+    assert.equal((await app.call({ query: { limit: 100 } }, 'valid', 'history')).status, 400);
+    const first = (await (await app.call({ query: {} }, 'valid', 'history')).json()).result;
+    assert.deepEqual(first, { items: [{ agentId: 'agent', version: 1, principalId: 'operator', observedAt: 100 }], nextAfter: 1 });
+    const second = (await (await app.call({ query: { after: 1 } }, 'valid', 'history')).json()).result;
+    assert.deepEqual(second, { items: [{ agentId: 'agent', version: 2, principalId: 'operator', observedAt: 100 }] });
+    inner = false;
+    assert.equal((await app.call({ query: {} }, 'valid', 'history')).status, 403);
+    inner = true;
+    outer = false;
+    assert.equal((await app.call({ query: {} }, 'valid', 'history')).status, 403);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition audit cancellation fences a late database result',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_history_cancel_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release,entered,seen,reads=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),controller=new AbortController();try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),queryWithSignal:async(sql,args,signal)=>{seen=signal;entered();await gate;return pool.query(sql,args);},transaction:transaction(pool),authorize:(_who,action)=>{if(action==='audit')reads++;return true;}});await definitions.initialize();await definitions.save(actor,manifest(),0);const pending=definitions.historyWithSignal(actor,'agent',{},controller.signal);await ready;controller.abort();release();await assert.rejects(pending);assert.equal(seen.aborted,true);assert.equal(reads,1);await assert.rejects(definitions.historyWithSignal(actor,'agent',{},AbortSignal.abort()));}finally{release();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition audit endpoint times out without returning a late page', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_history_timeout_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    release,
+    entered,
+    signal,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: async (_actor, action, _id, _manifest, provided) => {
+        if (action === 'audit' && block) {
+          signal = provided;
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionHistory(registry, { definitions, scope, operationId: 'history', path: '/history', limit: 1, authorize: () => true, timeoutMs: 100, maxPending: 1 });
+    const app = await serve(registry);
+    server = app.server;
+    const pending = app.call({ query: {} }, 'valid', 'history');
+    await ready;
+    assert.equal((await pending).status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal((await app.call({ query: {} }, 'valid', 'history')).status, 503);
+    block = false;
+    release();
+    let status = 503;
+    for (let i = 0; i < 100 && status === 503; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      status = (await app.call({ query: {} }, 'valid', 'history')).status;
+    }
+    assert.equal(status, 200);
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition status exposes only authorized metadata and detects concurrent changes',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_status_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,mode='normal',reads=0;try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionStatus(registry,{definitions,scope,operationId:'status',path:'/status',authorize:async(_who,action,state)=>{if(action==='read'){reads++;assert.deepEqual(Object.keys(state).sort(),['enabled','version']);state.version=999;if(mode==='revoke'&&reads===2)return false;if(mode==='change'&&reads===1)await definitions.save(actor,{...manifest(),name:'Changed'},1);}return true;}});const app=await serve(registry);server=app.server;assert.equal((await app.call({query:{}},'bad','status')).status,401);assert.equal((await app.call({query:{}},'other','status')).status,403);assert.equal((await app.call({query:{agentId:'other'}},'valid','status')).status,400);const response=await app.call({query:{}},'valid','status');assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{agentId:'agent',version:1,enabled:true});reads=0;mode='revoke';assert.equal((await app.call({query:{}},'valid','status')).status,403);reads=0;mode='change';assert.equal((await app.call({query:{}},'valid','status')).status,409);assert.equal((await definitions.get(actor,'agent')).version,2);}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition audit cancellation fences a late database result', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_history_cancel_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let release,
+    entered,
+    seen,
+    reads = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    controller = new AbortController();
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      queryWithSignal: async (sql, args, signal) => {
+        seen = signal;
+        entered();
+        await gate;
+        return pool.query(sql, args);
+      },
+      transaction: transaction(pool),
+      authorize: (_who, action) => {
+        if (action === 'audit') reads++;
+        return true;
+      }
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    const pending = definitions.historyWithSignal(actor, 'agent', {}, controller.signal);
+    await ready;
+    controller.abort();
+    release();
+    await assert.rejects(pending);
+    assert.equal(seen.aborted, true);
+    assert.equal(reads, 1);
+    await assert.rejects(definitions.historyWithSignal(actor, 'agent', {}, AbortSignal.abort()));
+  } finally {
+    release();
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition status bounds a slow database read and fences late results',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_status_timeout_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),queryWithSignal:async(sql,args,s)=>{if(block){signal=s;entered();await gate;}return pool.query(sql,args);},transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionStatus(registry,{definitions,scope,operationId:'status',path:'/status',timeoutMs:100,maxPending:1,authorize:()=>true});const app=await serve(registry);server=app.server;const pending=app.call({query:{}},'valid','status');await ready;assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call({query:{}},'valid','status')).status,503);block=false;release();let status=503;for(let i=0;i<100&&status===503;i++){await new Promise(resolve=>setTimeout(resolve,20));status=(await app.call({query:{}},'valid','status')).status;}assert.equal(status,200);}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition status exposes only authorized metadata and detects concurrent changes', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_status_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    mode = 'normal',
+    reads = 0;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionStatus(registry, {
+      definitions,
+      scope,
+      operationId: 'status',
+      path: '/status',
+      authorize: async (_who, action, state) => {
+        if (action === 'read') {
+          reads++;
+          assert.deepEqual(Object.keys(state).sort(), ['enabled', 'version']);
+          state.version = 999;
+          if (mode === 'revoke' && reads === 2) return false;
+          if (mode === 'change' && reads === 1) await definitions.save(actor, { ...manifest(), name: 'Changed' }, 1);
+        }
+        return true;
+      }
+    });
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ query: {} }, 'bad', 'status')).status, 401);
+    assert.equal((await app.call({ query: {} }, 'other', 'status')).status, 403);
+    assert.equal((await app.call({ query: { agentId: 'other' } }, 'valid', 'status')).status, 400);
+    const response = await app.call({ query: {} }, 'valid', 'status');
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { agentId: 'agent', version: 1, enabled: true });
+    reads = 0;
+    mode = 'revoke';
+    assert.equal((await app.call({ query: {} }, 'valid', 'status')).status, 403);
+    reads = 0;
+    mode = 'change';
+    assert.equal((await app.call({ query: {} }, 'valid', 'status')).status, 409);
+    assert.equal((await definitions.get(actor, 'agent')).version, 2);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('shared definition control fences changes and records the actual operator',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_control_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,allowed=true;try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,clock:()=>100});await definitions.initialize();await definitions.save(actor,manifest(),0);await definitions.save({...actor,tenantId:'other'},manifest('other'),0);const options={definitions,scope:{...scope},operationId:'control',path:'/control',authorize:(_who,action,state)=>{if(state)assert.deepEqual(Object.keys(state).sort(),['enabled','version']);return action!=='suspend'||allowed;}};registerAgentDefinitionControl(registry,options);options.scope.tenantId='other';const app=await serve(registry);server=app.server;
-  assert.equal((await app.call({version:1,enabled:false},'bad')).status,401);assert.equal((await app.call({version:1,enabled:false},'other')).status,403);assert.equal((await app.call({version:1,enabled:false,agentId:'other'})).status,400);allowed=false;assert.equal((await app.call({version:1,enabled:false})).status,403);allowed=true;const response=await app.call({version:1,enabled:false});assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{agentId:'agent',version:2,enabled:false});const changed=await definitions.get(actor,'agent');assert.deepEqual(changed.manifest,{...manifest(),lifecycle:{...manifest().lifecycle,enabled:false}});assert.equal((await app.call({version:1,enabled:true})).status,409);assert.equal((await app.call({version:2,enabled:false})).status,409);const enabled=await app.call({version:2,enabled:true});assert.equal(enabled.status,200);assert.deepEqual((await enabled.json()).result,{agentId:'agent',version:3,enabled:true});assert.equal((await definitions.get({...actor,tenantId:'other'},'agent')).version,1);assert.deepEqual((await definitions.history(actor,'agent')).items.map(event=>[event.version,event.principalId]),[[1,'operator'],[2,'operator'],[3,'operator']]);await pool.query("CREATE FUNCTION reject_control_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");await pool.query('CREATE TRIGGER reject_control_audit BEFORE INSERT ON app_mixer_agent_definition_audit FOR EACH ROW EXECUTE FUNCTION reject_control_audit()');assert.equal((await app.call({version:3,enabled:false})).status,500);assert.equal((await definitions.get(actor,'agent')).version,3);assert.equal((await definitions.history(actor,'agent')).items.length,3);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition status bounds a slow database read and fences late results', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_status_timeout_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    release,
+    entered,
+    signal,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      queryWithSignal: async (sql, args, s) => {
+        if (block) {
+          signal = s;
+          entered();
+          await gate;
+        }
+        return pool.query(sql, args);
+      },
+      transaction: transaction(pool),
+      authorize: () => true
+    });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionStatus(registry, { definitions, scope, operationId: 'status', path: '/status', timeoutMs: 100, maxPending: 1, authorize: () => true });
+    const app = await serve(registry);
+    server = app.server;
+    const pending = app.call({ query: {} }, 'valid', 'status');
+    await ready;
+    assert.equal((await pending).status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal((await app.call({ query: {} }, 'valid', 'status')).status, 503);
+    block = false;
+    release();
+    let status = 503;
+    for (let i = 0; i < 100 && status === 503; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      status = (await app.call({ query: {} }, 'valid', 'status')).status;
+    }
+    assert.equal(status, 200);
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition control rejects a concurrent definition change',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_control_race_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionControl(registry,{definitions,scope,operationId:'control',path:'/control',authorize:async(_who,action)=>{if(action==='suspend'){entered();await gate;}return true;}});const app=await serve(registry);server=app.server;const pending=app.call({version:1,enabled:false});await ready;await definitions.save(actor,{...manifest(),name:'Updated'},1);release();assert.equal((await pending).status,409);const current=await definitions.get(actor,'agent');assert.equal(current.version,2);assert.equal(current.manifest.name,'Updated');assert.equal(current.manifest.lifecycle.enabled,true);assert.equal((await definitions.history(actor,'agent')).items.length,2);}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('shared definition control fences changes and records the actual operator', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_control_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    allowed = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true, clock: () => 100 });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    await definitions.save({ ...actor, tenantId: 'other' }, manifest('other'), 0);
+    const options = {
+      definitions,
+      scope: { ...scope },
+      operationId: 'control',
+      path: '/control',
+      authorize: (_who, action, state) => {
+        if (state) assert.deepEqual(Object.keys(state).sort(), ['enabled', 'version']);
+        return action !== 'suspend' || allowed;
+      }
+    };
+    registerAgentDefinitionControl(registry, options);
+    options.scope.tenantId = 'other';
+    const app = await serve(registry);
+    server = app.server;
+    assert.equal((await app.call({ version: 1, enabled: false }, 'bad')).status, 401);
+    assert.equal((await app.call({ version: 1, enabled: false }, 'other')).status, 403);
+    assert.equal((await app.call({ version: 1, enabled: false, agentId: 'other' })).status, 400);
+    allowed = false;
+    assert.equal((await app.call({ version: 1, enabled: false })).status, 403);
+    allowed = true;
+    const response = await app.call({ version: 1, enabled: false });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { agentId: 'agent', version: 2, enabled: false });
+    const changed = await definitions.get(actor, 'agent');
+    assert.deepEqual(changed.manifest, { ...manifest(), lifecycle: { ...manifest().lifecycle, enabled: false } });
+    assert.equal((await app.call({ version: 1, enabled: true })).status, 409);
+    assert.equal((await app.call({ version: 2, enabled: false })).status, 409);
+    const enabled = await app.call({ version: 2, enabled: true });
+    assert.equal(enabled.status, 200);
+    assert.deepEqual((await enabled.json()).result, { agentId: 'agent', version: 3, enabled: true });
+    assert.equal((await definitions.get({ ...actor, tenantId: 'other' }, 'agent')).version, 1);
+    assert.deepEqual(
+      (await definitions.history(actor, 'agent')).items.map(event => [event.version, event.principalId]),
+      [
+        [1, 'operator'],
+        [2, 'operator'],
+        [3, 'operator']
+      ]
+    );
+    await pool.query("CREATE FUNCTION reject_control_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");
+    await pool.query('CREATE TRIGGER reject_control_audit BEFORE INSERT ON app_mixer_agent_definition_audit FOR EACH ROW EXECUTE FUNCTION reject_control_audit()');
+    assert.equal((await app.call({ version: 3, enabled: false })).status, 500);
+    assert.equal((await definitions.get(actor, 'agent')).version, 3);
+    assert.equal((await definitions.history(actor, 'agent')).items.length, 3);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('definition control cannot commit after a timed-out permission decision',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_control_timeout_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{});let server,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);registerAgentDefinitionControl(registry,{definitions,scope,operationId:'control',path:'/control',timeoutMs:100,maxPending:1,authorize:async(_who,action,_state,s)=>{if(action==='suspend'&&block){signal=s;entered();await gate;}return true;}});const app=await serve(registry);server=app.server;const pending=app.call({version:1,enabled:false});await ready;assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call({version:1,enabled:false})).status,503);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await definitions.get(actor,'agent')).version,1);assert.equal((await app.call({version:1,enabled:false})).status,200);}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('definition control rejects a concurrent definition change', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_control_race_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server, release, entered;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionControl(registry, {
+      definitions,
+      scope,
+      operationId: 'control',
+      path: '/control',
+      authorize: async (_who, action) => {
+        if (action === 'suspend') {
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    });
+    const app = await serve(registry);
+    server = app.server;
+    const pending = app.call({ version: 1, enabled: false });
+    await ready;
+    await definitions.save(actor, { ...manifest(), name: 'Updated' }, 1);
+    release();
+    assert.equal((await pending).status, 409);
+    const current = await definitions.get(actor, 'agent');
+    assert.equal(current.version, 2);
+    assert.equal(current.manifest.name, 'Updated');
+    assert.equal(current.manifest.lifecycle.enabled, true);
+    assert.equal((await definitions.history(actor, 'agent')).items.length, 2);
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
+});
+test('definition control cannot commit after a timed-out permission decision', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_control_timeout_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {});
+  let server,
+    release,
+    entered,
+    signal,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    registerAgentDefinitionControl(registry, {
+      definitions,
+      scope,
+      operationId: 'control',
+      path: '/control',
+      timeoutMs: 100,
+      maxPending: 1,
+      authorize: async (_who, action, _state, s) => {
+        if (action === 'suspend' && block) {
+          signal = s;
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    });
+    const app = await serve(registry);
+    server = app.server;
+    const pending = app.call({ version: 1, enabled: false });
+    await ready;
+    assert.equal((await pending).status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal((await app.call({ version: 1, enabled: false })).status, 503);
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await definitions.get(actor, 'agent')).version, 1);
+    assert.equal((await app.call({ version: 1, enabled: false })).status, 200);
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });

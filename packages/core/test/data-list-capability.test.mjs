@@ -1,277 +1,1787 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomBytes} from 'node:crypto';
-import {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'},alice={tenantId:'tenant',principalId:'alice',origin:'ui'},bob={tenantId:'tenant',principalId:'bob',origin:'agent'};
-function setup(){const provider=new SqliteDataProvider(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome)),key=randomBytes(32);for(const [id,owner] of [['a-secret','bob'],['b-visible','alice'],['c-secret','bob'],['d-visible','alice']])provider.put(scope,'items',id,{owner},null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:key,authorize:()=>true,authorizeItem:(actor,record)=>actor.principalId===record.value.owner});return {provider,registry,key,events};}
+import { randomBytes } from 'node:crypto';
+import { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' },
+  alice = { tenantId: 'tenant', principalId: 'alice', origin: 'ui' },
+  bob = { tenantId: 'tenant', principalId: 'bob', origin: 'agent' };
+function setup() {
+  const provider = new SqliteDataProvider(':memory:'),
+    events = [],
+    registry = new CapabilityRegistry(event => events.push(event.outcome)),
+    key = randomBytes(32);
+  for (const [id, owner] of [
+    ['a-secret', 'bob'],
+    ['b-visible', 'alice'],
+    ['c-secret', 'bob'],
+    ['d-visible', 'alice']
+  ])
+    provider.put(scope, 'items', id, { owner }, null);
+  registerDataListCapability(registry, provider, {
+    candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+    applicationId: 'app',
+    collection: 'items',
+    cursorKey: key,
+    authorize: () => true,
+    authorizeItem: (actor, record) => actor.principalId === record.value.owner
+  });
+  return { provider, registry, key, events };
+}
 
-test('ID prefix listing is explicitly enabled, scoped, authorized and cursor-bound',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
-  for(const [id,owner] of [['A%1','alice'],['A%2','bob'],['A%3','alice'],['A_1','alice'],['a%4','alice'],['😀1','alice'],['😀2','alice']])provider.put(scope,'items',id,{owner},null);provider.put({...scope,tenantId:'other'},'items','A%4',{owner:'alice'},null);
-  const base={applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId};registerDataListCapability(registry,provider,{...base,candidate:{operationId:'prefix.list',method:'GET',path:'/items'},allowIdPrefix:true});const first=await registry.invoke('prefix.list',{idPrefix:'A%',limit:1},alice);assert.deepEqual(first.items.map(x=>x.id),['A%1']);assert.ok(first.nextCursor);for(const changed of ['A_',undefined,''])await assert.rejects(registry.invoke('prefix.list',{cursor:first.nextCursor,...(changed===undefined?{}:{idPrefix:changed})},alice),/Invalid capability input/);const second=await registry.invoke('prefix.list',{idPrefix:'A%',cursor:first.nextCursor,limit:2},alice);assert.deepEqual(second.items.map(x=>x.id),['A%3']);assert.deepEqual((await registry.invoke('prefix.list',{idPrefix:'A%',order:'desc'},alice)).items.map(x=>x.id),['A%3','A%1']);assert.deepEqual((await registry.invoke('prefix.list',{idPrefix:'😀'},alice)).items.map(x=>x.id),['😀1','😀2']);assert.equal((await registry.invoke('prefix.list',{idPrefix:''},alice)).items.length,6);
-  for(const idPrefix of [null,1,'x'.repeat(257),'a\nb'])await assert.rejects(registry.invoke('prefix.list',{idPrefix},alice),/Invalid capability input/);registerDataListCapability(registry,provider,{...base,candidate:{operationId:'disabled.list',method:'GET',path:'/items'}});await assert.rejects(registry.invoke('disabled.list',{idPrefix:'A'},alice),/Invalid capability input/);const legacy={list:provider.list.bind(provider),get:provider.get.bind(provider),put:provider.put.bind(provider),delete:provider.delete.bind(provider)};registerDataListCapability(registry,legacy,{...base,candidate:{operationId:'legacy.prefix',method:'GET',path:'/items'},allowIdPrefix:true});await assert.rejects(registry.invoke('legacy.prefix',{idPrefix:'A'},alice),/prefix listing unavailable/);
- }finally{provider.close();}
+test('ID prefix listing is explicitly enabled, scoped, authorized and cursor-bound', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    for (const [id, owner] of [
+      ['A%1', 'alice'],
+      ['A%2', 'bob'],
+      ['A%3', 'alice'],
+      ['A_1', 'alice'],
+      ['a%4', 'alice'],
+      ['😀1', 'alice'],
+      ['😀2', 'alice']
+    ])
+      provider.put(scope, 'items', id, { owner }, null);
+    provider.put({ ...scope, tenantId: 'other' }, 'items', 'A%4', { owner: 'alice' }, null);
+    const base = { applicationId: 'app', collection: 'items', cursorKey: randomBytes(32), authorize: () => true, authorizeItem: (actor, item) => item.value.owner === actor.principalId };
+    registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'prefix.list', method: 'GET', path: '/items' }, allowIdPrefix: true });
+    const first = await registry.invoke('prefix.list', { idPrefix: 'A%', limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(x => x.id),
+      ['A%1']
+    );
+    assert.ok(first.nextCursor);
+    for (const changed of ['A_', undefined, ''])
+      await assert.rejects(registry.invoke('prefix.list', { cursor: first.nextCursor, ...(changed === undefined ? {} : { idPrefix: changed }) }, alice), /Invalid capability input/);
+    const second = await registry.invoke('prefix.list', { idPrefix: 'A%', cursor: first.nextCursor, limit: 2 }, alice);
+    assert.deepEqual(
+      second.items.map(x => x.id),
+      ['A%3']
+    );
+    assert.deepEqual(
+      (await registry.invoke('prefix.list', { idPrefix: 'A%', order: 'desc' }, alice)).items.map(x => x.id),
+      ['A%3', 'A%1']
+    );
+    assert.deepEqual(
+      (await registry.invoke('prefix.list', { idPrefix: '😀' }, alice)).items.map(x => x.id),
+      ['😀1', '😀2']
+    );
+    assert.equal((await registry.invoke('prefix.list', { idPrefix: '' }, alice)).items.length, 6);
+    for (const idPrefix of [null, 1, 'x'.repeat(257), 'a\nb']) await assert.rejects(registry.invoke('prefix.list', { idPrefix }, alice), /Invalid capability input/);
+    registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'disabled.list', method: 'GET', path: '/items' } });
+    await assert.rejects(registry.invoke('disabled.list', { idPrefix: 'A' }, alice), /Invalid capability input/);
+    const legacy = { list: provider.list.bind(provider), get: provider.get.bind(provider), put: provider.put.bind(provider), delete: provider.delete.bind(provider) };
+    registerDataListCapability(registry, legacy, { ...base, candidate: { operationId: 'legacy.prefix', method: 'GET', path: '/items' }, allowIdPrefix: true });
+    await assert.rejects(registry.invoke('legacy.prefix', { idPrefix: 'A' }, alice), /prefix listing unavailable/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('indexed ID prefix bounds preserve Unicode, empty and maximal-prefix results',()=>{
- const provider=new SqliteDataProvider(':memory:');try{const maximum=String.fromCodePoint(0x10ffff),beforeSurrogates=String.fromCodePoint(0xd7ff),afterSurrogates=String.fromCodePoint(0xe000);for(const id of ['x','xA','x'+maximum,'y','😀a','😀b',beforeSurrogates+'a',afterSurrogates+'a',maximum,maximum+'a'])provider.put(scope,'items',id,{id},null);const ids=(idPrefix,order)=>provider.list(scope,'items',{idPrefix,order}).items.map(item=>item.id);assert.deepEqual(ids('x','asc'),['x','xA','x'+maximum]);assert.deepEqual(ids('x','desc'),['x'+maximum,'xA','x']);assert.deepEqual(ids('😀','asc'),['😀a','😀b']);assert.deepEqual(ids(beforeSurrogates,'asc'),[beforeSurrogates+'a']);assert.deepEqual(ids(afterSurrogates,'asc'),[afterSurrogates+'a']);assert.deepEqual(ids(maximum,'asc'),[maximum,maximum+'a']);provider.put(scope,'items','\ufffda',{id:'replacement'},null);assert.deepEqual(ids('\ud800','asc'),['\ufffda']);assert.equal(ids('','asc').length,11);}finally{provider.close();}
+test('indexed ID prefix bounds preserve Unicode, empty and maximal-prefix results', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    const maximum = String.fromCodePoint(0x10ffff),
+      beforeSurrogates = String.fromCodePoint(0xd7ff),
+      afterSurrogates = String.fromCodePoint(0xe000);
+    for (const id of ['x', 'xA', 'x' + maximum, 'y', '😀a', '😀b', beforeSurrogates + 'a', afterSurrogates + 'a', maximum, maximum + 'a']) provider.put(scope, 'items', id, { id }, null);
+    const ids = (idPrefix, order) => provider.list(scope, 'items', { idPrefix, order }).items.map(item => item.id);
+    assert.deepEqual(ids('x', 'asc'), ['x', 'xA', 'x' + maximum]);
+    assert.deepEqual(ids('x', 'desc'), ['x' + maximum, 'xA', 'x']);
+    assert.deepEqual(ids('😀', 'asc'), ['😀a', '😀b']);
+    assert.deepEqual(ids(beforeSurrogates, 'asc'), [beforeSurrogates + 'a']);
+    assert.deepEqual(ids(afterSurrogates, 'asc'), [afterSurrogates + 'a']);
+    assert.deepEqual(ids(maximum, 'asc'), [maximum, maximum + 'a']);
+    provider.put(scope, 'items', '\ufffda', { id: 'replacement' }, null);
+    assert.deepEqual(ids('\ud800', 'asc'), ['\ufffda']);
+    assert.equal(ids('', 'asc').length, 11);
+  } finally {
+    provider.close();
+  }
 });
 
-test('SQLite record listing pages in either ID direction without crossing scopes',()=>{
- const provider=new SqliteDataProvider(':memory:');try{for(const id of ['a','b','c','d'])provider.put(scope,'items',id,{id},null);provider.put({...scope,tenantId:'other'},'items','z',{id:'foreign'},null);provider.delete(scope,'items','c',1);assert.equal(provider.supportsReverseList,true);const first=provider.list(scope,'items',{order:'desc',limit:1});assert.deepEqual(first.items.map(x=>x.id),['d']);assert.equal(first.nextAfter,'d');const second=provider.list(scope,'items',{order:'desc',after:first.nextAfter,limit:1});assert.deepEqual(second.items.map(x=>x.id),['b']);assert.equal(second.nextAfter,'b');const last=provider.list(scope,'items',{order:'desc',after:second.nextAfter,limit:1});assert.deepEqual(last.items.map(x=>x.id),['a']);assert.equal(last.nextAfter,undefined);assert.deepEqual(provider.list(scope,'items').items.map(x=>x.id),['a','b','d']);assert.throws(()=>provider.list(scope,'items',{order:'bad'}),/Invalid data listing/);assert.throws(()=>provider.list(scope,'items',{order:'desc',expectedSchemaVersion:1}),/schema version conflict/);}finally{provider.close();}
+test('SQLite record listing pages in either ID direction without crossing scopes', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    for (const id of ['a', 'b', 'c', 'd']) provider.put(scope, 'items', id, { id }, null);
+    provider.put({ ...scope, tenantId: 'other' }, 'items', 'z', { id: 'foreign' }, null);
+    provider.delete(scope, 'items', 'c', 1);
+    assert.equal(provider.supportsReverseList, true);
+    const first = provider.list(scope, 'items', { order: 'desc', limit: 1 });
+    assert.deepEqual(
+      first.items.map(x => x.id),
+      ['d']
+    );
+    assert.equal(first.nextAfter, 'd');
+    const second = provider.list(scope, 'items', { order: 'desc', after: first.nextAfter, limit: 1 });
+    assert.deepEqual(
+      second.items.map(x => x.id),
+      ['b']
+    );
+    assert.equal(second.nextAfter, 'b');
+    const last = provider.list(scope, 'items', { order: 'desc', after: second.nextAfter, limit: 1 });
+    assert.deepEqual(
+      last.items.map(x => x.id),
+      ['a']
+    );
+    assert.equal(last.nextAfter, undefined);
+    assert.deepEqual(
+      provider.list(scope, 'items').items.map(x => x.id),
+      ['a', 'b', 'd']
+    );
+    assert.throws(() => provider.list(scope, 'items', { order: 'bad' }), /Invalid data listing/);
+    assert.throws(() => provider.list(scope, 'items', { order: 'desc', expectedSchemaVersion: 1 }), /schema version conflict/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('authorized reverse listing binds its cursor to direction and preserves record filtering',async()=>{
- const s=setup();try{const first=await s.registry.invoke('items.list',{order:'desc',limit:1},alice);assert.deepEqual(first.items.map(x=>x.id),['d-visible']);assert.ok(first.nextCursor);await assert.rejects(s.registry.invoke('items.list',{cursor:first.nextCursor,order:'asc'},alice),/Invalid capability input/);const second=await s.registry.invoke('items.list',{order:'desc',cursor:first.nextCursor,limit:2},alice);assert.deepEqual(second.items.map(x=>x.id),['b-visible']);assert.ok(second.nextCursor);const last=await s.registry.invoke('items.list',{order:'desc',cursor:second.nextCursor,limit:1},alice);assert.deepEqual(last.items,[]);await assert.rejects(s.registry.invoke('items.list',{order:'sideways'},alice),/Invalid capability input/);const legacy={list:s.provider.list.bind(s.provider),get:s.provider.get.bind(s.provider),put:s.provider.put.bind(s.provider),delete:s.provider.delete.bind(s.provider)};registerDataListCapability(s.registry,legacy,{candidate:{operationId:'legacy.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,authorize:()=>true,authorizeItem:()=>true});await assert.rejects(s.registry.invoke('legacy.list',{order:'desc'},alice),/reverse listing unavailable/);
- }finally{s.provider.close();}
+test('authorized reverse listing binds its cursor to direction and preserves record filtering', async () => {
+  const s = setup();
+  try {
+    const first = await s.registry.invoke('items.list', { order: 'desc', limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(x => x.id),
+      ['d-visible']
+    );
+    assert.ok(first.nextCursor);
+    await assert.rejects(s.registry.invoke('items.list', { cursor: first.nextCursor, order: 'asc' }, alice), /Invalid capability input/);
+    const second = await s.registry.invoke('items.list', { order: 'desc', cursor: first.nextCursor, limit: 2 }, alice);
+    assert.deepEqual(
+      second.items.map(x => x.id),
+      ['b-visible']
+    );
+    assert.ok(second.nextCursor);
+    const last = await s.registry.invoke('items.list', { order: 'desc', cursor: second.nextCursor, limit: 1 }, alice);
+    assert.deepEqual(last.items, []);
+    await assert.rejects(s.registry.invoke('items.list', { order: 'sideways' }, alice), /Invalid capability input/);
+    const legacy = { list: s.provider.list.bind(s.provider), get: s.provider.get.bind(s.provider), put: s.provider.put.bind(s.provider), delete: s.provider.delete.bind(s.provider) };
+    registerDataListCapability(s.registry, legacy, {
+      candidate: { operationId: 'legacy.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: s.key,
+      authorize: () => true,
+      authorizeItem: () => true
+    });
+    await assert.rejects(s.registry.invoke('legacy.list', { order: 'desc' }, alice), /reverse listing unavailable/);
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('HTTP reverse listing reports an unsupported provider as unavailable',async()=>{
- const s=setup();let server;try{const legacy={list:s.provider.list.bind(s.provider),get:s.provider.get.bind(s.provider),put:s.provider.put.bind(s.provider),delete:s.provider.delete.bind(s.provider)};registerDataListCapability(s.registry,legacy,{candidate:{operationId:'legacy.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,authorize:()=>true,authorizeItem:()=>true});registerDataListCapability(s.registry,legacy,{candidate:{operationId:'legacy.prefix',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,allowIdPrefix:true,authorize:()=>true,authorizeItem:()=>true});server=createCapabilityServer(s.registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const prefixResponse=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/legacy.prefix/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{idPrefix:'a'}})});assert.equal(prefixResponse.status,503);const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/legacy.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{order:'desc'}})});assert.equal(response.status,503);}finally{if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));s.provider.close();}
+test('HTTP reverse listing reports an unsupported provider as unavailable', async () => {
+  const s = setup();
+  let server;
+  try {
+    const legacy = { list: s.provider.list.bind(s.provider), get: s.provider.get.bind(s.provider), put: s.provider.put.bind(s.provider), delete: s.provider.delete.bind(s.provider) };
+    registerDataListCapability(s.registry, legacy, {
+      candidate: { operationId: 'legacy.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: s.key,
+      authorize: () => true,
+      authorizeItem: () => true
+    });
+    registerDataListCapability(s.registry, legacy, {
+      candidate: { operationId: 'legacy.prefix', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: s.key,
+      allowIdPrefix: true,
+      authorize: () => true,
+      authorizeItem: () => true
+    });
+    server = createCapabilityServer(
+      s.registry,
+      () => ({ tenantId: 'tenant', principalId: 'alice' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const prefixResponse = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/legacy.prefix/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { idPrefix: 'a' } })
+    });
+    assert.equal(prefixResponse.status, 503);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/legacy.list/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { order: 'desc' } })
+    });
+    assert.equal(response.status, 503);
+  } finally {
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    s.provider.close();
+  }
 });
 
-test('field existence filtering distinguishes missing and null, enforces policy and binds cursors',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),fields=['note'];try{
-  for(const [id,value] of [['a',{owner:'alice',note:null}],['b',{owner:'bob',note:'secret'}],['c',{owner:'alice'}],['d',{owner:'alice',note:false}]])provider.put(scope,'items',id,value,null);
-  const options={candidate:{operationId:'exists.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['note','owner'],existsFilterFields:fields,authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId};registerDataListCapability(registry,provider,options);fields.length=0;
-  const filter={field:'note',operator:'exists',value:true},first=await registry.invoke('exists.list',{filter,limit:1},alice);assert.deepEqual(first.items.map(x=>x.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('exists.list',{cursor:first.nextCursor,filter:{...filter,value:false}},alice),/Invalid capability input/);assert.deepEqual((await registry.invoke('exists.list',{filter,cursor:first.nextCursor,limit:3},alice)).items.map(x=>x.id),['d']);assert.deepEqual((await registry.invoke('exists.list',{filter:{...filter,value:false}},alice)).items.map(x=>x.id),['c']);assert.deepEqual((await registry.invoke('exists.list',{filters:[filter,{field:'note',value:null}]},alice)).items.map(x=>x.id),['a']);
-  for(const invalid of [{...filter,value:null},{...filter,value:'true'},{...filter,field:'owner'}])await assert.rejects(registry.invoke('exists.list',{filter:invalid},alice),/Invalid capability input/);for(const existsFilterFields of [['unknown'],['note','note'],'note'])assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...options,existsFilterFields}),/Invalid data list capability/);
- }finally{provider.close();}
+test('field existence filtering distinguishes missing and null, enforces policy and binds cursors', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    fields = ['note'];
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', note: null }],
+      ['b', { owner: 'bob', note: 'secret' }],
+      ['c', { owner: 'alice' }],
+      ['d', { owner: 'alice', note: false }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    const options = {
+      candidate: { operationId: 'exists.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['note', 'owner'],
+      existsFilterFields: fields,
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    };
+    registerDataListCapability(registry, provider, options);
+    fields.length = 0;
+    const filter = { field: 'note', operator: 'exists', value: true },
+      first = await registry.invoke('exists.list', { filter, limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(x => x.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    await assert.rejects(registry.invoke('exists.list', { cursor: first.nextCursor, filter: { ...filter, value: false } }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (await registry.invoke('exists.list', { filter, cursor: first.nextCursor, limit: 3 }, alice)).items.map(x => x.id),
+      ['d']
+    );
+    assert.deepEqual(
+      (await registry.invoke('exists.list', { filter: { ...filter, value: false } }, alice)).items.map(x => x.id),
+      ['c']
+    );
+    assert.deepEqual(
+      (await registry.invoke('exists.list', { filters: [filter, { field: 'note', value: null }] }, alice)).items.map(x => x.id),
+      ['a']
+    );
+    for (const invalid of [
+      { ...filter, value: null },
+      { ...filter, value: 'true' },
+      { ...filter, field: 'owner' }
+    ])
+      await assert.rejects(registry.invoke('exists.list', { filter: invalid }, alice), /Invalid capability input/);
+    for (const existsFilterFields of [['unknown'], ['note', 'note'], 'note'])
+      assert.throws(() => registerDataListCapability(new CapabilityRegistry(() => {}), provider, { ...options, existsFilterFields }), /Invalid data list capability/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('allowed exact filters scan bounded pages, enforce record policy and bind cursors to the filter',async()=>{const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),fields=['status','count','flag'];let checked=[];try{
- for(const [id,value] of [['a',{owner:'bob',status:'open',count:1,flag:null}],['b',{owner:'alice',status:'closed',count:1,flag:false}],['c',{owner:'alice',status:'open',count:1,flag:null}],['d',{owner:'alice',status:'open',count:'1'}]])provider.put(scope,'items',id,value,null);
- registerDataListCapability(registry,provider,{candidate:{operationId:'items.filter',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:fields,authorize:()=>true,authorizeItem:(actor,item)=>{checked.push(item.id);return actor.principalId===item.value.owner;}});fields.length=0;
- const filter={field:'status',value:'open'},first=await registry.invoke('items.filter',{filter,limit:2},alice);assert.deepEqual(first.items,[]);assert.deepEqual(checked,['a','b']);assert.ok(first.nextCursor);const next=await registry.invoke('items.filter',{filter,cursor:first.nextCursor,limit:2},alice);assert.deepEqual(next.items.map(x=>x.id),['c','d']);
- for(const changed of [undefined,{field:'status',value:'closed'},{field:'count',value:1}])await assert.rejects(registry.invoke('items.filter',{cursor:first.nextCursor,...(changed?{filter:changed}:{})},alice),/Invalid capability input/);
- assert.deepEqual((await registry.invoke('items.filter',{filter:{field:'count',value:1}},alice)).items.map(x=>x.id),['b','c']);assert.deepEqual((await registry.invoke('items.filter',{filter:{field:'flag',value:null}},alice)).items.map(x=>x.id),['c']);
- for(const invalid of [{field:'owner',value:'alice'},{field:'status',value:{}},{field:'status',value:'x',extra:true},{field:'status'},{field:'status',value:'x'.repeat(1025)}])await assert.rejects(registry.invoke('items.filter',{filter:invalid},alice),/Invalid capability input/);
- }finally{provider.close();}});
-
-test('list filter fields are host configured and validated',()=>{const s=setup();try{for(const filterFields of [['__proto__'],['a','a'],['bad\nname'],['x'.repeat(129)],Array(41).fill('x')])assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),s.provider,{candidate:{operationId:'other.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,filterFields,authorize:()=>true,authorizeItem:()=>true}),/Invalid data list capability/);}finally{s.provider.close()}});
-
-test('filters use host-approved literal property names, including empty names',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let server;try{
-  provider.put(scope,'items','a',{'':'yes','a.b':5,'city name':'Dubai','δοκιμή':'alpha',owner:'alice'},null);provider.put(scope,'items','b',{'':'yes','a.b':3,'city name':'Dubai','δοκιμή':'beta',owner:'bob'},null);
-  registerDataListCapability(registry,provider,{candidate:{operationId:'literal.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['','a.b','city name','δοκιμή'],rangeFilterFields:['a.b'],prefixFilterFields:['δοκιμή'],authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});
-  const filters=[{field:'',value:'yes'},{field:'a.b',operator:'gte',value:4},{field:'δοκιμή',operator:'prefix',value:'al'}],first=await registry.invoke('literal.list',{filters,limit:1},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('literal.list',{filters:[{field:'',value:'no'},...filters.slice(1)],cursor:first.nextCursor},alice),/Invalid capability input/);assert.deepEqual((await registry.invoke('literal.list',{filters,cursor:first.nextCursor},alice)).items,[]);
-  assert.deepEqual((await registry.invoke('literal.list',{filter:{field:'city name',value:'Dubai'}},alice)).items.map(item=>item.id),['a']);await assert.rejects(registry.invoke('literal.list',{filter:{field:'a',value:5}},alice),/Invalid capability input/);
-  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/literal.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{filters}})});assert.equal(response.status,200);assert.deepEqual((await response.json()).result.items.map(item=>item.id),['a']);
- }finally{if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();}
+test('allowed exact filters scan bounded pages, enforce record policy and bind cursors to the filter', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    fields = ['status', 'count', 'flag'];
+  let checked = [];
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'bob', status: 'open', count: 1, flag: null }],
+      ['b', { owner: 'alice', status: 'closed', count: 1, flag: false }],
+      ['c', { owner: 'alice', status: 'open', count: 1, flag: null }],
+      ['d', { owner: 'alice', status: 'open', count: '1' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.filter', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: fields,
+      authorize: () => true,
+      authorizeItem: (actor, item) => {
+        checked.push(item.id);
+        return actor.principalId === item.value.owner;
+      }
+    });
+    fields.length = 0;
+    const filter = { field: 'status', value: 'open' },
+      first = await registry.invoke('items.filter', { filter, limit: 2 }, alice);
+    assert.deepEqual(first.items, []);
+    assert.deepEqual(checked, ['a', 'b']);
+    assert.ok(first.nextCursor);
+    const next = await registry.invoke('items.filter', { filter, cursor: first.nextCursor, limit: 2 }, alice);
+    assert.deepEqual(
+      next.items.map(x => x.id),
+      ['c', 'd']
+    );
+    for (const changed of [undefined, { field: 'status', value: 'closed' }, { field: 'count', value: 1 }])
+      await assert.rejects(registry.invoke('items.filter', { cursor: first.nextCursor, ...(changed ? { filter: changed } : {}) }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (await registry.invoke('items.filter', { filter: { field: 'count', value: 1 } }, alice)).items.map(x => x.id),
+      ['b', 'c']
+    );
+    assert.deepEqual(
+      (await registry.invoke('items.filter', { filter: { field: 'flag', value: null } }, alice)).items.map(x => x.id),
+      ['c']
+    );
+    for (const invalid of [
+      { field: 'owner', value: 'alice' },
+      { field: 'status', value: {} },
+      { field: 'status', value: 'x', extra: true },
+      { field: 'status' },
+      { field: 'status', value: 'x'.repeat(1025) }
+    ])
+      await assert.rejects(registry.invoke('items.filter', { filter: invalid }, alice), /Invalid capability input/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('array membership filtering is opt-in, typed, authorized and cursor-bound',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let server;try{
-  for(const [id,value] of [['a',{owner:'alice',tags:['red',2,false,null],state:'open'}],['b',{owner:'bob',tags:['red'],state:'open'}],['c',{owner:'alice',tags:['2',true],state:'open'}],['d',{owner:'alice',tags:'red',state:'open'}],['e',{owner:'alice',tags:[{value:'red'}],state:'open'}]])provider.put(scope,'items',id,value,null);
-  registerDataListCapability(registry,provider,{candidate:{operationId:'arrays.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['tags','state'],arrayContainsFilterFields:['tags'],authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});
-  const filter={field:'tags',operator:'arrayContains',value:'red'},first=await registry.invoke('arrays.list',{filter,limit:1},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('arrays.list',{cursor:first.nextCursor,filter:{...filter,value:'blue'}},alice),/Invalid capability input/);assert.deepEqual((await registry.invoke('arrays.list',{cursor:first.nextCursor,filter,limit:10},alice)).items,[]);
-  for(const value of [2,false,null])assert.deepEqual((await registry.invoke('arrays.list',{filter:{...filter,value}},alice)).items.map(item=>item.id),['a']);assert.deepEqual((await registry.invoke('arrays.list',{filter:{...filter,value:'2'}},alice)).items.map(item=>item.id),['c']);
-  assert.deepEqual((await registry.invoke('arrays.list',{filters:[filter,{field:'state',value:'open'}]},alice)).items.map(item=>item.id),['a']);for(const invalid of [{field:'state',operator:'arrayContains',value:'open'},{field:'tags',operator:'arrayContains',value:{value:'red'}}])await assert.rejects(registry.invoke('arrays.list',{filter:invalid},alice),/Invalid capability input/);
-  assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{candidate:{operationId:'bad.arrays',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['tags'],arrayContainsFilterFields:['state'],authorize:()=>true,authorizeItem:()=>true}),/Invalid data list capability/);
-  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/arrays.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{filter:{...filter,value:null}}})});assert.equal(response.status,200);assert.deepEqual((await response.json()).result.items.map(item=>item.id),['a']);
- }finally{if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();}
+test('list filter fields are host configured and validated', () => {
+  const s = setup();
+  try {
+    for (const filterFields of [['__proto__'], ['a', 'a'], ['bad\nname'], ['x'.repeat(129)], Array(41).fill('x')])
+      assert.throws(
+        () =>
+          registerDataListCapability(new CapabilityRegistry(() => {}), s.provider, {
+            candidate: { operationId: 'other.list', method: 'GET', path: '/items' },
+            applicationId: 'app',
+            collection: 'items',
+            cursorKey: s.key,
+            filterFields,
+            authorize: () => true,
+            authorizeItem: () => true
+          }),
+        /Invalid data list capability/
+      );
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('multiple array membership conditions match all values and canonicalize cursors',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
-  for(const [id,value] of [['a',{owner:'alice',tags:['red','blue',1,'1']}],['b',{owner:'alice',tags:['red']}],['c',{owner:'bob',tags:['red','blue']}],['d',{owner:'alice',tags:['red','blue']} ]])provider.put(scope,'items',id,value,null);
-  registerDataListCapability(registry,provider,{candidate:{operationId:'all-tags.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['tags'],arrayContainsFilterFields:['tags'],authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});
-  const filters=[{field:'tags',operator:'arrayContains',value:'red'},{field:'tags',operator:'arrayContains',value:'blue'}],first=await registry.invoke('all-tags.list',{filters,limit:1},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);const second=await registry.invoke('all-tags.list',{filters:[...filters].reverse(),cursor:first.nextCursor,limit:3},alice);assert.deepEqual(second.items.map(item=>item.id),['d']);
-  await assert.rejects(registry.invoke('all-tags.list',{filters:[filters[0],{...filters[1],value:'green'}],cursor:first.nextCursor},alice),/Invalid capability input/);await assert.rejects(registry.invoke('all-tags.list',{filters:[filters[0],filters[0]]},alice),/Invalid capability input/);
-  assert.deepEqual((await registry.invoke('all-tags.list',{filters:[{field:'tags',operator:'arrayContains',value:1},{field:'tags',operator:'arrayContains',value:'1'}]},alice)).items.map(item=>item.id),['a']);
- }finally{provider.close();}
+test('filters use host-approved literal property names, including empty names', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let server;
+  try {
+    provider.put(scope, 'items', 'a', { '': 'yes', 'a.b': 5, 'city name': 'Dubai', δοκιμή: 'alpha', owner: 'alice' }, null);
+    provider.put(scope, 'items', 'b', { '': 'yes', 'a.b': 3, 'city name': 'Dubai', δοκιμή: 'beta', owner: 'bob' }, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'literal.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['', 'a.b', 'city name', 'δοκιμή'],
+      rangeFilterFields: ['a.b'],
+      prefixFilterFields: ['δοκιμή'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    const filters = [
+        { field: '', value: 'yes' },
+        { field: 'a.b', operator: 'gte', value: 4 },
+        { field: 'δοκιμή', operator: 'prefix', value: 'al' }
+      ],
+      first = await registry.invoke('literal.list', { filters, limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    await assert.rejects(registry.invoke('literal.list', { filters: [{ field: '', value: 'no' }, ...filters.slice(1)], cursor: first.nextCursor }, alice), /Invalid capability input/);
+    assert.deepEqual((await registry.invoke('literal.list', { filters, cursor: first.nextCursor }, alice)).items, []);
+    assert.deepEqual(
+      (await registry.invoke('literal.list', { filter: { field: 'city name', value: 'Dubai' } }, alice)).items.map(item => item.id),
+      ['a']
+    );
+    await assert.rejects(registry.invoke('literal.list', { filter: { field: 'a', value: 5 } }, alice), /Invalid capability input/);
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'alice' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/literal.list/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { filters } })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (await response.json()).result.items.map(item => item.id),
+      ['a']
+    );
+  } finally {
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+  }
 });
 
-test('any-condition filtering is opt-in, authorized and bound to cursor mode',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
-  for(const [id,value] of [['a',{owner:'alice',state:'open',priority:1}],['b',{owner:'bob',state:'open',priority:9}],['c',{owner:'alice',state:'closed',priority:9}],['d',{owner:'alice',state:'open',priority:9}]])provider.put(scope,'items',id,value,null);
-  const common={applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','priority'],authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId};registerDataListCapability(registry,provider,{...common,candidate:{operationId:'any.list',method:'GET',path:'/items'},allowAnyFilters:true});registerDataListCapability(registry,provider,{...common,candidate:{operationId:'all.list',method:'GET',path:'/items'}});
-  const filters=[{field:'state',value:'open'},{field:'priority',value:9}],first=await registry.invoke('any.list',{filters,filterMode:'any',limit:1},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);const next=await registry.invoke('any.list',{filters:[...filters].reverse(),filterMode:'any',cursor:first.nextCursor,limit:3},alice);assert.deepEqual(next.items.map(item=>item.id),['c','d']);
-  const alternatives=[{field:'state',value:'open'},{field:'state',value:'closed'}],altFirst=await registry.invoke('any.list',{filters:alternatives,filterMode:'any',limit:1},alice);assert.deepEqual(altFirst.items.map(item=>item.id),['a']);assert.deepEqual((await registry.invoke('any.list',{filters:[...alternatives].reverse(),filterMode:'any',cursor:altFirst.nextCursor,limit:3},alice)).items.map(item=>item.id),['c','d']);await assert.rejects(registry.invoke('any.list',{filters:[alternatives[0],alternatives[0]],filterMode:'any'},alice),/Invalid capability input/);await assert.rejects(registry.invoke('any.list',{filters:alternatives},alice),/Invalid capability input/);
-  for(const mode of [undefined,'all'])await assert.rejects(registry.invoke('any.list',{filters,cursor:first.nextCursor,...(mode?{filterMode:mode}:{})},alice),/Invalid capability input/);const legacy=await registry.invoke('any.list',{filters,limit:1},alice);assert.ok(legacy.nextCursor);await assert.rejects(registry.invoke('any.list',{filters,filterMode:'any',cursor:legacy.nextCursor},alice),/Invalid capability input/);await registry.invoke('any.list',{filters,filterMode:'all',cursor:legacy.nextCursor},alice);
-  for(const input of [{filters,filterMode:'any'},{filter:filters[0],filterMode:'any'},{filters,filterMode:'invalid'}])await assert.rejects(registry.invoke('all.list',input,alice),/Invalid capability input/);await assert.rejects(registry.invoke('any.list',{filter:filters[0],filterMode:'any'},alice),/Invalid capability input/);
- }finally{provider.close();}
+test('array membership filtering is opt-in, typed, authorized and cursor-bound', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let server;
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', tags: ['red', 2, false, null], state: 'open' }],
+      ['b', { owner: 'bob', tags: ['red'], state: 'open' }],
+      ['c', { owner: 'alice', tags: ['2', true], state: 'open' }],
+      ['d', { owner: 'alice', tags: 'red', state: 'open' }],
+      ['e', { owner: 'alice', tags: [{ value: 'red' }], state: 'open' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'arrays.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['tags', 'state'],
+      arrayContainsFilterFields: ['tags'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    const filter = { field: 'tags', operator: 'arrayContains', value: 'red' },
+      first = await registry.invoke('arrays.list', { filter, limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    await assert.rejects(registry.invoke('arrays.list', { cursor: first.nextCursor, filter: { ...filter, value: 'blue' } }, alice), /Invalid capability input/);
+    assert.deepEqual((await registry.invoke('arrays.list', { cursor: first.nextCursor, filter, limit: 10 }, alice)).items, []);
+    for (const value of [2, false, null])
+      assert.deepEqual(
+        (await registry.invoke('arrays.list', { filter: { ...filter, value } }, alice)).items.map(item => item.id),
+        ['a']
+      );
+    assert.deepEqual(
+      (await registry.invoke('arrays.list', { filter: { ...filter, value: '2' } }, alice)).items.map(item => item.id),
+      ['c']
+    );
+    assert.deepEqual(
+      (await registry.invoke('arrays.list', { filters: [filter, { field: 'state', value: 'open' }] }, alice)).items.map(item => item.id),
+      ['a']
+    );
+    for (const invalid of [
+      { field: 'state', operator: 'arrayContains', value: 'open' },
+      { field: 'tags', operator: 'arrayContains', value: { value: 'red' } }
+    ])
+      await assert.rejects(registry.invoke('arrays.list', { filter: invalid }, alice), /Invalid capability input/);
+    assert.throws(
+      () =>
+        registerDataListCapability(new CapabilityRegistry(() => {}), provider, {
+          candidate: { operationId: 'bad.arrays', method: 'GET', path: '/items' },
+          applicationId: 'app',
+          collection: 'items',
+          cursorKey: randomBytes(32),
+          filterFields: ['tags'],
+          arrayContainsFilterFields: ['state'],
+          authorize: () => true,
+          authorizeItem: () => true
+        }),
+      /Invalid data list capability/
+    );
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'alice' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/arrays.list/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { filter: { ...filter, value: null } } })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (await response.json()).result.items.map(item => item.id),
+      ['a']
+    );
+  } finally {
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+  }
 });
 
-test('SQLite listing uses bounded keyset pages, filters tombstones and isolates scope',()=>{const s=setup();try{s.provider.delete(scope,'items','c-secret',1);s.provider.put({...scope,tenantId:'other'},'items','z',{owner:'alice'},null);let page=s.provider.list(scope,'items',{limit:2});assert.deepEqual(page.items.map(x=>x.id),['a-secret','b-visible']);assert.equal(page.nextAfter,'b-visible');page=s.provider.list(scope,'items',{limit:2,after:page.nextAfter});assert.deepEqual(page.items.map(x=>x.id),['d-visible']);assert.equal(page.nextAfter,undefined);for(const limit of [0,101,1.5])assert.throws(()=>s.provider.list(scope,'items',{limit}),/Invalid data listing/);assert.equal(s.provider.list(scope,'other').items.length,0);}finally{s.provider.close()}});
-
-test('authorized listing filters each record and uses opaque, actor-bound cursors',async()=>{const s=setup();try{let page=await s.registry.invoke('items.list',{limit:1},alice);assert.deepEqual(page.items,[]);assert.equal(typeof page.nextCursor,'string');assert.equal(page.nextCursor.includes('a-secret'),false);const cursor=page.nextCursor;await assert.rejects(s.registry.invoke('items.list',{cursor,limit:1},bob),/Invalid capability input/);await assert.rejects(s.registry.invoke('items.list',{cursor,limit:1},{...alice,tenantId:'other'}),/Invalid capability input/);const tampered=(cursor[0]==='A'?'B':'A')+cursor.slice(1);await assert.rejects(s.registry.invoke('items.list',{cursor:tampered},alice),/Invalid capability input/);page=await s.registry.invoke('items.list',{cursor,limit:1},alice);assert.deepEqual(page.items.map(x=>x.id),['b-visible']);page=await s.registry.invoke('items.list',{cursor:page.nextCursor,limit:1},alice);assert.deepEqual(page.items,[]);page=await s.registry.invoke('items.list',{cursor:page.nextCursor,limit:1},alice);assert.deepEqual(page.items.map(x=>x.id),['d-visible']);assert.equal(page.nextCursor,undefined);assert.ok(s.events.includes('succeeded'));}finally{s.provider.close()}});
-
-test('list policies receive isolated copies and errors fail closed',async()=>{const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),key=randomBytes(32);try{provider.put(scope,'items','one',{owner:'alice'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:key,authorize:actor=>actor.principalId==='alice',authorizeItem:(actor,record)=>{actor.tenantId='other';record.value.owner='changed';return true}});key.fill(0);const page=await registry.invoke('items.list',{},alice);assert.equal(page.items[0].value.owner,'alice');assert.equal(provider.get(scope,'items','one').value.owner,'alice');await assert.rejects(registry.invoke('items.list',{},bob),/forbidden/);await assert.rejects(registry.invoke('items.list',{id:'one'},alice),/Invalid capability input/);const broken=new CapabilityRegistry(()=>{});registerDataListCapability(broken,provider,{candidate:{operationId:'broken',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:()=>{throw Error('policy unavailable')}});await assert.rejects(broken.invoke('broken',{},alice),/policy unavailable/);}finally{provider.close()}});
-
-test('large records are bounded per page and single large records still make progress',()=>{const provider=new SqliteDataProvider(':memory:');try{for(const id of ['a','b','c'])provider.put(scope,'large',id,{text:'x'.repeat(300000)},null);const first=provider.list(scope,'large',{limit:100});assert.deepEqual(first.items.map(x=>x.id),['a']);assert.equal(first.nextAfter,'a');const second=provider.list(scope,'large',{limit:100,after:'a'});assert.deepEqual(second.items.map(x=>x.id),['b']);provider.put(scope,'large','large',{text:'x'.repeat(700000)},null);assert.equal(provider.list(scope,'large',{after:'c'}).items[0].id,'large');}finally{provider.close()}});
-
-test('HTTP listing enforces authentication, rejects cursor tampering and returns authorized rows',async()=>{const s=setup(),server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'alice'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const url=`http://127.0.0.1:${server.address().port}/capabilities/items.list/invoke`,call=async(input,auth='Bearer valid')=>fetch(url,{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});assert.equal((await call({},'bad')).status,401);const first=await (await call({limit:1})).json();assert.equal(first.result.items.length,0);assert.equal((await call({cursor:'bad'})).status,400);const second=await (await call({cursor:first.result.nextCursor,limit:1})).json();assert.equal(second.result.items[0].id,'b-visible');}finally{await new Promise(resolve=>server.close(resolve));s.provider.close()}});
-
-test('cursors are bound to the operation and survive a restart only with the same host key',async()=>{const s=setup();try{const original=await s.registry.invoke('items.list',{limit:1},alice),another=new CapabilityRegistry(()=>{});registerDataListCapability(another,s.provider,{candidate:{operationId:'other.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,authorize:()=>true,authorizeItem:()=>true});await assert.rejects(another.invoke('other.list',{cursor:original.nextCursor},alice),/Invalid capability input/);const reopened=new CapabilityRegistry(()=>{});registerDataListCapability(reopened,s.provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner});assert.equal((await reopened.invoke('items.list',{cursor:original.nextCursor,limit:1},alice)).items[0].id,'b-visible');const rotated=new CapabilityRegistry(()=>{});registerDataListCapability(rotated,s.provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:()=>true});await assert.rejects(rotated.invoke('items.list',{cursor:original.nextCursor},alice),/Invalid capability input/);}finally{s.provider.close()}});
-
-test('asynchronous item policy authorizes the returned snapshot without permitting mutation',async()=>{const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{provider.put(scope,'items','one',{owner:'alice',value:'before'},null);let started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:async(_actor,item)=>{started();await gate;item.value.value='tampered';return true}});const pending=registry.invoke('items.list',{},alice);await ready;provider.put(scope,'items','one',{owner:'bob',value:'after'},1);release();const result=await pending;assert.deepEqual(result.items[0].value,{owner:'alice',value:'before'});assert.equal(provider.get(scope,'items','one').value.value,'after');}finally{provider.close()}});
-
-test('schema-bound cursors cannot cross versions and fail after a collection migration',async()=>{const s=setup();try{const first=await s.registry.invoke('items.list',{limit:1,expectedSchemaVersion:0},alice);assert.ok(first.nextCursor);await assert.rejects(s.registry.invoke('items.list',{cursor:first.nextCursor,limit:1,expectedSchemaVersion:1},alice),/Invalid capability input/);await assert.rejects(s.registry.invoke('items.list',{cursor:first.nextCursor,limit:1},alice),/Invalid capability input/);const preview=s.provider.previewMigration(scope,'items');s.provider.migrateCollection(scope,'items',{fromVersion:0,toVersion:1,digest:preview.digest,transform:value=>value,validate:()=>true});await assert.rejects(s.registry.invoke('items.list',{cursor:first.nextCursor,limit:1,expectedSchemaVersion:0},alice),/schema version conflict/);assert.deepEqual((await s.registry.invoke('items.list',{limit:2,expectedSchemaVersion:1},alice)).items.map(x=>x.id),['b-visible']);assert.equal((await s.registry.invoke('items.list',{limit:2},alice)).items.length,1);}finally{s.provider.close()}});
-
-test('list capability rejects a schema guard unsupported by its provider',async()=>{const s=setup(),registry=new CapabilityRegistry(()=>{});try{const legacy={get:s.provider.get.bind(s.provider),put:s.provider.put.bind(s.provider),delete:s.provider.delete.bind(s.provider),list:s.provider.list.bind(s.provider)};registerDataListCapability(registry,legacy,{candidate:{operationId:'legacy.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:s.key,authorize:()=>true,authorizeItem:()=>true});assert.equal((await registry.invoke('legacy.list',{},alice)).items.length,4);await assert.rejects(registry.invoke('legacy.list',{expectedSchemaVersion:0},alice),/guard unavailable/);}finally{s.provider.close()}});
-
-test('rollback generation does not revive pre-migration cursors',async()=>{const s=setup();try{const first=await s.registry.invoke('items.list',{limit:1,expectedSchemaVersion:0},alice),before=s.provider.previewMigration(scope,'items');s.provider.migrateCollection(scope,'items',{fromVersion:0,toVersion:1,digest:before.digest,transform:value=>value,validate:()=>true});const current=s.provider.previewMigration(scope,'items');s.provider.rollbackCollection(scope,'items',{fromVersion:1,targetVersion:0,digest:current.digest,transform:value=>value,validate:()=>true});await assert.rejects(s.registry.invoke('items.list',{cursor:first.nextCursor,limit:1,expectedSchemaVersion:0},alice),/schema version conflict/);assert.deepEqual((await s.registry.invoke('items.list',{limit:2,expectedSchemaVersion:2},alice)).items.map(item=>item.id),['b-visible']);}finally{s.provider.close();}});
-
-test('multiple exact filters combine safely and bind cursors to the complete canonical filter set',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),checked=[];try{
-  for(const [id,value] of [['a',{owner:'bob',state:'open',flag:null}],['b',{owner:'alice',state:'open',flag:null}],['c',{owner:'alice',state:'open',flag:false}],['d',{owner:'alice',state:'open',flag:null}],['e',{owner:'alice',state:'open'}]])provider.put(scope,'items',id,value,null);
-  registerDataListCapability(registry,provider,{candidate:{operationId:'multi.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','flag'],authorize:()=>true,authorizeItem:(actor,item)=>{checked.push(item.id);return item.value.owner===actor.principalId;}});
-  const filters=[{field:'state',value:'open'},{field:'flag',value:null}],first=await registry.invoke('multi.list',{filters,limit:2},alice);assert.deepEqual(first.items.map(item=>item.id),['b']);assert.deepEqual(checked,['a','b']);assert.ok(first.nextCursor);
-  const next=await registry.invoke('multi.list',{filters:[...filters].reverse(),cursor:first.nextCursor,limit:2},alice);assert.deepEqual(next.items.map(item=>item.id),['d']);const last=await registry.invoke('multi.list',{filters,cursor:next.nextCursor,limit:2},alice);assert.deepEqual(last.items,[]);
-  for(const changed of [[{field:'state',value:'open'}],[{field:'state',value:'open'},{field:'flag',value:false}]])await assert.rejects(registry.invoke('multi.list',{filters:changed,cursor:first.nextCursor},alice),/Invalid capability input/);
-  for(const invalid of [[],[{field:'state',value:'open'},{field:'state',value:'closed'}],[{field:'owner',value:'alice'}],Array.from({length:11},()=>({field:'state',value:'open'}))])await assert.rejects(registry.invoke('multi.list',{filters:invalid},alice),/Invalid capability input/);
-  await assert.rejects(registry.invoke('multi.list',{filter:filters[0],filters},alice),/Invalid capability input/);await assert.rejects(registry.invoke('multi.list',{filter:filters[0],cursor:first.nextCursor},alice),/Invalid capability input/);
- }finally{provider.close();}
+test('multiple array membership conditions match all values and canonicalize cursors', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', tags: ['red', 'blue', 1, '1'] }],
+      ['b', { owner: 'alice', tags: ['red'] }],
+      ['c', { owner: 'bob', tags: ['red', 'blue'] }],
+      ['d', { owner: 'alice', tags: ['red', 'blue'] }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'all-tags.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['tags'],
+      arrayContainsFilterFields: ['tags'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    const filters = [
+        { field: 'tags', operator: 'arrayContains', value: 'red' },
+        { field: 'tags', operator: 'arrayContains', value: 'blue' }
+      ],
+      first = await registry.invoke('all-tags.list', { filters, limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    const second = await registry.invoke('all-tags.list', { filters: [...filters].reverse(), cursor: first.nextCursor, limit: 3 }, alice);
+    assert.deepEqual(
+      second.items.map(item => item.id),
+      ['d']
+    );
+    await assert.rejects(registry.invoke('all-tags.list', { filters: [filters[0], { ...filters[1], value: 'green' }], cursor: first.nextCursor }, alice), /Invalid capability input/);
+    await assert.rejects(registry.invoke('all-tags.list', { filters: [filters[0], filters[0]] }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (
+        await registry.invoke(
+          'all-tags.list',
+          {
+            filters: [
+              { field: 'tags', operator: 'arrayContains', value: 1 },
+              { field: 'tags', operator: 'arrayContains', value: '1' }
+            ]
+          },
+          alice
+        )
+      ).items.map(item => item.id),
+      ['a']
+    );
+  } finally {
+    provider.close();
+  }
 });
 
-test('authenticated HTTP listing accepts multiple filters and rejects changed cursor filters',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});provider.put(scope,'items','a',{owner:'alice',state:'open',priority:1},null);provider.put(scope,'items','b',{owner:'alice',state:'open',priority:1},null);
- registerDataListCapability(registry,provider,{candidate:{operationId:'multi.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','priority'],authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner});const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- try{const call=input=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/multi.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})}),filters=[{field:'state',value:'open'},{field:'priority',value:1}],first=await (await call({filters,limit:1})).json();assert.equal(first.result.items[0].id,'a');assert.equal((await call({filters:[{field:'state',value:'closed'},{field:'priority',value:1}],cursor:first.result.nextCursor})).status,400);const second=await (await call({filters,cursor:first.result.nextCursor,limit:1})).json();assert.equal(second.result.items[0].id,'b');}finally{await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();}
+test('any-condition filtering is opt-in, authorized and bound to cursor mode', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', state: 'open', priority: 1 }],
+      ['b', { owner: 'bob', state: 'open', priority: 9 }],
+      ['c', { owner: 'alice', state: 'closed', priority: 9 }],
+      ['d', { owner: 'alice', state: 'open', priority: 9 }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    const common = {
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state', 'priority'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    };
+    registerDataListCapability(registry, provider, { ...common, candidate: { operationId: 'any.list', method: 'GET', path: '/items' }, allowAnyFilters: true });
+    registerDataListCapability(registry, provider, { ...common, candidate: { operationId: 'all.list', method: 'GET', path: '/items' } });
+    const filters = [
+        { field: 'state', value: 'open' },
+        { field: 'priority', value: 9 }
+      ],
+      first = await registry.invoke('any.list', { filters, filterMode: 'any', limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    const next = await registry.invoke('any.list', { filters: [...filters].reverse(), filterMode: 'any', cursor: first.nextCursor, limit: 3 }, alice);
+    assert.deepEqual(
+      next.items.map(item => item.id),
+      ['c', 'd']
+    );
+    const alternatives = [
+        { field: 'state', value: 'open' },
+        { field: 'state', value: 'closed' }
+      ],
+      altFirst = await registry.invoke('any.list', { filters: alternatives, filterMode: 'any', limit: 1 }, alice);
+    assert.deepEqual(
+      altFirst.items.map(item => item.id),
+      ['a']
+    );
+    assert.deepEqual(
+      (await registry.invoke('any.list', { filters: [...alternatives].reverse(), filterMode: 'any', cursor: altFirst.nextCursor, limit: 3 }, alice)).items.map(item => item.id),
+      ['c', 'd']
+    );
+    await assert.rejects(registry.invoke('any.list', { filters: [alternatives[0], alternatives[0]], filterMode: 'any' }, alice), /Invalid capability input/);
+    await assert.rejects(registry.invoke('any.list', { filters: alternatives }, alice), /Invalid capability input/);
+    for (const mode of [undefined, 'all'])
+      await assert.rejects(registry.invoke('any.list', { filters, cursor: first.nextCursor, ...(mode ? { filterMode: mode } : {}) }, alice), /Invalid capability input/);
+    const legacy = await registry.invoke('any.list', { filters, limit: 1 }, alice);
+    assert.ok(legacy.nextCursor);
+    await assert.rejects(registry.invoke('any.list', { filters, filterMode: 'any', cursor: legacy.nextCursor }, alice), /Invalid capability input/);
+    await registry.invoke('any.list', { filters, filterMode: 'all', cursor: legacy.nextCursor }, alice);
+    for (const input of [
+      { filters, filterMode: 'any' },
+      { filter: filters[0], filterMode: 'any' },
+      { filters, filterMode: 'invalid' }
+    ])
+      await assert.rejects(registry.invoke('all.list', input, alice), /Invalid capability input/);
+    await assert.rejects(registry.invoke('any.list', { filter: filters[0], filterMode: 'any' }, alice), /Invalid capability input/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('numeric range filters enforce types, bounds, authorization and operator-bound cursors',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),calls=[];try{
-  for(const [id,value] of [['a',{owner:'alice',count:1}],['b',{owner:'bob',count:2}],['c',{owner:'alice',count:2}],['d',{owner:'alice',count:3}],['e',{owner:'alice',count:'3'}],['f',{owner:'alice'}]])provider.put(scope,'items',id,value,null);
-  registerDataListCapability(registry,provider,{candidate:{operationId:'range.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['count','owner'],rangeFilterFields:['count'],authorize:()=>true,authorizeItem:(actor,item)=>{calls.push(item.id);return actor.principalId===item.value.owner;}});
-  for(const [operator,expected] of [['gt',['d']],['gte',['c','d']],['lt',['a']],['lte',['a','c']]]){const page=await registry.invoke('range.list',{filter:{field:'count',operator,value:2}},alice);assert.deepEqual(page.items.map(item=>item.id),expected);}
-  const bounded=await registry.invoke('range.list',{filters:[{field:'count',operator:'gte',value:2},{field:'count',operator:'lt',value:3}]},alice);assert.deepEqual(bounded.items.map(item=>item.id),['c']);
-  const rules=[{field:'count',operator:'gte',value:2},{field:'owner',value:'alice'}],first=await registry.invoke('range.list',{filters:rules,limit:3},alice);assert.deepEqual(first.items.map(item=>item.id),['c']);assert.ok(first.nextCursor);const next=await registry.invoke('range.list',{filters:[...rules].reverse(),cursor:first.nextCursor,limit:3},alice);assert.deepEqual(next.items.map(item=>item.id),['d']);await assert.rejects(registry.invoke('range.list',{filters:[{...rules[0],operator:'gt'},rules[1]],cursor:first.nextCursor},alice),/Invalid capability input/);
-  const legacy=await registry.invoke('range.list',{filter:{field:'count',value:2},limit:3},alice);assert.ok(legacy.nextCursor);const explicit=await registry.invoke('range.list',{filter:{field:'count',operator:'eq',value:2},cursor:legacy.nextCursor},alice);assert.deepEqual(explicit.items,[]);
-  for(const filter of [{field:'count',operator:'gt',value:'2'},{field:'count',operator:'gt',value:null},{field:'count',operator:'gte',value:true},{field:'count',operator:['gt'],value:2},{field:'count',operator:'ne',value:2},{field:'unknown',operator:'gt',value:2},{field:'owner',operator:'gt',value:2}])await assert.rejects(registry.invoke('range.list',{filter},alice),/Invalid capability input/);await assert.rejects(registry.invoke('range.list',{filters:[{field:'count',operator:'gt',value:1},{field:'count',operator:'gt',value:2}]},alice),/Invalid capability input/);assert.ok(calls.includes('b'));
- }finally{provider.close();}
+test('SQLite listing uses bounded keyset pages, filters tombstones and isolates scope', () => {
+  const s = setup();
+  try {
+    s.provider.delete(scope, 'items', 'c-secret', 1);
+    s.provider.put({ ...scope, tenantId: 'other' }, 'items', 'z', { owner: 'alice' }, null);
+    let page = s.provider.list(scope, 'items', { limit: 2 });
+    assert.deepEqual(
+      page.items.map(x => x.id),
+      ['a-secret', 'b-visible']
+    );
+    assert.equal(page.nextAfter, 'b-visible');
+    page = s.provider.list(scope, 'items', { limit: 2, after: page.nextAfter });
+    assert.deepEqual(
+      page.items.map(x => x.id),
+      ['d-visible']
+    );
+    assert.equal(page.nextAfter, undefined);
+    for (const limit of [0, 101, 1.5]) assert.throws(() => s.provider.list(scope, 'items', { limit }), /Invalid data listing/);
+    assert.equal(s.provider.list(scope, 'other').items.length, 0);
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('numeric range query fields require explicit, snapshotted host approval',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),fields=['count'],rangeFields=['count'],base={applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:()=>true};try{provider.put(scope,'items','a',{count:3},null);registerDataListCapability(registry,provider,{...base,candidate:{operationId:'approved',method:'GET',path:'/'},filterFields:fields,rangeFilterFields:rangeFields});fields.length=0;rangeFields.length=0;assert.deepEqual((await registry.invoke('approved',{filter:{field:'count',operator:'gt',value:2}},alice)).items.map(item=>item.id),['a']);registerDataListCapability(registry,provider,{...base,candidate:{operationId:'exact',method:'GET',path:'/'},filterFields:['count']});await assert.rejects(registry.invoke('exact',{filter:{field:'count',operator:'gt',value:2}},alice),/Invalid capability input/);assert.equal((await registry.invoke('exact',{filter:{field:'count',operator:'eq',value:3}},alice)).items.length,1);for(const rangeFilterFields of [['unknown'],['count','count'],'count'])assert.throws(()=>registerDataListCapability(registry,provider,{...base,candidate:{operationId:'bad',method:'GET',path:'/'},filterFields:['count'],rangeFilterFields}),/Invalid data list/);}finally{provider.close();}
+test('authorized listing filters each record and uses opaque, actor-bound cursors', async () => {
+  const s = setup();
+  try {
+    let page = await s.registry.invoke('items.list', { limit: 1 }, alice);
+    assert.deepEqual(page.items, []);
+    assert.equal(typeof page.nextCursor, 'string');
+    assert.equal(page.nextCursor.includes('a-secret'), false);
+    const cursor = page.nextCursor;
+    await assert.rejects(s.registry.invoke('items.list', { cursor, limit: 1 }, bob), /Invalid capability input/);
+    await assert.rejects(s.registry.invoke('items.list', { cursor, limit: 1 }, { ...alice, tenantId: 'other' }), /Invalid capability input/);
+    const tampered = (cursor[0] === 'A' ? 'B' : 'A') + cursor.slice(1);
+    await assert.rejects(s.registry.invoke('items.list', { cursor: tampered }, alice), /Invalid capability input/);
+    page = await s.registry.invoke('items.list', { cursor, limit: 1 }, alice);
+    assert.deepEqual(
+      page.items.map(x => x.id),
+      ['b-visible']
+    );
+    page = await s.registry.invoke('items.list', { cursor: page.nextCursor, limit: 1 }, alice);
+    assert.deepEqual(page.items, []);
+    page = await s.registry.invoke('items.list', { cursor: page.nextCursor, limit: 1 }, alice);
+    assert.deepEqual(
+      page.items.map(x => x.id),
+      ['d-visible']
+    );
+    assert.equal(page.nextCursor, undefined);
+    assert.ok(s.events.includes('succeeded'));
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('approved string prefixes enforce authorization, type, case and cursor binding',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),prefixFields=['name'],base={applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['name','kind'],prefixFilterFields:prefixFields,authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner};try{
-  for(const [id,value] of [['a',{owner:'alice',name:'Alpha',kind:'open'}],['b',{owner:'bob',name:'Alpine',kind:'open'}],['c',{owner:'alice',name:'Alpine',kind:'open'}],['d',{owner:'alice',name:'alpha',kind:'open'}],['e',{owner:'alice',name:12,kind:'open'}],['f',{owner:'alice',kind:'open'}]])provider.put(scope,'items',id,value,null);
-  registerDataListCapability(registry,provider,{...base,candidate:{operationId:'prefix',method:'GET',path:'/'}});prefixFields.length=0;const filter={field:'name',operator:'prefix',value:'Al'},first=await registry.invoke('prefix',{filter,limit:2},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);const second=await registry.invoke('prefix',{filter,cursor:first.nextCursor,limit:2},alice);assert.deepEqual(second.items.map(item=>item.id),['c']);for(const changed of [{...filter,value:'al'},{...filter,operator:'eq'}])await assert.rejects(registry.invoke('prefix',{filter:changed,cursor:first.nextCursor},alice),/Invalid capability input/);assert.deepEqual((await registry.invoke('prefix',{filters:[filter,{field:'kind',value:'open'}]},alice)).items.map(item=>item.id),['a','c']);assert.deepEqual((await registry.invoke('prefix',{filter:{...filter,value:''}},alice)).items.map(item=>item.id),['a','c','d']);for(const invalid of [{...filter,value:null},{...filter,value:1},{field:'kind',operator:'prefix',value:'o'}])await assert.rejects(registry.invoke('prefix',{filter:invalid},alice),/Invalid capability input/);registerDataListCapability(registry,provider,{...base,prefixFilterFields:[],candidate:{operationId:'not-approved',method:'GET',path:'/'}});await assert.rejects(registry.invoke('not-approved',{filter},alice),/Invalid capability input/);for(const prefixFilterFields of [['unknown'],['name','name'],'name'])assert.throws(()=>registerDataListCapability(registry,provider,{...base,prefixFilterFields,candidate:{operationId:'bad',method:'GET',path:'/'}}),/Invalid data list/);
- }finally{provider.close();}
+test('list policies receive isolated copies and errors fail closed', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    key = randomBytes(32);
+  try {
+    provider.put(scope, 'items', 'one', { owner: 'alice' }, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: key,
+      authorize: actor => actor.principalId === 'alice',
+      authorizeItem: (actor, record) => {
+        actor.tenantId = 'other';
+        record.value.owner = 'changed';
+        return true;
+      }
+    });
+    key.fill(0);
+    const page = await registry.invoke('items.list', {}, alice);
+    assert.equal(page.items[0].value.owner, 'alice');
+    assert.equal(provider.get(scope, 'items', 'one').value.owner, 'alice');
+    await assert.rejects(registry.invoke('items.list', {}, bob), /forbidden/);
+    await assert.rejects(registry.invoke('items.list', { id: 'one' }, alice), /Invalid capability input/);
+    const broken = new CapabilityRegistry(() => {});
+    registerDataListCapability(broken, provider, {
+      candidate: { operationId: 'broken', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeItem: () => {
+        throw Error('policy unavailable');
+      }
+    });
+    await assert.rejects(broken.invoke('broken', {}, alice), /policy unavailable/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('substring filters require approval and retain record authorization and cursor binding',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),fields=['name'];
- const base={applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['name','kind'],containsFilterFields:fields,authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner};
- try{
-  for(const [id,value] of [['a',{owner:'alice',name:'Alpha',kind:'open'}],['b',{owner:'bob',name:'Alpine',kind:'open'}],['c',{owner:'alice',name:'Alpine',kind:'open'}],['d',{owner:'alice',name:'alpha',kind:'closed'}],['e',{owner:'alice',name:12}],['f',{owner:'alice'}]])provider.put(scope,'items',id,value,null);
-  registerDataListCapability(registry,provider,{...base,candidate:{operationId:'contains',method:'GET',path:'/'}});fields.length=0;
-  const filter={field:'name',operator:'contains',value:'lp'},first=await registry.invoke('contains',{filter,limit:2},alice);
-  assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);
-  assert.deepEqual((await registry.invoke('contains',{filter,cursor:first.nextCursor,limit:2},alice)).items.map(item=>item.id),['c','d']);
-  for(const changed of [{...filter,value:'LP'},{...filter,operator:'eq'}])await assert.rejects(registry.invoke('contains',{filter:changed,cursor:first.nextCursor},alice),/Invalid capability input/);
-  assert.deepEqual((await registry.invoke('contains',{filters:[filter,{field:'kind',value:'open'}]},alice)).items.map(item=>item.id),['a','c']);
-  assert.deepEqual((await registry.invoke('contains',{filter:{...filter,value:'LP'}},alice)).items,[]);
-  assert.deepEqual((await registry.invoke('contains',{filter:{...filter,value:''}},alice)).items.map(item=>item.id),['a','c','d']);
-  for(const invalid of [{...filter,value:null},{...filter,value:1},{field:'kind',operator:'contains',value:'o'}])await assert.rejects(registry.invoke('contains',{filter:invalid},alice),/Invalid capability input/);
-  registerDataListCapability(registry,provider,{...base,containsFilterFields:[],candidate:{operationId:'not-approved',method:'GET',path:'/'}});await assert.rejects(registry.invoke('not-approved',{filter},alice),/Invalid capability input/);
-  for(const containsFilterFields of [['unknown'],['name','name'],'name'])assert.throws(()=>registerDataListCapability(registry,provider,{...base,containsFilterFields,candidate:{operationId:'bad',method:'GET',path:'/'}}),/Invalid data list/);
- }finally{provider.close();}
+test('large records are bounded per page and single large records still make progress', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    for (const id of ['a', 'b', 'c']) provider.put(scope, 'large', id, { text: 'x'.repeat(300000) }, null);
+    const first = provider.list(scope, 'large', { limit: 100 });
+    assert.deepEqual(
+      first.items.map(x => x.id),
+      ['a']
+    );
+    assert.equal(first.nextAfter, 'a');
+    const second = provider.list(scope, 'large', { limit: 100, after: 'a' });
+    assert.deepEqual(
+      second.items.map(x => x.id),
+      ['b']
+    );
+    provider.put(scope, 'large', 'large', { text: 'x'.repeat(700000) }, null);
+    assert.equal(provider.list(scope, 'large', { after: 'c' }).items[0].id, 'large');
+  } finally {
+    provider.close();
+  }
 });
 
-test('bounded item policies time out without returning partial pages and retain capacity until settlement',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),base={candidate:{operationId:'bounded.list',method:'GET',path:'/'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true};let release,signal,blocked=true,server;
- const gate=new Promise(resolve=>release=resolve);
- try{
-  provider.put(scope,'items','a',{name:'visible'},null);provider.put(scope,'items','b',{name:'pending'},null);
-  for(const invalid of [{policyTimeoutMs:100},{maxPendingPolicies:1},{policyTimeoutMs:99,maxPendingPolicies:1},{policyTimeoutMs:100,maxPendingPolicies:0}])assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...base,...invalid,authorizeItem:()=>true}),/Invalid data list/);
-  const options={...base,policyTimeoutMs:100,maxPendingPolicies:1,authorizeItem:async(_actor,item,currentSignal)=>{if(item.id==='b'&&blocked){signal=currentSignal;await gate;}return true;}};
-  registerDataListCapability(registry,provider,options);options.policyTimeoutMs=30000;options.maxPendingPolicies=100;
-  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});server.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
-  const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/bounded.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});
-  const first=await call();assert.equal(first.status,503);assert.deepEqual(await first.json(),{error:'Data list unavailable'});assert.equal(signal.aborted,true);
-  const saturated=await call();assert.equal(saturated.status,503);assert.deepEqual(await saturated.json(),{error:'Data list unavailable'});
-  blocked=false;release();await new Promise(resolve=>setImmediate(resolve));
-  const recovered=await call();assert.equal(recovered.status,200);assert.deepEqual((await recovered.json()).result.items.map(item=>item.id),['a','b']);
- }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
+test('HTTP listing enforces authentication, rejects cursor tampering and returns authorized rows', async () => {
+  const s = setup(),
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'alice' } : undefined),
+      () => {}
+    );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/capabilities/items.list/invoke`,
+      call = async (input, auth = 'Bearer valid') =>
+        fetch(url, { method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input }) });
+    assert.equal((await call({}, 'bad')).status, 401);
+    const first = await (await call({ limit: 1 })).json();
+    assert.equal(first.result.items.length, 0);
+    assert.equal((await call({ cursor: 'bad' })).status, 400);
+    const second = await (await call({ cursor: first.result.nextCursor, limit: 1 })).json();
+    assert.equal(second.result.items[0].id, 'b-visible');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    s.provider.close();
+  }
 });
 
-test('optional page rechecks reject scope or record access revoked during a scan',async()=>{
- for(const revoked of ['scope','record']){
-  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,started,blocked=true,scopeAllowed=true,recordAllowed=true,server;
-  const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>started=resolve);
-  try{
-   provider.put(scope,'items','a',{name:'secret'},null);provider.put(scope,'items','b',{name:'other'},null);
-   const options={candidate:{operationId:'checked.list',method:'GET',path:'/'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,authorize:()=>scopeAllowed,authorizeItem:async(_actor,item)=>{if(item.id==='b'&&blocked){started();await gate;}return item.id!=='a'||recordAllowed;}};
-   assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...options,recheckAuthorization:'true'}),/Invalid data list/);
-   registerDataListCapability(registry,provider,options);options.recheckAuthorization=false;
-   server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});server.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
-   const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/checked.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});
-   const pending=call();await waiting;if(revoked==='scope')scopeAllowed=false;else recordAllowed=false;blocked=false;release();
-   const denied=await pending;assert.equal(denied.status,403);assert.deepEqual(await denied.json(),{error:'Capability forbidden'});
-   scopeAllowed=true;recordAllowed=true;const allowed=await call();assert.equal(allowed.status,200);assert.deepEqual((await allowed.json()).result.items.map(item=>item.id),['a','b']);
-  }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}provider.close();}
- }
+test('cursors are bound to the operation and survive a restart only with the same host key', async () => {
+  const s = setup();
+  try {
+    const original = await s.registry.invoke('items.list', { limit: 1 }, alice),
+      another = new CapabilityRegistry(() => {});
+    registerDataListCapability(another, s.provider, {
+      candidate: { operationId: 'other.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: s.key,
+      authorize: () => true,
+      authorizeItem: () => true
+    });
+    await assert.rejects(another.invoke('other.list', { cursor: original.nextCursor }, alice), /Invalid capability input/);
+    const reopened = new CapabilityRegistry(() => {});
+    registerDataListCapability(reopened, s.provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: s.key,
+      authorize: () => true,
+      authorizeItem: (actor, item) => actor.principalId === item.value.owner
+    });
+    assert.equal((await reopened.invoke('items.list', { cursor: original.nextCursor, limit: 1 }, alice)).items[0].id, 'b-visible');
+    const rotated = new CapabilityRegistry(() => {});
+    registerDataListCapability(rotated, s.provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeItem: () => true
+    });
+    await assert.rejects(rotated.invoke('items.list', { cursor: original.nextCursor }, alice), /Invalid capability input/);
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('not-equal filters are host-approved, type-sensitive, authorized and cursor-bound',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),checks=[];
- try{
-  for(const [id,value] of [['a',{owner:'alice',state:'open'}],['b',{owner:'bob',state:'hidden'}],['c',{owner:'alice',state:null}],['d',{owner:'alice'}],['e',{owner:'alice',state:2}],['f',{owner:'alice',state:['open']}],['g',{owner:'alice',state:false}],['h',{owner:'alice',state:'closed'}]])provider.put(scope,'items',id,value,null);
-  provider.put({...scope,tenantId:'other'},'items','outside',{owner:'alice',state:'open'},null);
-  const base={candidate:{operationId:'not-equal.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','owner'],notEqualFilterFields:['state'],allowAnyFilters:true,authorize:()=>true,authorizeItem:(actor,item)=>{checks.push(item.id);return item.value.owner===actor.principalId;}};registerDataListCapability(registry,provider,base);
-  const filter={field:'state',operator:'neq',value:'closed'},first=await registry.invoke('not-equal.list',{filter,limit:1},alice);assert.deepEqual(first.items.map(item=>item.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('not-equal.list',{cursor:first.nextCursor,filter:{...filter,value:'open'}},alice),/Invalid capability input/);
-  assert.deepEqual((await registry.invoke('not-equal.list',{filter,limit:20},alice)).items.map(item=>item.id),['a','c','e','g']);assert.ok(checks.includes('b'));assert.equal(checks.includes('outside'),false);
-  const filters=[{field:'state',operator:'neq',value:'open'},{field:'state',operator:'neq',value:null}],page=await registry.invoke('not-equal.list',{filters,limit:1},alice);assert.ok(page.nextCursor);assert.deepEqual((await registry.invoke('not-equal.list',{filters:[...filters].reverse(),cursor:page.nextCursor,limit:20},alice)).items.map(item=>item.id),['e','g','h']);await assert.rejects(registry.invoke('not-equal.list',{filters:[filters[0],filters[0]]},alice),/Invalid capability input/);
-  assert.deepEqual((await registry.invoke('not-equal.list',{filter:{field:'state',operator:'neq',value:2},limit:20},alice)).items.map(item=>item.id),['a','c','g','h']);assert.deepEqual((await registry.invoke('not-equal.list',{filter:{field:'state',operator:'neq',value:'2'},limit:20},alice)).items.map(item=>item.id),['a','c','e','g','h']);
-  await assert.rejects(registry.invoke('not-equal.list',{filter:{field:'owner',operator:'neq',value:'bob'}},alice),/Invalid capability input/);assert.throws(()=>registerDataListCapability(new CapabilityRegistry(()=>{}),provider,{...base,notEqualFilterFields:['unknown']}),/Invalid data list capability/);
- }finally{provider.close();}
+test('asynchronous item policy authorizes the returned snapshot without permitting mutation', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    provider.put(scope, 'items', 'one', { owner: 'alice', value: 'before' }, null);
+    let started, release;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeItem: async (_actor, item) => {
+        started();
+        await gate;
+        item.value.value = 'tampered';
+        return true;
+      }
+    });
+    const pending = registry.invoke('items.list', {}, alice);
+    await ready;
+    provider.put(scope, 'items', 'one', { owner: 'bob', value: 'after' }, 1);
+    release();
+    const result = await pending;
+    assert.deepEqual(result.items[0].value, { owner: 'alice', value: 'before' });
+    assert.equal(provider.get(scope, 'items', 'one').value.value, 'after');
+  } finally {
+    provider.close();
+  }
 });
 
-test('not-equal filters compose with any-mode, scoped cursors and snapshotted policy',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
-  for(const [id,value] of [['a',{owner:'alice',state:'closed',group:'vip'}],['b',{owner:'alice',state:'open',group:'staff'}],['c',{owner:'alice',group:'vip'}],['d',{owner:'bob',state:'open',group:'vip'}]])provider.put(scope,'items',id,value,null);
-  const options={candidate:{operationId:'neq-any.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','group'],notEqualFilterFields:['state'],allowAnyFilters:true,authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner};registerDataListCapability(registry,provider,options);options.notEqualFilterFields.length=0;options.allowAnyFilters=false;
-  const filters=[{field:'state',operator:'neq',value:'closed'},{field:'group',value:'vip'}],first=await registry.invoke('neq-any.list',{filters,filterMode:'any',limit:1},alice);assert.deepEqual(first.items.map(x=>x.id),['a']);assert.ok(first.nextCursor);await assert.rejects(registry.invoke('neq-any.list',{filters,cursor:first.nextCursor},alice),/Invalid capability input/);await assert.rejects(registry.invoke('neq-any.list',{filters,filterMode:'any',cursor:first.nextCursor},bob),/Invalid capability input/);
-  const second=await registry.invoke('neq-any.list',{filters:[...filters].reverse(),filterMode:'any',cursor:first.nextCursor,limit:10},alice);assert.deepEqual(second.items.map(x=>x.id),['b','c']);assert.equal(second.items.some(x=>x.id==='d'),false);assert.deepEqual((await registry.invoke('neq-any.list',{filters,limit:10},alice)).items,[]);
- }finally{provider.close();}
+test('schema-bound cursors cannot cross versions and fail after a collection migration', async () => {
+  const s = setup();
+  try {
+    const first = await s.registry.invoke('items.list', { limit: 1, expectedSchemaVersion: 0 }, alice);
+    assert.ok(first.nextCursor);
+    await assert.rejects(s.registry.invoke('items.list', { cursor: first.nextCursor, limit: 1, expectedSchemaVersion: 1 }, alice), /Invalid capability input/);
+    await assert.rejects(s.registry.invoke('items.list', { cursor: first.nextCursor, limit: 1 }, alice), /Invalid capability input/);
+    const preview = s.provider.previewMigration(scope, 'items');
+    s.provider.migrateCollection(scope, 'items', { fromVersion: 0, toVersion: 1, digest: preview.digest, transform: value => value, validate: () => true });
+    await assert.rejects(s.registry.invoke('items.list', { cursor: first.nextCursor, limit: 1, expectedSchemaVersion: 0 }, alice), /schema version conflict/);
+    assert.deepEqual(
+      (await s.registry.invoke('items.list', { limit: 2, expectedSchemaVersion: 1 }, alice)).items.map(x => x.id),
+      ['b-visible']
+    );
+    assert.equal((await s.registry.invoke('items.list', { limit: 2 }, alice)).items.length, 1);
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('list final record authorization catches revocation during the last scope check',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let scopeChecks=0,recordAllowed=true;
- try{provider.put(scope,'items','private',{text:'secret'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'checked.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,authorize:async()=>{if(++scopeChecks===3)recordAllowed=false;return true;},authorizeItem:()=>recordAllowed});await assert.rejects(registry.invoke('checked.list',{},alice),/forbidden/);}finally{provider.close();}
+test('list capability rejects a schema guard unsupported by its provider', async () => {
+  const s = setup(),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    const legacy = { get: s.provider.get.bind(s.provider), put: s.provider.put.bind(s.provider), delete: s.provider.delete.bind(s.provider), list: s.provider.list.bind(s.provider) };
+    registerDataListCapability(registry, legacy, {
+      candidate: { operationId: 'legacy.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: s.key,
+      authorize: () => true,
+      authorizeItem: () => true
+    });
+    assert.equal((await registry.invoke('legacy.list', {}, alice)).items.length, 4);
+    await assert.rejects(registry.invoke('legacy.list', { expectedSchemaVersion: 0 }, alice), /guard unavailable/);
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('timed-out last list item recheck does not return a late page',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,signal,count=0;const gate=new Promise(resolve=>release=resolve);
- try{provider.put(scope,'items','private',{text:'secret'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'checked.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,policyTimeoutMs:100,maxPendingPolicies:1,authorize:()=>true,authorizeItem:async(_actor,_item,currentSignal)=>{if(++count===3){signal=currentSignal;await gate;}return true;}});await assert.rejects(registry.invoke('checked.list',{},alice),/Data list unavailable/);assert.equal(signal.aborted,true);release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await registry.invoke('checked.list',{},alice)).items.map(item=>item.id),['private']);}finally{release();provider.close();}
+test('rollback generation does not revive pre-migration cursors', async () => {
+  const s = setup();
+  try {
+    const first = await s.registry.invoke('items.list', { limit: 1, expectedSchemaVersion: 0 }, alice),
+      before = s.provider.previewMigration(scope, 'items');
+    s.provider.migrateCollection(scope, 'items', { fromVersion: 0, toVersion: 1, digest: before.digest, transform: value => value, validate: () => true });
+    const current = s.provider.previewMigration(scope, 'items');
+    s.provider.rollbackCollection(scope, 'items', { fromVersion: 1, targetVersion: 0, digest: current.digest, transform: value => value, validate: () => true });
+    await assert.rejects(s.registry.invoke('items.list', { cursor: first.nextCursor, limit: 1, expectedSchemaVersion: 0 }, alice), /schema version conflict/);
+    assert.deepEqual(
+      (await s.registry.invoke('items.list', { limit: 2, expectedSchemaVersion: 2 }, alice)).items.map(item => item.id),
+      ['b-visible']
+    );
+  } finally {
+    s.provider.close();
+  }
 });
 
-test('optional final record verification rejects updates and deletions during authorization',async()=>{
- for(const mutation of ['update','delete']){
-  const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,entered;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);let calls=0;
-  try{provider.put(scope,'items','a',{owner:'alice',secret:'old'},null);provider.put({...scope,tenantId:'other'},'items','a',{owner:'alice',secret:'foreign'},null);
-   registerDataListCapability(registry,provider,{candidate:{operationId:'verified.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckAuthorization:true,recheckRecords:true,authorize:()=>true,authorizeItem:async()=>{if(++calls===3){entered();await gate;}return true;}});
-   const result=registry.invoke('verified.list',{expectedSchemaVersion:0},alice);await waiting;if(mutation==='update')provider.put(scope,'items','a',{owner:'bob',secret:'new'},1);else provider.delete(scope,'items','a',1);release();await assert.rejects(result,/Data list changed/);assert.equal(provider.get({...scope,tenantId:'other'},'items','a').value.secret,'foreign');
-   const fresh=await registry.invoke('verified.list',{},alice);assert.deepEqual(fresh.items.map(x=>x.value.secret),mutation==='update'?['new']:[]);
-  }finally{release();provider.close();}
- }
+test('multiple exact filters combine safely and bind cursors to the complete canonical filter set', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    checked = [];
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'bob', state: 'open', flag: null }],
+      ['b', { owner: 'alice', state: 'open', flag: null }],
+      ['c', { owner: 'alice', state: 'open', flag: false }],
+      ['d', { owner: 'alice', state: 'open', flag: null }],
+      ['e', { owner: 'alice', state: 'open' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'multi.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state', 'flag'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => {
+        checked.push(item.id);
+        return item.value.owner === actor.principalId;
+      }
+    });
+    const filters = [
+        { field: 'state', value: 'open' },
+        { field: 'flag', value: null }
+      ],
+      first = await registry.invoke('multi.list', { filters, limit: 2 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['b']
+    );
+    assert.deepEqual(checked, ['a', 'b']);
+    assert.ok(first.nextCursor);
+    const next = await registry.invoke('multi.list', { filters: [...filters].reverse(), cursor: first.nextCursor, limit: 2 }, alice);
+    assert.deepEqual(
+      next.items.map(item => item.id),
+      ['d']
+    );
+    const last = await registry.invoke('multi.list', { filters, cursor: next.nextCursor, limit: 2 }, alice);
+    assert.deepEqual(last.items, []);
+    for (const changed of [
+      [{ field: 'state', value: 'open' }],
+      [
+        { field: 'state', value: 'open' },
+        { field: 'flag', value: false }
+      ]
+    ])
+      await assert.rejects(registry.invoke('multi.list', { filters: changed, cursor: first.nextCursor }, alice), /Invalid capability input/);
+    for (const invalid of [
+      [],
+      [
+        { field: 'state', value: 'open' },
+        { field: 'state', value: 'closed' }
+      ],
+      [{ field: 'owner', value: 'alice' }],
+      Array.from({ length: 11 }, () => ({ field: 'state', value: 'open' }))
+    ])
+      await assert.rejects(registry.invoke('multi.list', { filters: invalid }, alice), /Invalid capability input/);
+    await assert.rejects(registry.invoke('multi.list', { filter: filters[0], filters }, alice), /Invalid capability input/);
+    await assert.rejects(registry.invoke('multi.list', { filter: filters[0], cursor: first.nextCursor }, alice), /Invalid capability input/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('record verification is opt-in, fails closed for unsupported providers and compares values',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
-  const item=provider.put(scope,'items','a',{nested:{value:1}},null),base={candidate:{operationId:'verify.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),authorize:()=>true,authorizeItem:()=>true};
-  assert.equal(provider.verifyListPage(scope,'items',[item],0),true);assert.equal(provider.verifyListPage(scope,'items',[{...item,value:{nested:{value:2}}}],0),false);assert.equal(provider.verifyListPage({...scope,tenantId:'other'},'items',[item]),false);assert.throws(()=>provider.verifyListPage(scope,'items',[item,item]),/Invalid data listing/);assert.throws(()=>provider.verifyListPage(scope,'items',[],1),/schema version conflict/);
-  const legacy={list:provider.list.bind(provider)};assert.throws(()=>registerDataListCapability(registry,legacy,{...base,recheckRecords:true}),/Invalid data list capability/);assert.throws(()=>registerDataListCapability(registry,provider,{...base,recheckRecords:'yes'}),/Invalid data list capability/);
-  registerDataListCapability(registry,{...legacy,verifyListPage:()=>false},{...base,recheckRecords:true});await assert.rejects(registry.invoke('verify.list',{},alice),/Data list changed/);
- }finally{provider.close();}
+test('authenticated HTTP listing accepts multiple filters and rejects changed cursor filters', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  provider.put(scope, 'items', 'a', { owner: 'alice', state: 'open', priority: 1 }, null);
+  provider.put(scope, 'items', 'b', { owner: 'alice', state: 'open', priority: 1 }, null);
+  registerDataListCapability(registry, provider, {
+    candidate: { operationId: 'multi.list', method: 'GET', path: '/items' },
+    applicationId: 'app',
+    collection: 'items',
+    cursorKey: randomBytes(32),
+    filterFields: ['state', 'priority'],
+    authorize: () => true,
+    authorizeItem: (actor, item) => actor.principalId === item.value.owner
+  });
+  const server = createCapabilityServer(
+    registry,
+    () => ({ tenantId: 'tenant', principalId: 'alice' }),
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const call = input =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/multi.list/invoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input })
+        }),
+      filters = [
+        { field: 'state', value: 'open' },
+        { field: 'priority', value: 1 }
+      ],
+      first = await (await call({ filters, limit: 1 })).json();
+    assert.equal(first.result.items[0].id, 'a');
+    assert.equal(
+      (
+        await call({
+          filters: [
+            { field: 'state', value: 'closed' },
+            { field: 'priority', value: 1 }
+          ],
+          cursor: first.result.nextCursor
+        })
+      ).status,
+      400
+    );
+    const second = await (await call({ filters, cursor: first.result.nextCursor, limit: 1 })).json();
+    assert.equal(second.result.items[0].id, 'b');
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+  }
 });
 
-test('record verification reports an HTTP conflict without returning stale records',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,entered,server;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);
- try{provider.put(scope,'items','a',{secret:'do not return'},null);registerDataListCapability(registry,provider,{candidate:{operationId:'http.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckRecords:true,authorize:()=>true,authorizeItem:async()=>{entered();await gate;return true;}});
-  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'alice'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=fetch(`http://127.0.0.1:${server.address().port}/capabilities/http.list/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});await waiting;provider.delete(scope,'items','a',1);release();const result=await response;assert.equal(result.status,409);assert.doesNotMatch(await result.text(),/do not return/);
- }finally{release();if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();}
+test('numeric range filters enforce types, bounds, authorization and operator-bound cursors', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    calls = [];
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', count: 1 }],
+      ['b', { owner: 'bob', count: 2 }],
+      ['c', { owner: 'alice', count: 2 }],
+      ['d', { owner: 'alice', count: 3 }],
+      ['e', { owner: 'alice', count: '3' }],
+      ['f', { owner: 'alice' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'range.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['count', 'owner'],
+      rangeFilterFields: ['count'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => {
+        calls.push(item.id);
+        return actor.principalId === item.value.owner;
+      }
+    });
+    for (const [operator, expected] of [
+      ['gt', ['d']],
+      ['gte', ['c', 'd']],
+      ['lt', ['a']],
+      ['lte', ['a', 'c']]
+    ]) {
+      const page = await registry.invoke('range.list', { filter: { field: 'count', operator, value: 2 } }, alice);
+      assert.deepEqual(
+        page.items.map(item => item.id),
+        expected
+      );
+    }
+    const bounded = await registry.invoke(
+      'range.list',
+      {
+        filters: [
+          { field: 'count', operator: 'gte', value: 2 },
+          { field: 'count', operator: 'lt', value: 3 }
+        ]
+      },
+      alice
+    );
+    assert.deepEqual(
+      bounded.items.map(item => item.id),
+      ['c']
+    );
+    const rules = [
+        { field: 'count', operator: 'gte', value: 2 },
+        { field: 'owner', value: 'alice' }
+      ],
+      first = await registry.invoke('range.list', { filters: rules, limit: 3 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['c']
+    );
+    assert.ok(first.nextCursor);
+    const next = await registry.invoke('range.list', { filters: [...rules].reverse(), cursor: first.nextCursor, limit: 3 }, alice);
+    assert.deepEqual(
+      next.items.map(item => item.id),
+      ['d']
+    );
+    await assert.rejects(registry.invoke('range.list', { filters: [{ ...rules[0], operator: 'gt' }, rules[1]], cursor: first.nextCursor }, alice), /Invalid capability input/);
+    const legacy = await registry.invoke('range.list', { filter: { field: 'count', value: 2 }, limit: 3 }, alice);
+    assert.ok(legacy.nextCursor);
+    const explicit = await registry.invoke('range.list', { filter: { field: 'count', operator: 'eq', value: 2 }, cursor: legacy.nextCursor }, alice);
+    assert.deepEqual(explicit.items, []);
+    for (const filter of [
+      { field: 'count', operator: 'gt', value: '2' },
+      { field: 'count', operator: 'gt', value: null },
+      { field: 'count', operator: 'gte', value: true },
+      { field: 'count', operator: ['gt'], value: 2 },
+      { field: 'count', operator: 'ne', value: 2 },
+      { field: 'unknown', operator: 'gt', value: 2 },
+      { field: 'owner', operator: 'gt', value: 2 }
+    ])
+      await assert.rejects(registry.invoke('range.list', { filter }, alice), /Invalid capability input/);
+    await assert.rejects(
+      registry.invoke(
+        'range.list',
+        {
+          filters: [
+            { field: 'count', operator: 'gt', value: 1 },
+            { field: 'count', operator: 'gt', value: 2 }
+          ]
+        },
+        alice
+      ),
+      /Invalid capability input/
+    );
+    assert.ok(calls.includes('b'));
+  } finally {
+    provider.close();
+  }
 });
 
-test('record verification rejects asynchronous providers without unhandled rejections',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{provider.put(scope,'items','a',{value:1},null);registerDataListCapability(registry,{list:provider.list.bind(provider),verifyListPage:()=>Promise.reject(Error('late verifier failure'))},{candidate:{operationId:'async.verify',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckRecords:true,authorize:()=>true,authorizeItem:()=>true});await assert.rejects(registry.invoke('async.verify',{},alice),/Data list changed/);await new Promise(resolve=>setImmediate(resolve));}finally{provider.close();}
+test('numeric range query fields require explicit, snapshotted host approval', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    fields = ['count'],
+    rangeFields = ['count'],
+    base = { applicationId: 'app', collection: 'items', cursorKey: randomBytes(32), authorize: () => true, authorizeItem: () => true };
+  try {
+    provider.put(scope, 'items', 'a', { count: 3 }, null);
+    registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'approved', method: 'GET', path: '/' }, filterFields: fields, rangeFilterFields: rangeFields });
+    fields.length = 0;
+    rangeFields.length = 0;
+    assert.deepEqual(
+      (await registry.invoke('approved', { filter: { field: 'count', operator: 'gt', value: 2 } }, alice)).items.map(item => item.id),
+      ['a']
+    );
+    registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'exact', method: 'GET', path: '/' }, filterFields: ['count'] });
+    await assert.rejects(registry.invoke('exact', { filter: { field: 'count', operator: 'gt', value: 2 } }, alice), /Invalid capability input/);
+    assert.equal((await registry.invoke('exact', { filter: { field: 'count', operator: 'eq', value: 3 } }, alice)).items.length, 1);
+    for (const rangeFilterFields of [['unknown'], ['count', 'count'], 'count'])
+      assert.throws(
+        () => registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'bad', method: 'GET', path: '/' }, filterFields: ['count'], rangeFilterFields }),
+        /Invalid data list/
+      );
+  } finally {
+    provider.close();
+  }
 });
 
-test('record verification detects schema migration while an item policy waits',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release,entered;const gate=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);try{provider.put(scope,'items','a',{value:1},null);registerDataListCapability(registry,provider,{candidate:{operationId:'migration.verify',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),recheckRecords:true,authorize:()=>true,authorizeItem:async()=>{entered();await gate;return true;}});const result=registry.invoke('migration.verify',{expectedSchemaVersion:0},alice);await waiting;const preview=provider.previewMigration(scope,'items');provider.migrateCollection(scope,'items',{fromVersion:0,toVersion:1,digest:preview.digest,transform:value=>value,validate:()=>true});release();await assert.rejects(result,/Data schema version conflict/);}finally{release();provider.close();}
+test('approved string prefixes enforce authorization, type, case and cursor binding', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    prefixFields = ['name'],
+    base = {
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['name', 'kind'],
+      prefixFilterFields: prefixFields,
+      authorize: () => true,
+      authorizeItem: (actor, item) => actor.principalId === item.value.owner
+    };
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', name: 'Alpha', kind: 'open' }],
+      ['b', { owner: 'bob', name: 'Alpine', kind: 'open' }],
+      ['c', { owner: 'alice', name: 'Alpine', kind: 'open' }],
+      ['d', { owner: 'alice', name: 'alpha', kind: 'open' }],
+      ['e', { owner: 'alice', name: 12, kind: 'open' }],
+      ['f', { owner: 'alice', kind: 'open' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'prefix', method: 'GET', path: '/' } });
+    prefixFields.length = 0;
+    const filter = { field: 'name', operator: 'prefix', value: 'Al' },
+      first = await registry.invoke('prefix', { filter, limit: 2 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    const second = await registry.invoke('prefix', { filter, cursor: first.nextCursor, limit: 2 }, alice);
+    assert.deepEqual(
+      second.items.map(item => item.id),
+      ['c']
+    );
+    for (const changed of [
+      { ...filter, value: 'al' },
+      { ...filter, operator: 'eq' }
+    ])
+      await assert.rejects(registry.invoke('prefix', { filter: changed, cursor: first.nextCursor }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (await registry.invoke('prefix', { filters: [filter, { field: 'kind', value: 'open' }] }, alice)).items.map(item => item.id),
+      ['a', 'c']
+    );
+    assert.deepEqual(
+      (await registry.invoke('prefix', { filter: { ...filter, value: '' } }, alice)).items.map(item => item.id),
+      ['a', 'c', 'd']
+    );
+    for (const invalid of [
+      { ...filter, value: null },
+      { ...filter, value: 1 },
+      { field: 'kind', operator: 'prefix', value: 'o' }
+    ])
+      await assert.rejects(registry.invoke('prefix', { filter: invalid }, alice), /Invalid capability input/);
+    registerDataListCapability(registry, provider, { ...base, prefixFilterFields: [], candidate: { operationId: 'not-approved', method: 'GET', path: '/' } });
+    await assert.rejects(registry.invoke('not-approved', { filter }, alice), /Invalid capability input/);
+    for (const prefixFilterFields of [['unknown'], ['name', 'name'], 'name'])
+      assert.throws(() => registerDataListCapability(registry, provider, { ...base, prefixFilterFields, candidate: { operationId: 'bad', method: 'GET', path: '/' } }), /Invalid data list/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('substring filters require approval and retain record authorization and cursor binding', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    fields = ['name'];
+  const base = {
+    applicationId: 'app',
+    collection: 'items',
+    cursorKey: randomBytes(32),
+    filterFields: ['name', 'kind'],
+    containsFilterFields: fields,
+    authorize: () => true,
+    authorizeItem: (actor, item) => actor.principalId === item.value.owner
+  };
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', name: 'Alpha', kind: 'open' }],
+      ['b', { owner: 'bob', name: 'Alpine', kind: 'open' }],
+      ['c', { owner: 'alice', name: 'Alpine', kind: 'open' }],
+      ['d', { owner: 'alice', name: 'alpha', kind: 'closed' }],
+      ['e', { owner: 'alice', name: 12 }],
+      ['f', { owner: 'alice' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, { ...base, candidate: { operationId: 'contains', method: 'GET', path: '/' } });
+    fields.length = 0;
+    const filter = { field: 'name', operator: 'contains', value: 'lp' },
+      first = await registry.invoke('contains', { filter, limit: 2 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    assert.deepEqual(
+      (await registry.invoke('contains', { filter, cursor: first.nextCursor, limit: 2 }, alice)).items.map(item => item.id),
+      ['c', 'd']
+    );
+    for (const changed of [
+      { ...filter, value: 'LP' },
+      { ...filter, operator: 'eq' }
+    ])
+      await assert.rejects(registry.invoke('contains', { filter: changed, cursor: first.nextCursor }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (await registry.invoke('contains', { filters: [filter, { field: 'kind', value: 'open' }] }, alice)).items.map(item => item.id),
+      ['a', 'c']
+    );
+    assert.deepEqual((await registry.invoke('contains', { filter: { ...filter, value: 'LP' } }, alice)).items, []);
+    assert.deepEqual(
+      (await registry.invoke('contains', { filter: { ...filter, value: '' } }, alice)).items.map(item => item.id),
+      ['a', 'c', 'd']
+    );
+    for (const invalid of [
+      { ...filter, value: null },
+      { ...filter, value: 1 },
+      { field: 'kind', operator: 'contains', value: 'o' }
+    ])
+      await assert.rejects(registry.invoke('contains', { filter: invalid }, alice), /Invalid capability input/);
+    registerDataListCapability(registry, provider, { ...base, containsFilterFields: [], candidate: { operationId: 'not-approved', method: 'GET', path: '/' } });
+    await assert.rejects(registry.invoke('not-approved', { filter }, alice), /Invalid capability input/);
+    for (const containsFilterFields of [['unknown'], ['name', 'name'], 'name'])
+      assert.throws(() => registerDataListCapability(registry, provider, { ...base, containsFilterFields, candidate: { operationId: 'bad', method: 'GET', path: '/' } }), /Invalid data list/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('bounded item policies time out without returning partial pages and retain capacity until settlement', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    base = { candidate: { operationId: 'bounded.list', method: 'GET', path: '/' }, applicationId: 'app', collection: 'items', cursorKey: randomBytes(32), authorize: () => true };
+  let release,
+    signal,
+    blocked = true,
+    server;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    provider.put(scope, 'items', 'a', { name: 'visible' }, null);
+    provider.put(scope, 'items', 'b', { name: 'pending' }, null);
+    for (const invalid of [{ policyTimeoutMs: 100 }, { maxPendingPolicies: 1 }, { policyTimeoutMs: 99, maxPendingPolicies: 1 }, { policyTimeoutMs: 100, maxPendingPolicies: 0 }])
+      assert.throws(() => registerDataListCapability(new CapabilityRegistry(() => {}), provider, { ...base, ...invalid, authorizeItem: () => true }), /Invalid data list/);
+    const options = {
+      ...base,
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1,
+      authorizeItem: async (_actor, item, currentSignal) => {
+        if (item.id === 'b' && blocked) {
+          signal = currentSignal;
+          await gate;
+        }
+        return true;
+      }
+    };
+    registerDataListCapability(registry, provider, options);
+    options.policyTimeoutMs = 30000;
+    options.maxPendingPolicies = 100;
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'alice' }),
+      () => {}
+    );
+    server.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    const call = () =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/bounded.list/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: {} })
+      });
+    const first = await call();
+    assert.equal(first.status, 503);
+    assert.deepEqual(await first.json(), { error: 'Data list unavailable' });
+    assert.equal(signal.aborted, true);
+    const saturated = await call();
+    assert.equal(saturated.status, 503);
+    assert.deepEqual(await saturated.json(), { error: 'Data list unavailable' });
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    const recovered = await call();
+    assert.equal(recovered.status, 200);
+    assert.deepEqual(
+      (await recovered.json()).result.items.map(item => item.id),
+      ['a', 'b']
+    );
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    provider.close();
+  }
+});
+
+test('optional page rechecks reject scope or record access revoked during a scan', async () => {
+  for (const revoked of ['scope', 'record']) {
+    const provider = new SqliteDataProvider(':memory:'),
+      registry = new CapabilityRegistry(() => {});
+    let release,
+      started,
+      blocked = true,
+      scopeAllowed = true,
+      recordAllowed = true,
+      server;
+    const gate = new Promise(resolve => (release = resolve)),
+      waiting = new Promise(resolve => (started = resolve));
+    try {
+      provider.put(scope, 'items', 'a', { name: 'secret' }, null);
+      provider.put(scope, 'items', 'b', { name: 'other' }, null);
+      const options = {
+        candidate: { operationId: 'checked.list', method: 'GET', path: '/' },
+        applicationId: 'app',
+        collection: 'items',
+        cursorKey: randomBytes(32),
+        recheckAuthorization: true,
+        authorize: () => scopeAllowed,
+        authorizeItem: async (_actor, item) => {
+          if (item.id === 'b' && blocked) {
+            started();
+            await gate;
+          }
+          return item.id !== 'a' || recordAllowed;
+        }
+      };
+      assert.throws(() => registerDataListCapability(new CapabilityRegistry(() => {}), provider, { ...options, recheckAuthorization: 'true' }), /Invalid data list/);
+      registerDataListCapability(registry, provider, options);
+      options.recheckAuthorization = false;
+      server = createCapabilityServer(
+        registry,
+        () => ({ tenantId: 'tenant', principalId: 'alice' }),
+        () => {}
+      );
+      server.listen(0, '127.0.0.1');
+      await new Promise(resolve => server.once('listening', resolve));
+      const call = () =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/checked.list/invoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input: {} })
+        });
+      const pending = call();
+      await waiting;
+      if (revoked === 'scope') scopeAllowed = false;
+      else recordAllowed = false;
+      blocked = false;
+      release();
+      const denied = await pending;
+      assert.equal(denied.status, 403);
+      assert.deepEqual(await denied.json(), { error: 'Capability forbidden' });
+      scopeAllowed = true;
+      recordAllowed = true;
+      const allowed = await call();
+      assert.equal(allowed.status, 200);
+      assert.deepEqual(
+        (await allowed.json()).result.items.map(item => item.id),
+        ['a', 'b']
+      );
+    } finally {
+      release();
+      if (server) {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+      provider.close();
+    }
+  }
+});
+
+test('not-equal filters are host-approved, type-sensitive, authorized and cursor-bound', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    checks = [];
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', state: 'open' }],
+      ['b', { owner: 'bob', state: 'hidden' }],
+      ['c', { owner: 'alice', state: null }],
+      ['d', { owner: 'alice' }],
+      ['e', { owner: 'alice', state: 2 }],
+      ['f', { owner: 'alice', state: ['open'] }],
+      ['g', { owner: 'alice', state: false }],
+      ['h', { owner: 'alice', state: 'closed' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    provider.put({ ...scope, tenantId: 'other' }, 'items', 'outside', { owner: 'alice', state: 'open' }, null);
+    const base = {
+      candidate: { operationId: 'not-equal.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state', 'owner'],
+      notEqualFilterFields: ['state'],
+      allowAnyFilters: true,
+      authorize: () => true,
+      authorizeItem: (actor, item) => {
+        checks.push(item.id);
+        return item.value.owner === actor.principalId;
+      }
+    };
+    registerDataListCapability(registry, provider, base);
+    const filter = { field: 'state', operator: 'neq', value: 'closed' },
+      first = await registry.invoke('not-equal.list', { filter, limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(item => item.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    await assert.rejects(registry.invoke('not-equal.list', { cursor: first.nextCursor, filter: { ...filter, value: 'open' } }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (await registry.invoke('not-equal.list', { filter, limit: 20 }, alice)).items.map(item => item.id),
+      ['a', 'c', 'e', 'g']
+    );
+    assert.ok(checks.includes('b'));
+    assert.equal(checks.includes('outside'), false);
+    const filters = [
+        { field: 'state', operator: 'neq', value: 'open' },
+        { field: 'state', operator: 'neq', value: null }
+      ],
+      page = await registry.invoke('not-equal.list', { filters, limit: 1 }, alice);
+    assert.ok(page.nextCursor);
+    assert.deepEqual(
+      (await registry.invoke('not-equal.list', { filters: [...filters].reverse(), cursor: page.nextCursor, limit: 20 }, alice)).items.map(item => item.id),
+      ['e', 'g', 'h']
+    );
+    await assert.rejects(registry.invoke('not-equal.list', { filters: [filters[0], filters[0]] }, alice), /Invalid capability input/);
+    assert.deepEqual(
+      (await registry.invoke('not-equal.list', { filter: { field: 'state', operator: 'neq', value: 2 }, limit: 20 }, alice)).items.map(item => item.id),
+      ['a', 'c', 'g', 'h']
+    );
+    assert.deepEqual(
+      (await registry.invoke('not-equal.list', { filter: { field: 'state', operator: 'neq', value: '2' }, limit: 20 }, alice)).items.map(item => item.id),
+      ['a', 'c', 'e', 'g', 'h']
+    );
+    await assert.rejects(registry.invoke('not-equal.list', { filter: { field: 'owner', operator: 'neq', value: 'bob' } }, alice), /Invalid capability input/);
+    assert.throws(() => registerDataListCapability(new CapabilityRegistry(() => {}), provider, { ...base, notEqualFilterFields: ['unknown'] }), /Invalid data list capability/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('not-equal filters compose with any-mode, scoped cursors and snapshotted policy', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    for (const [id, value] of [
+      ['a', { owner: 'alice', state: 'closed', group: 'vip' }],
+      ['b', { owner: 'alice', state: 'open', group: 'staff' }],
+      ['c', { owner: 'alice', group: 'vip' }],
+      ['d', { owner: 'bob', state: 'open', group: 'vip' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    const options = {
+      candidate: { operationId: 'neq-any.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state', 'group'],
+      notEqualFilterFields: ['state'],
+      allowAnyFilters: true,
+      authorize: () => true,
+      authorizeItem: (actor, item) => actor.principalId === item.value.owner
+    };
+    registerDataListCapability(registry, provider, options);
+    options.notEqualFilterFields.length = 0;
+    options.allowAnyFilters = false;
+    const filters = [
+        { field: 'state', operator: 'neq', value: 'closed' },
+        { field: 'group', value: 'vip' }
+      ],
+      first = await registry.invoke('neq-any.list', { filters, filterMode: 'any', limit: 1 }, alice);
+    assert.deepEqual(
+      first.items.map(x => x.id),
+      ['a']
+    );
+    assert.ok(first.nextCursor);
+    await assert.rejects(registry.invoke('neq-any.list', { filters, cursor: first.nextCursor }, alice), /Invalid capability input/);
+    await assert.rejects(registry.invoke('neq-any.list', { filters, filterMode: 'any', cursor: first.nextCursor }, bob), /Invalid capability input/);
+    const second = await registry.invoke('neq-any.list', { filters: [...filters].reverse(), filterMode: 'any', cursor: first.nextCursor, limit: 10 }, alice);
+    assert.deepEqual(
+      second.items.map(x => x.id),
+      ['b', 'c']
+    );
+    assert.equal(
+      second.items.some(x => x.id === 'd'),
+      false
+    );
+    assert.deepEqual((await registry.invoke('neq-any.list', { filters, limit: 10 }, alice)).items, []);
+  } finally {
+    provider.close();
+  }
+});
+
+test('list final record authorization catches revocation during the last scope check', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let scopeChecks = 0,
+    recordAllowed = true;
+  try {
+    provider.put(scope, 'items', 'private', { text: 'secret' }, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'checked.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      recheckAuthorization: true,
+      authorize: async () => {
+        if (++scopeChecks === 3) recordAllowed = false;
+        return true;
+      },
+      authorizeItem: () => recordAllowed
+    });
+    await assert.rejects(registry.invoke('checked.list', {}, alice), /forbidden/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('timed-out last list item recheck does not return a late page', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    signal,
+    count = 0;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    provider.put(scope, 'items', 'private', { text: 'secret' }, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'checked.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      recheckAuthorization: true,
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1,
+      authorize: () => true,
+      authorizeItem: async (_actor, _item, currentSignal) => {
+        if (++count === 3) {
+          signal = currentSignal;
+          await gate;
+        }
+        return true;
+      }
+    });
+    await assert.rejects(registry.invoke('checked.list', {}, alice), /Data list unavailable/);
+    assert.equal(signal.aborted, true);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(
+      (await registry.invoke('checked.list', {}, alice)).items.map(item => item.id),
+      ['private']
+    );
+  } finally {
+    release();
+    provider.close();
+  }
+});
+
+test('optional final record verification rejects updates and deletions during authorization', async () => {
+  for (const mutation of ['update', 'delete']) {
+    const provider = new SqliteDataProvider(':memory:'),
+      registry = new CapabilityRegistry(() => {});
+    let release, entered;
+    const gate = new Promise(resolve => (release = resolve)),
+      waiting = new Promise(resolve => (entered = resolve));
+    let calls = 0;
+    try {
+      provider.put(scope, 'items', 'a', { owner: 'alice', secret: 'old' }, null);
+      provider.put({ ...scope, tenantId: 'other' }, 'items', 'a', { owner: 'alice', secret: 'foreign' }, null);
+      registerDataListCapability(registry, provider, {
+        candidate: { operationId: 'verified.list', method: 'GET', path: '/items' },
+        applicationId: 'app',
+        collection: 'items',
+        cursorKey: randomBytes(32),
+        recheckAuthorization: true,
+        recheckRecords: true,
+        authorize: () => true,
+        authorizeItem: async () => {
+          if (++calls === 3) {
+            entered();
+            await gate;
+          }
+          return true;
+        }
+      });
+      const result = registry.invoke('verified.list', { expectedSchemaVersion: 0 }, alice);
+      await waiting;
+      if (mutation === 'update') provider.put(scope, 'items', 'a', { owner: 'bob', secret: 'new' }, 1);
+      else provider.delete(scope, 'items', 'a', 1);
+      release();
+      await assert.rejects(result, /Data list changed/);
+      assert.equal(provider.get({ ...scope, tenantId: 'other' }, 'items', 'a').value.secret, 'foreign');
+      const fresh = await registry.invoke('verified.list', {}, alice);
+      assert.deepEqual(
+        fresh.items.map(x => x.value.secret),
+        mutation === 'update' ? ['new'] : []
+      );
+    } finally {
+      release();
+      provider.close();
+    }
+  }
+});
+
+test('record verification is opt-in, fails closed for unsupported providers and compares values', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    const item = provider.put(scope, 'items', 'a', { nested: { value: 1 } }, null),
+      base = {
+        candidate: { operationId: 'verify.list', method: 'GET', path: '/items' },
+        applicationId: 'app',
+        collection: 'items',
+        cursorKey: randomBytes(32),
+        authorize: () => true,
+        authorizeItem: () => true
+      };
+    assert.equal(provider.verifyListPage(scope, 'items', [item], 0), true);
+    assert.equal(provider.verifyListPage(scope, 'items', [{ ...item, value: { nested: { value: 2 } } }], 0), false);
+    assert.equal(provider.verifyListPage({ ...scope, tenantId: 'other' }, 'items', [item]), false);
+    assert.throws(() => provider.verifyListPage(scope, 'items', [item, item]), /Invalid data listing/);
+    assert.throws(() => provider.verifyListPage(scope, 'items', [], 1), /schema version conflict/);
+    const legacy = { list: provider.list.bind(provider) };
+    assert.throws(() => registerDataListCapability(registry, legacy, { ...base, recheckRecords: true }), /Invalid data list capability/);
+    assert.throws(() => registerDataListCapability(registry, provider, { ...base, recheckRecords: 'yes' }), /Invalid data list capability/);
+    registerDataListCapability(registry, { ...legacy, verifyListPage: () => false }, { ...base, recheckRecords: true });
+    await assert.rejects(registry.invoke('verify.list', {}, alice), /Data list changed/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('record verification reports an HTTP conflict without returning stale records', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let release, entered, server;
+  const gate = new Promise(resolve => (release = resolve)),
+    waiting = new Promise(resolve => (entered = resolve));
+  try {
+    provider.put(scope, 'items', 'a', { secret: 'do not return' }, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'http.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      recheckRecords: true,
+      authorize: () => true,
+      authorizeItem: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'alice' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const response = fetch(`http://127.0.0.1:${server.address().port}/capabilities/http.list/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: {} })
+    });
+    await waiting;
+    provider.delete(scope, 'items', 'a', 1);
+    release();
+    const result = await response;
+    assert.equal(result.status, 409);
+    assert.doesNotMatch(await result.text(), /do not return/);
+  } finally {
+    release();
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+  }
+});
+
+test('record verification rejects asynchronous providers without unhandled rejections', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    provider.put(scope, 'items', 'a', { value: 1 }, null);
+    registerDataListCapability(
+      registry,
+      { list: provider.list.bind(provider), verifyListPage: () => Promise.reject(Error('late verifier failure')) },
+      {
+        candidate: { operationId: 'async.verify', method: 'GET', path: '/items' },
+        applicationId: 'app',
+        collection: 'items',
+        cursorKey: randomBytes(32),
+        recheckRecords: true,
+        authorize: () => true,
+        authorizeItem: () => true
+      }
+    );
+    await assert.rejects(registry.invoke('async.verify', {}, alice), /Data list changed/);
+    await new Promise(resolve => setImmediate(resolve));
+  } finally {
+    provider.close();
+  }
+});
+
+test('record verification detects schema migration while an item policy waits', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let release, entered;
+  const gate = new Promise(resolve => (release = resolve)),
+    waiting = new Promise(resolve => (entered = resolve));
+  try {
+    provider.put(scope, 'items', 'a', { value: 1 }, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'migration.verify', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      recheckRecords: true,
+      authorize: () => true,
+      authorizeItem: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    });
+    const result = registry.invoke('migration.verify', { expectedSchemaVersion: 0 }, alice);
+    await waiting;
+    const preview = provider.previewMigration(scope, 'items');
+    provider.migrateCollection(scope, 'items', { fromVersion: 0, toVersion: 1, digest: preview.digest, transform: value => value, validate: () => true });
+    release();
+    await assert.rejects(result, /Data schema version conflict/);
+  } finally {
+    release();
+    provider.close();
+  }
 });

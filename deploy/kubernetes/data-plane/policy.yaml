@@ -4,11 +4,11 @@ metadata:
   name: app-mixer-data-plane
 spec:
   podSelector:
-    matchLabels: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
+    matchLabels: { app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
         - podSelector:
-            matchLabels: {app-mixer-data-plane-client: "true"}
-      ports: [{protocol: TCP, port: 3002}]
+            matchLabels: { app-mixer-data-plane-client: 'true' }
+      ports: [{ protocol: TCP, port: 3002 }]
   egress: []

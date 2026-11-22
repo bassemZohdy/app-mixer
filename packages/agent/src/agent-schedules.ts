@@ -1,149 +1,461 @@
-import {DatabaseSync} from 'node:sqlite';
-import {ensureTriggerReceiptSchema} from './agent-trigger-receipts.js';
-import {insertAgentTraceParent,parseAgentTraceParent} from './agent-trace-context.js';
-import {Temporal} from '@js-temporal/polyfill';
-import {createHash,randomUUID} from 'node:crypto';
-import {SqliteAgentRuns,resumeAgentRunWithTriggerInTransaction,type AgentRunScope} from './durable-runs.js';
-import {openDatabase} from './sqlite-open.js';
-import {isIdentifier,isNonNegativeInteger} from './validation.js';
-import {AgentError} from './errors.js';
+import { DatabaseSync } from 'node:sqlite';
+import { ensureTriggerReceiptSchema } from './agent-trigger-receipts.js';
+import { insertAgentTraceParent, parseAgentTraceParent } from './agent-trace-context.js';
+import { Temporal } from '@js-temporal/polyfill';
+import { createHash, randomUUID } from 'node:crypto';
+import { SqliteAgentRuns, resumeAgentRunWithTriggerInTransaction, type AgentRunScope } from './durable-runs.js';
+import { openDatabase } from './sqlite-open.js';
+import { isIdentifier, isNonNegativeInteger } from './validation.js';
+import { AgentError } from './errors.js';
 
-type ScheduleRule={kind:'interval';intervalMs:number}|{kind:'cron';expression:string;timeZone?:string;excludeDates?:string[];excludeDateRanges?:{start:string;end:string}[];excludeAnnualDates?:string[];observeAnnualWeekends?:boolean};
-type ScheduleConfig={enabled:boolean;principalId:string;rule:ScheduleRule;misfire?:'catchUp'|'coalesce'};
-export type AgentSchedule={tenantId:string;agentId:string;scheduleId:string;revision:number;generation:number;nextAt:number;config:ScheduleConfig};
-export type AgentScheduleCursor={nextAt:number;scheduleId:string};
-export type AgentSchedulePage={items:AgentSchedule[];next?:AgentScheduleCursor};
-type FireOptions={definitionVersion:number;maxAttempts:number;runTimeoutMs:number;maxPending:number;traceParent?:string;wakeup?:{runId:string;revision:number}};
-const id=isIdentifier;
-const integer=isNonNegativeInteger;
-function field(raw:string,min:number,max:number,starMax=max):Set<number>{
- const values=new Set<number>();for(const piece of raw.split(',')){
-  const parts=piece.split('/');if(parts.length>2||!parts[0]||parts[1]===''||(parts[1]!==undefined&&!/^\d+$/.test(parts[1])))throw Error('Invalid cron expression');
-  if(parts[1]!==undefined&&parts[0]!=='*'&&!parts[0].includes('-'))throw Error('Invalid cron expression');
-  const step=parts[1]===undefined?1:Number(parts[1]);if(!Number.isSafeInteger(step)||step<1||step>max-min+1)throw Error('Invalid cron expression');
-  let start:number,end:number;if(parts[0]==='*'){start=min;end=starMax;}else{const range=parts[0].split('-');if(range.length>2||range.some(x=>!/^\d+$/.test(x)))throw Error('Invalid cron expression');start=Number(range[0]);end=range.length===2?Number(range[1]):start;}
-  if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<min||end>max||start>end)throw Error('Invalid cron expression');for(let n=start;n<=end;n+=step)values.add(n);
- }return values;
-}
-const monthNames=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'],weekdayNames=['sun','mon','tue','wed','thu','fri','sat'];
-/** Replace three-letter names with their numbers; any other letters are invalid. */
-function names(raw:string,list:string[],offset:number):string{return raw.replace(/[A-Za-z]+/g,token=>{const index=list.indexOf(token.toLowerCase());if(token.length!==3||index<0)throw Error('Invalid cron expression');return String(index+offset);});}
-function cron(expression:string){
- if(typeof expression!=='string'||expression.length>200)throw Error('Invalid cron expression');const parts=expression.trim().split(/\s+/);if(parts.length!==5)throw Error('Invalid cron expression');
- return {minutes:field(parts[0],0,59),hours:field(parts[1],0,23),days:field(parts[2],1,31),months:field(names(parts[3],monthNames,1),1,12),weekdays:new Set([...field(names(parts[4],weekdayNames,0),0,7,6)].map(day=>day%7)),dayAny:parts[2]==='*',weekdayAny:parts[4]==='*'};
-}
-function checkConfig(config:ScheduleConfig):ScheduleConfig{
- if(!config||typeof config!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(config))||(typeof config.rule==='object'&&config.rule!==null&&![Object.prototype,null].includes(Object.getPrototypeOf(config.rule)))||Object.keys(config).some(k=>!['enabled','principalId','rule','misfire'].includes(k))||typeof config.enabled!=='boolean'||!id(config.principalId)||(config.misfire!==undefined&&!['catchUp','coalesce'].includes(config.misfire))||!config.rule||typeof config.rule!=='object')throw Error('Invalid schedule');
- if(config.rule.kind==='interval'){if(Object.keys(config.rule).length!==2||!integer(config.rule.intervalMs)||config.rule.intervalMs<1000||config.rule.intervalMs>30*86400000)throw Error('Invalid schedule');return structuredClone(config);}
- if(config.rule.kind==='cron'){if(Object.keys(config.rule).some(key=>!['kind','expression','timeZone','excludeDates','excludeDateRanges','excludeAnnualDates','observeAnnualWeekends'].includes(key)))throw Error('Invalid schedule');cron(config.rule.expression);if(config.rule.timeZone!==undefined)checkZone(config.rule.timeZone);if(config.rule.excludeDates!==undefined)checkExcludedDates(config.rule.excludeDates);if(config.rule.excludeDateRanges!==undefined)checkExcludedRanges(config.rule.excludeDateRanges);if(config.rule.excludeAnnualDates!==undefined)checkAnnualDates(config.rule.excludeAnnualDates);if(config.rule.observeAnnualWeekends!==undefined&&(typeof config.rule.observeAnnualWeekends!=='boolean'||(config.rule.observeAnnualWeekends&&!config.rule.excludeAnnualDates?.length)))throw Error('Invalid annual observance');return structuredClone(config);}
- throw Error('Invalid schedule');
-}
-function checkZone(zone:unknown):asserts zone is string{
- if(typeof zone!=='string'||zone.length>128||!/^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)*$/.test(zone))throw Error('Invalid schedule time zone');
- try{new Intl.DateTimeFormat('en-US',{timeZone:zone}).format(0);}catch{throw Error('Invalid schedule time zone');}
-}
-function checkExcludedDates(value:unknown):asserts value is string[]{
- if(!Array.isArray(value)||value.length>366||new Set(value).size!==value.length)throw Error('Invalid excluded dates');
- for(const date of value){if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw Error('Invalid excluded dates');try{if(Temporal.PlainDate.from(date).toString()!==date)throw Error();}catch{throw Error('Invalid excluded dates');}}
-}
-function checkExcludedRanges(value:unknown):asserts value is {start:string;end:string}[]{
- if(!Array.isArray(value)||value.length>100)throw Error('Invalid excluded date ranges');
- for(const range of value){if(!range||typeof range!=='object'||Array.isArray(range)||Object.keys(range).length!==2||!Object.hasOwn(range,'start')||!Object.hasOwn(range,'end'))throw Error('Invalid excluded date ranges');try{checkExcludedDates([range.start]);checkExcludedDates([range.end]);}catch{throw Error('Invalid excluded date ranges');}if(range.start>range.end)throw Error('Invalid excluded date ranges');}
-}
-const inExcludedRange=(date:string,ranges:{start:string;end:string}[])=>ranges.some(range=>range.start<=date&&date<=range.end);
-function checkAnnualDates(value:unknown):asserts value is string[]{
- if(!Array.isArray(value)||value.length>366||new Set(value).size!==value.length)throw Error('Invalid annual excluded dates');
- for(const date of value){if(typeof date!=='string'||!/^\d{2}-\d{2}$/.test(date))throw Error('Invalid annual excluded dates');try{if(Temporal.PlainDate.from(`2000-${date}`).toString()!==`2000-${date}`)throw Error();}catch{throw Error('Invalid annual excluded dates');}}
-}
-const monthDay=(month:number,day:number)=>`${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-function nextZoned(expression:string,zone:string,after:number,excluded:Set<string>,ranges:{start:string;end:string}[],annual:Set<string>,observe:boolean):number{
- const c=cron(expression),start=Temporal.Instant.fromEpochMilliseconds(after).toZonedDateTimeISO(zone).toPlainDate().subtract({days:2}),hours=[...c.hours].sort((a,b)=>a-b),minutes=[...c.minutes].sort((a,b)=>a-b);let best:number|undefined;
- for(let offset=0;offset<366*9+4;offset++){
-  const date=start.add({days:offset}),lower=date.toPlainDateTime().toZonedDateTime('UTC').epochMilliseconds-86400000;
-  if(best!==undefined&&lower>best)return best;if(lower+3*86400000<=after)continue;
-  const observed=observe&&(date.dayOfWeek===5&&(()=>{const holiday=date.add({days:1});return annual.has(monthDay(holiday.month,holiday.day));})()||date.dayOfWeek===1&&(()=>{const holiday=date.subtract({days:1});return annual.has(monthDay(holiday.month,holiday.day));})());
-  const dom=c.days.has(date.day),dow=c.weekdays.has(date.dayOfWeek%7),dayMatch=c.dayAny?dow:c.weekdayAny?dom:dom||dow;if(!c.months.has(date.month)||!dayMatch||excluded.has(date.toString())||inExcludedRange(date.toString(),ranges)||annual.has(monthDay(date.month,date.day))||observed)continue;
-  for(const hour of hours)for(const minute of minutes){
-   const parts={timeZone:zone,year:date.year,month:date.month,day:date.day,hour,minute};
-   const early=Temporal.ZonedDateTime.from(parts,{disambiguation:'earlier'}),late=Temporal.ZonedDateTime.from(parts,{disambiguation:'later'});
-   for(const candidate of [early,late]){if(candidate.year!==date.year||candidate.month!==date.month||candidate.day!==date.day||candidate.hour!==hour||candidate.minute!==minute)continue;const instant=candidate.epochMilliseconds;if(instant>after&&Number.isSafeInteger(instant)&&(best===undefined||instant<best))best=instant;}
-   if(best!==undefined&&early.epochMilliseconds>best)break;
+type ScheduleRule =
+  | { kind: 'interval'; intervalMs: number }
+  | {
+      kind: 'cron';
+      expression: string;
+      timeZone?: string;
+      excludeDates?: string[];
+      excludeDateRanges?: { start: string; end: string }[];
+      excludeAnnualDates?: string[];
+      observeAnnualWeekends?: boolean;
+    };
+type ScheduleConfig = { enabled: boolean; principalId: string; rule: ScheduleRule; misfire?: 'catchUp' | 'coalesce' };
+export type AgentSchedule = { tenantId: string; agentId: string; scheduleId: string; revision: number; generation: number; nextAt: number; config: ScheduleConfig };
+export type AgentScheduleCursor = { nextAt: number; scheduleId: string };
+export type AgentSchedulePage = { items: AgentSchedule[]; next?: AgentScheduleCursor };
+type FireOptions = { definitionVersion: number; maxAttempts: number; runTimeoutMs: number; maxPending: number; traceParent?: string; wakeup?: { runId: string; revision: number } };
+const id = isIdentifier;
+const integer = isNonNegativeInteger;
+function field(raw: string, min: number, max: number, starMax = max): Set<number> {
+  const values = new Set<number>();
+  for (const piece of raw.split(',')) {
+    const parts = piece.split('/');
+    if (parts.length > 2 || !parts[0] || parts[1] === '' || (parts[1] !== undefined && !/^\d+$/.test(parts[1]))) throw Error('Invalid cron expression');
+    if (parts[1] !== undefined && parts[0] !== '*' && !parts[0].includes('-')) throw Error('Invalid cron expression');
+    const step = parts[1] === undefined ? 1 : Number(parts[1]);
+    if (!Number.isSafeInteger(step) || step < 1 || step > max - min + 1) throw Error('Invalid cron expression');
+    let start: number, end: number;
+    if (parts[0] === '*') {
+      start = min;
+      end = starMax;
+    } else {
+      const range = parts[0].split('-');
+      if (range.length > 2 || range.some(x => !/^\d+$/.test(x))) throw Error('Invalid cron expression');
+      start = Number(range[0]);
+      end = range.length === 2 ? Number(range[1]) : start;
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < min || end > max || start > end) throw Error('Invalid cron expression');
+    for (let n = start; n <= end; n += step) values.add(n);
   }
- }
- if(best!==undefined)return best;throw Error('Cron has no occurrence within nine years');
+  return values;
 }
-function next(rule:ScheduleRule,after:number):number{
- if(rule.kind==='interval'){const value=after+rule.intervalMs;if(!Number.isSafeInteger(value))throw Error('Invalid schedule time');return value;}
- const excluded=new Set(rule.excludeDates??[]),annual=new Set(rule.excludeAnnualDates??[]);if(rule.timeZone!==undefined)return nextZoned(rule.expression,rule.timeZone,after,excluded,rule.excludeDateRanges??[],annual,rule.observeAnnualWeekends===true);
- const c=cron(rule.expression),start=Math.floor(after/60000)*60000+60000,date=new Date(start);if(!Number.isFinite(date.getTime()))throw Error('Invalid schedule time');
- const midnight=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate());
- for(let day=0;day<366*9;day++){
-  const base=midnight+day*86400000,d=new Date(base);if(!Number.isFinite(d.getTime()))break;
-  const dom=c.days.has(d.getUTCDate()),dow=c.weekdays.has(d.getUTCDay()),dayMatch=c.dayAny?dow:c.weekdayAny?dom:dom||dow;
-  const observed=rule.observeAnnualWeekends===true&&(d.getUTCDay()===5&&(()=>{const holiday=new Date(base+86400000);return annual.has(monthDay(holiday.getUTCMonth()+1,holiday.getUTCDate()));})()||d.getUTCDay()===1&&(()=>{const holiday=new Date(base-86400000);return annual.has(monthDay(holiday.getUTCMonth()+1,holiday.getUTCDate()));})());
-  if(!c.months.has(d.getUTCMonth()+1)||!dayMatch||excluded.has(d.toISOString().slice(0,10))||inExcludedRange(d.toISOString().slice(0,10),rule.excludeDateRanges??[])||annual.has(monthDay(d.getUTCMonth()+1,d.getUTCDate()))||observed)continue;
-  for(const hour of [...c.hours].sort((a,b)=>a-b))for(const minute of [...c.minutes].sort((a,b)=>a-b)){const candidate=base+hour*3600000+minute*60000;if(candidate>=start&&Number.isSafeInteger(candidate))return candidate;}
- }
- throw Error('Cron has no occurrence within nine years');
+const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'],
+  weekdayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+/** Replace three-letter names with their numbers; any other letters are invalid. */
+function names(raw: string, list: string[], offset: number): string {
+  return raw.replace(/[A-Za-z]+/g, token => {
+    const index = list.indexOf(token.toLowerCase());
+    if (token.length !== 3 || index < 0) throw Error('Invalid cron expression');
+    return String(index + offset);
+  });
+}
+function cron(expression: string) {
+  if (typeof expression !== 'string' || expression.length > 200) throw Error('Invalid cron expression');
+  const parts = expression.trim().split(/\s+/);
+  if (parts.length !== 5) throw Error('Invalid cron expression');
+  return {
+    minutes: field(parts[0], 0, 59),
+    hours: field(parts[1], 0, 23),
+    days: field(parts[2], 1, 31),
+    months: field(names(parts[3], monthNames, 1), 1, 12),
+    weekdays: new Set([...field(names(parts[4], weekdayNames, 0), 0, 7, 6)].map(day => day % 7)),
+    dayAny: parts[2] === '*',
+    weekdayAny: parts[4] === '*'
+  };
+}
+function checkConfig(config: ScheduleConfig): ScheduleConfig {
+  if (
+    !config ||
+    typeof config !== 'object' ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(config)) ||
+    (typeof config.rule === 'object' && config.rule !== null && ![Object.prototype, null].includes(Object.getPrototypeOf(config.rule))) ||
+    Object.keys(config).some(k => !['enabled', 'principalId', 'rule', 'misfire'].includes(k)) ||
+    typeof config.enabled !== 'boolean' ||
+    !id(config.principalId) ||
+    (config.misfire !== undefined && !['catchUp', 'coalesce'].includes(config.misfire)) ||
+    !config.rule ||
+    typeof config.rule !== 'object'
+  )
+    throw Error('Invalid schedule');
+  if (config.rule.kind === 'interval') {
+    if (Object.keys(config.rule).length !== 2 || !integer(config.rule.intervalMs) || config.rule.intervalMs < 1000 || config.rule.intervalMs > 30 * 86400000) throw Error('Invalid schedule');
+    return structuredClone(config);
+  }
+  if (config.rule.kind === 'cron') {
+    if (Object.keys(config.rule).some(key => !['kind', 'expression', 'timeZone', 'excludeDates', 'excludeDateRanges', 'excludeAnnualDates', 'observeAnnualWeekends'].includes(key)))
+      throw Error('Invalid schedule');
+    cron(config.rule.expression);
+    if (config.rule.timeZone !== undefined) checkZone(config.rule.timeZone);
+    if (config.rule.excludeDates !== undefined) checkExcludedDates(config.rule.excludeDates);
+    if (config.rule.excludeDateRanges !== undefined) checkExcludedRanges(config.rule.excludeDateRanges);
+    if (config.rule.excludeAnnualDates !== undefined) checkAnnualDates(config.rule.excludeAnnualDates);
+    if (config.rule.observeAnnualWeekends !== undefined && (typeof config.rule.observeAnnualWeekends !== 'boolean' || (config.rule.observeAnnualWeekends && !config.rule.excludeAnnualDates?.length)))
+      throw Error('Invalid annual observance');
+    return structuredClone(config);
+  }
+  throw Error('Invalid schedule');
+}
+function checkZone(zone: unknown): asserts zone is string {
+  if (typeof zone !== 'string' || zone.length > 128 || !/^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)*$/.test(zone)) throw Error('Invalid schedule time zone');
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone }).format(0);
+  } catch {
+    throw Error('Invalid schedule time zone');
+  }
+}
+function checkExcludedDates(value: unknown): asserts value is string[] {
+  if (!Array.isArray(value) || value.length > 366 || new Set(value).size !== value.length) throw Error('Invalid excluded dates');
+  for (const date of value) {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Error('Invalid excluded dates');
+    try {
+      if (Temporal.PlainDate.from(date).toString() !== date) throw Error();
+    } catch {
+      throw Error('Invalid excluded dates');
+    }
+  }
+}
+function checkExcludedRanges(value: unknown): asserts value is { start: string; end: string }[] {
+  if (!Array.isArray(value) || value.length > 100) throw Error('Invalid excluded date ranges');
+  for (const range of value) {
+    if (!range || typeof range !== 'object' || Array.isArray(range) || Object.keys(range).length !== 2 || !Object.hasOwn(range, 'start') || !Object.hasOwn(range, 'end'))
+      throw Error('Invalid excluded date ranges');
+    try {
+      checkExcludedDates([range.start]);
+      checkExcludedDates([range.end]);
+    } catch {
+      throw Error('Invalid excluded date ranges');
+    }
+    if (range.start > range.end) throw Error('Invalid excluded date ranges');
+  }
+}
+const inExcludedRange = (date: string, ranges: { start: string; end: string }[]) => ranges.some(range => range.start <= date && date <= range.end);
+function checkAnnualDates(value: unknown): asserts value is string[] {
+  if (!Array.isArray(value) || value.length > 366 || new Set(value).size !== value.length) throw Error('Invalid annual excluded dates');
+  for (const date of value) {
+    if (typeof date !== 'string' || !/^\d{2}-\d{2}$/.test(date)) throw Error('Invalid annual excluded dates');
+    try {
+      if (Temporal.PlainDate.from(`2000-${date}`).toString() !== `2000-${date}`) throw Error();
+    } catch {
+      throw Error('Invalid annual excluded dates');
+    }
+  }
+}
+const monthDay = (month: number, day: number) => `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+function nextZoned(expression: string, zone: string, after: number, excluded: Set<string>, ranges: { start: string; end: string }[], annual: Set<string>, observe: boolean): number {
+  const c = cron(expression),
+    start = Temporal.Instant.fromEpochMilliseconds(after).toZonedDateTimeISO(zone).toPlainDate().subtract({ days: 2 }),
+    hours = [...c.hours].sort((a, b) => a - b),
+    minutes = [...c.minutes].sort((a, b) => a - b);
+  let best: number | undefined;
+  for (let offset = 0; offset < 366 * 9 + 4; offset++) {
+    const date = start.add({ days: offset }),
+      lower = date.toPlainDateTime().toZonedDateTime('UTC').epochMilliseconds - 86400000;
+    if (best !== undefined && lower > best) return best;
+    if (lower + 3 * 86400000 <= after) continue;
+    const observed =
+      observe &&
+      ((date.dayOfWeek === 5 &&
+        (() => {
+          const holiday = date.add({ days: 1 });
+          return annual.has(monthDay(holiday.month, holiday.day));
+        })()) ||
+        (date.dayOfWeek === 1 &&
+          (() => {
+            const holiday = date.subtract({ days: 1 });
+            return annual.has(monthDay(holiday.month, holiday.day));
+          })()));
+    const dom = c.days.has(date.day),
+      dow = c.weekdays.has(date.dayOfWeek % 7),
+      dayMatch = c.dayAny ? dow : c.weekdayAny ? dom : dom || dow;
+    if (!c.months.has(date.month) || !dayMatch || excluded.has(date.toString()) || inExcludedRange(date.toString(), ranges) || annual.has(monthDay(date.month, date.day)) || observed) continue;
+    for (const hour of hours)
+      for (const minute of minutes) {
+        const parts = { timeZone: zone, year: date.year, month: date.month, day: date.day, hour, minute };
+        const early = Temporal.ZonedDateTime.from(parts, { disambiguation: 'earlier' }),
+          late = Temporal.ZonedDateTime.from(parts, { disambiguation: 'later' });
+        for (const candidate of [early, late]) {
+          if (candidate.year !== date.year || candidate.month !== date.month || candidate.day !== date.day || candidate.hour !== hour || candidate.minute !== minute) continue;
+          const instant = candidate.epochMilliseconds;
+          if (instant > after && Number.isSafeInteger(instant) && (best === undefined || instant < best)) best = instant;
+        }
+        if (best !== undefined && early.epochMilliseconds > best) break;
+      }
+  }
+  if (best !== undefined) return best;
+  throw Error('Cron has no occurrence within nine years');
+}
+function next(rule: ScheduleRule, after: number): number {
+  if (rule.kind === 'interval') {
+    const value = after + rule.intervalMs;
+    if (!Number.isSafeInteger(value)) throw Error('Invalid schedule time');
+    return value;
+  }
+  const excluded = new Set(rule.excludeDates ?? []),
+    annual = new Set(rule.excludeAnnualDates ?? []);
+  if (rule.timeZone !== undefined) return nextZoned(rule.expression, rule.timeZone, after, excluded, rule.excludeDateRanges ?? [], annual, rule.observeAnnualWeekends === true);
+  const c = cron(rule.expression),
+    start = Math.floor(after / 60000) * 60000 + 60000,
+    date = new Date(start);
+  if (!Number.isFinite(date.getTime())) throw Error('Invalid schedule time');
+  const midnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  for (let day = 0; day < 366 * 9; day++) {
+    const base = midnight + day * 86400000,
+      d = new Date(base);
+    if (!Number.isFinite(d.getTime())) break;
+    const dom = c.days.has(d.getUTCDate()),
+      dow = c.weekdays.has(d.getUTCDay()),
+      dayMatch = c.dayAny ? dow : c.weekdayAny ? dom : dom || dow;
+    const observed =
+      rule.observeAnnualWeekends === true &&
+      ((d.getUTCDay() === 5 &&
+        (() => {
+          const holiday = new Date(base + 86400000);
+          return annual.has(monthDay(holiday.getUTCMonth() + 1, holiday.getUTCDate()));
+        })()) ||
+        (d.getUTCDay() === 1 &&
+          (() => {
+            const holiday = new Date(base - 86400000);
+            return annual.has(monthDay(holiday.getUTCMonth() + 1, holiday.getUTCDate()));
+          })()));
+    if (
+      !c.months.has(d.getUTCMonth() + 1) ||
+      !dayMatch ||
+      excluded.has(d.toISOString().slice(0, 10)) ||
+      inExcludedRange(d.toISOString().slice(0, 10), rule.excludeDateRanges ?? []) ||
+      annual.has(monthDay(d.getUTCMonth() + 1, d.getUTCDate())) ||
+      observed
+    )
+      continue;
+    for (const hour of [...c.hours].sort((a, b) => a - b))
+      for (const minute of [...c.minutes].sort((a, b) => a - b)) {
+        const candidate = base + hour * 3600000 + minute * 60000;
+        if (candidate >= start && Number.isSafeInteger(candidate)) return candidate;
+      }
+  }
+  throw Error('Cron has no occurrence within nine years');
 }
 /** SQLite-backed schedules and atomic occurrence enqueue. Host supplies authorization and time. */
 export class SqliteAgentSchedules {
- private readonly db:DatabaseSync;
- constructor(path:string){this.db=openDatabase(path);try{this.db.exec(`PRAGMA busy_timeout=5000;
+  private readonly db: DatabaseSync;
+  constructor(path: string) {
+    this.db = openDatabase(path);
+    try {
+      this.db.exec(`PRAGMA busy_timeout=5000;
   CREATE TABLE IF NOT EXISTS agent_schedules (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,enabled INTEGER NOT NULL,config TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,schedule_id));
   CREATE INDEX IF NOT EXISTS agent_schedules_due ON agent_schedules(tenant_id,agent_id,enabled,next_at,schedule_id);
   CREATE TABLE IF NOT EXISTS agent_schedule_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,schedule_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,generation INTEGER NOT NULL,next_at INTEGER NOT NULL,config TEXT NOT NULL,actor_id TEXT,run_id TEXT,scheduled_at INTEGER,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,schedule_id,revision));
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_replace BEFORE INSERT ON agent_schedule_events WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_schedule_events WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM agent_schedule_events WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND schedule_id=NEW.schedule_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_update BEFORE UPDATE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_schedule_events_no_delete BEFORE DELETE ON agent_schedule_events BEGIN SELECT RAISE(ABORT,'Schedule history is immutable'); END;`);
-  for(const table of ['agent_runs','agent_trigger_inbox'])if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw Error('Trigger registry unavailable');ensureTriggerReceiptSchema(this.db);
- }catch(error){this.db.close();throw error;}}
- close():void{this.db.close();}
- /** Scheduled wakeups require a shared on-disk run registry. */
- sharesRunDatabase(runs:SqliteAgentRuns):boolean{if(!(runs instanceof SqliteAgentRuns))return false;const row=this.db.prepare('PRAGMA database_list').all().find(item=>item.name==='main');return typeof row?.file==='string'&&row.file.length>0&&runs.isBackedByDatabase(row.file);}
+      for (const table of ['agent_runs', 'agent_trigger_inbox'])
+        if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('Trigger registry unavailable');
+      ensureTriggerReceiptSchema(this.db);
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+  close(): void {
+    this.db.close();
+  }
+  /** Scheduled wakeups require a shared on-disk run registry. */
+  sharesRunDatabase(runs: SqliteAgentRuns): boolean {
+    if (!(runs instanceof SqliteAgentRuns)) return false;
+    const row = this.db
+      .prepare('PRAGMA database_list')
+      .all()
+      .find(item => item.name === 'main');
+    return typeof row?.file === 'string' && row.file.length > 0 && runs.isBackedByDatabase(row.file);
+  }
 
- private check(scope:AgentRunScope,scheduleId:string):void{if(!scope||!id(scope.tenantId)||!id(scope.agentId)||!id(scheduleId))throw Error('Invalid schedule scope');}
- private parse(row:Record<string,unknown>):AgentSchedule{return {tenantId:String(row.tenant_id),agentId:String(row.agent_id),scheduleId:String(row.schedule_id),revision:Number(row.revision),generation:Number(row.generation),nextAt:Number(row.next_at),config:checkConfig(JSON.parse(String(row.config)))};}
- get(scope:AgentRunScope,scheduleId:string):AgentSchedule|undefined{this.check(scope,scheduleId);const row=this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND schedule_id=?').get(scope.tenantId,scope.agentId,scheduleId);return row?this.parse(row):undefined;}
- due(scope:AgentRunScope,now:number,limit=100):AgentSchedule[]{
-  this.check(scope,'validation');if(!integer(now)||!integer(limit)||limit<1||limit>100)throw Error('Invalid schedule query');
-  const rows=this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit);return rows.map(row=>this.parse(row));
- }
- /** Bounded keyset scan; callers must restart a scan to revisit changed schedules. */
- duePage(scope:AgentRunScope,now:number,limit=100,after?:AgentScheduleCursor):AgentSchedulePage{
-  this.check(scope,'validation');if(!integer(now)||!integer(limit)||limit<1||limit>100||(after!==undefined&&(!after||!integer(after.nextAt)||!id(after.scheduleId))))throw Error('Invalid schedule query');
-  const rows=after===undefined?this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,limit+1):this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? AND (next_at>? OR (next_at=? AND schedule_id>?)) ORDER BY next_at,schedule_id LIMIT ?').all(scope.tenantId,scope.agentId,now,after.nextAt,after.nextAt,after.scheduleId,limit+1);
-  const items=rows.slice(0,limit).map(row=>this.parse(row)),last=items.at(-1);return {items,...(rows.length>limit&&last?{next:{nextAt:last.nextAt,scheduleId:last.scheduleId}}:{})};
- }
- save(scope:AgentRunScope,scheduleId:string,config:ScheduleConfig,expectedRevision:number,now=Date.now(),actorId?:string):AgentSchedule{
-  this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId)))throw Error('Invalid schedule');const safe=checkConfig(config),nextAt=next(safe.rule,now);
-  this.db.exec('BEGIN IMMEDIATE');try{const old=this.get(scope,scheduleId);if((old?.revision??0)!==expectedRevision)throw Error('Schedule revision conflict');const revision=expectedRevision+1,generation=(old?.generation??0)+1;if(!Number.isSafeInteger(generation))throw Error('Invalid schedule');
-   this.db.prepare('INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config').run(scope.tenantId,scope.agentId,scheduleId,revision,generation,nextAt,safe.enabled?1:0,JSON.stringify(safe));this.db.prepare('INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?)').run(scope.tenantId,scope.agentId,scheduleId,old?'updated':'created',revision,generation,nextAt,JSON.stringify(safe),actorId??null,now);this.db.exec('COMMIT');return this.get(scope,scheduleId)!;
-  }catch(error){this.db.exec('ROLLBACK');throw error;}
- }
- getOccurrence(scope:AgentRunScope,scheduleId:string,generation:number,scheduledAt:number):string|undefined {
-  this.check(scope,scheduleId);if(!integer(generation)||generation<1||!integer(scheduledAt))throw Error('Invalid schedule occurrence');
-  const sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${generation}:t${scheduledAt}`;
-  const row=this.db.prepare('SELECT run_id FROM agent_trigger_inbox WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId);if(row)return String(row.run_id);const fired=this.db.prepare("SELECT run_id FROM agent_schedule_events WHERE tenant_id=? AND agent_id=? AND schedule_id=? AND kind='fired' AND generation=? AND scheduled_at=?").get(scope.tenantId,scope.agentId,scheduleId,generation,scheduledAt);return fired?String(fired.run_id):undefined;
- }
- fire(scope:AgentRunScope,scheduleId:string,expectedRevision:number,policy:FireOptions,now=Date.now(),actorId?:string):{runId:string;scheduledAt:number}{
-  this.check(scope,scheduleId);if(!integer(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER||!integer(now)||(actorId!==undefined&&!id(actorId))||!policy||!integer(policy.definitionVersion)||policy.definitionVersion<1||!integer(policy.maxAttempts)||policy.maxAttempts<1||policy.maxAttempts>100||!integer(policy.runTimeoutMs)||policy.runTimeoutMs<1000||policy.runTimeoutMs>86400000||!integer(policy.maxPending)||policy.maxPending<1||policy.maxPending>10000||!Number.isSafeInteger(now+policy.runTimeoutMs)||(policy.traceParent!==undefined&&!parseAgentTraceParent(policy.traceParent))||(policy.wakeup!==undefined&&(!policy.wakeup||!id(policy.wakeup.runId)||!integer(policy.wakeup.revision)||policy.wakeup.revision<1||policy.wakeup.revision>=Number.MAX_SAFE_INTEGER||policy.traceParent!==undefined)))throw Error('Invalid schedule fire');
-  this.db.exec('BEGIN IMMEDIATE');try{
-   const schedule=this.get(scope,scheduleId);if(!schedule||schedule.revision!==expectedRevision)throw Error('Schedule revision conflict');if(!schedule.config.enabled||schedule.nextAt>now)throw Error('Schedule not due');
-   const count=this.db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')").get(scope.tenantId,scope.agentId);if(!policy.wakeup&&Number(count?.n)>=policy.maxPending)throw new AgentError('limit','Trigger backlog full');
-   const scheduledAt=schedule.nextAt,coalesce=schedule.config.misfire==='coalesce',rule=schedule.config.rule;let nextAt=coalesce&&rule.kind==='interval'?now+(rule.intervalMs-((now-scheduledAt)%rule.intervalMs)):next(rule,coalesce?now:scheduledAt);if(!Number.isSafeInteger(nextAt))throw Error('Invalid schedule time');const runId=policy.wakeup?.runId??randomUUID(),sourceId='schedule.'+createHash('sha256').update(scheduleId).digest('hex'),eventId=`g${schedule.generation}:t${scheduledAt}`,payload=JSON.stringify({scheduleId,scheduledAt,...(coalesce?{coalescedThrough:now}:{})}),hash=createHash('sha256').update(payload).digest('hex');
-   const wakeups=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_run_wakeups'").get();if(wakeups&&this.db.prepare('SELECT 1 FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId,scope.agentId,sourceId,eventId))throw new AgentError('conflict','Trigger identity conflict');
-   if(policy.wakeup){const resumed=resumeAgentRunWithTriggerInTransaction(this.db,scope,runId,policy.wakeup.revision,{sourceId,eventId,principalId:schedule.config.principalId,eventType:'schedule.tick',payload:JSON.parse(payload)},now);if(resumed.duplicate)throw new AgentError('conflict','Trigger identity conflict');if(resumed.run.definitionVersion!==policy.definitionVersion)throw Error('Agent definition changed');}
-   else{this.db.prepare("INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)").run(scope.tenantId,scope.agentId,runId,policy.definitionVersion,policy.maxAttempts,now+policy.runTimeoutMs);
-   insertAgentTraceParent(this.db,scope,runId,policy.traceParent);
-   this.db.prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)').run(scope.tenantId,scope.agentId,sourceId,eventId,schedule.config.principalId,'schedule.tick',payload,hash,runId);
-   this.db.prepare('INSERT INTO agent_trigger_receipts VALUES (?,?,?,?)').run(scope.tenantId,scope.agentId,runId,now);}
-   this.db.prepare('UPDATE agent_schedules SET revision=?,next_at=? WHERE tenant_id=? AND agent_id=? AND schedule_id=?').run(schedule.revision+1,nextAt,scope.tenantId,scope.agentId,scheduleId);
-   this.db.prepare("INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,'fired',?,?,?,?,?,?,?,?)").run(scope.tenantId,scope.agentId,scheduleId,schedule.revision+1,schedule.generation,nextAt,JSON.stringify(schedule.config),actorId??null,runId,scheduledAt,now);
-   this.db.exec('COMMIT');return {runId,scheduledAt};
-  }catch(error){this.db.exec('ROLLBACK');throw error;}
- }
+  private check(scope: AgentRunScope, scheduleId: string): void {
+    if (!scope || !id(scope.tenantId) || !id(scope.agentId) || !id(scheduleId)) throw Error('Invalid schedule scope');
+  }
+  private parse(row: Record<string, unknown>): AgentSchedule {
+    return {
+      tenantId: String(row.tenant_id),
+      agentId: String(row.agent_id),
+      scheduleId: String(row.schedule_id),
+      revision: Number(row.revision),
+      generation: Number(row.generation),
+      nextAt: Number(row.next_at),
+      config: checkConfig(JSON.parse(String(row.config)))
+    };
+  }
+  get(scope: AgentRunScope, scheduleId: string): AgentSchedule | undefined {
+    this.check(scope, scheduleId);
+    const row = this.db.prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND schedule_id=?').get(scope.tenantId, scope.agentId, scheduleId);
+    return row ? this.parse(row) : undefined;
+  }
+  due(scope: AgentRunScope, now: number, limit = 100): AgentSchedule[] {
+    this.check(scope, 'validation');
+    if (!integer(now) || !integer(limit) || limit < 1 || limit > 100) throw Error('Invalid schedule query');
+    const rows = this.db
+      .prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?')
+      .all(scope.tenantId, scope.agentId, now, limit);
+    return rows.map(row => this.parse(row));
+  }
+  /** Bounded keyset scan; callers must restart a scan to revisit changed schedules. */
+  duePage(scope: AgentRunScope, now: number, limit = 100, after?: AgentScheduleCursor): AgentSchedulePage {
+    this.check(scope, 'validation');
+    if (!integer(now) || !integer(limit) || limit < 1 || limit > 100 || (after !== undefined && (!after || !integer(after.nextAt) || !id(after.scheduleId)))) throw Error('Invalid schedule query');
+    const rows =
+      after === undefined
+        ? this.db
+            .prepare('SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? ORDER BY next_at,schedule_id LIMIT ?')
+            .all(scope.tenantId, scope.agentId, now, limit + 1)
+        : this.db
+            .prepare(
+              'SELECT * FROM agent_schedules WHERE tenant_id=? AND agent_id=? AND enabled=1 AND next_at<=? AND (next_at>? OR (next_at=? AND schedule_id>?)) ORDER BY next_at,schedule_id LIMIT ?'
+            )
+            .all(scope.tenantId, scope.agentId, now, after.nextAt, after.nextAt, after.scheduleId, limit + 1);
+    const items = rows.slice(0, limit).map(row => this.parse(row)),
+      last = items.at(-1);
+    return { items, ...(rows.length > limit && last ? { next: { nextAt: last.nextAt, scheduleId: last.scheduleId } } : {}) };
+  }
+  save(scope: AgentRunScope, scheduleId: string, config: ScheduleConfig, expectedRevision: number, now = Date.now(), actorId?: string): AgentSchedule {
+    this.check(scope, scheduleId);
+    if (!integer(expectedRevision) || expectedRevision >= Number.MAX_SAFE_INTEGER || !integer(now) || (actorId !== undefined && !id(actorId))) throw Error('Invalid schedule');
+    const safe = checkConfig(config),
+      nextAt = next(safe.rule, now);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const old = this.get(scope, scheduleId);
+      if ((old?.revision ?? 0) !== expectedRevision) throw Error('Schedule revision conflict');
+      const revision = expectedRevision + 1,
+        generation = (old?.generation ?? 0) + 1;
+      if (!Number.isSafeInteger(generation)) throw Error('Invalid schedule');
+      this.db
+        .prepare(
+          'INSERT INTO agent_schedules VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,agent_id,schedule_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,next_at=excluded.next_at,enabled=excluded.enabled,config=excluded.config'
+        )
+        .run(scope.tenantId, scope.agentId, scheduleId, revision, generation, nextAt, safe.enabled ? 1 : 0, JSON.stringify(safe));
+      this.db
+        .prepare(
+          'INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?)'
+        )
+        .run(scope.tenantId, scope.agentId, scheduleId, old ? 'updated' : 'created', revision, generation, nextAt, JSON.stringify(safe), actorId ?? null, now);
+      this.db.exec('COMMIT');
+      return this.get(scope, scheduleId)!;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  getOccurrence(scope: AgentRunScope, scheduleId: string, generation: number, scheduledAt: number): string | undefined {
+    this.check(scope, scheduleId);
+    if (!integer(generation) || generation < 1 || !integer(scheduledAt)) throw Error('Invalid schedule occurrence');
+    const sourceId = 'schedule.' + createHash('sha256').update(scheduleId).digest('hex'),
+      eventId = `g${generation}:t${scheduledAt}`;
+    const row = this.db.prepare('SELECT run_id FROM agent_trigger_inbox WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId, scope.agentId, sourceId, eventId);
+    if (row) return String(row.run_id);
+    const fired = this.db
+      .prepare("SELECT run_id FROM agent_schedule_events WHERE tenant_id=? AND agent_id=? AND schedule_id=? AND kind='fired' AND generation=? AND scheduled_at=?")
+      .get(scope.tenantId, scope.agentId, scheduleId, generation, scheduledAt);
+    return fired ? String(fired.run_id) : undefined;
+  }
+  fire(scope: AgentRunScope, scheduleId: string, expectedRevision: number, policy: FireOptions, now = Date.now(), actorId?: string): { runId: string; scheduledAt: number } {
+    this.check(scope, scheduleId);
+    if (
+      !integer(expectedRevision) ||
+      expectedRevision < 1 ||
+      expectedRevision >= Number.MAX_SAFE_INTEGER ||
+      !integer(now) ||
+      (actorId !== undefined && !id(actorId)) ||
+      !policy ||
+      !integer(policy.definitionVersion) ||
+      policy.definitionVersion < 1 ||
+      !integer(policy.maxAttempts) ||
+      policy.maxAttempts < 1 ||
+      policy.maxAttempts > 100 ||
+      !integer(policy.runTimeoutMs) ||
+      policy.runTimeoutMs < 1000 ||
+      policy.runTimeoutMs > 86400000 ||
+      !integer(policy.maxPending) ||
+      policy.maxPending < 1 ||
+      policy.maxPending > 10000 ||
+      !Number.isSafeInteger(now + policy.runTimeoutMs) ||
+      (policy.traceParent !== undefined && !parseAgentTraceParent(policy.traceParent)) ||
+      (policy.wakeup !== undefined &&
+        (!policy.wakeup ||
+          !id(policy.wakeup.runId) ||
+          !integer(policy.wakeup.revision) ||
+          policy.wakeup.revision < 1 ||
+          policy.wakeup.revision >= Number.MAX_SAFE_INTEGER ||
+          policy.traceParent !== undefined))
+    )
+      throw Error('Invalid schedule fire');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const schedule = this.get(scope, scheduleId);
+      if (!schedule || schedule.revision !== expectedRevision) throw Error('Schedule revision conflict');
+      if (!schedule.config.enabled || schedule.nextAt > now) throw Error('Schedule not due');
+      const count = this.db
+        .prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE tenant_id=? AND agent_id=? AND status IN ('queued','running','pause_requested','cancel_requested','paused','uncertain')")
+        .get(scope.tenantId, scope.agentId);
+      if (!policy.wakeup && Number(count?.n) >= policy.maxPending) throw new AgentError('limit', 'Trigger backlog full');
+      const scheduledAt = schedule.nextAt,
+        coalesce = schedule.config.misfire === 'coalesce',
+        rule = schedule.config.rule;
+      let nextAt = coalesce && rule.kind === 'interval' ? now + (rule.intervalMs - ((now - scheduledAt) % rule.intervalMs)) : next(rule, coalesce ? now : scheduledAt);
+      if (!Number.isSafeInteger(nextAt)) throw Error('Invalid schedule time');
+      const runId = policy.wakeup?.runId ?? randomUUID(),
+        sourceId = 'schedule.' + createHash('sha256').update(scheduleId).digest('hex'),
+        eventId = `g${schedule.generation}:t${scheduledAt}`,
+        payload = JSON.stringify({ scheduleId, scheduledAt, ...(coalesce ? { coalescedThrough: now } : {}) }),
+        hash = createHash('sha256').update(payload).digest('hex');
+      const wakeups = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_run_wakeups'").get();
+      if (wakeups && this.db.prepare('SELECT 1 FROM agent_run_wakeups WHERE tenant_id=? AND agent_id=? AND source_id=? AND event_id=?').get(scope.tenantId, scope.agentId, sourceId, eventId))
+        throw new AgentError('conflict', 'Trigger identity conflict');
+      if (policy.wakeup) {
+        const resumed = resumeAgentRunWithTriggerInTransaction(
+          this.db,
+          scope,
+          runId,
+          policy.wakeup.revision,
+          { sourceId, eventId, principalId: schedule.config.principalId, eventType: 'schedule.tick', payload: JSON.parse(payload) },
+          now
+        );
+        if (resumed.duplicate) throw new AgentError('conflict', 'Trigger identity conflict');
+        if (resumed.run.definitionVersion !== policy.definitionVersion) throw Error('Agent definition changed');
+      } else {
+        this.db
+          .prepare(
+            "INSERT INTO agent_runs (tenant_id,agent_id,run_id,definition_version,revision,status,attempts,max_attempts,deadline,lease_owner,lease_token,lease_until,archived) VALUES (?,?,?,?,1,'queued',0,?,?,NULL,NULL,NULL,0)"
+          )
+          .run(scope.tenantId, scope.agentId, runId, policy.definitionVersion, policy.maxAttempts, now + policy.runTimeoutMs);
+        insertAgentTraceParent(this.db, scope, runId, policy.traceParent);
+        this.db
+          .prepare('INSERT INTO agent_trigger_inbox VALUES (?,?,?,?,?,?,?,?,?)')
+          .run(scope.tenantId, scope.agentId, sourceId, eventId, schedule.config.principalId, 'schedule.tick', payload, hash, runId);
+        this.db.prepare('INSERT INTO agent_trigger_receipts VALUES (?,?,?,?)').run(scope.tenantId, scope.agentId, runId, now);
+      }
+      this.db
+        .prepare('UPDATE agent_schedules SET revision=?,next_at=? WHERE tenant_id=? AND agent_id=? AND schedule_id=?')
+        .run(schedule.revision + 1, nextAt, scope.tenantId, scope.agentId, scheduleId);
+      this.db
+        .prepare(
+          "INSERT INTO agent_schedule_events (tenant_id,agent_id,schedule_id,kind,revision,generation,next_at,config,actor_id,run_id,scheduled_at,observed_at) VALUES (?,?,?,'fired',?,?,?,?,?,?,?,?)"
+        )
+        .run(scope.tenantId, scope.agentId, scheduleId, schedule.revision + 1, schedule.generation, nextAt, JSON.stringify(schedule.config), actorId ?? null, runId, scheduledAt, now);
+      this.db.exec('COMMIT');
+      return { runId, scheduledAt };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
 }
-export type {ScheduleRule as AgentScheduleRule,ScheduleConfig as AgentScheduleConfig,FireOptions as AgentScheduleFireOptions};
+export type { ScheduleRule as AgentScheduleRule, ScheduleConfig as AgentScheduleConfig, FireOptions as AgentScheduleFireOptions };
 // Shared storage uses the same validation and recurrence semantics as SQLite.
-export {checkConfig as validateAgentScheduleConfig,next as nextAgentScheduleOccurrence};
+export { checkConfig as validateAgentScheduleConfig, next as nextAgentScheduleOccurrence };

@@ -1,112 +1,614 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {AIMessage} from '@langchain/core/messages';
-import {CapabilityRegistry} from '../../core/dist/index.js';
-import {SqliteAgentDefinitions,createConfiguredAgentRun} from '../dist/index.js';
-const base={manifestVersion:1,tenantId:'t',agentId:'agent',name:'Operations',owner:{kind:'organization',id:'org'},administrators:['admin'],userAssociation:'someone',servicePrincipalId:'svc',model:{provider:'local',model:'model'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:1000,maxRunsPerDay:10}};
-const input={threadId:'thread',runId:'run',messages:[{role:'user',content:'Find it'}]};
-const collect=async iterable=>{const result=[];for await(const item of iterable)result.push(item);return result;};
-function setup(){
- const definitions=new SqliteAgentDefinitions(':memory:'),audit=[],registry=new CapabilityRegistry(e=>audit.push(e));let count=0;
- registry.register({operationId:'lookup',method:'GET',path:'/lookup'},{authorize:ctx=>ctx.tenantId==='t'&&ctx.principalId==='svc',validate:()=>true,execute:()=>{count++;return {name:'Ada'};}});definitions.save('t',base,0);
- const identities=[],options={definitions,tenantId:'t',agentId:'agent',expectedVersion:1,bindings:[{operationId:'lookup',toolName:'lookup',description:'Look up data'}],registry,authorizeRun:identity=>{identities.push(identity);return true;},authorizeCapability:(identity)=>{identities.push(identity);return true;},createModel:(_definition,tools)=>{assert.deepEqual(tools.map(t=>t.name),['lookup']);let turn=0;return {async invoke(){return ++turn===1?new AIMessage({content:'',tool_calls:[{id:'c1',name:'lookup',args:{}}]}):new AIMessage('Found');}};}};
- return {definitions,registry,audit,options,identities,count:()=>count};
+import { AIMessage } from '@langchain/core/messages';
+import { CapabilityRegistry } from '../../core/dist/index.js';
+import { SqliteAgentDefinitions, createConfiguredAgentRun } from '../dist/index.js';
+const base = {
+  manifestVersion: 1,
+  tenantId: 't',
+  agentId: 'agent',
+  name: 'Operations',
+  owner: { kind: 'organization', id: 'org' },
+  administrators: ['admin'],
+  userAssociation: 'someone',
+  servicePrincipalId: 'svc',
+  model: { provider: 'local', model: 'model' },
+  allowedCapabilities: ['lookup'],
+  lifecycle: { enabled: true, maxAttempts: 3, runTimeoutMs: 60000 },
+  quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 1000, maxRunsPerDay: 10 }
+};
+const input = { threadId: 'thread', runId: 'run', messages: [{ role: 'user', content: 'Find it' }] };
+const collect = async iterable => {
+  const result = [];
+  for await (const item of iterable) result.push(item);
+  return result;
+};
+function setup() {
+  const definitions = new SqliteAgentDefinitions(':memory:'),
+    audit = [],
+    registry = new CapabilityRegistry(e => audit.push(e));
+  let count = 0;
+  registry.register(
+    { operationId: 'lookup', method: 'GET', path: '/lookup' },
+    {
+      authorize: ctx => ctx.tenantId === 't' && ctx.principalId === 'svc',
+      validate: () => true,
+      execute: () => {
+        count++;
+        return { name: 'Ada' };
+      }
+    }
+  );
+  definitions.save('t', base, 0);
+  const identities = [],
+    options = {
+      definitions,
+      tenantId: 't',
+      agentId: 'agent',
+      expectedVersion: 1,
+      bindings: [{ operationId: 'lookup', toolName: 'lookup', description: 'Look up data' }],
+      registry,
+      authorizeRun: identity => {
+        identities.push(identity);
+        return true;
+      },
+      authorizeCapability: identity => {
+        identities.push(identity);
+        return true;
+      },
+      createModel: (_definition, tools) => {
+        assert.deepEqual(
+          tools.map(t => t.name),
+          ['lookup']
+        );
+        let turn = 0;
+        return {
+          async invoke() {
+            return ++turn === 1 ? new AIMessage({ content: '', tool_calls: [{ id: 'c1', name: 'lookup', args: {} }] }) : new AIMessage('Found');
+          }
+        };
+      }
+    };
+  return { definitions, registry, audit, options, identities, count: () => count };
 }
 
-test('configured agents support asynchronous definition stores and reject changes during lookup',async()=>{
- const s=setup();try{s.options.definitions={get:async(tenant,agent)=>s.definitions.get(tenant,agent)};const run=await createConfiguredAgentRun(s.options);assert.equal((await collect(run.run(input))).at(-1).type,'RUN_FINISHED');assert.equal(s.count(),1);}finally{s.definitions.close();}
- const t=setup();try{let reads=0,started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);t.options.definitions={get:async(tenant,agent)=>{if(++reads===2){started();await gate;}return t.definitions.get(tenant,agent);}};const pending=createConfiguredAgentRun(t.options);await ready;t.definitions.save('t',{...base,lifecycle:{...base.lifecycle,enabled:false}},1);release();await assert.rejects(pending,/definition changed/);assert.equal(t.count(),0);}finally{t.definitions.close();}
+test('configured agents support asynchronous definition stores and reject changes during lookup', async () => {
+  const s = setup();
+  try {
+    s.options.definitions = { get: async (tenant, agent) => s.definitions.get(tenant, agent) };
+    const run = await createConfiguredAgentRun(s.options);
+    assert.equal((await collect(run.run(input))).at(-1).type, 'RUN_FINISHED');
+    assert.equal(s.count(), 1);
+  } finally {
+    s.definitions.close();
+  }
+  const t = setup();
+  try {
+    let reads = 0,
+      started,
+      release;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    t.options.definitions = {
+      get: async (tenant, agent) => {
+        if (++reads === 2) {
+          started();
+          await gate;
+        }
+        return t.definitions.get(tenant, agent);
+      }
+    };
+    const pending = createConfiguredAgentRun(t.options);
+    await ready;
+    t.definitions.save('t', { ...base, lifecycle: { ...base.lifecycle, enabled: false } }, 1);
+    release();
+    await assert.rejects(pending, /definition changed/);
+    assert.equal(t.count(), 0);
+  } finally {
+    t.definitions.close();
+  }
 });
 
-test('configured organization agent uses only its service principal and authorized capability',async()=>{
- const s=setup();try{const run=await createConfiguredAgentRun(s.options),events=await collect(run.run(input));assert.equal(events.at(-1).type,'RUN_FINISHED');assert.equal(s.count(),1);assert.equal(s.identities.length,3);assert.ok(s.identities.every(x=>x.servicePrincipalId==='svc'&&!('userAssociation' in x)));assert.deepEqual(s.audit.map(x=>x.principalId),['svc','svc']);await assert.rejects(collect(run.run(input)),/already used/);}finally{s.definitions.close();}
+test('configured organization agent uses only its service principal and authorized capability', async () => {
+  const s = setup();
+  try {
+    const run = await createConfiguredAgentRun(s.options),
+      events = await collect(run.run(input));
+    assert.equal(events.at(-1).type, 'RUN_FINISHED');
+    assert.equal(s.count(), 1);
+    assert.equal(s.identities.length, 3);
+    assert.ok(s.identities.every(x => x.servicePrincipalId === 'svc' && !('userAssociation' in x)));
+    assert.deepEqual(
+      s.audit.map(x => x.principalId),
+      ['svc', 'svc']
+    );
+    await assert.rejects(collect(run.run(input)), /already used/);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-test('revocation, changed definitions and registry authorization prevent execution',async()=>{
- for(const mode of ['run-revoked','capability-denied','definition-changed','registry-denied']){
-  const s=setup();try{
-   let allowed=true;if(mode==='run-revoked')s.options.authorizeRun=()=>allowed;
-   if(mode==='capability-denied')s.options.authorizeCapability=()=>false;
-   if(mode==='registry-denied'){const reg=new CapabilityRegistry(()=>{});reg.register({operationId:'lookup',method:'GET',path:'/lookup'},{authorize:()=>false,validate:()=>true,execute:()=>{throw Error('must not run');}});s.options.registry=reg;}
-   const run=await createConfiguredAgentRun(s.options);
-   if(mode==='run-revoked')allowed=false;
-   if(mode==='definition-changed')s.definitions.save('t',{...base,lifecycle:{...base.lifecycle,enabled:false}},1);
-   if(mode==='run-revoked'||mode==='definition-changed')await assert.rejects(collect(run.run(input)),/forbidden|changed/);
-   else assert.equal((await collect(run.run(input))).at(-1).type,'RUN_ERROR');assert.equal(s.count(),0);
-  }finally{s.definitions.close();}
- }
+test('revocation, changed definitions and registry authorization prevent execution', async () => {
+  for (const mode of ['run-revoked', 'capability-denied', 'definition-changed', 'registry-denied']) {
+    const s = setup();
+    try {
+      let allowed = true;
+      if (mode === 'run-revoked') s.options.authorizeRun = () => allowed;
+      if (mode === 'capability-denied') s.options.authorizeCapability = () => false;
+      if (mode === 'registry-denied') {
+        const reg = new CapabilityRegistry(() => {});
+        reg.register(
+          { operationId: 'lookup', method: 'GET', path: '/lookup' },
+          {
+            authorize: () => false,
+            validate: () => true,
+            execute: () => {
+              throw Error('must not run');
+            }
+          }
+        );
+        s.options.registry = reg;
+      }
+      const run = await createConfiguredAgentRun(s.options);
+      if (mode === 'run-revoked') allowed = false;
+      if (mode === 'definition-changed') s.definitions.save('t', { ...base, lifecycle: { ...base.lifecycle, enabled: false } }, 1);
+      if (mode === 'run-revoked' || mode === 'definition-changed') await assert.rejects(collect(run.run(input)), /forbidden|changed/);
+      else assert.equal((await collect(run.run(input))).at(-1).type, 'RUN_ERROR');
+      assert.equal(s.count(), 0);
+    } finally {
+      s.definitions.close();
+    }
+  }
 });
 
-test('agent policy and configuration are rechecked after asynchronous authorization',async()=>{
- const s=setup();try{let started,resume;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r);s.options.authorizeCapability=async()=>{started();await gate;return true;};
-  const run=await createConfiguredAgentRun(s.options),pending=collect(run.run(input));await ready;s.definitions.save('t',{...base,allowedCapabilities:[]},1);resume();const events=await pending;assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(s.count(),0);
- }finally{s.definitions.close();}
+test('agent policy and configuration are rechecked after asynchronous authorization', async () => {
+  const s = setup();
+  try {
+    let started, resume;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (resume = r));
+    s.options.authorizeCapability = async () => {
+      started();
+      await gate;
+      return true;
+    };
+    const run = await createConfiguredAgentRun(s.options),
+      pending = collect(run.run(input));
+    await ready;
+    s.definitions.save('t', { ...base, allowedCapabilities: [] }, 1);
+    resume();
+    const events = await pending;
+    assert.equal(events.at(-1).type, 'RUN_ERROR');
+    assert.equal(s.count(), 0);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-test('preparation rejects disabled, cross-tenant, missing and unapproved tools',async()=>{
- const s=setup();try{
-  await assert.rejects(createConfiguredAgentRun({...s.options,tenantId:'other'}),/unavailable/);
-  await assert.rejects(createConfiguredAgentRun({...s.options,expectedVersion:2}),/unavailable/);
-  await assert.rejects(createConfiguredAgentRun({...s.options,bindings:[]}),/capability unavailable/);
-  await assert.rejects(createConfiguredAgentRun({...s.options,authorizeRun:()=>false}),/forbidden/);
-  const unlisted={...base,allowedCapabilities:[]};s.definitions.save('t',unlisted,1);let visible;s.options.expectedVersion=2;s.options.createModel=(_d,tools)=>{visible=tools.length;return {async invoke(){return new AIMessage({content:'',tool_calls:[{id:'c',name:'lookup',args:{}}]});}};};const run=await createConfiguredAgentRun(s.options);assert.equal(visible,0);assert.equal((await collect(run.run(input))).at(-1).type,'RUN_ERROR');assert.equal(s.count(),0);
- }finally{s.definitions.close();}
+test('preparation rejects disabled, cross-tenant, missing and unapproved tools', async () => {
+  const s = setup();
+  try {
+    await assert.rejects(createConfiguredAgentRun({ ...s.options, tenantId: 'other' }), /unavailable/);
+    await assert.rejects(createConfiguredAgentRun({ ...s.options, expectedVersion: 2 }), /unavailable/);
+    await assert.rejects(createConfiguredAgentRun({ ...s.options, bindings: [] }), /capability unavailable/);
+    await assert.rejects(createConfiguredAgentRun({ ...s.options, authorizeRun: () => false }), /forbidden/);
+    const unlisted = { ...base, allowedCapabilities: [] };
+    s.definitions.save('t', unlisted, 1);
+    let visible;
+    s.options.expectedVersion = 2;
+    s.options.createModel = (_d, tools) => {
+      visible = tools.length;
+      return {
+        async invoke() {
+          return new AIMessage({ content: '', tool_calls: [{ id: 'c', name: 'lookup', args: {} }] });
+        }
+      };
+    };
+    const run = await createConfiguredAgentRun(s.options);
+    assert.equal(visible, 0);
+    assert.equal((await collect(run.run(input))).at(-1).type, 'RUN_ERROR');
+    assert.equal(s.count(), 0);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-test('explicit scoped delegation invokes as the user only while host policy and expiry permit it',async()=>{
- for(const mode of ['allowed','expired','revoked','wrong-tenant','wrong-run','expires-during-check']){const s=setup();try{
-  let now=10,calls=0,contexts=[];const registry=new CapabilityRegistry(e=>contexts.push(e));registry.register({operationId:'lookup',method:'GET',path:'/lookup'},{authorize:ctx=>ctx.principalId==='user',validate:()=>true,execute:()=>{calls++;return {ok:true}}});s.options.registry=registry;
-  const grant={tenantId:mode==='wrong-tenant'?'other':'t',agentId:'agent',runId:mode==='wrong-run'?'other':'run',principalId:'user',grantId:'grant',permissionVersion:'v1',expiresAt:mode==='expired'?10:20};let checks=0;s.options.delegation={grant,clock:()=>now,authorize:(identity,g,operation)=>{assert.equal(identity.servicePrincipalId,'svc');assert.equal(g.principalId,'user');assert.equal(operation,'lookup');checks++;if(mode==='expires-during-check')now=20;return mode!=='revoked';}};
-  if(mode==='wrong-tenant'){await assert.rejects(createConfiguredAgentRun(s.options),/Invalid delegation/);continue}const run=await createConfiguredAgentRun(s.options);grant.principalId='forged';
-  if(mode==='wrong-run'){await assert.rejects(collect(run.run(input)),/run mismatch/);continue}const events=await collect(run.run(input));assert.equal(events.at(-1).type,mode==='allowed'?'RUN_FINISHED':'RUN_ERROR');assert.equal(calls,mode==='allowed'?1:0);if(mode==='allowed'){assert.ok(checks>0);assert.ok(contexts.every(e=>e.principalId==='user'));}
- }finally{s.definitions.close();}}
+test('explicit scoped delegation invokes as the user only while host policy and expiry permit it', async () => {
+  for (const mode of ['allowed', 'expired', 'revoked', 'wrong-tenant', 'wrong-run', 'expires-during-check']) {
+    const s = setup();
+    try {
+      let now = 10,
+        calls = 0,
+        contexts = [];
+      const registry = new CapabilityRegistry(e => contexts.push(e));
+      registry.register(
+        { operationId: 'lookup', method: 'GET', path: '/lookup' },
+        {
+          authorize: ctx => ctx.principalId === 'user',
+          validate: () => true,
+          execute: () => {
+            calls++;
+            return { ok: true };
+          }
+        }
+      );
+      s.options.registry = registry;
+      const grant = {
+        tenantId: mode === 'wrong-tenant' ? 'other' : 't',
+        agentId: 'agent',
+        runId: mode === 'wrong-run' ? 'other' : 'run',
+        principalId: 'user',
+        grantId: 'grant',
+        permissionVersion: 'v1',
+        expiresAt: mode === 'expired' ? 10 : 20
+      };
+      let checks = 0;
+      s.options.delegation = {
+        grant,
+        clock: () => now,
+        authorize: (identity, g, operation) => {
+          assert.equal(identity.servicePrincipalId, 'svc');
+          assert.equal(g.principalId, 'user');
+          assert.equal(operation, 'lookup');
+          checks++;
+          if (mode === 'expires-during-check') now = 20;
+          return mode !== 'revoked';
+        }
+      };
+      if (mode === 'wrong-tenant') {
+        await assert.rejects(createConfiguredAgentRun(s.options), /Invalid delegation/);
+        continue;
+      }
+      const run = await createConfiguredAgentRun(s.options);
+      grant.principalId = 'forged';
+      if (mode === 'wrong-run') {
+        await assert.rejects(collect(run.run(input)), /run mismatch/);
+        continue;
+      }
+      const events = await collect(run.run(input));
+      assert.equal(events.at(-1).type, mode === 'allowed' ? 'RUN_FINISHED' : 'RUN_ERROR');
+      assert.equal(calls, mode === 'allowed' ? 1 : 0);
+      if (mode === 'allowed') {
+        assert.ok(checks > 0);
+        assert.ok(contexts.every(e => e.principalId === 'user'));
+      }
+    } finally {
+      s.definitions.close();
+    }
+  }
 });
 
-
-test('versioned agent instructions reach each model turn without changing capability policy',async()=>{
- const s=setup(),histories=[];try{const instructions='Answer inventory questions using the approved tool.';s.definitions.save('t',{...base,instructions},1);s.options.expectedVersion=2;let turns=0;s.options.createModel=(definition,tools)=>{assert.equal(definition.manifest.instructions,instructions);definition.manifest.instructions='mutated by host model';assert.deepEqual(tools.map(tool=>tool.name),['lookup']);return {async invoke(messages){histories.push(messages.map(message=>({role:message._getType(),content:message.content})));return ++turns===1?new AIMessage({content:'',tool_calls:[{id:'c1',name:'lookup',args:{}}]}):new AIMessage('Found');}};};const run=await createConfiguredAgentRun(s.options),events=await collect(run.run(input));assert.equal(events.at(-1).type,'RUN_FINISHED');assert.equal(s.count(),1);assert.equal(histories.length,2);for(const history of histories){assert.deepEqual(history[0],{role:'system',content:instructions});assert.equal(history.filter(message=>message.role==='system').length,1);}assert.equal(histories[0][1].content,'Find it');assert.equal(s.definitions.get('t','agent').manifest.instructions,instructions);assert.ok(s.audit.every(event=>event.principalId==='svc'));
-  const stale=await createConfiguredAgentRun(s.options);s.definitions.save('t',{...base,instructions:'Changed instruction'},2);await assert.rejects(collect(stale.run(input)),/definition changed/);assert.equal(turns,2);
- }finally{s.definitions.close();}
+test('versioned agent instructions reach each model turn without changing capability policy', async () => {
+  const s = setup(),
+    histories = [];
+  try {
+    const instructions = 'Answer inventory questions using the approved tool.';
+    s.definitions.save('t', { ...base, instructions }, 1);
+    s.options.expectedVersion = 2;
+    let turns = 0;
+    s.options.createModel = (definition, tools) => {
+      assert.equal(definition.manifest.instructions, instructions);
+      definition.manifest.instructions = 'mutated by host model';
+      assert.deepEqual(
+        tools.map(tool => tool.name),
+        ['lookup']
+      );
+      return {
+        async invoke(messages) {
+          histories.push(messages.map(message => ({ role: message._getType(), content: message.content })));
+          return ++turns === 1 ? new AIMessage({ content: '', tool_calls: [{ id: 'c1', name: 'lookup', args: {} }] }) : new AIMessage('Found');
+        }
+      };
+    };
+    const run = await createConfiguredAgentRun(s.options),
+      events = await collect(run.run(input));
+    assert.equal(events.at(-1).type, 'RUN_FINISHED');
+    assert.equal(s.count(), 1);
+    assert.equal(histories.length, 2);
+    for (const history of histories) {
+      assert.deepEqual(history[0], { role: 'system', content: instructions });
+      assert.equal(history.filter(message => message.role === 'system').length, 1);
+    }
+    assert.equal(histories[0][1].content, 'Find it');
+    assert.equal(s.definitions.get('t', 'agent').manifest.instructions, instructions);
+    assert.ok(s.audit.every(event => event.principalId === 'svc'));
+    const stale = await createConfiguredAgentRun(s.options);
+    s.definitions.save('t', { ...base, instructions: 'Changed instruction' }, 2);
+    await assert.rejects(collect(stale.run(input)), /definition changed/);
+    assert.equal(turns, 2);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-
-test('configured runs reject invalid instructions from a custom definition source',async()=>{
- const s=setup();try{const current=s.definitions.get('t','agent');for(const instructions of ['',123,'x'.repeat(16001)]){s.options.definitions={get:()=>({...current,manifest:{...current.manifest,instructions}})};await assert.rejects(createConfiguredAgentRun(s.options),/definition unavailable/);}assert.equal(s.count(),0);}finally{s.definitions.close();}
+test('configured runs reject invalid instructions from a custom definition source', async () => {
+  const s = setup();
+  try {
+    const current = s.definitions.get('t', 'agent');
+    for (const instructions of ['', 123, 'x'.repeat(16001)]) {
+      s.options.definitions = { get: () => ({ ...current, manifest: { ...current.manifest, instructions } }) };
+      await assert.rejects(createConfiguredAgentRun(s.options), /definition unavailable/);
+    }
+    assert.equal(s.count(), 0);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-
-test('versioned model turn limits respect the stricter host ceiling',async()=>{
- for(const [configured,hostLimit,expectedCalls] of [[1,undefined,0],[2,10,1],[3,2,1],[3,undefined,2],[8,undefined,3],[8,6,5],[undefined,2,1]]){const s=setup();try{const lifecycle={...base.lifecycle,...(configured===undefined?{}:{maxTurns:configured})};s.definitions.save('t',{...base,lifecycle},1);s.options.expectedVersion=2;s.options.maxTurns=hostLimit;let turns=0;s.options.createModel=()=>({async invoke(){turns++;return new AIMessage({content:'',tool_calls:[{id:'call-'+turns,name:'lookup',args:{}}]});}});const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(s.count(),expectedCalls);assert.equal(turns,expectedCalls+1);}finally{s.definitions.close();}}
+test('versioned model turn limits respect the stricter host ceiling', async () => {
+  for (const [configured, hostLimit, expectedCalls] of [
+    [1, undefined, 0],
+    [2, 10, 1],
+    [3, 2, 1],
+    [3, undefined, 2],
+    [8, undefined, 3],
+    [8, 6, 5],
+    [undefined, 2, 1]
+  ]) {
+    const s = setup();
+    try {
+      const lifecycle = { ...base.lifecycle, ...(configured === undefined ? {} : { maxTurns: configured }) };
+      s.definitions.save('t', { ...base, lifecycle }, 1);
+      s.options.expectedVersion = 2;
+      s.options.maxTurns = hostLimit;
+      let turns = 0;
+      s.options.createModel = () => ({
+        async invoke() {
+          turns++;
+          return new AIMessage({ content: '', tool_calls: [{ id: 'call-' + turns, name: 'lookup', args: {} }] });
+        }
+      });
+      const agent = await createConfiguredAgentRun(s.options),
+        events = await collect(agent.run(input));
+      assert.equal(events.at(-1).type, 'RUN_ERROR');
+      assert.equal(s.count(), expectedCalls);
+      assert.equal(turns, expectedCalls + 1);
+    } finally {
+      s.definitions.close();
+    }
+  }
 });
 
-test('configured runs reject invalid model turn limits before creating a model',async()=>{
- const s=setup();try{let created=0;s.options.createModel=()=>{created++;return {invoke:async()=>new AIMessage('Done')};};for(const maxTurns of [0,11,1.5,NaN])await assert.rejects(createConfiguredAgentRun({...s.options,maxTurns}),/Invalid configured agent/);const current=s.definitions.get('t','agent');for(const maxTurns of [0,11,1.5]){s.options.definitions={get:()=>({...current,manifest:{...current.manifest,lifecycle:{...current.manifest.lifecycle,maxTurns}}})};await assert.rejects(createConfiguredAgentRun(s.options),/definition unavailable/);}assert.equal(created,0);}finally{s.definitions.close();}
+test('configured runs reject invalid model turn limits before creating a model', async () => {
+  const s = setup();
+  try {
+    let created = 0;
+    s.options.createModel = () => {
+      created++;
+      return { invoke: async () => new AIMessage('Done') };
+    };
+    for (const maxTurns of [0, 11, 1.5, NaN]) await assert.rejects(createConfiguredAgentRun({ ...s.options, maxTurns }), /Invalid configured agent/);
+    const current = s.definitions.get('t', 'agent');
+    for (const maxTurns of [0, 11, 1.5]) {
+      s.options.definitions = { get: () => ({ ...current, manifest: { ...current.manifest, lifecycle: { ...current.manifest.lifecycle, maxTurns } } }) };
+      await assert.rejects(createConfiguredAgentRun(s.options), /definition unavailable/);
+    }
+    assert.equal(created, 0);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-
-test('optional model authority checks discard responses after revocation or expiry',async()=>{
- for(const mode of ['run-revoked','definition-changed','delegation-expired']){const s=setup();let allowed=true,now=10,started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>allowed;s.options.createModel=()=>({invoke:async()=>{started();await gate;return new AIMessage('Sensitive model output');}});if(mode==='delegation-expired')s.options.delegation={grant:{tenantId:'t',agentId:'agent',runId:'run',principalId:'user',grantId:'grant',permissionVersion:'v1',expiresAt:20},authorize:()=>true,clock:()=>now};const agent=await createConfiguredAgentRun(s.options),pending=collect(agent.run(input));await ready;if(mode==='run-revoked')allowed=false;else if(mode==='definition-changed')s.definitions.save('t',{...base,name:'Changed'},1);else now=20;release();const events=await pending;assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.at(-1).code,mode==='delegation-expired'?'AGENT_DELEGATION_EXPIRED':'AGENT_RUN_FAILED');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(s.count(),0);}finally{release?.();s.definitions.close();}}
+test('optional model authority checks discard responses after revocation or expiry', async () => {
+  for (const mode of ['run-revoked', 'definition-changed', 'delegation-expired']) {
+    const s = setup();
+    let allowed = true,
+      now = 10,
+      started,
+      release;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      s.options.recheckModelAuthority = true;
+      s.options.authorizeRun = () => allowed;
+      s.options.createModel = () => ({
+        invoke: async () => {
+          started();
+          await gate;
+          return new AIMessage('Sensitive model output');
+        }
+      });
+      if (mode === 'delegation-expired')
+        s.options.delegation = {
+          grant: { tenantId: 't', agentId: 'agent', runId: 'run', principalId: 'user', grantId: 'grant', permissionVersion: 'v1', expiresAt: 20 },
+          authorize: () => true,
+          clock: () => now
+        };
+      const agent = await createConfiguredAgentRun(s.options),
+        pending = collect(agent.run(input));
+      await ready;
+      if (mode === 'run-revoked') allowed = false;
+      else if (mode === 'definition-changed') s.definitions.save('t', { ...base, name: 'Changed' }, 1);
+      else now = 20;
+      release();
+      const events = await pending;
+      assert.equal(events.at(-1).type, 'RUN_ERROR');
+      assert.equal(events.at(-1).code, mode === 'delegation-expired' ? 'AGENT_DELEGATION_EXPIRED' : 'AGENT_RUN_FAILED');
+      assert.equal(
+        events.some(event => event.type === 'TEXT_MESSAGE_CONTENT'),
+        false
+      );
+      assert.equal(s.count(), 0);
+    } finally {
+      release?.();
+      s.definitions.close();
+    }
+  }
 });
 
-test('model authority policy is snapshotted and permits valid responses',async()=>{
- const s=setup();try{let calls=0;s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>{calls++;return true;};s.options.createModel=()=>{s.options.recheckModelAuthority=false;return {invoke:async()=>new AIMessage('Allowed')};};const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_FINISHED');assert.equal(events.find(event=>event.type==='TEXT_MESSAGE_CONTENT').delta,'Allowed');assert.ok(calls>=4);await assert.rejects(createConfiguredAgentRun({...s.options,recheckModelAuthority:'yes'}),/Invalid configured agent/);}finally{s.definitions.close();}
+test('model authority policy is snapshotted and permits valid responses', async () => {
+  const s = setup();
+  try {
+    let calls = 0;
+    s.options.recheckModelAuthority = true;
+    s.options.authorizeRun = () => {
+      calls++;
+      return true;
+    };
+    s.options.createModel = () => {
+      s.options.recheckModelAuthority = false;
+      return { invoke: async () => new AIMessage('Allowed') };
+    };
+    const agent = await createConfiguredAgentRun(s.options),
+      events = await collect(agent.run(input));
+    assert.equal(events.at(-1).type, 'RUN_FINISHED');
+    assert.equal(events.find(event => event.type === 'TEXT_MESSAGE_CONTENT').delta, 'Allowed');
+    assert.ok(calls >= 4);
+    await assert.rejects(createConfiguredAgentRun({ ...s.options, recheckModelAuthority: 'yes' }), /Invalid configured agent/);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-
-test('model authority recheck can block dispatch before the model is called',async()=>{
- const s=setup();try{let checks=0,modelCalls=0;s.options.recheckModelAuthority=true;s.options.authorizeRun=()=>++checks<3;s.options.createModel=()=>({invoke:async()=>{modelCalls++;return new AIMessage('Must not appear');}});const agent=await createConfiguredAgentRun(s.options),events=await collect(agent.run(input));assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(modelCalls,0);}finally{s.definitions.close();}
+test('model authority recheck can block dispatch before the model is called', async () => {
+  const s = setup();
+  try {
+    let checks = 0,
+      modelCalls = 0;
+    s.options.recheckModelAuthority = true;
+    s.options.authorizeRun = () => ++checks < 3;
+    s.options.createModel = () => ({
+      invoke: async () => {
+        modelCalls++;
+        return new AIMessage('Must not appear');
+      }
+    });
+    const agent = await createConfiguredAgentRun(s.options),
+      events = await collect(agent.run(input));
+    assert.equal(events.at(-1).type, 'RUN_ERROR');
+    assert.equal(
+      events.some(event => event.type === 'TEXT_MESSAGE_CONTENT'),
+      false
+    );
+    assert.equal(modelCalls, 0);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-
-test('configured model checks propagate cancellation to definition lookups and fence late results',async()=>{
- for(const mode of ['signal-aware','fallback']){const s=setup(),controller=new AbortController();let armed=false,started,release,seen,signalReads=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const source={marker:'trusted',async get(tenant,id){assert.equal(this.marker,'trusted');if(armed&&mode==='fallback'){started();await gate;}return s.definitions.get(tenant,id);}};if(mode==='signal-aware')source.getWithSignal=async function(tenant,id,signal){assert.equal(this.marker,'trusted');signalReads++;if(armed){seen=signal;started();await gate;}return s.definitions.get(tenant,id);};s.options.definitions=source;s.options.recheckModelAuthority=true;s.options.createModel=()=>({invoke:async()=>{armed=true;return new AIMessage('Late output');}});const agent=await createConfiguredAgentRun(s.options);if(mode==='signal-aware')source.getWithSignal=()=>{throw Error('mutated lookup');};const pending=collect(agent.run(input,{signal:controller.signal}));await ready;controller.abort();if(seen)assert.equal(seen.aborted,true);release();const events=await pending;assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(events.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);assert.equal(s.count(),0);if(mode==='signal-aware')assert.ok(signalReads>0);}finally{release?.();s.definitions.close();}}
+test('configured model checks propagate cancellation to definition lookups and fence late results', async () => {
+  for (const mode of ['signal-aware', 'fallback']) {
+    const s = setup(),
+      controller = new AbortController();
+    let armed = false,
+      started,
+      release,
+      seen,
+      signalReads = 0;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      const source = {
+        marker: 'trusted',
+        async get(tenant, id) {
+          assert.equal(this.marker, 'trusted');
+          if (armed && mode === 'fallback') {
+            started();
+            await gate;
+          }
+          return s.definitions.get(tenant, id);
+        }
+      };
+      if (mode === 'signal-aware')
+        source.getWithSignal = async function (tenant, id, signal) {
+          assert.equal(this.marker, 'trusted');
+          signalReads++;
+          if (armed) {
+            seen = signal;
+            started();
+            await gate;
+          }
+          return s.definitions.get(tenant, id);
+        };
+      s.options.definitions = source;
+      s.options.recheckModelAuthority = true;
+      s.options.createModel = () => ({
+        invoke: async () => {
+          armed = true;
+          return new AIMessage('Late output');
+        }
+      });
+      const agent = await createConfiguredAgentRun(s.options);
+      if (mode === 'signal-aware')
+        source.getWithSignal = () => {
+          throw Error('mutated lookup');
+        };
+      const pending = collect(agent.run(input, { signal: controller.signal }));
+      await ready;
+      controller.abort();
+      if (seen) assert.equal(seen.aborted, true);
+      release();
+      const events = await pending;
+      assert.equal(events.at(-1).type, 'RUN_ERROR');
+      assert.equal(
+        events.some(event => event.type === 'TEXT_MESSAGE_CONTENT'),
+        false
+      );
+      assert.equal(s.count(), 0);
+      if (mode === 'signal-aware') assert.ok(signalReads > 0);
+    } finally {
+      release?.();
+      s.definitions.close();
+    }
+  }
 });
 
-test('configured agents reject malformed signal-aware definition lookups',async()=>{
- const s=setup();try{await assert.rejects(createConfiguredAgentRun({...s.options,definitions:{get:()=>undefined,getWithSignal:true}}),/Invalid configured agent/);}finally{s.definitions.close();}
+test('configured agents reject malformed signal-aware definition lookups', async () => {
+  const s = setup();
+  try {
+    await assert.rejects(createConfiguredAgentRun({ ...s.options, definitions: { get: () => undefined, getWithSignal: true } }), /Invalid configured agent/);
+  } finally {
+    s.definitions.close();
+  }
 });
 
-
-test('configured runs fence cancellation during the first definition check',async()=>{
- for(const mode of ['signal-aware','fallback']){const s=setup(),controller=new AbortController();let armed=false,started,release,seen,modelCalls=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{const source={async get(tenant,id){if(armed&&mode==='fallback'){started();await gate;}return s.definitions.get(tenant,id);}};if(mode==='signal-aware')source.getWithSignal=async(tenant,id,signal)=>{seen=signal;started();await gate;return s.definitions.get(tenant,id);};s.options.definitions=source;s.options.createModel=()=>({invoke:async()=>{modelCalls++;return new AIMessage('Unexpected');}});const agent=await createConfiguredAgentRun(s.options);armed=true;const pending=collect(agent.run(input,{signal:controller.signal}));await ready;controller.abort();if(seen)assert.equal(seen.aborted,true);release();await assert.rejects(pending,/abort/i);assert.equal(modelCalls,0);}finally{release?.();s.definitions.close();}}
+test('configured runs fence cancellation during the first definition check', async () => {
+  for (const mode of ['signal-aware', 'fallback']) {
+    const s = setup(),
+      controller = new AbortController();
+    let armed = false,
+      started,
+      release,
+      seen,
+      modelCalls = 0;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      const source = {
+        async get(tenant, id) {
+          if (armed && mode === 'fallback') {
+            started();
+            await gate;
+          }
+          return s.definitions.get(tenant, id);
+        }
+      };
+      if (mode === 'signal-aware')
+        source.getWithSignal = async (tenant, id, signal) => {
+          seen = signal;
+          started();
+          await gate;
+          return s.definitions.get(tenant, id);
+        };
+      s.options.definitions = source;
+      s.options.createModel = () => ({
+        invoke: async () => {
+          modelCalls++;
+          return new AIMessage('Unexpected');
+        }
+      });
+      const agent = await createConfiguredAgentRun(s.options);
+      armed = true;
+      const pending = collect(agent.run(input, { signal: controller.signal }));
+      await ready;
+      controller.abort();
+      if (seen) assert.equal(seen.aborted, true);
+      release();
+      await assert.rejects(pending, /abort/i);
+      assert.equal(modelCalls, 0);
+    } finally {
+      release?.();
+      s.definitions.close();
+    }
+  }
 });

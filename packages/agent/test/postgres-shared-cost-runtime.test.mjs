@@ -1,48 +1,719 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import pg from 'pg';
-import {AIMessage} from '@langchain/core/messages';
-import {SpanStatusCode} from '@opentelemetry/api';
-import {TracerProvider,SimpleSpanProcessor,InMemorySpanExporter} from '@opentelemetry/sdk-trace';
-import {PostgresAgentSharedCost,AgentBudgetRecovery,ConfiguredAgentOperationMetrics,createPricedCostLimitedToolModel,createOpenAIPricedCostModel,createOpenAICapabilityPricedModel,SqliteAgentRuns,SqliteAgentDefinitions,SqliteAgentTokenBudget,createConfiguredAgentRun} from '../dist/index.js';
-const actor={tenantId:'t',principalId:'service'},scope={tenantId:'t',agentId:'agent'},sharedScope={tenantId:'t',budgetId:'cycle',currency:'USD',maxMicros:1000};
-const manifest={manifestVersion:1,tenantId:'t',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:10000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
-async function fixture(t,wrap=base=>base,authorize=()=>true,limits={}){const schema='shared_runtime_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});await admin.query(`CREATE SCHEMA "${schema}"`);t.after(async()=>{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();});const ledger=new PostgresAgentSharedCost({enabled:true,scope:sharedScope,query:(sql,args)=>pool.query(sql,args),transaction:wrap(transaction(pool)),authorize,...limits});await ledger.initialize();return ledger;}
-function worker(t,id,definition=manifest){const dir=mkdtempSync(join(tmpdir(),'shared-runtime-')),path=join(dir,'db'),runs=new SqliteAgentRuns(path),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('t',definition,0);let now=10;let run=runs.create(scope,id,{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,id,run.revision,'worker',100,10);const budget=new SqliteAgentTokenBudget(path,{scope,runId:id,leaseToken:run.leaseToken,maxTokens:100,cost:{currency:'USD',maxMicros:1000},clock:()=>now});t.after(()=>{budget.close();runs.close();definitions.close();rmSync(dir,{recursive:true,force:true});});return {id,runs,definitions,budget,run,setNow(value){now=value}};}
-async function execute(w,ledger,invoke,sharedCost={ledger,actor}){const agent=await createConfiguredAgentRun({definitions:w.definitions,tenantId:'t',agentId:'agent',expectedVersion:1,bindings:[],registry:{invoke:async()=>null},authorizeRun:()=>true,authorizeCapability:()=>true,tokenBudget:{budget:w.budget,maxTokensPerCall:60,maxCostMicrosPerCall:600,...(sharedCost===undefined?{}:{sharedCost})},createModel:()=>({invoke:async()=>new AIMessage('unused'),invokeLimitedCost:invoke})});let last;for await(const event of agent.run({threadId:'thread',runId:w.id,messages:[{role:'user',content:'hello'}]}))last=event;return last;}
-const result={message:new AIMessage('Done'),usedTokens:10,usedCostMicros:200};
-const opts={skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000};
-test('shared cost limits model dispatch across independent workers',opts,async t=>{const ledger=await fixture(t),a=worker(t,'a'),b=worker(t,'b');let release,entered,calls=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);t.after(()=>release());const pending=execute(a,ledger,async()=>{calls++;entered();await gate;return result;});await ready;assert.equal((await execute(b,ledger,async()=>{calls++;return result;})).type,'RUN_ERROR');assert.equal(calls,1);assert.equal(b.budget.list()[0].status,'reserved');assert.equal(b.runs.settle(scope,b.id,b.run.revision,b.run.leaseToken,'failed',11).status,'uncertain');release();assert.equal((await pending).type,'RUN_FINISHED');assert.deepEqual(await ledger.summary(actor),{currency:'USD',limitMicros:1000,reservedMicros:0,committedMicros:200,calls:1});assert.equal(a.budget.costSummary().committed,200);});
-test('lost database acknowledgement preserves a local reservation for reconciliation',opts,async t=>{for(const failAt of [1,2]){let count=0;const ledger=await fixture(t,base=>async op=>{const value=await base(op);if(++count===failAt)throw Error('lost acknowledgement');return value;}),w=worker(t,'run-'+failAt);let calls=0;assert.equal((await execute(w,ledger,async()=>{calls++;return result;})).type,'RUN_ERROR');assert.equal(calls,failAt-1);const local=w.budget.list()[0],shared=await ledger.get(actor,{agentId:'agent',runId:w.id,callId:local.callId});assert.equal(local.status,'reserved');assert.equal(shared.status,failAt===1?'reserved':'settled');const uncertain=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);assert.equal(uncertain.status,'uncertain');assert.throws(()=>w.runs.reconcile(scope,w.id,uncertain.revision,'retry',12),/Token usage/);}});
-test('shared cost binding cannot be removed or changed by an updated worker',opts,async t=>{const ledger=await fixture(t),w=worker(t,'bound');assert.equal((await execute(w,ledger,async()=>result)).type,'RUN_FINISHED');assert.throws(()=>w.budget.reserve('later',1,1),/binding conflict/);assert.throws(()=>w.budget.reserve('later',1,1,{...ledger.binding(),budgetId:'other'}),/binding conflict/);assert.equal(w.budget.get('later'),undefined);});
+import { AIMessage } from '@langchain/core/messages';
+import { SpanStatusCode } from '@opentelemetry/api';
+import { TracerProvider, SimpleSpanProcessor, InMemorySpanExporter } from '@opentelemetry/sdk-trace';
+import {
+  PostgresAgentSharedCost,
+  AgentBudgetRecovery,
+  ConfiguredAgentOperationMetrics,
+  createPricedCostLimitedToolModel,
+  createOpenAIPricedCostModel,
+  createOpenAICapabilityPricedModel,
+  SqliteAgentRuns,
+  SqliteAgentDefinitions,
+  SqliteAgentTokenBudget,
+  createConfiguredAgentRun
+} from '../dist/index.js';
+const actor = { tenantId: 't', principalId: 'service' },
+  scope = { tenantId: 't', agentId: 'agent' },
+  sharedScope = { tenantId: 't', budgetId: 'cycle', currency: 'USD', maxMicros: 1000 };
+const manifest = {
+  manifestVersion: 1,
+  tenantId: 't',
+  agentId: 'agent',
+  name: 'Agent',
+  owner: { kind: 'organization', id: 'org' },
+  administrators: ['admin'],
+  servicePrincipalId: 'service',
+  model: { provider: 'local', model: 'test' },
+  allowedCapabilities: [],
+  lifecycle: { enabled: true, maxAttempts: 3, runTimeoutMs: 10000 },
+  quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+};
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const value = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return value;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+async function fixture(t, wrap = base => base, authorize = () => true, limits = {}) {
+  const schema = 'shared_runtime_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  await admin.query(`CREATE SCHEMA "${schema}"`);
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  });
+  const ledger = new PostgresAgentSharedCost({ enabled: true, scope: sharedScope, query: (sql, args) => pool.query(sql, args), transaction: wrap(transaction(pool)), authorize, ...limits });
+  await ledger.initialize();
+  return ledger;
+}
+function worker(t, id, definition = manifest) {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-runtime-')),
+    path = join(dir, 'db'),
+    runs = new SqliteAgentRuns(path),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('t', definition, 0);
+  let now = 10;
+  let run = runs.create(scope, id, { definitionVersion: 1, maxAttempts: 3, deadline: 1000 }, 0);
+  run = runs.claim(scope, id, run.revision, 'worker', 100, 10);
+  const budget = new SqliteAgentTokenBudget(path, { scope, runId: id, leaseToken: run.leaseToken, maxTokens: 100, cost: { currency: 'USD', maxMicros: 1000 }, clock: () => now });
+  t.after(() => {
+    budget.close();
+    runs.close();
+    definitions.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return {
+    id,
+    runs,
+    definitions,
+    budget,
+    run,
+    setNow(value) {
+      now = value;
+    }
+  };
+}
+async function execute(w, ledger, invoke, sharedCost = { ledger, actor }) {
+  const agent = await createConfiguredAgentRun({
+    definitions: w.definitions,
+    tenantId: 't',
+    agentId: 'agent',
+    expectedVersion: 1,
+    bindings: [],
+    registry: { invoke: async () => null },
+    authorizeRun: () => true,
+    authorizeCapability: () => true,
+    tokenBudget: { budget: w.budget, maxTokensPerCall: 60, maxCostMicrosPerCall: 600, ...(sharedCost === undefined ? {} : { sharedCost }) },
+    createModel: () => ({ invoke: async () => new AIMessage('unused'), invokeLimitedCost: invoke })
+  });
+  let last;
+  for await (const event of agent.run({ threadId: 'thread', runId: w.id, messages: [{ role: 'user', content: 'hello' }] })) last = event;
+  return last;
+}
+const result = { message: new AIMessage('Done'), usedTokens: 10, usedCostMicros: 200 };
+const opts = { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 };
+test('shared cost limits model dispatch across independent workers', opts, async t => {
+  const ledger = await fixture(t),
+    a = worker(t, 'a'),
+    b = worker(t, 'b');
+  let release,
+    entered,
+    calls = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  t.after(() => release());
+  const pending = execute(a, ledger, async () => {
+    calls++;
+    entered();
+    await gate;
+    return result;
+  });
+  await ready;
+  assert.equal(
+    (
+      await execute(b, ledger, async () => {
+        calls++;
+        return result;
+      })
+    ).type,
+    'RUN_ERROR'
+  );
+  assert.equal(calls, 1);
+  assert.equal(b.budget.list()[0].status, 'reserved');
+  assert.equal(b.runs.settle(scope, b.id, b.run.revision, b.run.leaseToken, 'failed', 11).status, 'uncertain');
+  release();
+  assert.equal((await pending).type, 'RUN_FINISHED');
+  assert.deepEqual(await ledger.summary(actor), { currency: 'USD', limitMicros: 1000, reservedMicros: 0, committedMicros: 200, calls: 1 });
+  assert.equal(a.budget.costSummary().committed, 200);
+});
+test('lost database acknowledgement preserves a local reservation for reconciliation', opts, async t => {
+  for (const failAt of [1, 2]) {
+    let count = 0;
+    const ledger = await fixture(t, base => async op => {
+        const value = await base(op);
+        if (++count === failAt) throw Error('lost acknowledgement');
+        return value;
+      }),
+      w = worker(t, 'run-' + failAt);
+    let calls = 0;
+    assert.equal(
+      (
+        await execute(w, ledger, async () => {
+          calls++;
+          return result;
+        })
+      ).type,
+      'RUN_ERROR'
+    );
+    assert.equal(calls, failAt - 1);
+    const local = w.budget.list()[0],
+      shared = await ledger.get(actor, { agentId: 'agent', runId: w.id, callId: local.callId });
+    assert.equal(local.status, 'reserved');
+    assert.equal(shared.status, failAt === 1 ? 'reserved' : 'settled');
+    const uncertain = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+    assert.equal(uncertain.status, 'uncertain');
+    assert.throws(() => w.runs.reconcile(scope, w.id, uncertain.revision, 'retry', 12), /Token usage/);
+  }
+});
+test('shared cost binding cannot be removed or changed by an updated worker', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'bound');
+  assert.equal((await execute(w, ledger, async () => result)).type, 'RUN_FINISHED');
+  assert.throws(() => w.budget.reserve('later', 1, 1), /binding conflict/);
+  assert.throws(() => w.budget.reserve('later', 1, 1, { ...ledger.binding(), budgetId: 'other' }), /binding conflict/);
+  assert.equal(w.budget.get('later'), undefined);
+});
 
-test('lease loss while reserving shared cost prevents provider dispatch',opts,async t=>{let entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);t.after(()=>release());const ledger=await fixture(t,base=>async op=>{const value=await base(op);entered();await gate;return value;}),w=worker(t,'lease-loss');let calls=0;const pending=execute(w,ledger,async()=>{calls++;return result;});await ready;w.setNow(110);const recovered=w.runs.recoverExpired(scope,w.id,w.run.revision,110);assert.equal(recovered.status,'uncertain');release();assert.equal((await pending).type,'RUN_ERROR');assert.equal(calls,0);const local=w.budget.list()[0];assert.equal(local.status,'reserved');assert.equal((await ledger.get(actor,{agentId:'agent',runId:w.id,callId:local.callId})).status,'reserved');});
+test('lease loss while reserving shared cost prevents provider dispatch', opts, async t => {
+  let entered, release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  t.after(() => release());
+  const ledger = await fixture(t, base => async op => {
+      const value = await base(op);
+      entered();
+      await gate;
+      return value;
+    }),
+    w = worker(t, 'lease-loss');
+  let calls = 0;
+  const pending = execute(w, ledger, async () => {
+    calls++;
+    return result;
+  });
+  await ready;
+  w.setNow(110);
+  const recovered = w.runs.recoverExpired(scope, w.id, w.run.revision, 110);
+  assert.equal(recovered.status, 'uncertain');
+  release();
+  assert.equal((await pending).type, 'RUN_ERROR');
+  assert.equal(calls, 0);
+  const local = w.budget.list()[0];
+  assert.equal(local.status, 'reserved');
+  assert.equal((await ledger.get(actor, { agentId: 'agent', runId: w.id, callId: local.callId })).status, 'reserved');
+});
 
-test('verified recovery reconciles shared cost before releasing the local reservation',opts,async t=>{for(const mode of ['reserved','settled','missing']){const ledger=await fixture(t),w=worker(t,'recovery-'+mode),call={agentId:'agent',runId:w.id,callId:'call'};w.budget.reserve('call',60,600,ledger.binding());if(mode!=='missing'){await ledger.reserve(actor,call,600);if(mode==='settled')await ledger.settle(actor,call,200);}const uncertain=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);assert.equal(uncertain.status,'uncertain');const operator={tenantId:'t',principalId:'operator'},target={scope,runId:w.id,maxTokens:100},verify=()=>({usedTokens:mode==='missing'?0:10,usedCostMicros:mode==='missing'?0:200}),base={budget:w.budget,target,authorize:()=>true,verify};await assert.rejects(new AgentBudgetRecovery(base).reconcile(operator,'call','case'),/configuration conflict/);assert.throws(()=>w.budget.reconcile('call',0,0),/binding conflict/);const recovery=new AgentBudgetRecovery({...base,sharedCost:ledger});assert.equal(await recovery.reconcile(operator,'call','case'),'reconciled');assert.equal(w.budget.get('call').status,'settled');assert.equal(w.budget.getCost('call').used,mode==='missing'?0:200);if(mode!=='missing')assert.equal((await ledger.get(operator,call)).usedMicros,200);assert.equal((await ledger.history(operator)).items.length,mode==='reserved'?1:0);assert.equal(w.budget.reconciliationHistory()[0].principalId,'operator');assert.equal(w.runs.reconcile(scope,w.id,uncertain.revision,'retry',12).status,'queued');}});
-test('shared settlement acknowledgement loss and mismatched usage keep local recovery gated',opts,async t=>{let transactions=0;const ledger=await fixture(t,base=>async op=>{const result=await base(op);if(++transactions===2)throw Error('lost acknowledgement');return result;}),w=worker(t,'lost-recovery'),call={agentId:'agent',runId:w.id,callId:'call'},operator={tenantId:'t',principalId:'operator'};w.budget.reserve('call',60,600,ledger.binding());await ledger.reserve(actor,call,600);const uncertain=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);let amount=200;const recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>true,verify:()=>({usedTokens:10,usedCostMicros:amount})});await assert.rejects(recovery.reconcile(operator,'call','case'),/lost acknowledgement/);assert.equal(w.budget.get('call').status,'reserved');assert.equal((await ledger.get(operator,call)).usedMicros,200);assert.throws(()=>w.runs.reconcile(scope,w.id,uncertain.revision,'retry',12),/Token usage/);amount=201;await assert.rejects(recovery.reconcile(operator,'call','case'),/usage conflict/);assert.equal(w.budget.get('call').status,'reserved');amount=200;assert.equal(await recovery.reconcile(operator,'call','case'),'reconciled');assert.equal((await ledger.history(operator)).items.length,1);});
-test('missing shared reservation cannot hide verified provider usage',opts,async t=>{const ledger=await fixture(t),w=worker(t,'missing-shared');w.budget.reserve('call',60,600,ledger.binding());w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);const recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>true,verify:()=>({usedTokens:1,usedCostMicros:0})});await assert.rejects(recovery.reconcile({tenantId:'t',principalId:'operator'},'call','case'),/reservation unavailable/);assert.equal(w.budget.get('call').status,'reserved');});
+test('verified recovery reconciles shared cost before releasing the local reservation', opts, async t => {
+  for (const mode of ['reserved', 'settled', 'missing']) {
+    const ledger = await fixture(t),
+      w = worker(t, 'recovery-' + mode),
+      call = { agentId: 'agent', runId: w.id, callId: 'call' };
+    w.budget.reserve('call', 60, 600, ledger.binding());
+    if (mode !== 'missing') {
+      await ledger.reserve(actor, call, 600);
+      if (mode === 'settled') await ledger.settle(actor, call, 200);
+    }
+    const uncertain = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+    assert.equal(uncertain.status, 'uncertain');
+    const operator = { tenantId: 't', principalId: 'operator' },
+      target = { scope, runId: w.id, maxTokens: 100 },
+      verify = () => ({ usedTokens: mode === 'missing' ? 0 : 10, usedCostMicros: mode === 'missing' ? 0 : 200 }),
+      base = { budget: w.budget, target, authorize: () => true, verify };
+    await assert.rejects(new AgentBudgetRecovery(base).reconcile(operator, 'call', 'case'), /configuration conflict/);
+    assert.throws(() => w.budget.reconcile('call', 0, 0), /binding conflict/);
+    const recovery = new AgentBudgetRecovery({ ...base, sharedCost: ledger });
+    assert.equal(await recovery.reconcile(operator, 'call', 'case'), 'reconciled');
+    assert.equal(w.budget.get('call').status, 'settled');
+    assert.equal(w.budget.getCost('call').used, mode === 'missing' ? 0 : 200);
+    if (mode !== 'missing') assert.equal((await ledger.get(operator, call)).usedMicros, 200);
+    assert.equal((await ledger.history(operator)).items.length, mode === 'reserved' ? 1 : 0);
+    assert.equal(w.budget.reconciliationHistory()[0].principalId, 'operator');
+    assert.equal(w.runs.reconcile(scope, w.id, uncertain.revision, 'retry', 12).status, 'queued');
+  }
+});
+test('shared settlement acknowledgement loss and mismatched usage keep local recovery gated', opts, async t => {
+  let transactions = 0;
+  const ledger = await fixture(t, base => async op => {
+      const result = await base(op);
+      if (++transactions === 2) throw Error('lost acknowledgement');
+      return result;
+    }),
+    w = worker(t, 'lost-recovery'),
+    call = { agentId: 'agent', runId: w.id, callId: 'call' },
+    operator = { tenantId: 't', principalId: 'operator' };
+  w.budget.reserve('call', 60, 600, ledger.binding());
+  await ledger.reserve(actor, call, 600);
+  const uncertain = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+  let amount = 200;
+  const recovery = new AgentBudgetRecovery({
+    budget: w.budget,
+    target: { scope, runId: w.id, maxTokens: 100 },
+    sharedCost: ledger,
+    authorize: () => true,
+    verify: () => ({ usedTokens: 10, usedCostMicros: amount })
+  });
+  await assert.rejects(recovery.reconcile(operator, 'call', 'case'), /lost acknowledgement/);
+  assert.equal(w.budget.get('call').status, 'reserved');
+  assert.equal((await ledger.get(operator, call)).usedMicros, 200);
+  assert.throws(() => w.runs.reconcile(scope, w.id, uncertain.revision, 'retry', 12), /Token usage/);
+  amount = 201;
+  await assert.rejects(recovery.reconcile(operator, 'call', 'case'), /usage conflict/);
+  assert.equal(w.budget.get('call').status, 'reserved');
+  amount = 200;
+  assert.equal(await recovery.reconcile(operator, 'call', 'case'), 'reconciled');
+  assert.equal((await ledger.history(operator)).items.length, 1);
+});
+test('missing shared reservation cannot hide verified provider usage', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'missing-shared');
+  w.budget.reserve('call', 60, 600, ledger.binding());
+  w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+  const recovery = new AgentBudgetRecovery({
+    budget: w.budget,
+    target: { scope, runId: w.id, maxTokens: 100 },
+    sharedCost: ledger,
+    authorize: () => true,
+    verify: () => ({ usedTokens: 1, usedCostMicros: 0 })
+  });
+  await assert.rejects(recovery.reconcile({ tenantId: 't', principalId: 'operator' }, 'call', 'case'), /reservation unavailable/);
+  assert.equal(w.budget.get('call').status, 'reserved');
+});
 
-test('shared recovery cannot settle an actively running worker budget',opts,async t=>{const ledger=await fixture(t),w=worker(t,'still-running'),call={agentId:'agent',runId:w.id,callId:'call'};w.budget.reserve('call',60,600,ledger.binding());await ledger.reserve(actor,call,600);const recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>true,verify:()=>({usedTokens:10,usedCostMicros:200})});await assert.rejects(recovery.reconcile({tenantId:'t',principalId:'operator'},'call','case'),/not uncertain/);assert.equal((await ledger.get(actor,call)).status,'reserved');assert.equal(w.budget.get('call').status,'reserved');});
+test('shared recovery cannot settle an actively running worker budget', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'still-running'),
+    call = { agentId: 'agent', runId: w.id, callId: 'call' };
+  w.budget.reserve('call', 60, 600, ledger.binding());
+  await ledger.reserve(actor, call, 600);
+  const recovery = new AgentBudgetRecovery({
+    budget: w.budget,
+    target: { scope, runId: w.id, maxTokens: 100 },
+    sharedCost: ledger,
+    authorize: () => true,
+    verify: () => ({ usedTokens: 10, usedCostMicros: 200 })
+  });
+  await assert.rejects(recovery.reconcile({ tenantId: 't', principalId: 'operator' }, 'call', 'case'), /not uncertain/);
+  assert.equal((await ledger.get(actor, call)).status, 'reserved');
+  assert.equal(w.budget.get('call').status, 'reserved');
+});
 
-test('revoked recovery permission prevents shared and local settlement',opts,async t=>{const ledger=await fixture(t),w=worker(t,'revoked'),call={agentId:'agent',runId:w.id,callId:'call'};w.budget.reserve('call',60,600,ledger.binding());await ledger.reserve(actor,call,600);w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);let checks=0;const recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>++checks<3,verify:()=>({usedTokens:10,usedCostMicros:200})});await assert.rejects(recovery.reconcile({tenantId:'t',principalId:'operator'},'call','case'),/access denied/);assert.equal((await ledger.get(actor,call)).status,'reserved');assert.equal(w.budget.get('call').status,'reserved');});
+test('revoked recovery permission prevents shared and local settlement', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'revoked'),
+    call = { agentId: 'agent', runId: w.id, callId: 'call' };
+  w.budget.reserve('call', 60, 600, ledger.binding());
+  await ledger.reserve(actor, call, 600);
+  w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+  let checks = 0;
+  const recovery = new AgentBudgetRecovery({
+    budget: w.budget,
+    target: { scope, runId: w.id, maxTokens: 100 },
+    sharedCost: ledger,
+    authorize: () => ++checks < 3,
+    verify: () => ({ usedTokens: 10, usedCostMicros: 200 })
+  });
+  await assert.rejects(recovery.reconcile({ tenantId: 't', principalId: 'operator' }, 'call', 'case'), /access denied/);
+  assert.equal((await ledger.get(actor, call)).status, 'reserved');
+  assert.equal(w.budget.get('call').status, 'reserved');
+});
 
-test('timed-out shared cost authorization prevents dispatch and preserves local reconciliation',opts,async t=>{let entered,release,signal;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);t.after(()=>release());const ledger=await fixture(t,base=>base,async(_actor,_scope,action,_call,received)=>{if(action==='reserve'){signal=received;entered();await gate;}return true;},{timeoutMs:100,maxPending:1}),w=worker(t,'policy-timeout');let calls=0;const pending=execute(w,ledger,async()=>{calls++;return result;});await ready;assert.equal((await pending).type,'RUN_ERROR');assert.equal(signal.aborted,true);assert.equal(calls,0);assert.equal(w.budget.list()[0].status,'reserved');const uncertain=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);assert.equal(uncertain.status,'uncertain');assert.throws(()=>w.runs.reconcile(scope,w.id,uncertain.revision,'retry',12),/Token usage/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await ledger.summary(actor)).calls,0);});
+test('timed-out shared cost authorization prevents dispatch and preserves local reconciliation', opts, async t => {
+  let entered, release, signal;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  t.after(() => release());
+  const ledger = await fixture(
+      t,
+      base => base,
+      async (_actor, _scope, action, _call, received) => {
+        if (action === 'reserve') {
+          signal = received;
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      { timeoutMs: 100, maxPending: 1 }
+    ),
+    w = worker(t, 'policy-timeout');
+  let calls = 0;
+  const pending = execute(w, ledger, async () => {
+    calls++;
+    return result;
+  });
+  await ready;
+  assert.equal((await pending).type, 'RUN_ERROR');
+  assert.equal(signal.aborted, true);
+  assert.equal(calls, 0);
+  assert.equal(w.budget.list()[0].status, 'reserved');
+  const uncertain = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+  assert.equal(uncertain.status, 'uncertain');
+  assert.throws(() => w.runs.reconcile(scope, w.id, uncertain.revision, 'retry', 12), /Token usage/);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await ledger.summary(actor)).calls, 0);
+});
 
-test('timed-out shared recovery authorization leaves both reservations recoverable',opts,async t=>{let entered,release,slow=true,signal;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);t.after(()=>release());const ledger=await fixture(t,base=>base,async(_actor,_scope,action,_call,received)=>{if(action==='reconcile'&&slow){signal=received;entered();await gate;}return true;},{timeoutMs:100,maxPending:1}),w=worker(t,'recovery-policy-timeout'),selected={agentId:'agent',runId:w.id,callId:'call'},operator={tenantId:'t',principalId:'operator'};w.budget.reserve('call',60,600,ledger.binding());await ledger.reserve(actor,selected,600);const uncertain=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11),recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>true,verify:()=>({usedTokens:10,usedCostMicros:200})}),pending=recovery.reconcile(operator,'call','case');await ready;await assert.rejects(pending,/unavailable/);assert.equal(signal.aborted,true);assert.equal(w.budget.get('call').status,'reserved');assert.throws(()=>w.runs.reconcile(scope,w.id,uncertain.revision,'retry',12),/Token usage/);slow=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await ledger.get(operator,selected)).status,'reserved');assert.equal(await recovery.reconcile(operator,'call','case'),'reconciled');assert.equal((await ledger.get(operator,selected)).usedMicros,200);});
+test('timed-out shared recovery authorization leaves both reservations recoverable', opts, async t => {
+  let entered,
+    release,
+    slow = true,
+    signal;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  t.after(() => release());
+  const ledger = await fixture(
+      t,
+      base => base,
+      async (_actor, _scope, action, _call, received) => {
+        if (action === 'reconcile' && slow) {
+          signal = received;
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      { timeoutMs: 100, maxPending: 1 }
+    ),
+    w = worker(t, 'recovery-policy-timeout'),
+    selected = { agentId: 'agent', runId: w.id, callId: 'call' },
+    operator = { tenantId: 't', principalId: 'operator' };
+  w.budget.reserve('call', 60, 600, ledger.binding());
+  await ledger.reserve(actor, selected, 600);
+  const uncertain = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11),
+    recovery = new AgentBudgetRecovery({
+      budget: w.budget,
+      target: { scope, runId: w.id, maxTokens: 100 },
+      sharedCost: ledger,
+      authorize: () => true,
+      verify: () => ({ usedTokens: 10, usedCostMicros: 200 })
+    }),
+    pending = recovery.reconcile(operator, 'call', 'case');
+  await ready;
+  await assert.rejects(pending, /unavailable/);
+  assert.equal(signal.aborted, true);
+  assert.equal(w.budget.get('call').status, 'reserved');
+  assert.throws(() => w.runs.reconcile(scope, w.id, uncertain.revision, 'retry', 12), /Token usage/);
+  slow = false;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await ledger.get(operator, selected)).status, 'reserved');
+  assert.equal(await recovery.reconcile(operator, 'call', 'case'), 'reconciled');
+  assert.equal((await ledger.get(operator, selected)).usedMicros, 200);
+});
 
-test('priced model records consistent usage in local and shared ledgers',opts,async t=>{const ledger=await fixture(t),w=worker(t,'priced');let cap;const model=createPricedCostLimitedToolModel({currency:'USD',inputMicrosPerMillionTokens:2000000,outputMicrosPerMillionTokens:3000000,fixedMicrosPerCall:5,maxOutputTokens:100,prepare:()=>({request:{messages:[{role:'user',content:'hello'}]},maxInputTokens:10}),dispatch:async(_request,options)=>{cap=options.maxOutputTokens;return {message:new AIMessage('Done'),inputTokens:8,outputTokens:3};}});assert.equal((await execute(w,ledger,(messages,options)=>model.invokeLimitedCost(messages,options))).type,'RUN_FINISHED');assert.equal(cap,50);assert.equal(w.budget.costSummary().committed,30);assert.equal(w.budget.summary().committed,11);assert.equal((await ledger.summary(actor)).committedMicros,30);});
+test('priced model records consistent usage in local and shared ledgers', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'priced');
+  let cap;
+  const model = createPricedCostLimitedToolModel({
+    currency: 'USD',
+    inputMicrosPerMillionTokens: 2000000,
+    outputMicrosPerMillionTokens: 3000000,
+    fixedMicrosPerCall: 5,
+    maxOutputTokens: 100,
+    prepare: () => ({ request: { messages: [{ role: 'user', content: 'hello' }] }, maxInputTokens: 10 }),
+    dispatch: async (_request, options) => {
+      cap = options.maxOutputTokens;
+      return { message: new AIMessage('Done'), inputTokens: 8, outputTokens: 3 };
+    }
+  });
+  assert.equal((await execute(w, ledger, (messages, options) => model.invokeLimitedCost(messages, options))).type, 'RUN_FINISHED');
+  assert.equal(cap, 50);
+  assert.equal(w.budget.costSummary().committed, 30);
+  assert.equal(w.budget.summary().committed, 11);
+  assert.equal((await ledger.summary(actor)).committedMicros, 30);
+});
 
-test('OpenAI priced adapter settles simulated provider usage in both ledgers',opts,async t=>{const ledger=await fixture(t),w=worker(t,'openai-priced');let sent;const model=createOpenAIPricedCostModel({model:'model-snapshot',apiKey:'test-secret',inputMicrosPerMillionTokens:2000000,outputMicrosPerMillionTokens:3000000,fixedMicrosPerCall:5,maxOutputTokens:100,timeoutMs:5000,maxPending:1,prepare:()=>({messages:[{role:'user',content:'hello'}],maxInputTokens:10}),fetch:async(_url,options)=>{sent=JSON.parse(options.body);return new Response(JSON.stringify({model:'model-snapshot',service_tier:'default',usage:{prompt_tokens:8,completion_tokens:3,total_tokens:11},choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Done'}}]}),{status:200});}});assert.equal((await execute(w,ledger,(messages,options)=>model.invokeLimitedCost(messages,options))).type,'RUN_FINISHED');assert.equal(sent.max_completion_tokens,50);assert.equal(w.budget.summary().committed,11);assert.equal(w.budget.costSummary().committed,30);assert.equal((await ledger.summary(actor)).committedMicros,30);});
+test('OpenAI priced adapter settles simulated provider usage in both ledgers', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'openai-priced');
+  let sent;
+  const model = createOpenAIPricedCostModel({
+    model: 'model-snapshot',
+    apiKey: 'test-secret',
+    inputMicrosPerMillionTokens: 2000000,
+    outputMicrosPerMillionTokens: 3000000,
+    fixedMicrosPerCall: 5,
+    maxOutputTokens: 100,
+    timeoutMs: 5000,
+    maxPending: 1,
+    prepare: () => ({ messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 }),
+    fetch: async (_url, options) => {
+      sent = JSON.parse(options.body);
+      return new Response(
+        JSON.stringify({
+          model: 'model-snapshot',
+          service_tier: 'default',
+          usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done' } }]
+        }),
+        { status: 200 }
+      );
+    }
+  });
+  assert.equal((await execute(w, ledger, (messages, options) => model.invokeLimitedCost(messages, options))).type, 'RUN_FINISHED');
+  assert.equal(sent.max_completion_tokens, 50);
+  assert.equal(w.budget.summary().committed, 11);
+  assert.equal(w.budget.costSummary().committed, 30);
+  assert.equal((await ledger.summary(actor)).committedMicros, 30);
+});
 
-test('timed-out OpenAI credential lookup preserves and safely recovers both ledgers',opts,async t=>{let entered,release,signal,calls=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);t.after(()=>release());const ledger=await fixture(t),w=worker(t,'openai-credential-timeout'),model=createOpenAIPricedCostModel({model:'model-snapshot',getApiKey:async received=>{signal=received;entered();await gate;return 'late-key';},inputMicrosPerMillionTokens:2000000,outputMicrosPerMillionTokens:3000000,fixedMicrosPerCall:5,maxOutputTokens:100,timeoutMs:100,maxPending:1,prepare:()=>({messages:[{role:'user',content:'hello'}],maxInputTokens:10}),fetch:async()=>{calls++;throw Error('unexpected dispatch');}}),pending=execute(w,ledger,(messages,options)=>model.invokeLimitedCost(messages,options));await ready;assert.equal((await pending).type,'RUN_ERROR');assert.equal(signal.aborted,true);assert.equal(calls,0);const [local]=w.budget.list(),selected={agentId:'agent',runId:w.id,callId:local.callId};assert.equal(local.status,'reserved');assert.equal((await ledger.get(actor,selected)).status,'reserved');const run=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);assert.equal(run.status,'uncertain');release();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,0);const recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>true,verify:()=>({usedTokens:0,usedCostMicros:0})});assert.equal(await recovery.reconcile({tenantId:'t',principalId:'operator'},local.callId,'credential-timeout'),'reconciled');assert.equal((await ledger.get(actor,selected)).usedMicros,0);assert.equal(w.runs.reconcile(scope,w.id,run.revision,'retry',12).status,'queued');});
+test('timed-out OpenAI credential lookup preserves and safely recovers both ledgers', opts, async t => {
+  let entered,
+    release,
+    signal,
+    calls = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  t.after(() => release());
+  const ledger = await fixture(t),
+    w = worker(t, 'openai-credential-timeout'),
+    model = createOpenAIPricedCostModel({
+      model: 'model-snapshot',
+      getApiKey: async received => {
+        signal = received;
+        entered();
+        await gate;
+        return 'late-key';
+      },
+      inputMicrosPerMillionTokens: 2000000,
+      outputMicrosPerMillionTokens: 3000000,
+      fixedMicrosPerCall: 5,
+      maxOutputTokens: 100,
+      timeoutMs: 100,
+      maxPending: 1,
+      prepare: () => ({ messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 }),
+      fetch: async () => {
+        calls++;
+        throw Error('unexpected dispatch');
+      }
+    }),
+    pending = execute(w, ledger, (messages, options) => model.invokeLimitedCost(messages, options));
+  await ready;
+  assert.equal((await pending).type, 'RUN_ERROR');
+  assert.equal(signal.aborted, true);
+  assert.equal(calls, 0);
+  const [local] = w.budget.list(),
+    selected = { agentId: 'agent', runId: w.id, callId: local.callId };
+  assert.equal(local.status, 'reserved');
+  assert.equal((await ledger.get(actor, selected)).status, 'reserved');
+  const run = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+  assert.equal(run.status, 'uncertain');
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 0);
+  const recovery = new AgentBudgetRecovery({
+    budget: w.budget,
+    target: { scope, runId: w.id, maxTokens: 100 },
+    sharedCost: ledger,
+    authorize: () => true,
+    verify: () => ({ usedTokens: 0, usedCostMicros: 0 })
+  });
+  assert.equal(await recovery.reconcile({ tenantId: 't', principalId: 'operator' }, local.callId, 'credential-timeout'), 'reconciled');
+  assert.equal((await ledger.get(actor, selected)).usedMicros, 0);
+  assert.equal(w.runs.reconcile(scope, w.id, run.revision, 'retry', 12).status, 'queued');
+});
 
-test('timed-out OpenAI request preparation preserves and safely recovers both ledgers',opts,async t=>{let entered,release,signal,credentials=0,calls=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);t.after(()=>release());const ledger=await fixture(t),w=worker(t,'openai-prepare-timeout'),model=createOpenAIPricedCostModel({model:'model-snapshot',getApiKey:()=>{credentials++;return 'key';},inputMicrosPerMillionTokens:2000000,outputMicrosPerMillionTokens:3000000,fixedMicrosPerCall:5,maxOutputTokens:100,timeoutMs:100,maxPending:1,prepare:async(_messages,received)=>{signal=received;entered();await gate;return {messages:[{role:'user',content:'hello'}],maxInputTokens:10};},fetch:async()=>{calls++;throw Error('unexpected dispatch');}}),pending=execute(w,ledger,(messages,options)=>model.invokeLimitedCost(messages,options));await ready;assert.equal((await pending).type,'RUN_ERROR');assert.equal(signal.aborted,true);assert.equal(credentials,0);assert.equal(calls,0);const [local]=w.budget.list(),selected={agentId:'agent',runId:w.id,callId:local.callId};assert.equal(local.status,'reserved');assert.equal((await ledger.get(actor,selected)).status,'reserved');const run=w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11);assert.equal(run.status,'uncertain');release();await new Promise(resolve=>setImmediate(resolve));assert.equal(credentials,0);assert.equal(calls,0);const recovery=new AgentBudgetRecovery({budget:w.budget,target:{scope,runId:w.id,maxTokens:100},sharedCost:ledger,authorize:()=>true,verify:()=>({usedTokens:0,usedCostMicros:0})});assert.equal(await recovery.reconcile({tenantId:'t',principalId:'operator'},local.callId,'prepare-timeout'),'reconciled');assert.equal((await ledger.get(actor,selected)).usedMicros,0);assert.equal(w.runs.reconcile(scope,w.id,run.revision,'retry',12).status,'queued');});
+test('timed-out OpenAI request preparation preserves and safely recovers both ledgers', opts, async t => {
+  let entered,
+    release,
+    signal,
+    credentials = 0,
+    calls = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  t.after(() => release());
+  const ledger = await fixture(t),
+    w = worker(t, 'openai-prepare-timeout'),
+    model = createOpenAIPricedCostModel({
+      model: 'model-snapshot',
+      getApiKey: () => {
+        credentials++;
+        return 'key';
+      },
+      inputMicrosPerMillionTokens: 2000000,
+      outputMicrosPerMillionTokens: 3000000,
+      fixedMicrosPerCall: 5,
+      maxOutputTokens: 100,
+      timeoutMs: 100,
+      maxPending: 1,
+      prepare: async (_messages, received) => {
+        signal = received;
+        entered();
+        await gate;
+        return { messages: [{ role: 'user', content: 'hello' }], maxInputTokens: 10 };
+      },
+      fetch: async () => {
+        calls++;
+        throw Error('unexpected dispatch');
+      }
+    }),
+    pending = execute(w, ledger, (messages, options) => model.invokeLimitedCost(messages, options));
+  await ready;
+  assert.equal((await pending).type, 'RUN_ERROR');
+  assert.equal(signal.aborted, true);
+  assert.equal(credentials, 0);
+  assert.equal(calls, 0);
+  const [local] = w.budget.list(),
+    selected = { agentId: 'agent', runId: w.id, callId: local.callId };
+  assert.equal(local.status, 'reserved');
+  assert.equal((await ledger.get(actor, selected)).status, 'reserved');
+  const run = w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11);
+  assert.equal(run.status, 'uncertain');
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(credentials, 0);
+  assert.equal(calls, 0);
+  const recovery = new AgentBudgetRecovery({
+    budget: w.budget,
+    target: { scope, runId: w.id, maxTokens: 100 },
+    sharedCost: ledger,
+    authorize: () => true,
+    verify: () => ({ usedTokens: 0, usedCostMicros: 0 })
+  });
+  assert.equal(await recovery.reconcile({ tenantId: 't', principalId: 'operator' }, local.callId, 'prepare-timeout'), 'reconciled');
+  assert.equal((await ledger.get(actor, selected)).usedMicros, 0);
+  assert.equal(w.runs.reconcile(scope, w.id, run.revision, 'retry', 12).status, 'queued');
+});
 
-test('capability model performs an authorized tool round trip with a shared budget',opts,async t=>{const ledger=await fixture(t),w=worker(t,'openai-tool',{...manifest,allowedCapabilities:['lookup']}),requests=[],invocations=[];const agent=await createConfiguredAgentRun({definitions:w.definitions,tenantId:'t',agentId:'agent',expectedVersion:1,bindings:[{operationId:'lookup',toolName:'lookup',description:'Find an item'}],registry:{invoke:async(operation,input,who)=>{invocations.push({operation,input,who});return {found:true};}},authorizeRun:()=>true,authorizeCapability:()=>true,tokenBudget:{budget:w.budget,maxTokensPerCall:60,maxCostMicrosPerCall:100,sharedCost:{ledger,actor}},createModel:(_definition,tools)=>createOpenAICapabilityPricedModel({model:'model-snapshot',apiKey:'test-secret',inputMicrosPerMillionTokens:2000000,outputMicrosPerMillionTokens:3000000,fixedMicrosPerCall:5,maxOutputTokens:100,timeoutMs:5000,maxPending:1,tools,systemPrompt:'Host instructions',estimateInputTokens:()=>20,fetch:async(_url,options)=>{requests.push(JSON.parse(options.body));const message=requests.length===1?{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'lookup',arguments:'{"query":{"key":"x"}}'}}]}:{role:'assistant',content:'Found'};return new Response(JSON.stringify({model:'model-snapshot',service_tier:'default',usage:{prompt_tokens:8,completion_tokens:3,total_tokens:11},choices:[{index:0,finish_reason:requests.length===1?'tool_calls':'stop',message}]}),{status:200});}})});let last;for await(const event of agent.run({threadId:'thread',runId:w.id,messages:[{role:'user',content:'Hello'}]}))last=event;assert.equal(last.type,'RUN_FINISHED');assert.equal(requests.length,2);assert.equal(invocations.length,1);assert.deepEqual(invocations[0].input,{query:{key:'x'}});assert.equal(invocations[0].who.principalId,'service');assert.deepEqual(requests[1].messages.map(message=>message.role),['system','user','assistant','tool']);assert.equal(w.budget.summary().committed,22);assert.equal(w.budget.costSummary().committed,60);const shared=await ledger.summary(actor);assert.equal(shared.calls,2);assert.equal(shared.committedMicros,60);});
+test('capability model performs an authorized tool round trip with a shared budget', opts, async t => {
+  const ledger = await fixture(t),
+    w = worker(t, 'openai-tool', { ...manifest, allowedCapabilities: ['lookup'] }),
+    requests = [],
+    invocations = [];
+  const agent = await createConfiguredAgentRun({
+    definitions: w.definitions,
+    tenantId: 't',
+    agentId: 'agent',
+    expectedVersion: 1,
+    bindings: [{ operationId: 'lookup', toolName: 'lookup', description: 'Find an item' }],
+    registry: {
+      invoke: async (operation, input, who) => {
+        invocations.push({ operation, input, who });
+        return { found: true };
+      }
+    },
+    authorizeRun: () => true,
+    authorizeCapability: () => true,
+    tokenBudget: { budget: w.budget, maxTokensPerCall: 60, maxCostMicrosPerCall: 100, sharedCost: { ledger, actor } },
+    createModel: (_definition, tools) =>
+      createOpenAICapabilityPricedModel({
+        model: 'model-snapshot',
+        apiKey: 'test-secret',
+        inputMicrosPerMillionTokens: 2000000,
+        outputMicrosPerMillionTokens: 3000000,
+        fixedMicrosPerCall: 5,
+        maxOutputTokens: 100,
+        timeoutMs: 5000,
+        maxPending: 1,
+        tools,
+        systemPrompt: 'Host instructions',
+        estimateInputTokens: () => 20,
+        fetch: async (_url, options) => {
+          requests.push(JSON.parse(options.body));
+          const message =
+            requests.length === 1
+              ? { role: 'assistant', content: null, tool_calls: [{ id: 'tool_1', type: 'function', function: { name: 'lookup', arguments: '{"query":{"key":"x"}}' } }] }
+              : { role: 'assistant', content: 'Found' };
+          return new Response(
+            JSON.stringify({
+              model: 'model-snapshot',
+              service_tier: 'default',
+              usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+              choices: [{ index: 0, finish_reason: requests.length === 1 ? 'tool_calls' : 'stop', message }]
+            }),
+            { status: 200 }
+          );
+        }
+      })
+  });
+  let last;
+  for await (const event of agent.run({ threadId: 'thread', runId: w.id, messages: [{ role: 'user', content: 'Hello' }] })) last = event;
+  assert.equal(last.type, 'RUN_FINISHED');
+  assert.equal(requests.length, 2);
+  assert.equal(invocations.length, 1);
+  assert.deepEqual(invocations[0].input, { query: { key: 'x' } });
+  assert.equal(invocations[0].who.principalId, 'service');
+  assert.deepEqual(
+    requests[1].messages.map(message => message.role),
+    ['system', 'user', 'assistant', 'tool']
+  );
+  assert.equal(w.budget.summary().committed, 22);
+  assert.equal(w.budget.costSummary().committed, 60);
+  const shared = await ledger.summary(actor);
+  assert.equal(shared.calls, 2);
+  assert.equal(shared.committedMicros, 60);
+});
 
-test('model tracing preserves shared-budget accounting for success and ambiguous failure',opts,async t=>{for(const fail of [false,true]){const ledger=await fixture(t),w=worker(t,fail?'trace-failure':'trace-success'),exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('test'),metrics=new ConfiguredAgentOperationMetrics({authorize:()=>true});try{let calls=0;const agent=await createConfiguredAgentRun({definitions:w.definitions,tenantId:'t',agentId:'agent',expectedVersion:1,bindings:[],registry:{invoke:async()=>null},authorizeRun:()=>true,authorizeCapability:()=>true,tokenBudget:{budget:w.budget,maxTokensPerCall:60,maxCostMicrosPerCall:600,sharedCost:{ledger,actor}},tracing:{tracer},observeOperation:metrics.observe,createModel:()=>({invoke:async()=>new AIMessage('unused'),invokeLimitedCost:async()=>{calls++;if(fail)throw Error('private-provider-failure');return result;}})});let last;for await(const event of agent.run({threadId:'thread',runId:w.id,messages:[{role:'user',content:'private-prompt'}]}))last=event;assert.equal(last.type,fail?'RUN_ERROR':'RUN_FINISHED');assert.equal(calls,1);const local=w.budget.list()[0],selected={agentId:'agent',runId:w.id,callId:local.callId},shared=await ledger.get(actor,selected),span=exporter.getFinishedSpans().find(item=>item.name==='agent.model');assert.ok(span);assert.deepEqual((await metrics.snapshot(actor)).map(row=>row.count),fail?[0,1,0,0]:[1,0,0,0]);assert.equal(span.attributes['app_mixer.agent.operation.outcome'],fail?'failed':'succeeded');assert.equal(local.status,fail?'reserved':'settled');assert.equal(shared.status,fail?'reserved':'settled');if(fail){assert.equal(span.status.code,SpanStatusCode.ERROR);assert.equal(span.attributes['error.type'],'agent_model_failed');assert.equal(w.runs.settle(scope,w.id,w.run.revision,w.run.leaseToken,'failed',11).status,'uncertain');}else{assert.equal(local.used,10);assert.equal(shared.usedMicros,200);}const safe=JSON.stringify({attributes:span.attributes,events:span.events});for(const secret of [w.id,local.callId,'private-provider-failure','private-prompt'])assert.equal(safe.includes(secret),false);}finally{await provider.shutdown();}}});
+test('model tracing preserves shared-budget accounting for success and ambiguous failure', opts, async t => {
+  for (const fail of [false, true]) {
+    const ledger = await fixture(t),
+      w = worker(t, fail ? 'trace-failure' : 'trace-success'),
+      exporter = new InMemorySpanExporter(),
+      provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }),
+      tracer = provider.getTracer('test'),
+      metrics = new ConfiguredAgentOperationMetrics({ authorize: () => true });
+    try {
+      let calls = 0;
+      const agent = await createConfiguredAgentRun({
+        definitions: w.definitions,
+        tenantId: 't',
+        agentId: 'agent',
+        expectedVersion: 1,
+        bindings: [],
+        registry: { invoke: async () => null },
+        authorizeRun: () => true,
+        authorizeCapability: () => true,
+        tokenBudget: { budget: w.budget, maxTokensPerCall: 60, maxCostMicrosPerCall: 600, sharedCost: { ledger, actor } },
+        tracing: { tracer },
+        observeOperation: metrics.observe,
+        createModel: () => ({
+          invoke: async () => new AIMessage('unused'),
+          invokeLimitedCost: async () => {
+            calls++;
+            if (fail) throw Error('private-provider-failure');
+            return result;
+          }
+        })
+      });
+      let last;
+      for await (const event of agent.run({ threadId: 'thread', runId: w.id, messages: [{ role: 'user', content: 'private-prompt' }] })) last = event;
+      assert.equal(last.type, fail ? 'RUN_ERROR' : 'RUN_FINISHED');
+      assert.equal(calls, 1);
+      const local = w.budget.list()[0],
+        selected = { agentId: 'agent', runId: w.id, callId: local.callId },
+        shared = await ledger.get(actor, selected),
+        span = exporter.getFinishedSpans().find(item => item.name === 'agent.model');
+      assert.ok(span);
+      assert.deepEqual(
+        (await metrics.snapshot(actor)).map(row => row.count),
+        fail ? [0, 1, 0, 0] : [1, 0, 0, 0]
+      );
+      assert.equal(span.attributes['app_mixer.agent.operation.outcome'], fail ? 'failed' : 'succeeded');
+      assert.equal(local.status, fail ? 'reserved' : 'settled');
+      assert.equal(shared.status, fail ? 'reserved' : 'settled');
+      if (fail) {
+        assert.equal(span.status.code, SpanStatusCode.ERROR);
+        assert.equal(span.attributes['error.type'], 'agent_model_failed');
+        assert.equal(w.runs.settle(scope, w.id, w.run.revision, w.run.leaseToken, 'failed', 11).status, 'uncertain');
+      } else {
+        assert.equal(local.used, 10);
+        assert.equal(shared.usedMicros, 200);
+      }
+      const safe = JSON.stringify({ attributes: span.attributes, events: span.events });
+      for (const secret of [w.id, local.callId, 'private-provider-failure', 'private-prompt']) assert.equal(safe.includes(secret), false);
+    } finally {
+      await provider.shutdown();
+    }
+  }
+});

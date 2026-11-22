@@ -1,64 +1,423 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
-import {once} from 'node:events';
-import {mkdtemp,rm,symlink,writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {fileURLToPath,pathToFileURL} from 'node:url';
-import {context,propagation,SpanKind} from '@opentelemetry/api';
-import {W3CTraceContextPropagator} from '@opentelemetry/core';
-import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
-import {TracerProvider,SimpleSpanProcessor,InMemorySpanExporter} from '@opentelemetry/sdk-trace';
-import {createProject} from '../dist/index.js';
-import {ApplicationStore,createDataPlane,CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {createAGUIServer,LangGraphAGUIAdapter} from '../../agent/dist/index.js';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { context, propagation, SpanKind } from '@opentelemetry/api';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { TracerProvider, SimpleSpanProcessor, InMemorySpanExporter } from '@opentelemetry/sdk-trace';
+import { createProject } from '../dist/index.js';
+import { ApplicationStore, createDataPlane, CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import { createAGUIServer, LangGraphAGUIAdapter } from '../../agent/dist/index.js';
 
-const bootstrap=`import {context,propagation,trace} from '@opentelemetry/api';
+const bootstrap = `import {context,propagation,trace} from '@opentelemetry/api';
 import {W3CTraceContextPropagator} from '@opentelemetry/core';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {TracerProvider,SimpleSpanProcessor} from '@opentelemetry/sdk-trace';
 context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 const exporter={export(spans,callback){for(const s of spans)process.stdout.write('SPAN '+JSON.stringify({name:s.name,kind:s.kind,context:s.spanContext(),parent:s.parentSpanContext,attributes:s.attributes})+'\\n');callback({code:0});},shutdown:async()=>{}};
 trace.setGlobalTracerProvider(new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}));`;
-const wait=async predicate=>{for(let i=0;i<200;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Timed out waiting for workspace');};
+const wait = async predicate => {
+  for (let i = 0; i < 200; i++) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw Error('Timed out waiting for workspace');
+};
 
-test('generated workspace traces publication request across the Data Plane', {timeout:15000},async()=>{
- const manager=new AsyncLocalStorageContextManager().enable();context.setGlobalContextManager(manager);propagation.setGlobalPropagator(new W3CTraceContextPropagator());const exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),store=new ApplicationStore({id:'demo-app',schemaVersion:1,revision:0,pages:[]});store.publish(0);const plane=createDataPlane(store,{tracing:{tracer:provider.getTracer('data'),trustRemoteParent:true}});plane.listen(0,'127.0.0.1');await once(plane,'listening');const dir=await mkdtemp(join(tmpdir(),'workspace-trace-'));let child;
- try{
-  const target=await createProject('demo-app',dir);await symlink(fileURLToPath(new URL('../../../node_modules',import.meta.url)),join(target,'node_modules'),'junction');await writeFile(join(target,'trace-bootstrap.mjs'),bootstrap);
-  const env={...process.env,PORT:'0',DATA_PLANE_URL:`http://127.0.0.1:${plane.address().port}/application`,WORKSPACE_TRACING_ENABLED:'true',WORKSPACE_TRACING_TRUST_INCOMING:'true',WORKSPACE_TRACING_PROPAGATE:'true'};child=spawn(process.execPath,['--import',pathToFileURL(join(target,'trace-bootstrap.mjs')).href,'server.mjs'],{cwd:target,env,stdio:['ignore','pipe','pipe']});let output='',errors='';child.stdout.on('data',part=>output+=part);child.stderr.on('data',part=>errors+=part);await wait(()=>/http:\/\/127\.0\.0\.1:\d+/.test(output)||child.exitCode!==null);assert.equal(child.exitCode,null,errors);const url=output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],parent='00-0123456789abcdef0123456789abcdef-0123456789abcdef-01';
-  const response=await fetch(url+'/api/publication',{headers:{traceparent:parent,authorization:'Bearer private-secret'}});assert.equal(response.status,200);const etag=response.headers.get('etag');await response.text();assert.equal((await fetch(url+'/api/publication',{headers:{'if-none-match':etag}})).status,304);await wait(()=>output.split('\n').filter(line=>line.startsWith('SPAN ')).length>=4&&exporter.getFinishedSpans().length>=2);
-  const spans=output.split('\n').filter(line=>line.startsWith('SPAN ')).map(line=>JSON.parse(line.slice(5))),server=spans.find(s=>s.kind===SpanKind.SERVER&&s.parent?.spanId==='0123456789abcdef'),client=spans.find(s=>s.kind===SpanKind.CLIENT&&s.parent?.spanId===server?.context.spanId),data=exporter.getFinishedSpans().find(s=>s.kind===SpanKind.SERVER&&s.parentSpanContext?.spanId===client?.context.spanId);assert.ok(server);assert.ok(client);assert.ok(data);assert.equal(data.spanContext().traceId,'0123456789abcdef0123456789abcdef');assert.ok(spans.some(s=>s.kind===SpanKind.CLIENT&&s.attributes['http.response.status_code']===304));assert.equal(JSON.stringify(spans).includes('private-secret'),false);
- }finally{if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}plane.closeAllConnections();await new Promise(resolve=>plane.close(resolve));await provider.shutdown();context.disable();propagation.disable();manager.disable();await rm(dir,{recursive:true,force:true});}
+test('generated workspace traces publication request across the Data Plane', { timeout: 15000 }, async () => {
+  const manager = new AsyncLocalStorageContextManager().enable();
+  context.setGlobalContextManager(manager);
+  propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  const exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }),
+    store = new ApplicationStore({ id: 'demo-app', schemaVersion: 1, revision: 0, pages: [] });
+  store.publish(0);
+  const plane = createDataPlane(store, { tracing: { tracer: provider.getTracer('data'), trustRemoteParent: true } });
+  plane.listen(0, '127.0.0.1');
+  await once(plane, 'listening');
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-trace-'));
+  let child;
+  try {
+    const target = await createProject('demo-app', dir);
+    await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(target, 'node_modules'), 'junction');
+    await writeFile(join(target, 'trace-bootstrap.mjs'), bootstrap);
+    const env = {
+      ...process.env,
+      PORT: '0',
+      DATA_PLANE_URL: `http://127.0.0.1:${plane.address().port}/application`,
+      WORKSPACE_TRACING_ENABLED: 'true',
+      WORKSPACE_TRACING_TRUST_INCOMING: 'true',
+      WORKSPACE_TRACING_PROPAGATE: 'true'
+    };
+    child = spawn(process.execPath, ['--import', pathToFileURL(join(target, 'trace-bootstrap.mjs')).href, 'server.mjs'], { cwd: target, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '',
+      errors = '';
+    child.stdout.on('data', part => (output += part));
+    child.stderr.on('data', part => (errors += part));
+    await wait(() => /http:\/\/127\.0\.0\.1:\d+/.test(output) || child.exitCode !== null);
+    assert.equal(child.exitCode, null, errors);
+    const url = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],
+      parent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01';
+    const response = await fetch(url + '/api/publication', { headers: { traceparent: parent, authorization: 'Bearer private-secret' } });
+    assert.equal(response.status, 200);
+    const etag = response.headers.get('etag');
+    await response.text();
+    assert.equal((await fetch(url + '/api/publication', { headers: { 'if-none-match': etag } })).status, 304);
+    await wait(() => output.split('\n').filter(line => line.startsWith('SPAN ')).length >= 4 && exporter.getFinishedSpans().length >= 2);
+    const spans = output
+        .split('\n')
+        .filter(line => line.startsWith('SPAN '))
+        .map(line => JSON.parse(line.slice(5))),
+      server = spans.find(s => s.kind === SpanKind.SERVER && s.parent?.spanId === '0123456789abcdef'),
+      client = spans.find(s => s.kind === SpanKind.CLIENT && s.parent?.spanId === server?.context.spanId),
+      data = exporter.getFinishedSpans().find(s => s.kind === SpanKind.SERVER && s.parentSpanContext?.spanId === client?.context.spanId);
+    assert.ok(server);
+    assert.ok(client);
+    assert.ok(data);
+    assert.equal(data.spanContext().traceId, '0123456789abcdef0123456789abcdef');
+    assert.ok(spans.some(s => s.kind === SpanKind.CLIENT && s.attributes['http.response.status_code'] === 304));
+    assert.equal(JSON.stringify(spans).includes('private-secret'), false);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    plane.closeAllConnections();
+    await new Promise(resolve => plane.close(resolve));
+    await provider.shutdown();
+    context.disable();
+    propagation.disable();
+    manager.disable();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('generated workspace does not propagate incoming traces by default', {timeout:15000},async()=>{
- propagation.setGlobalPropagator(new W3CTraceContextPropagator());const exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),store=new ApplicationStore({id:'demo-app',schemaVersion:1,revision:0,pages:[]});store.publish(0);const plane=createDataPlane(store,{tracing:{tracer:provider.getTracer('data'),trustRemoteParent:true}});plane.listen(0,'127.0.0.1');await once(plane,'listening');const dir=await mkdtemp(join(tmpdir(),'workspace-no-trace-'));let child;
- try{const target=await createProject('demo-app',dir),env={...process.env,PORT:'0',DATA_PLANE_URL:`http://127.0.0.1:${plane.address().port}/application`,WORKSPACE_TRACING_ENABLED:'false',WORKSPACE_TRACING_TRUST_INCOMING:'false',WORKSPACE_TRACING_PROPAGATE:'false'};child=spawn(process.execPath,['server.mjs'],{cwd:target,env,stdio:['ignore','pipe','pipe']});let output='',errors='';child.stdout.on('data',part=>output+=part);child.stderr.on('data',part=>errors+=part);await wait(()=>/http:\/\/127\.0\.0\.1:\d+/.test(output)||child.exitCode!==null);assert.equal(child.exitCode,null,errors);const url=output.match(/http:\/\/127\.0\.0\.1:\d+/)[0];assert.equal((await fetch(url+'/api/publication',{headers:{traceparent:'00-0123456789abcdef0123456789abcdef-0123456789abcdef-01'}})).status,200);await wait(()=>exporter.getFinishedSpans().length>0);assert.equal(exporter.getFinishedSpans()[0].parentSpanContext,undefined);}finally{if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}plane.closeAllConnections();await new Promise(resolve=>plane.close(resolve));await provider.shutdown();propagation.disable();await rm(dir,{recursive:true,force:true});}
+test('generated workspace does not propagate incoming traces by default', { timeout: 15000 }, async () => {
+  propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  const exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }),
+    store = new ApplicationStore({ id: 'demo-app', schemaVersion: 1, revision: 0, pages: [] });
+  store.publish(0);
+  const plane = createDataPlane(store, { tracing: { tracer: provider.getTracer('data'), trustRemoteParent: true } });
+  plane.listen(0, '127.0.0.1');
+  await once(plane, 'listening');
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-no-trace-'));
+  let child;
+  try {
+    const target = await createProject('demo-app', dir),
+      env = {
+        ...process.env,
+        PORT: '0',
+        DATA_PLANE_URL: `http://127.0.0.1:${plane.address().port}/application`,
+        WORKSPACE_TRACING_ENABLED: 'false',
+        WORKSPACE_TRACING_TRUST_INCOMING: 'false',
+        WORKSPACE_TRACING_PROPAGATE: 'false'
+      };
+    child = spawn(process.execPath, ['server.mjs'], { cwd: target, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '',
+      errors = '';
+    child.stdout.on('data', part => (output += part));
+    child.stderr.on('data', part => (errors += part));
+    await wait(() => /http:\/\/127\.0\.0\.1:\d+/.test(output) || child.exitCode !== null);
+    assert.equal(child.exitCode, null, errors);
+    const url = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0];
+    assert.equal((await fetch(url + '/api/publication', { headers: { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' } })).status, 200);
+    await wait(() => exporter.getFinishedSpans().length > 0);
+    assert.equal(exporter.getFinishedSpans()[0].parentSpanContext, undefined);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    plane.closeAllConnections();
+    await new Promise(resolve => plane.close(resolve));
+    await provider.shutdown();
+    propagation.disable();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('workspace capability request traces through authorization and execution without recording sensitive data', {timeout:15000},async()=>{
- const manager=new AsyncLocalStorageContextManager().enable();context.setGlobalContextManager(manager);propagation.setGlobalPropagator(new W3CTraceContextPropagator());const exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('capability'),registry=new CapabilityRegistry(()=>{}),token='capability-secret-at-least-thirty-two-characters';let active;
- registry.register({operationId:'private.operation',method:'POST',path:'/private'},{authorize:()=>true,validate:input=>input.allow===true,execute:()=>{active=context.active();return {ok:true};}});
- const service=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?{tenantId:'tenant',principalId:'actor'}:undefined,()=>{},{tracer,trustRemoteParent:true});service.listen(0,'127.0.0.1');await once(service,'listening');const dir=await mkdtemp(join(tmpdir(),'workspace-cap-trace-'));let child;
- try{const target=await createProject('demo-app',dir);await symlink(fileURLToPath(new URL('../../../node_modules',import.meta.url)),join(target,'node_modules'),'junction');await writeFile(join(target,'trace-bootstrap.mjs'),bootstrap);const env={...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${service.address().port}/capabilities/`,CAPABILITY_TOKEN:token,WORKSPACE_TRACING_ENABLED:'true',WORKSPACE_TRACING_TRUST_INCOMING:'true',WORKSPACE_TRACING_PROPAGATE:'true',WORKSPACE_TRACING_PROPAGATE_CAPABILITIES:'true'};child=spawn(process.execPath,['--import',pathToFileURL(join(target,'trace-bootstrap.mjs')).href,'server.mjs'],{cwd:target,env,stdio:['ignore','pipe','pipe']});let output='',errors='';child.stdout.on('data',part=>output+=part);child.stderr.on('data',part=>errors+=part);await wait(()=>/http:\/\/127\.0\.0\.1:\d+/.test(output)||child.exitCode!==null);assert.equal(child.exitCode,null,errors);const url=output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],parent='00-0123456789abcdef0123456789abcdef-0123456789abcdef-01';
-  const response=await fetch(url+'/api/capabilities/private.operation',{method:'POST',headers:{origin:url,'content-type':'application/json',traceparent:parent},body:JSON.stringify({allow:true,secret:'private-input'})});assert.equal(response.status,200);assert.deepEqual(await response.json(),{result:{ok:true}});await wait(()=>output.split('\n').filter(line=>line.startsWith('SPAN ')).length>=2&&exporter.getFinishedSpans().length>=1);
-  const spans=output.split('\n').filter(line=>line.startsWith('SPAN ')).map(line=>JSON.parse(line.slice(5))),server=spans.find(s=>s.kind===SpanKind.SERVER),client=spans.find(s=>s.kind===SpanKind.CLIENT),serviceSpan=exporter.getFinishedSpans().find(s=>s.kind===SpanKind.SERVER);assert.equal(server.parent.spanId,'0123456789abcdef');assert.equal(client.parent.spanId,server.context.spanId);assert.equal(serviceSpan.parentSpanContext.spanId,client.context.spanId);assert.equal(serviceSpan.attributes['http.route'],'/capabilities/{operationId}/invoke');const childSpan=tracer.startSpan('check',undefined,active);assert.equal(childSpan.spanContext().traceId,serviceSpan.spanContext().traceId);childSpan.end();
-  const invalid=await fetch(url+'/api/capabilities/private.operation',{method:'POST',headers:{origin:url,'content-type':'application/json'},body:JSON.stringify({allow:false,secret:'private-input'})});assert.equal(invalid.status,400);await wait(()=>exporter.getFinishedSpans().some(s=>s.kind===SpanKind.SERVER&&s.attributes['http.response.status_code']===400));
-  const exposed=JSON.stringify([...spans,...exporter.getFinishedSpans().map(s=>({name:s.name,attributes:s.attributes}))]);for(const value of [token,'private-input','private.operation','actor','tenant'])assert.equal(exposed.includes(value),false);
-  const exited=once(child,'exit');child.kill();await exited;exporter.reset();output='';errors='';child=spawn(process.execPath,['--import',pathToFileURL(join(target,'trace-bootstrap.mjs')).href,'server.mjs'],{cwd:target,env:{...env,WORKSPACE_TRACING_PROPAGATE_CAPABILITIES:'false'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',part=>output+=part);child.stderr.on('data',part=>errors+=part);await wait(()=>/http:\/\/127\.0\.0\.1:\d+/.test(output)||child.exitCode!==null);assert.equal(child.exitCode,null,errors);const noPropagationUrl=output.match(/http:\/\/127\.0\.0\.1:\d+/)[0];assert.equal((await fetch(noPropagationUrl+'/api/capabilities/private.operation',{method:'POST',headers:{origin:noPropagationUrl,'content-type':'application/json',traceparent:parent},body:JSON.stringify({allow:true})})).status,200);await wait(()=>exporter.getFinishedSpans().some(s=>s.kind===SpanKind.SERVER));assert.equal(exporter.getFinishedSpans().find(s=>s.kind===SpanKind.SERVER).parentSpanContext,undefined);
- }finally{if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}service.closeAllConnections();await new Promise(resolve=>service.close(resolve));await provider.shutdown();context.disable();propagation.disable();manager.disable();await rm(dir,{recursive:true,force:true});}
+test('workspace capability request traces through authorization and execution without recording sensitive data', { timeout: 15000 }, async () => {
+  const manager = new AsyncLocalStorageContextManager().enable();
+  context.setGlobalContextManager(manager);
+  propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  const exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }),
+    tracer = provider.getTracer('capability'),
+    registry = new CapabilityRegistry(() => {}),
+    token = 'capability-secret-at-least-thirty-two-characters';
+  let active;
+  registry.register(
+    { operationId: 'private.operation', method: 'POST', path: '/private' },
+    {
+      authorize: () => true,
+      validate: input => input.allow === true,
+      execute: () => {
+        active = context.active();
+        return { ok: true };
+      }
+    }
+  );
+  const service = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'actor' } : undefined),
+    () => {},
+    { tracer, trustRemoteParent: true }
+  );
+  service.listen(0, '127.0.0.1');
+  await once(service, 'listening');
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-cap-trace-'));
+  let child;
+  try {
+    const target = await createProject('demo-app', dir);
+    await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(target, 'node_modules'), 'junction');
+    await writeFile(join(target, 'trace-bootstrap.mjs'), bootstrap);
+    const env = {
+      ...process.env,
+      PORT: '0',
+      CAPABILITY_URL: `http://127.0.0.1:${service.address().port}/capabilities/`,
+      CAPABILITY_TOKEN: token,
+      WORKSPACE_TRACING_ENABLED: 'true',
+      WORKSPACE_TRACING_TRUST_INCOMING: 'true',
+      WORKSPACE_TRACING_PROPAGATE: 'true',
+      WORKSPACE_TRACING_PROPAGATE_CAPABILITIES: 'true'
+    };
+    child = spawn(process.execPath, ['--import', pathToFileURL(join(target, 'trace-bootstrap.mjs')).href, 'server.mjs'], { cwd: target, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '',
+      errors = '';
+    child.stdout.on('data', part => (output += part));
+    child.stderr.on('data', part => (errors += part));
+    await wait(() => /http:\/\/127\.0\.0\.1:\d+/.test(output) || child.exitCode !== null);
+    assert.equal(child.exitCode, null, errors);
+    const url = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],
+      parent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01';
+    const response = await fetch(url + '/api/capabilities/private.operation', {
+      method: 'POST',
+      headers: { origin: url, 'content-type': 'application/json', traceparent: parent },
+      body: JSON.stringify({ allow: true, secret: 'private-input' })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { result: { ok: true } });
+    await wait(() => output.split('\n').filter(line => line.startsWith('SPAN ')).length >= 2 && exporter.getFinishedSpans().length >= 1);
+    const spans = output
+        .split('\n')
+        .filter(line => line.startsWith('SPAN '))
+        .map(line => JSON.parse(line.slice(5))),
+      server = spans.find(s => s.kind === SpanKind.SERVER),
+      client = spans.find(s => s.kind === SpanKind.CLIENT),
+      serviceSpan = exporter.getFinishedSpans().find(s => s.kind === SpanKind.SERVER);
+    assert.equal(server.parent.spanId, '0123456789abcdef');
+    assert.equal(client.parent.spanId, server.context.spanId);
+    assert.equal(serviceSpan.parentSpanContext.spanId, client.context.spanId);
+    assert.equal(serviceSpan.attributes['http.route'], '/capabilities/{operationId}/invoke');
+    const childSpan = tracer.startSpan('check', undefined, active);
+    assert.equal(childSpan.spanContext().traceId, serviceSpan.spanContext().traceId);
+    childSpan.end();
+    const invalid = await fetch(url + '/api/capabilities/private.operation', {
+      method: 'POST',
+      headers: { origin: url, 'content-type': 'application/json' },
+      body: JSON.stringify({ allow: false, secret: 'private-input' })
+    });
+    assert.equal(invalid.status, 400);
+    await wait(() => exporter.getFinishedSpans().some(s => s.kind === SpanKind.SERVER && s.attributes['http.response.status_code'] === 400));
+    const exposed = JSON.stringify([...spans, ...exporter.getFinishedSpans().map(s => ({ name: s.name, attributes: s.attributes }))]);
+    for (const value of [token, 'private-input', 'private.operation', 'actor', 'tenant']) assert.equal(exposed.includes(value), false);
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+    exporter.reset();
+    output = '';
+    errors = '';
+    child = spawn(process.execPath, ['--import', pathToFileURL(join(target, 'trace-bootstrap.mjs')).href, 'server.mjs'], {
+      cwd: target,
+      env: { ...env, WORKSPACE_TRACING_PROPAGATE_CAPABILITIES: 'false' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    child.stdout.on('data', part => (output += part));
+    child.stderr.on('data', part => (errors += part));
+    await wait(() => /http:\/\/127\.0\.0\.1:\d+/.test(output) || child.exitCode !== null);
+    assert.equal(child.exitCode, null, errors);
+    const noPropagationUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0];
+    assert.equal(
+      (
+        await fetch(noPropagationUrl + '/api/capabilities/private.operation', {
+          method: 'POST',
+          headers: { origin: noPropagationUrl, 'content-type': 'application/json', traceparent: parent },
+          body: JSON.stringify({ allow: true })
+        })
+      ).status,
+      200
+    );
+    await wait(() => exporter.getFinishedSpans().some(s => s.kind === SpanKind.SERVER));
+    assert.equal(exporter.getFinishedSpans().find(s => s.kind === SpanKind.SERVER).parentSpanContext, undefined);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    service.closeAllConnections();
+    await new Promise(resolve => service.close(resolve));
+    await provider.shutdown();
+    context.disable();
+    propagation.disable();
+    manager.disable();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('workspace chat traces the full agent stream and keeps prompts and credentials private', {timeout:15000},async()=>{
- const manager=new AsyncLocalStorageContextManager().enable();context.setGlobalContextManager(manager);propagation.setGlobalPropagator(new W3CTraceContextPropagator());const exporter=new InMemorySpanExporter(),provider=new TracerProvider({spanProcessors:[new SimpleSpanProcessor({exporter})]}),tracer=provider.getTracer('agent'),token='agent-secret-at-least-thirty-two-characters';let release,entered,active,markAborted;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>entered=resolve),aborted=new Promise(resolve=>markAborted=resolve),model={async *stream(messages,signal){active=context.active();entered();yield 'first';if(messages[0].content==='disconnect'){await new Promise(resolve=>{if(signal.aborted){markAborted();resolve();return;}signal.addEventListener('abort',()=>{markAborted();resolve();},{once:true});});}else{await gate;yield 'second';}}};
- const agent=createAGUIServer(new LangGraphAGUIAdapter(model),token,{tracer,trustRemoteParent:true});agent.listen(0,'127.0.0.1');await once(agent,'listening');const dir=await mkdtemp(join(tmpdir(),'workspace-chat-trace-'));let child;
- try{const target=await createProject('demo-app',dir);await symlink(fileURLToPath(new URL('../../../node_modules',import.meta.url)),join(target,'node_modules'),'junction');await writeFile(join(target,'trace-bootstrap.mjs'),bootstrap);const env={...process.env,PORT:'0',AGENT_URL:`http://127.0.0.1:${agent.address().port}/agent`,AGENT_TOKEN:token,WORKSPACE_TRACING_ENABLED:'true',WORKSPACE_TRACING_TRUST_INCOMING:'true',WORKSPACE_TRACING_PROPAGATE_AGENT:'true'};child=spawn(process.execPath,['--import',pathToFileURL(join(target,'trace-bootstrap.mjs')).href,'server.mjs'],{cwd:target,env,stdio:['ignore','pipe','pipe']});let output='',errors='';child.stdout.on('data',part=>output+=part);child.stderr.on('data',part=>errors+=part);await wait(()=>/http:\/\/127\.0\.0\.1:\d+/.test(output)||child.exitCode!==null);assert.equal(child.exitCode,null,errors);const url=output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],parent='00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',request={threadId:'thread-private',runId:'run-private',messages:[{id:'m',role:'user',content:'private prompt'}],tools:[],context:[],state:{}};
-  const response=await fetch(url+'/api/chat',{method:'POST',headers:{origin:url,'content-type':'application/json',traceparent:parent},body:JSON.stringify(request)});assert.equal(response.status,200);await started;assert.equal(exporter.getFinishedSpans().length,0);release();assert.match(await response.text(),/RUN_FINISHED/);await wait(()=>output.split('\n').filter(line=>line.startsWith('SPAN ')).length>=2&&exporter.getFinishedSpans().length>=1);
-  const spans=output.split('\n').filter(line=>line.startsWith('SPAN ')).map(line=>JSON.parse(line.slice(5))),server=spans.find(s=>s.kind===SpanKind.SERVER),client=spans.find(s=>s.kind===SpanKind.CLIENT),agentSpan=exporter.getFinishedSpans().find(s=>s.kind===SpanKind.SERVER);assert.ok(server);assert.ok(client);assert.ok(agentSpan);assert.equal(server.parent.spanId,'0123456789abcdef');assert.equal(client.parent.spanId,server.context.spanId);assert.equal(agentSpan.parentSpanContext.spanId,client.context.spanId);const nested=tracer.startSpan('model',undefined,active);assert.equal(nested.spanContext().traceId,agentSpan.spanContext().traceId);nested.end();
-  const exposed=JSON.stringify([...spans,...exporter.getFinishedSpans().map(s=>({name:s.name,attributes:s.attributes}))]);for(const value of [token,'private prompt','thread-private','run-private'])assert.equal(exposed.includes(value),false);
-  const controller=new AbortController(),pending=await fetch(url+'/api/chat',{method:'POST',headers:{origin:url,'content-type':'application/json'},body:JSON.stringify({...request,messages:[{id:'m',role:'user',content:'disconnect'}]}),signal:controller.signal}),reader=pending.body.getReader(),decoder=new TextDecoder();let text='';while(!text.includes('TEXT_MESSAGE_CONTENT')){const part=await reader.read();if(part.done)throw Error('Stream ended early');text+=decoder.decode(part.value,{stream:true});}controller.abort();await aborted;await wait(()=>exporter.getFinishedSpans().some(s=>s.attributes['error.type']==='client_disconnect'));await wait(()=>output.split('\n').filter(line=>line.startsWith('SPAN ')&&line.includes('client_disconnect')).length>0);
-  const exited=once(child,'exit');child.kill();await exited;exporter.reset();output='';errors='';child=spawn(process.execPath,['--import',pathToFileURL(join(target,'trace-bootstrap.mjs')).href,'server.mjs'],{cwd:target,env:{...env,WORKSPACE_TRACING_PROPAGATE_AGENT:'false',WORKSPACE_TRACING_PROPAGATE_CAPABILITIES:'true'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',part=>output+=part);child.stderr.on('data',part=>errors+=part);await wait(()=>/http:\/\/127\.0\.0\.1:\d+/.test(output)||child.exitCode!==null);assert.equal(child.exitCode,null,errors);const isolated=output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],retry=await fetch(isolated+'/api/chat',{method:'POST',headers:{origin:isolated,'content-type':'application/json',traceparent:parent},body:JSON.stringify(request)});assert.equal(retry.status,200);await retry.text();await wait(()=>exporter.getFinishedSpans().length>0);assert.equal(exporter.getFinishedSpans()[0].parentSpanContext,undefined);
- }finally{release();if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}agent.closeAllConnections();await new Promise(resolve=>agent.close(resolve));await provider.shutdown();context.disable();propagation.disable();manager.disable();await rm(dir,{recursive:true,force:true});}
+test('workspace chat traces the full agent stream and keeps prompts and credentials private', { timeout: 15000 }, async () => {
+  const manager = new AsyncLocalStorageContextManager().enable();
+  context.setGlobalContextManager(manager);
+  propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  const exporter = new InMemorySpanExporter(),
+    provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }),
+    tracer = provider.getTracer('agent'),
+    token = 'agent-secret-at-least-thirty-two-characters';
+  let release, entered, active, markAborted;
+  const gate = new Promise(resolve => (release = resolve)),
+    started = new Promise(resolve => (entered = resolve)),
+    aborted = new Promise(resolve => (markAborted = resolve)),
+    model = {
+      async *stream(messages, signal) {
+        active = context.active();
+        entered();
+        yield 'first';
+        if (messages[0].content === 'disconnect') {
+          await new Promise(resolve => {
+            if (signal.aborted) {
+              markAborted();
+              resolve();
+              return;
+            }
+            signal.addEventListener(
+              'abort',
+              () => {
+                markAborted();
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        } else {
+          await gate;
+          yield 'second';
+        }
+      }
+    };
+  const agent = createAGUIServer(new LangGraphAGUIAdapter(model), token, { tracer, trustRemoteParent: true });
+  agent.listen(0, '127.0.0.1');
+  await once(agent, 'listening');
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-chat-trace-'));
+  let child;
+  try {
+    const target = await createProject('demo-app', dir);
+    await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(target, 'node_modules'), 'junction');
+    await writeFile(join(target, 'trace-bootstrap.mjs'), bootstrap);
+    const env = {
+      ...process.env,
+      PORT: '0',
+      AGENT_URL: `http://127.0.0.1:${agent.address().port}/agent`,
+      AGENT_TOKEN: token,
+      WORKSPACE_TRACING_ENABLED: 'true',
+      WORKSPACE_TRACING_TRUST_INCOMING: 'true',
+      WORKSPACE_TRACING_PROPAGATE_AGENT: 'true'
+    };
+    child = spawn(process.execPath, ['--import', pathToFileURL(join(target, 'trace-bootstrap.mjs')).href, 'server.mjs'], { cwd: target, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '',
+      errors = '';
+    child.stdout.on('data', part => (output += part));
+    child.stderr.on('data', part => (errors += part));
+    await wait(() => /http:\/\/127\.0\.0\.1:\d+/.test(output) || child.exitCode !== null);
+    assert.equal(child.exitCode, null, errors);
+    const url = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],
+      parent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      request = { threadId: 'thread-private', runId: 'run-private', messages: [{ id: 'm', role: 'user', content: 'private prompt' }], tools: [], context: [], state: {} };
+    const response = await fetch(url + '/api/chat', { method: 'POST', headers: { origin: url, 'content-type': 'application/json', traceparent: parent }, body: JSON.stringify(request) });
+    assert.equal(response.status, 200);
+    await started;
+    assert.equal(exporter.getFinishedSpans().length, 0);
+    release();
+    assert.match(await response.text(), /RUN_FINISHED/);
+    await wait(() => output.split('\n').filter(line => line.startsWith('SPAN ')).length >= 2 && exporter.getFinishedSpans().length >= 1);
+    const spans = output
+        .split('\n')
+        .filter(line => line.startsWith('SPAN '))
+        .map(line => JSON.parse(line.slice(5))),
+      server = spans.find(s => s.kind === SpanKind.SERVER),
+      client = spans.find(s => s.kind === SpanKind.CLIENT),
+      agentSpan = exporter.getFinishedSpans().find(s => s.kind === SpanKind.SERVER);
+    assert.ok(server);
+    assert.ok(client);
+    assert.ok(agentSpan);
+    assert.equal(server.parent.spanId, '0123456789abcdef');
+    assert.equal(client.parent.spanId, server.context.spanId);
+    assert.equal(agentSpan.parentSpanContext.spanId, client.context.spanId);
+    const nested = tracer.startSpan('model', undefined, active);
+    assert.equal(nested.spanContext().traceId, agentSpan.spanContext().traceId);
+    nested.end();
+    const exposed = JSON.stringify([...spans, ...exporter.getFinishedSpans().map(s => ({ name: s.name, attributes: s.attributes }))]);
+    for (const value of [token, 'private prompt', 'thread-private', 'run-private']) assert.equal(exposed.includes(value), false);
+    const controller = new AbortController(),
+      pending = await fetch(url + '/api/chat', {
+        method: 'POST',
+        headers: { origin: url, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...request, messages: [{ id: 'm', role: 'user', content: 'disconnect' }] }),
+        signal: controller.signal
+      }),
+      reader = pending.body.getReader(),
+      decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes('TEXT_MESSAGE_CONTENT')) {
+      const part = await reader.read();
+      if (part.done) throw Error('Stream ended early');
+      text += decoder.decode(part.value, { stream: true });
+    }
+    controller.abort();
+    await aborted;
+    await wait(() => exporter.getFinishedSpans().some(s => s.attributes['error.type'] === 'client_disconnect'));
+    await wait(() => output.split('\n').filter(line => line.startsWith('SPAN ') && line.includes('client_disconnect')).length > 0);
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+    exporter.reset();
+    output = '';
+    errors = '';
+    child = spawn(process.execPath, ['--import', pathToFileURL(join(target, 'trace-bootstrap.mjs')).href, 'server.mjs'], {
+      cwd: target,
+      env: { ...env, WORKSPACE_TRACING_PROPAGATE_AGENT: 'false', WORKSPACE_TRACING_PROPAGATE_CAPABILITIES: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    child.stdout.on('data', part => (output += part));
+    child.stderr.on('data', part => (errors += part));
+    await wait(() => /http:\/\/127\.0\.0\.1:\d+/.test(output) || child.exitCode !== null);
+    assert.equal(child.exitCode, null, errors);
+    const isolated = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],
+      retry = await fetch(isolated + '/api/chat', { method: 'POST', headers: { origin: isolated, 'content-type': 'application/json', traceparent: parent }, body: JSON.stringify(request) });
+    assert.equal(retry.status, 200);
+    await retry.text();
+    await wait(() => exporter.getFinishedSpans().length > 0);
+    assert.equal(exporter.getFinishedSpans()[0].parentSpanContext, undefined);
+  } finally {
+    release();
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    agent.closeAllConnections();
+    await new Promise(resolve => agent.close(resolve));
+    await provider.shutdown();
+    context.disable();
+    propagation.disable();
+    manager.disable();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

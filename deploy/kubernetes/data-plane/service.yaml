@@ -4,5 +4,5 @@ metadata:
   name: app-mixer-data-plane
 spec:
   type: ClusterIP
-  selector: {app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane}
-  ports: [{name: http, port: 3002, targetPort: http, protocol: TCP}]
+  selector: { app.kubernetes.io/name: app-mixer, app.kubernetes.io/component: data-plane }
+  ports: [{ name: http, port: 3002, targetPort: http, protocol: TCP }]

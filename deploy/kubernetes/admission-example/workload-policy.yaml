@@ -15,7 +15,7 @@ metadata:
   name: app-mixer-namespace-pods
 spec:
   failurePolicy: Fail
-  paramKind: {apiVersion: v1, kind: ConfigMap}
+  paramKind: { apiVersion: v1, kind: ConfigMap }
   matchConstraints:
     resourceRules:
       - apiGroups: ['']
@@ -43,7 +43,7 @@ spec:
     - message: Existing pods cannot be relabelled into the Data Plane.
       expression: "!variables.dataPlane || request.operation != 'UPDATE' || variables.wasDataPlane"
     - message: Debug containers cannot be attached to Data Plane pods.
-      expression: "!variables.debugging || !(variables.dataPlane || variables.wasDataPlane)"
+      expression: '!variables.debugging || !(variables.dataPlane || variables.wasDataPlane)'
     - message: Data Plane pods must run only the approved image.
       expression: >-
         !variables.dataPlane || request.operation != 'CREATE' ||
@@ -80,7 +80,7 @@ spec:
     parameterNotFoundAction: Deny
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -126,7 +126,7 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -156,4 +156,4 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }

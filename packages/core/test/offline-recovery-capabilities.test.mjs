@@ -1,87 +1,597 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {CapabilityRegistry,createCapabilityServer,SqliteOfflineQueue,registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability,registerOfflineRecoveryListCapability,registerOfflineArchiveCapability,registerOfflineArchiveReadCapability,registerOfflineArchiveListCapability} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'operator',origin:'ui'};
-function setup(){const dir=mkdtempSync(join(tmpdir(),'offline-recovery-cap-')),path=join(dir,'db.sqlite'),queue=new SqliteOfflineQueue(path,{enabled:true,maxAttempts:2,retryDelayMs:0}),db=new DatabaseSync(path),events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));const item=queue.enqueue(scope,'owner','change','request',{private:'secret'});db.prepare("UPDATE offline_operations SET status='running',attempts=1 WHERE id=?").run(item.id);return {dir,queue,db,item,events,registry};}
-function close(s){s.db.close();s.queue.close();rmSync(s.dir,{recursive:true,force:true});}
-const candidate=id=>({operationId:id,method:'POST',path:'/recovery'});
-const base={applicationId:'app',queuePrincipalId:'owner',targetOperationId:'change',authorize:actor=>actor.principalId==='operator',authorizeOperation:()=>true};
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import {
+  CapabilityRegistry,
+  createCapabilityServer,
+  SqliteOfflineQueue,
+  registerOfflineAbandonedRecoveryCapability,
+  registerOfflineVerificationCapability,
+  registerOfflineRecoveryEvidenceCapability,
+  registerOfflineRecoveryListCapability,
+  registerOfflineArchiveCapability,
+  registerOfflineArchiveReadCapability,
+  registerOfflineArchiveListCapability
+} from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' },
+  actor = { tenantId: 'tenant', principalId: 'operator', origin: 'ui' };
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), 'offline-recovery-cap-')),
+    path = join(dir, 'db.sqlite'),
+    queue = new SqliteOfflineQueue(path, { enabled: true, maxAttempts: 2, retryDelayMs: 0 }),
+    db = new DatabaseSync(path),
+    events = [],
+    registry = new CapabilityRegistry(event => events.push(event.outcome));
+  const item = queue.enqueue(scope, 'owner', 'change', 'request', { private: 'secret' });
+  db.prepare("UPDATE offline_operations SET status='running',attempts=1 WHERE id=?").run(item.id);
+  return { dir, queue, db, item, events, registry };
+}
+function close(s) {
+  s.db.close();
+  s.queue.close();
+  rmSync(s.dir, { recursive: true, force: true });
+}
+const candidate = id => ({ operationId: id, method: 'POST', path: '/recovery' });
+const base = { applicationId: 'app', queuePrincipalId: 'owner', targetOperationId: 'change', authorize: actor => actor.principalId === 'operator', authorizeOperation: () => true };
 
-test('capabilities require confirmation, record evidence and recheck policy around verification',async()=>{
- const s=setup();let stopped=false,outcome='unknown',allowed=true;try{const options={...base,candidate:candidate('recover'),authorizeOperation:()=>allowed,verifyStopped:()=>stopped};registerOfflineAbandonedRecoveryCapability(s.registry,s.queue,options);registerOfflineVerificationCapability(s.registry,s.queue,{...base,candidate:candidate('verify'),authorizeOperation:()=>allowed,verify:()=>outcome});options.queuePrincipalId='other';options.verifyStopped=()=>true;
-  const input={id:s.item.id,reference:'case'};assert.deepEqual(await s.registry.invoke('recover',input,actor),{recovered:false});assert.equal(s.queue.get(scope,'owner',s.item.id).status,'running');stopped=true;assert.deepEqual(await s.registry.invoke('recover',input,actor),{recovered:true});assert.deepEqual(await s.registry.invoke('verify',input,actor),{outcome:'unknown'});assert.equal(s.queue.get(scope,'owner',s.item.id).status,'uncertain');outcome='applied';assert.deepEqual(await s.registry.invoke('verify',input,actor),{outcome:'applied'});assert.equal(s.queue.get(scope,'owner',s.item.id).status,'succeeded');assert.deepEqual(s.queue.listRecoveryEvidence(scope,'owner',s.item.id).map(x=>[x.operatorId,x.reference,x.action]),[['operator','case','recover'],['operator','case','applied']]);assert.ok(s.events.includes('succeeded'));
-  await assert.rejects(s.registry.invoke('recover',{...input,decision:'not_applied'},actor),/invalid/i);await assert.rejects(s.registry.invoke('recover',input,{...actor,principalId:'denied'}),/forbidden/i);await assert.rejects(s.registry.invoke('recover',input,{...actor,tenantId:'other'}),/not found/i);
- }finally{close(s);}
+test('capabilities require confirmation, record evidence and recheck policy around verification', async () => {
+  const s = setup();
+  let stopped = false,
+    outcome = 'unknown',
+    allowed = true;
+  try {
+    const options = { ...base, candidate: candidate('recover'), authorizeOperation: () => allowed, verifyStopped: () => stopped };
+    registerOfflineAbandonedRecoveryCapability(s.registry, s.queue, options);
+    registerOfflineVerificationCapability(s.registry, s.queue, { ...base, candidate: candidate('verify'), authorizeOperation: () => allowed, verify: () => outcome });
+    options.queuePrincipalId = 'other';
+    options.verifyStopped = () => true;
+    const input = { id: s.item.id, reference: 'case' };
+    assert.deepEqual(await s.registry.invoke('recover', input, actor), { recovered: false });
+    assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'running');
+    stopped = true;
+    assert.deepEqual(await s.registry.invoke('recover', input, actor), { recovered: true });
+    assert.deepEqual(await s.registry.invoke('verify', input, actor), { outcome: 'unknown' });
+    assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'uncertain');
+    outcome = 'applied';
+    assert.deepEqual(await s.registry.invoke('verify', input, actor), { outcome: 'applied' });
+    assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'succeeded');
+    assert.deepEqual(
+      s.queue.listRecoveryEvidence(scope, 'owner', s.item.id).map(x => [x.operatorId, x.reference, x.action]),
+      [
+        ['operator', 'case', 'recover'],
+        ['operator', 'case', 'applied']
+      ]
+    );
+    assert.ok(s.events.includes('succeeded'));
+    await assert.rejects(s.registry.invoke('recover', { ...input, decision: 'not_applied' }, actor), /invalid/i);
+    await assert.rejects(s.registry.invoke('recover', input, { ...actor, principalId: 'denied' }), /forbidden/i);
+    await assert.rejects(s.registry.invoke('recover', input, { ...actor, tenantId: 'other' }), /not found/i);
+  } finally {
+    close(s);
+  }
 });
 
-test('a late verifier cannot mutate the queue after policy revocation or deadline',async()=>{
- for(const mode of ['revoked','timeout']){const s=setup();let started,release,allowed=true,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{s.queue.recoverAbandonedWithEvidence(scope,'owner',s.item.id,{operatorId:'operator',reference:'start'},1);registerOfflineVerificationCapability(s.registry,s.queue,{...base,candidate:candidate('verify'),authorizeOperation:()=>allowed,...(mode==='timeout'?{timeoutMs:100,maxPending:1}:{}),verify:async(_actor,_operation,signal)=>{seen=signal;started();await gate;return 'applied';}});const pending=s.registry.invoke('verify',{id:s.item.id,reference:'case'},actor);await ready;if(mode==='revoked'){allowed=false;release();await assert.rejects(pending,/forbidden/i);}else{await assert.rejects(pending,/unavailable/i);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));}assert.equal(s.queue.get(scope,'owner',s.item.id).status,'uncertain');assert.equal(s.queue.listRecoveryEvidence(scope,'owner',s.item.id).length,1);
- }finally{release?.();close(s);}}
+test('a late verifier cannot mutate the queue after policy revocation or deadline', async () => {
+  for (const mode of ['revoked', 'timeout']) {
+    const s = setup();
+    let started,
+      release,
+      allowed = true,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'start' }, 1);
+      registerOfflineVerificationCapability(s.registry, s.queue, {
+        ...base,
+        candidate: candidate('verify'),
+        authorizeOperation: () => allowed,
+        ...(mode === 'timeout' ? { timeoutMs: 100, maxPending: 1 } : {}),
+        verify: async (_actor, _operation, signal) => {
+          seen = signal;
+          started();
+          await gate;
+          return 'applied';
+        }
+      });
+      const pending = s.registry.invoke('verify', { id: s.item.id, reference: 'case' }, actor);
+      await ready;
+      if (mode === 'revoked') {
+        allowed = false;
+        release();
+        await assert.rejects(pending, /forbidden/i);
+      } else {
+        await assert.rejects(pending, /unavailable/i);
+        assert.equal(seen.aborted, true);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'uncertain');
+      assert.equal(s.queue.listRecoveryEvidence(scope, 'owner', s.item.id).length, 1);
+    } finally {
+      release?.();
+      close(s);
+    }
+  }
 });
 
-test('HTTP recovery authenticates callers and does not accept client-supplied outcomes',async()=>{
- const s=setup();let server;try{registerOfflineAbandonedRecoveryCapability(s.registry,s.queue,{...base,candidate:candidate('recover'),verifyStopped:()=>true});server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(body,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:body})});assert.equal((await call({id:s.item.id,reference:'case'},'bad')).status,401);assert.equal((await call({id:s.item.id,reference:'case',outcome:'applied'})).status,400);const response=await call({id:s.item.id,reference:'case'});assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{recovered:true});assert.equal(s.queue.get(scope,'owner',s.item.id).status,'uncertain');}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}close(s);}
+test('HTTP recovery authenticates callers and does not accept client-supplied outcomes', async () => {
+  const s = setup();
+  let server;
+  try {
+    registerOfflineAbandonedRecoveryCapability(s.registry, s.queue, { ...base, candidate: candidate('recover'), verifyStopped: () => true });
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (body, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: body })
+      });
+    assert.equal((await call({ id: s.item.id, reference: 'case' }, 'bad')).status, 401);
+    assert.equal((await call({ id: s.item.id, reference: 'case', outcome: 'applied' })).status, 400);
+    const response = await call({ id: s.item.id, reference: 'case' });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { recovered: true });
+    assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'uncertain');
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    close(s);
+  }
 });
 
-
-test('evidence capability authorizes and pages immutable scoped history over HTTP',async()=>{
- const s=setup();let server;try{s.queue.recoverAbandonedWithEvidence(scope,'owner',s.item.id,{operatorId:'operator',reference:'first'},10);s.queue.reconcileWithEvidence(scope,'owner',s.item.id,'applied',{operatorId:'reviewer',reference:'second'},11);registerOfflineRecoveryEvidenceCapability(s.registry,s.queue,{...base,candidate:candidate('evidence')});server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(input,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});assert.equal((await call({id:s.item.id},'bad')).status,401);assert.equal((await call({id:s.item.id,principalId:'other'})).status,400);assert.equal((await call({id:s.item.id,limit:100})).status,400);const first=(await (await call({id:s.item.id,limit:1})).json()).result;assert.equal(first.items.length,1);assert.equal(first.items[0].action,'recover');assert.equal(first.nextAfter,first.items[0].id);const second=(await (await call({id:s.item.id,after:first.nextAfter,limit:1})).json()).result;assert.equal(second.items[0].action,'applied');assert.equal(second.items[0].operatorId,'reviewer');assert.equal(JSON.stringify([first,second]).includes('secret'),false);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}close(s);}
+test('evidence capability authorizes and pages immutable scoped history over HTTP', async () => {
+  const s = setup();
+  let server;
+  try {
+    s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'first' }, 10);
+    s.queue.reconcileWithEvidence(scope, 'owner', s.item.id, 'applied', { operatorId: 'reviewer', reference: 'second' }, 11);
+    registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, { ...base, candidate: candidate('evidence') });
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (input, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call({ id: s.item.id }, 'bad')).status, 401);
+    assert.equal((await call({ id: s.item.id, principalId: 'other' })).status, 400);
+    assert.equal((await call({ id: s.item.id, limit: 100 })).status, 400);
+    const first = (await (await call({ id: s.item.id, limit: 1 })).json()).result;
+    assert.equal(first.items.length, 1);
+    assert.equal(first.items[0].action, 'recover');
+    assert.equal(first.nextAfter, first.items[0].id);
+    const second = (await (await call({ id: s.item.id, after: first.nextAfter, limit: 1 })).json()).result;
+    assert.equal(second.items[0].action, 'applied');
+    assert.equal(second.items[0].operatorId, 'reviewer');
+    assert.equal(JSON.stringify([first, second]).includes('secret'), false);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    close(s);
+  }
 });
 
-test('evidence capability rechecks access and discards a late timed-out result',async()=>{
- for(const mode of ['revoked','timeout']){const s=setup();let started,release,checks=0,allowed=true,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{s.queue.recoverAbandonedWithEvidence(scope,'owner',s.item.id,{operatorId:'operator',reference:'case'},10);registerOfflineRecoveryEvidenceCapability(s.registry,s.queue,{...base,candidate:candidate('evidence'),...(mode==='timeout'?{timeoutMs:100,maxPending:1}:{}),authorizeOperation:async(_actor,_operation,signal)=>{if(++checks===2){seen=signal;started();await gate;}return allowed;}});const pending=s.registry.invoke('evidence',{id:s.item.id},actor);await ready;if(mode==='revoked'){allowed=false;release();await assert.rejects(pending,/forbidden/i);}else{await assert.rejects(pending,/unavailable/i);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));}assert.equal(s.queue.get(scope,'owner',s.item.id).status,'uncertain');
- }finally{release?.();close(s);}}
+test('evidence capability rechecks access and discards a late timed-out result', async () => {
+  for (const mode of ['revoked', 'timeout']) {
+    const s = setup();
+    let started,
+      release,
+      checks = 0,
+      allowed = true,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'case' }, 10);
+      registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, {
+        ...base,
+        candidate: candidate('evidence'),
+        ...(mode === 'timeout' ? { timeoutMs: 100, maxPending: 1 } : {}),
+        authorizeOperation: async (_actor, _operation, signal) => {
+          if (++checks === 2) {
+            seen = signal;
+            started();
+            await gate;
+          }
+          return allowed;
+        }
+      });
+      const pending = s.registry.invoke('evidence', { id: s.item.id }, actor);
+      await ready;
+      if (mode === 'revoked') {
+        allowed = false;
+        release();
+        await assert.rejects(pending, /forbidden/i);
+      } else {
+        await assert.rejects(pending, /unavailable/i);
+        assert.equal(seen.aborted, true);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'uncertain');
+    } finally {
+      release?.();
+      close(s);
+    }
+  }
 });
 
-
-test('recovery listing exposes only fixed-owner operation metadata and pages over HTTP',async()=>{
- const s=setup();let server;try{const second=s.queue.enqueue(scope,'owner','change','second',{private:'second-secret'}),foreign=s.queue.enqueue({tenantId:'other',applicationId:'app'},'owner','change','request',{private:'foreign'}),otherOwner=s.queue.enqueue(scope,'different','change','request',{}),otherOp=s.queue.enqueue(scope,'owner','different','different',{});s.db.prepare("UPDATE offline_operations SET status='uncertain',attempts=1 WHERE id IN (?,?,?,?)").run(second.id,foreign.id,otherOwner.id,otherOp.id);const options={...base,candidate:candidate('list'),authorizeListing:()=>true};registerOfflineRecoveryListCapability(s.registry,s.queue,options);options.queuePrincipalId='different';options.targetOperationId='different';options.authorizeListing=()=>false;server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(input,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/list/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});assert.equal((await call({},'bad')).status,401);assert.equal((await call({principalId:'different'})).status,400);assert.equal((await call({limit:101})).status,400);const first=(await (await call({limit:1})).json()).result,secondPage=(await (await call({after:first.nextAfter,limit:1})).json()).result;assert.deepEqual([first.items[0].id,secondPage.items[0].id],[s.item.id,second.id].sort());assert.equal(first.items[0].attempts,1);assert.equal(JSON.stringify([first,secondPage]).includes('secret'),false);assert.deepEqual((await s.queue.listRecoveryCandidates({tenantId:'other',applicationId:'app'},'owner','change')).items.map(x=>x.id),[foreign.id]);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}close(s);}
+test('recovery listing exposes only fixed-owner operation metadata and pages over HTTP', async () => {
+  const s = setup();
+  let server;
+  try {
+    const second = s.queue.enqueue(scope, 'owner', 'change', 'second', { private: 'second-secret' }),
+      foreign = s.queue.enqueue({ tenantId: 'other', applicationId: 'app' }, 'owner', 'change', 'request', { private: 'foreign' }),
+      otherOwner = s.queue.enqueue(scope, 'different', 'change', 'request', {}),
+      otherOp = s.queue.enqueue(scope, 'owner', 'different', 'different', {});
+    s.db.prepare("UPDATE offline_operations SET status='uncertain',attempts=1 WHERE id IN (?,?,?,?)").run(second.id, foreign.id, otherOwner.id, otherOp.id);
+    const options = { ...base, candidate: candidate('list'), authorizeListing: () => true };
+    registerOfflineRecoveryListCapability(s.registry, s.queue, options);
+    options.queuePrincipalId = 'different';
+    options.targetOperationId = 'different';
+    options.authorizeListing = () => false;
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (input, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/list/invoke`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call({}, 'bad')).status, 401);
+    assert.equal((await call({ principalId: 'different' })).status, 400);
+    assert.equal((await call({ limit: 101 })).status, 400);
+    const first = (await (await call({ limit: 1 })).json()).result,
+      secondPage = (await (await call({ after: first.nextAfter, limit: 1 })).json()).result;
+    assert.deepEqual([first.items[0].id, secondPage.items[0].id], [s.item.id, second.id].sort());
+    assert.equal(first.items[0].attempts, 1);
+    assert.equal(JSON.stringify([first, secondPage]).includes('secret'), false);
+    assert.deepEqual(
+      (await s.queue.listRecoveryCandidates({ tenantId: 'other', applicationId: 'app' }, 'owner', 'change')).items.map(x => x.id),
+      [foreign.id]
+    );
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    close(s);
+  }
 });
 
-test('recovery listing rechecks aggregate policy and discards late timed-out results',async()=>{
- for(const mode of ['revoked','timeout']){const s=setup();let started,release,checks=0,allowed=true,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{registerOfflineRecoveryListCapability(s.registry,s.queue,{...base,candidate:candidate('list'),...(mode==='timeout'?{timeoutMs:100,maxPending:1}:{}),authorizeListing:async(_actor,selection,signal)=>{assert.deepEqual(selection,{...scope,principalId:'owner',operationId:'change'});if(++checks===2){seen=signal;started();await gate;}return allowed;}});const pending=s.registry.invoke('list',{},actor);await ready;if(mode==='revoked'){allowed=false;release();await assert.rejects(pending,/forbidden/i);}else{await assert.rejects(pending,/unavailable/i);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));}
- }finally{release?.();close(s);}}
+test('recovery listing rechecks aggregate policy and discards late timed-out results', async () => {
+  for (const mode of ['revoked', 'timeout']) {
+    const s = setup();
+    let started,
+      release,
+      checks = 0,
+      allowed = true,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      registerOfflineRecoveryListCapability(s.registry, s.queue, {
+        ...base,
+        candidate: candidate('list'),
+        ...(mode === 'timeout' ? { timeoutMs: 100, maxPending: 1 } : {}),
+        authorizeListing: async (_actor, selection, signal) => {
+          assert.deepEqual(selection, { ...scope, principalId: 'owner', operationId: 'change' });
+          if (++checks === 2) {
+            seen = signal;
+            started();
+            await gate;
+          }
+          return allowed;
+        }
+      });
+      const pending = s.registry.invoke('list', {}, actor);
+      await ready;
+      if (mode === 'revoked') {
+        allowed = false;
+        release();
+        await assert.rejects(pending, /forbidden/i);
+      } else {
+        await assert.rejects(pending, /unavailable/i);
+        assert.equal(seen.aborted, true);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } finally {
+      release?.();
+      close(s);
+    }
+  }
 });
 
-
-test('authorized archive and retained recovery evidence are available over HTTP',async()=>{
- const s=setup();let server,allowRead=true;try{
-  s.queue.recoverAbandonedWithEvidence(scope,'owner',s.item.id,{operatorId:'operator',reference:'recovery'},10);s.queue.reconcileWithEvidence(scope,'owner',s.item.id,'applied',{operatorId:'operator',reference:'verification'},11);
-  registerOfflineArchiveCapability(s.registry,s.queue,{...base,candidate:candidate('archive')});registerOfflineArchiveReadCapability(s.registry,s.queue,{...base,candidate:candidate('archive-read'),authorizeArchived:()=>allowRead});registerOfflineRecoveryEvidenceCapability(s.registry,s.queue,{...base,candidate:candidate('evidence'),authorizeArchived:()=>allowRead});registerOfflineRecoveryEvidenceCapability(s.registry,s.queue,{...base,candidate:candidate('legacy-evidence')});
-  server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(operation,input,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});assert.equal((await call('archive',{id:s.item.id,reference:'retire'},'bad')).status,401);assert.equal((await call('archive',{id:s.item.id,reference:'retire',principalId:'other'})).status,400);const result=await call('archive',{id:s.item.id,reference:'retire'});assert.equal(result.status,200);assert.deepEqual((await result.json()).result,{archived:true});assert.equal(s.queue.get(scope,'owner',s.item.id),undefined);
-  const marker=await call('archive-read',{id:s.item.id});assert.equal(marker.status,200);const value=(await marker.json()).result;assert.equal(value.reference,'retire');assert.equal(value.operatorId,'operator');assert.equal(JSON.stringify(value).includes('secret'),false);const evidence=await call('evidence',{id:s.item.id});assert.equal(evidence.status,200);assert.deepEqual((await evidence.json()).result.items.map(x=>x.action),['recover','applied']);assert.notEqual((await call('legacy-evidence',{id:s.item.id})).status,200);allowRead=false;assert.notEqual((await call('archive-read',{id:s.item.id})).status,200);assert.notEqual((await call('evidence',{id:s.item.id})).status,200);await assert.rejects(s.registry.invoke('archive-read',{id:s.item.id},{...actor,tenantId:'other'}),/not found/i);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}close(s);}
+test('authorized archive and retained recovery evidence are available over HTTP', async () => {
+  const s = setup();
+  let server,
+    allowRead = true;
+  try {
+    s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'recovery' }, 10);
+    s.queue.reconcileWithEvidence(scope, 'owner', s.item.id, 'applied', { operatorId: 'operator', reference: 'verification' }, 11);
+    registerOfflineArchiveCapability(s.registry, s.queue, { ...base, candidate: candidate('archive') });
+    registerOfflineArchiveReadCapability(s.registry, s.queue, { ...base, candidate: candidate('archive-read'), authorizeArchived: () => allowRead });
+    registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, { ...base, candidate: candidate('evidence'), authorizeArchived: () => allowRead });
+    registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, { ...base, candidate: candidate('legacy-evidence') });
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (operation, input, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call('archive', { id: s.item.id, reference: 'retire' }, 'bad')).status, 401);
+    assert.equal((await call('archive', { id: s.item.id, reference: 'retire', principalId: 'other' })).status, 400);
+    const result = await call('archive', { id: s.item.id, reference: 'retire' });
+    assert.equal(result.status, 200);
+    assert.deepEqual((await result.json()).result, { archived: true });
+    assert.equal(s.queue.get(scope, 'owner', s.item.id), undefined);
+    const marker = await call('archive-read', { id: s.item.id });
+    assert.equal(marker.status, 200);
+    const value = (await marker.json()).result;
+    assert.equal(value.reference, 'retire');
+    assert.equal(value.operatorId, 'operator');
+    assert.equal(JSON.stringify(value).includes('secret'), false);
+    const evidence = await call('evidence', { id: s.item.id });
+    assert.equal(evidence.status, 200);
+    assert.deepEqual(
+      (await evidence.json()).result.items.map(x => x.action),
+      ['recover', 'applied']
+    );
+    assert.notEqual((await call('legacy-evidence', { id: s.item.id })).status, 200);
+    allowRead = false;
+    assert.notEqual((await call('archive-read', { id: s.item.id })).status, 200);
+    assert.notEqual((await call('evidence', { id: s.item.id })).status, 200);
+    await assert.rejects(s.registry.invoke('archive-read', { id: s.item.id }, { ...actor, tenantId: 'other' }), /not found/i);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    close(s);
+  }
 });
 
-test('late, revoked and stale archive decisions cannot retire an operation',async()=>{
- for(const mode of ['timeout','revoked','stale']){const s=setup();let started,release,allowed=true,checks=0,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{
-  s.queue.recoverAbandonedWithEvidence(scope,'owner',s.item.id,{operatorId:'operator',reference:'recovery'},1);s.queue.reconcileWithEvidence(scope,'owner',s.item.id,'applied',{operatorId:'operator',reference:'verification'},2);registerOfflineArchiveCapability(s.registry,s.queue,{...base,candidate:candidate('archive'),...(mode==='timeout'?{timeoutMs:100,maxPending:1}:{}),authorizeOperation:async(_actor,_operation,_reference,signal)=>{if(++checks===2){seen=signal;started();await gate;}return allowed;}});const pending=s.registry.invoke('archive',{id:s.item.id,reference:'retire'},actor);await ready;if(mode==='timeout'){await assert.rejects(pending,/unavailable/i);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));}else{if(mode==='revoked')allowed=false;else s.db.prepare("UPDATE offline_operations SET payload=? WHERE id=?").run('{"changed":true}',s.item.id);release();await assert.rejects(pending,mode==='revoked'?/forbidden/i:/stale/i);}assert.equal(s.queue.get(scope,'owner',s.item.id).status,'succeeded');assert.equal(s.queue.getArchived(scope,'owner',s.item.id),undefined);
- }finally{release?.();close(s);}}
+test('late, revoked and stale archive decisions cannot retire an operation', async () => {
+  for (const mode of ['timeout', 'revoked', 'stale']) {
+    const s = setup();
+    let started,
+      release,
+      allowed = true,
+      checks = 0,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'recovery' }, 1);
+      s.queue.reconcileWithEvidence(scope, 'owner', s.item.id, 'applied', { operatorId: 'operator', reference: 'verification' }, 2);
+      registerOfflineArchiveCapability(s.registry, s.queue, {
+        ...base,
+        candidate: candidate('archive'),
+        ...(mode === 'timeout' ? { timeoutMs: 100, maxPending: 1 } : {}),
+        authorizeOperation: async (_actor, _operation, _reference, signal) => {
+          if (++checks === 2) {
+            seen = signal;
+            started();
+            await gate;
+          }
+          return allowed;
+        }
+      });
+      const pending = s.registry.invoke('archive', { id: s.item.id, reference: 'retire' }, actor);
+      await ready;
+      if (mode === 'timeout') {
+        await assert.rejects(pending, /unavailable/i);
+        assert.equal(seen.aborted, true);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 20));
+      } else {
+        if (mode === 'revoked') allowed = false;
+        else s.db.prepare('UPDATE offline_operations SET payload=? WHERE id=?').run('{"changed":true}', s.item.id);
+        release();
+        await assert.rejects(pending, mode === 'revoked' ? /forbidden/i : /stale/i);
+      }
+      assert.equal(s.queue.get(scope, 'owner', s.item.id).status, 'succeeded');
+      assert.equal(s.queue.getArchived(scope, 'owner', s.item.id), undefined);
+    } finally {
+      release?.();
+      close(s);
+    }
+  }
 });
 
-
-test('archive reads recheck permission and discard late responses',async()=>{
- for(const mode of ['timeout','revoked']){const s=setup();let started,release,allowed=true,checks=0,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{
-  s.queue.recoverAbandonedWithEvidence(scope,'owner',s.item.id,{operatorId:'operator',reference:'recovery'},1);s.queue.reconcileWithEvidence(scope,'owner',s.item.id,'applied',{operatorId:'operator',reference:'verification'},2);s.queue.archiveTerminal(scope,'owner',s.item.id,{operatorId:'operator',reference:'retire'},3);registerOfflineArchiveReadCapability(s.registry,s.queue,{...base,candidate:candidate('archive-read'),...(mode==='timeout'?{timeoutMs:100,maxPending:1}:{}),authorizeArchived:async(_actor,_operation,signal)=>{if(++checks===2){seen=signal;started();await gate;}return allowed;}});const pending=s.registry.invoke('archive-read',{id:s.item.id},actor);await ready;if(mode==='timeout'){await assert.rejects(pending,/unavailable/i);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));}else{allowed=false;release();await assert.rejects(pending,/forbidden/i);}assert.equal(s.queue.getArchived(scope,'owner',s.item.id).reference,'retire');
- }finally{release?.();close(s);}}
+test('archive reads recheck permission and discard late responses', async () => {
+  for (const mode of ['timeout', 'revoked']) {
+    const s = setup();
+    let started,
+      release,
+      allowed = true,
+      checks = 0,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'recovery' }, 1);
+      s.queue.reconcileWithEvidence(scope, 'owner', s.item.id, 'applied', { operatorId: 'operator', reference: 'verification' }, 2);
+      s.queue.archiveTerminal(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'retire' }, 3);
+      registerOfflineArchiveReadCapability(s.registry, s.queue, {
+        ...base,
+        candidate: candidate('archive-read'),
+        ...(mode === 'timeout' ? { timeoutMs: 100, maxPending: 1 } : {}),
+        authorizeArchived: async (_actor, _operation, signal) => {
+          if (++checks === 2) {
+            seen = signal;
+            started();
+            await gate;
+          }
+          return allowed;
+        }
+      });
+      const pending = s.registry.invoke('archive-read', { id: s.item.id }, actor);
+      await ready;
+      if (mode === 'timeout') {
+        await assert.rejects(pending, /unavailable/i);
+        assert.equal(seen.aborted, true);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 20));
+      } else {
+        allowed = false;
+        release();
+        await assert.rejects(pending, /forbidden/i);
+      }
+      assert.equal(s.queue.getArchived(scope, 'owner', s.item.id).reference, 'retire');
+    } finally {
+      release?.();
+      close(s);
+    }
+  }
 });
 
-
-test('archive discovery lists fixed-scope metadata over HTTP',async()=>{
- const s=setup();let server,allowed=true;try{
-  s.queue.recoverAbandoned(scope,'owner',s.item.id);s.queue.reconcile(scope,'owner',s.item.id,'applied');const second=s.queue.enqueue(scope,'owner','change','second',{private:'hidden'}),pending=s.queue.enqueue(scope,'owner','change','pending',{}),foreign=s.queue.enqueue({tenantId:'other',applicationId:'app'},'owner','change','foreign',{}),owner=s.queue.enqueue(scope,'different','change','owner',{}),operation=s.queue.enqueue(scope,'owner','other','operation',{});for(const [where,who,entry] of [[scope,'owner',second],[{tenantId:'other',applicationId:'app'},'owner',foreign],[scope,'different',owner],[scope,'owner',operation]])s.queue.discard(where,who,entry.id);
-  const registration={...base,candidate:candidate('candidates'),kind:'candidates',authorizeListing:(_actor,selection)=>{assert.deepEqual(selection,{...scope,principalId:'owner',operationId:'change',kind:'candidates'});return allowed;}};registerOfflineArchiveListCapability(s.registry,s.queue,registration);registration.kind='archived';registration.queuePrincipalId='different';registration.authorizeListing=()=>false;registerOfflineArchiveListCapability(s.registry,s.queue,{...base,candidate:candidate('archived'),kind:'archived',authorizeListing:()=>allowed});
-  server=createCapabilityServer(s.registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(operation,input,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});assert.equal((await call('candidates',{},'bad')).status,401);assert.equal((await call('candidates',{kind:'archived'})).status,400);assert.equal((await call('candidates',{limit:101})).status,400);assert.equal((await call('candidates',{completedBefore:-1})).status,400);assert.equal((await call('archived',{completedBefore:1})).status,400);assert.deepEqual((await (await call('candidates',{completedBefore:0})).json()).result.items,[]);const first=(await (await call('candidates',{limit:1})).json()).result,secondPage=(await (await call('candidates',{limit:1,after:first.nextAfter})).json()).result;assert.deepEqual([first.items[0].id,secondPage.items[0].id],[s.item.id,second.id].sort());assert.ok(Number.isSafeInteger(first.items[0].completedAt));assert.equal(JSON.stringify([first,secondPage]).includes('secret'),false);assert.ok(![first.items[0].id,secondPage.items[0].id].includes(pending.id));
-  s.queue.archiveTerminal(scope,'owner',s.item.id,{operatorId:'operator',reference:'case'},12);s.queue.archiveTerminal({tenantId:'other',applicationId:'app'},'owner',foreign.id,{operatorId:'operator',reference:'other'},13);const page=(await (await call('archived',{})).json()).result;assert.deepEqual(page.items,[{id:s.item.id,status:'succeeded',recordedAt:12}]);assert.equal(JSON.stringify(page).includes('case'),false);assert.deepEqual((await s.registry.invoke('archived',{}, {...actor,tenantId:'other'})).items.map(x=>x.id),[foreign.id]);allowed=false;await assert.rejects(s.registry.invoke('archived',{},actor),/forbidden/i);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}close(s);}
+test('archive discovery lists fixed-scope metadata over HTTP', async () => {
+  const s = setup();
+  let server,
+    allowed = true;
+  try {
+    s.queue.recoverAbandoned(scope, 'owner', s.item.id);
+    s.queue.reconcile(scope, 'owner', s.item.id, 'applied');
+    const second = s.queue.enqueue(scope, 'owner', 'change', 'second', { private: 'hidden' }),
+      pending = s.queue.enqueue(scope, 'owner', 'change', 'pending', {}),
+      foreign = s.queue.enqueue({ tenantId: 'other', applicationId: 'app' }, 'owner', 'change', 'foreign', {}),
+      owner = s.queue.enqueue(scope, 'different', 'change', 'owner', {}),
+      operation = s.queue.enqueue(scope, 'owner', 'other', 'operation', {});
+    for (const [where, who, entry] of [
+      [scope, 'owner', second],
+      [{ tenantId: 'other', applicationId: 'app' }, 'owner', foreign],
+      [scope, 'different', owner],
+      [scope, 'owner', operation]
+    ])
+      s.queue.discard(where, who, entry.id);
+    const registration = {
+      ...base,
+      candidate: candidate('candidates'),
+      kind: 'candidates',
+      authorizeListing: (_actor, selection) => {
+        assert.deepEqual(selection, { ...scope, principalId: 'owner', operationId: 'change', kind: 'candidates' });
+        return allowed;
+      }
+    };
+    registerOfflineArchiveListCapability(s.registry, s.queue, registration);
+    registration.kind = 'archived';
+    registration.queuePrincipalId = 'different';
+    registration.authorizeListing = () => false;
+    registerOfflineArchiveListCapability(s.registry, s.queue, { ...base, candidate: candidate('archived'), kind: 'archived', authorizeListing: () => allowed });
+    server = createCapabilityServer(
+      s.registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (operation, input, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call('candidates', {}, 'bad')).status, 401);
+    assert.equal((await call('candidates', { kind: 'archived' })).status, 400);
+    assert.equal((await call('candidates', { limit: 101 })).status, 400);
+    assert.equal((await call('candidates', { completedBefore: -1 })).status, 400);
+    assert.equal((await call('archived', { completedBefore: 1 })).status, 400);
+    assert.deepEqual((await (await call('candidates', { completedBefore: 0 })).json()).result.items, []);
+    const first = (await (await call('candidates', { limit: 1 })).json()).result,
+      secondPage = (await (await call('candidates', { limit: 1, after: first.nextAfter })).json()).result;
+    assert.deepEqual([first.items[0].id, secondPage.items[0].id], [s.item.id, second.id].sort());
+    assert.ok(Number.isSafeInteger(first.items[0].completedAt));
+    assert.equal(JSON.stringify([first, secondPage]).includes('secret'), false);
+    assert.ok(![first.items[0].id, secondPage.items[0].id].includes(pending.id));
+    s.queue.archiveTerminal(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'case' }, 12);
+    s.queue.archiveTerminal({ tenantId: 'other', applicationId: 'app' }, 'owner', foreign.id, { operatorId: 'operator', reference: 'other' }, 13);
+    const page = (await (await call('archived', {})).json()).result;
+    assert.deepEqual(page.items, [{ id: s.item.id, status: 'succeeded', recordedAt: 12 }]);
+    assert.equal(JSON.stringify(page).includes('case'), false);
+    assert.deepEqual(
+      (await s.registry.invoke('archived', {}, { ...actor, tenantId: 'other' })).items.map(x => x.id),
+      [foreign.id]
+    );
+    allowed = false;
+    await assert.rejects(s.registry.invoke('archived', {}, actor), /forbidden/i);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    close(s);
+  }
 });
 
-test('archive discovery rechecks authorization and discards late results',async()=>{
- for(const mode of ['revoked','timeout']){const s=setup();let started,release,allowed=true,checks=0,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);try{registerOfflineArchiveListCapability(s.registry,s.queue,{...base,candidate:candidate('list'),kind:'candidates',...(mode==='timeout'?{timeoutMs:100,maxPending:1}:{}),authorizeListing:async(_actor,_selection,signal)=>{if(++checks===2){seen=signal;started();await gate;}return allowed;}});const pending=s.registry.invoke('list',{},actor);await ready;if(mode==='timeout'){await assert.rejects(pending,/unavailable/i);assert.equal(seen.aborted,true);release();await new Promise(resolve=>setTimeout(resolve,20));}else{allowed=false;release();await assert.rejects(pending,/forbidden/i);}}finally{release?.();close(s);}}
+test('archive discovery rechecks authorization and discards late results', async () => {
+  for (const mode of ['revoked', 'timeout']) {
+    const s = setup();
+    let started,
+      release,
+      allowed = true,
+      checks = 0,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      registerOfflineArchiveListCapability(s.registry, s.queue, {
+        ...base,
+        candidate: candidate('list'),
+        kind: 'candidates',
+        ...(mode === 'timeout' ? { timeoutMs: 100, maxPending: 1 } : {}),
+        authorizeListing: async (_actor, _selection, signal) => {
+          if (++checks === 2) {
+            seen = signal;
+            started();
+            await gate;
+          }
+          return allowed;
+        }
+      });
+      const pending = s.registry.invoke('list', {}, actor);
+      await ready;
+      if (mode === 'timeout') {
+        await assert.rejects(pending, /unavailable/i);
+        assert.equal(seen.aborted, true);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 20));
+      } else {
+        allowed = false;
+        release();
+        await assert.rejects(pending, /forbidden/i);
+      }
+    } finally {
+      release?.();
+      close(s);
+    }
+  }
 });

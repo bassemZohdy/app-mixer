@@ -1,27 +1,157 @@
-import {createBoundedOperation} from './bounded-operation.js';
-import {SqliteRemoteRollout,type RemoteRolloutScope} from './remote-rollout.js';
-import {PostgresRemoteRollout} from './postgres-remote-rollout.js';
-import {RemoteRolloutPoller,type RemoteRolloutPollerStatus} from './remote-rollout-poller.js';
+import { createBoundedOperation } from './bounded-operation.js';
+import { SqliteRemoteRollout, type RemoteRolloutScope } from './remote-rollout.js';
+import { PostgresRemoteRollout } from './postgres-remote-rollout.js';
+import { RemoteRolloutPoller, type RemoteRolloutPollerStatus } from './remote-rollout-poller.js';
 
-type Actor={tenantId:string;principalId:string};
-export type RemoteRolloutMetricPhase='idle'|'running'|'importing'|'uncertain';
-export type RemoteRolloutMetricsSnapshot={phase:RemoteRolloutMetricPhase;poller?:RemoteRolloutPollerStatus};
-export type RemoteRolloutMetricsOptions={poller?:RemoteRolloutPoller;scope:RemoteRolloutScope;authorize:(actor:Actor,scope:RemoteRolloutScope,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-const valid=(value:unknown):value is string=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value);
-const phases:RemoteRolloutMetricPhase[]=['idle','running','importing','uncertain'];
+type Actor = { tenantId: string; principalId: string };
+export type RemoteRolloutMetricPhase = 'idle' | 'running' | 'importing' | 'uncertain';
+export type RemoteRolloutMetricsSnapshot = { phase: RemoteRolloutMetricPhase; poller?: RemoteRolloutPollerStatus };
+export type RemoteRolloutMetricsOptions = {
+  poller?: RemoteRolloutPoller;
+  scope: RemoteRolloutScope;
+  authorize: (actor: Actor, scope: RemoteRolloutScope, signal: AbortSignal) => boolean | Promise<boolean>;
+  timeoutMs?: number;
+  maxPending?: number;
+};
+const valid = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
+const phases: RemoteRolloutMetricPhase[] = ['idle', 'running', 'importing', 'uncertain'];
 
 /** One host-fixed, separately authorized rollout-gate gauge without identifying labels. */
 export class RemoteRolloutMetrics {
- private readonly rollout:SqliteRemoteRollout|PostgresRemoteRollout;private readonly scope:RemoteRolloutScope;private readonly authorize:RemoteRolloutMetricsOptions['authorize'];private readonly poller?:RemoteRolloutPoller;private readonly bounded:ReturnType<typeof createBoundedOperation>;
- constructor(rollout:SqliteRemoteRollout|PostgresRemoteRollout,options:RemoteRolloutMetricsOptions){
-  if(!(rollout instanceof SqliteRemoteRollout||rollout instanceof PostgresRemoteRollout)||!options||!options.scope||![options.scope.tenantId,options.scope.applicationId,options.scope.sourceEnvironment,options.scope.targetEnvironment].every(valid)||typeof options.authorize!=='function'||(options.poller!==undefined&&(!(options.poller instanceof RemoteRolloutPoller)||!options.poller.isFor(rollout))))throw Error('Invalid rollout metrics');
-  this.scope={tenantId:options.scope.tenantId,applicationId:options.scope.applicationId,sourceEnvironment:options.scope.sourceEnvironment,targetEnvironment:options.scope.targetEnvironment};if(!rollout.isBoundTo(this.scope))throw Error('Invalid rollout metrics');this.rollout=rollout;this.authorize=options.authorize;this.poller=options.poller;this.bounded=createBoundedOperation(options.timeoutMs,options.maxPending,'Invalid rollout metrics','Rollout metrics unavailable');
- }
- async snapshot(actor:Actor,signal?:AbortSignal):Promise<RemoteRolloutMetricsSnapshot>{
-  if(!actor||actor.tenantId!==this.scope.tenantId||!valid(actor.principalId)||(signal!==undefined&&!(signal instanceof AbortSignal)))throw Error('Invalid rollout metrics actor');const who={tenantId:actor.tenantId,principalId:actor.principalId};
-  return this.bounded(async inner=>{const combined=signal?AbortSignal.any([inner,signal]):inner,check=()=>{if(combined.aborted)throw Error('Rollout metrics unavailable');},permit=async()=>{check();let allowed=false;try{allowed=await this.authorize({...who},{...this.scope},combined)===true;}catch{check();}check();if(!allowed)throw Error('Rollout metrics access denied');};await permit();const state=await this.rollout.getState();check();const version=(value:unknown,min:number)=>Number.isSafeInteger(value)&&Number(value)>=min;if(!state||!phases.includes(state.phase as RemoteRolloutMetricPhase)||(state.phase==='idle'&&(state.token!==null||state.sourceVersion!==null||state.expectedVersion!==null))||(state.phase==='running'&&(!valid(state.token)||state.sourceVersion!==null||state.expectedVersion!==null))||(['importing','uncertain'].includes(state.phase)&&(!valid(state.token)||!version(state.sourceVersion,1)||!version(state.expectedVersion,0))))throw Error('Invalid rollout metrics data');await permit();const current=await this.rollout.getState();check();if(!current||current.phase!==state.phase||current.token!==state.token||current.sourceVersion!==state.sourceVersion||current.expectedVersion!==state.expectedVersion)throw Error('Rollout metrics unavailable');const poller=this.poller?.getStatus();const timestamp=(value:unknown)=>value===null||Number.isSafeInteger(value)&&Number(value)>=0;if(this.poller&&(!poller||typeof poller.running!=='boolean'||typeof poller.inFlight!=='boolean'||typeof poller.reviewRequired!=='boolean'||!Number.isSafeInteger(poller.consecutiveFailures)||poller.consecutiveFailures<0||!timestamp(poller.passStartedAt)||!timestamp(poller.lastSuccessAt)||!timestamp(poller.lastFailureAt)||(poller.inFlight!==(poller.passStartedAt!==null))))throw Error('Invalid rollout metrics data');return {phase:state.phase as RemoteRolloutMetricPhase,...(poller?{poller:{running:poller.running,inFlight:poller.inFlight,reviewRequired:poller.reviewRequired,consecutiveFailures:poller.consecutiveFailures,passStartedAt:poller.passStartedAt,lastSuccessAt:poller.lastSuccessAt,lastFailureAt:poller.lastFailureAt}}:{})};});
- }
- async render(actor:Actor):Promise<string>{return this.renderWithSignal(actor,new AbortController().signal);}
- async renderWithSignal(actor:Actor,signal:AbortSignal):Promise<string>{if(!(signal instanceof AbortSignal))throw Error('Invalid rollout metrics signal');const {phase,poller}=await this.snapshot(actor,signal);return ['# HELP app_mixer_remote_rollout_gate Current state of one remote rollout recovery gate.','# TYPE app_mixer_remote_rollout_gate gauge',...phases.map(item=>`app_mixer_remote_rollout_gate{phase="${item}"} ${Number(item===phase)}`),...(poller?['# HELP app_mixer_remote_rollout_poller_running Whether the local rollout poller is running.','# TYPE app_mixer_remote_rollout_poller_running gauge',`app_mixer_remote_rollout_poller_running ${Number(poller.running)}`,'# HELP app_mixer_remote_rollout_poller_in_flight Whether a rollout pass is in progress.','# TYPE app_mixer_remote_rollout_poller_in_flight gauge',`app_mixer_remote_rollout_poller_in_flight ${Number(poller.inFlight)}`,'# HELP app_mixer_remote_rollout_poller_review_required Whether the poller stopped for review.','# TYPE app_mixer_remote_rollout_poller_review_required gauge',`app_mixer_remote_rollout_poller_review_required ${Number(poller.reviewRequired)}`,'# HELP app_mixer_remote_rollout_poller_consecutive_failures Consecutive failed passes since the last success or start.','# TYPE app_mixer_remote_rollout_poller_consecutive_failures gauge',`app_mixer_remote_rollout_poller_consecutive_failures ${poller.consecutiveFailures}`,'# HELP app_mixer_remote_rollout_poller_pass_started_timestamp_seconds Unix time when the current pass started, or zero.','# TYPE app_mixer_remote_rollout_poller_pass_started_timestamp_seconds gauge',`app_mixer_remote_rollout_poller_pass_started_timestamp_seconds ${(poller.passStartedAt??0)/1000}`,'# HELP app_mixer_remote_rollout_poller_last_success_timestamp_seconds Unix time of the latest successful pass, or zero.','# TYPE app_mixer_remote_rollout_poller_last_success_timestamp_seconds gauge',`app_mixer_remote_rollout_poller_last_success_timestamp_seconds ${(poller.lastSuccessAt??0)/1000}`,'# HELP app_mixer_remote_rollout_poller_last_failure_timestamp_seconds Unix time of the latest failed pass, or zero.','# TYPE app_mixer_remote_rollout_poller_last_failure_timestamp_seconds gauge',`app_mixer_remote_rollout_poller_last_failure_timestamp_seconds ${(poller.lastFailureAt??0)/1000}`]:[]),''].join('\n');}
+  private readonly rollout: SqliteRemoteRollout | PostgresRemoteRollout;
+  private readonly scope: RemoteRolloutScope;
+  private readonly authorize: RemoteRolloutMetricsOptions['authorize'];
+  private readonly poller?: RemoteRolloutPoller;
+  private readonly bounded: ReturnType<typeof createBoundedOperation>;
+  constructor(rollout: SqliteRemoteRollout | PostgresRemoteRollout, options: RemoteRolloutMetricsOptions) {
+    if (
+      !(rollout instanceof SqliteRemoteRollout || rollout instanceof PostgresRemoteRollout) ||
+      !options ||
+      !options.scope ||
+      ![options.scope.tenantId, options.scope.applicationId, options.scope.sourceEnvironment, options.scope.targetEnvironment].every(valid) ||
+      typeof options.authorize !== 'function' ||
+      (options.poller !== undefined && (!(options.poller instanceof RemoteRolloutPoller) || !options.poller.isFor(rollout)))
+    )
+      throw Error('Invalid rollout metrics');
+    this.scope = {
+      tenantId: options.scope.tenantId,
+      applicationId: options.scope.applicationId,
+      sourceEnvironment: options.scope.sourceEnvironment,
+      targetEnvironment: options.scope.targetEnvironment
+    };
+    if (!rollout.isBoundTo(this.scope)) throw Error('Invalid rollout metrics');
+    this.rollout = rollout;
+    this.authorize = options.authorize;
+    this.poller = options.poller;
+    this.bounded = createBoundedOperation(options.timeoutMs, options.maxPending, 'Invalid rollout metrics', 'Rollout metrics unavailable');
+  }
+  async snapshot(actor: Actor, signal?: AbortSignal): Promise<RemoteRolloutMetricsSnapshot> {
+    if (!actor || actor.tenantId !== this.scope.tenantId || !valid(actor.principalId) || (signal !== undefined && !(signal instanceof AbortSignal))) throw Error('Invalid rollout metrics actor');
+    const who = { tenantId: actor.tenantId, principalId: actor.principalId };
+    return this.bounded(async inner => {
+      const combined = signal ? AbortSignal.any([inner, signal]) : inner,
+        check = () => {
+          if (combined.aborted) throw Error('Rollout metrics unavailable');
+        },
+        permit = async () => {
+          check();
+          let allowed = false;
+          try {
+            allowed = (await this.authorize({ ...who }, { ...this.scope }, combined)) === true;
+          } catch {
+            check();
+          }
+          check();
+          if (!allowed) throw Error('Rollout metrics access denied');
+        };
+      await permit();
+      const state = await this.rollout.getState();
+      check();
+      const version = (value: unknown, min: number) => Number.isSafeInteger(value) && Number(value) >= min;
+      if (
+        !state ||
+        !phases.includes(state.phase as RemoteRolloutMetricPhase) ||
+        (state.phase === 'idle' && (state.token !== null || state.sourceVersion !== null || state.expectedVersion !== null)) ||
+        (state.phase === 'running' && (!valid(state.token) || state.sourceVersion !== null || state.expectedVersion !== null)) ||
+        (['importing', 'uncertain'].includes(state.phase) && (!valid(state.token) || !version(state.sourceVersion, 1) || !version(state.expectedVersion, 0)))
+      )
+        throw Error('Invalid rollout metrics data');
+      await permit();
+      const current = await this.rollout.getState();
+      check();
+      if (!current || current.phase !== state.phase || current.token !== state.token || current.sourceVersion !== state.sourceVersion || current.expectedVersion !== state.expectedVersion)
+        throw Error('Rollout metrics unavailable');
+      const poller = this.poller?.getStatus();
+      const timestamp = (value: unknown) => value === null || (Number.isSafeInteger(value) && Number(value) >= 0);
+      if (
+        this.poller &&
+        (!poller ||
+          typeof poller.running !== 'boolean' ||
+          typeof poller.inFlight !== 'boolean' ||
+          typeof poller.reviewRequired !== 'boolean' ||
+          !Number.isSafeInteger(poller.consecutiveFailures) ||
+          poller.consecutiveFailures < 0 ||
+          !timestamp(poller.passStartedAt) ||
+          !timestamp(poller.lastSuccessAt) ||
+          !timestamp(poller.lastFailureAt) ||
+          poller.inFlight !== (poller.passStartedAt !== null))
+      )
+        throw Error('Invalid rollout metrics data');
+      return {
+        phase: state.phase as RemoteRolloutMetricPhase,
+        ...(poller
+          ? {
+              poller: {
+                running: poller.running,
+                inFlight: poller.inFlight,
+                reviewRequired: poller.reviewRequired,
+                consecutiveFailures: poller.consecutiveFailures,
+                passStartedAt: poller.passStartedAt,
+                lastSuccessAt: poller.lastSuccessAt,
+                lastFailureAt: poller.lastFailureAt
+              }
+            }
+          : {})
+      };
+    });
+  }
+  async render(actor: Actor): Promise<string> {
+    return this.renderWithSignal(actor, new AbortController().signal);
+  }
+  async renderWithSignal(actor: Actor, signal: AbortSignal): Promise<string> {
+    if (!(signal instanceof AbortSignal)) throw Error('Invalid rollout metrics signal');
+    const { phase, poller } = await this.snapshot(actor, signal);
+    return [
+      '# HELP app_mixer_remote_rollout_gate Current state of one remote rollout recovery gate.',
+      '# TYPE app_mixer_remote_rollout_gate gauge',
+      ...phases.map(item => `app_mixer_remote_rollout_gate{phase="${item}"} ${Number(item === phase)}`),
+      ...(poller
+        ? [
+            '# HELP app_mixer_remote_rollout_poller_running Whether the local rollout poller is running.',
+            '# TYPE app_mixer_remote_rollout_poller_running gauge',
+            `app_mixer_remote_rollout_poller_running ${Number(poller.running)}`,
+            '# HELP app_mixer_remote_rollout_poller_in_flight Whether a rollout pass is in progress.',
+            '# TYPE app_mixer_remote_rollout_poller_in_flight gauge',
+            `app_mixer_remote_rollout_poller_in_flight ${Number(poller.inFlight)}`,
+            '# HELP app_mixer_remote_rollout_poller_review_required Whether the poller stopped for review.',
+            '# TYPE app_mixer_remote_rollout_poller_review_required gauge',
+            `app_mixer_remote_rollout_poller_review_required ${Number(poller.reviewRequired)}`,
+            '# HELP app_mixer_remote_rollout_poller_consecutive_failures Consecutive failed passes since the last success or start.',
+            '# TYPE app_mixer_remote_rollout_poller_consecutive_failures gauge',
+            `app_mixer_remote_rollout_poller_consecutive_failures ${poller.consecutiveFailures}`,
+            '# HELP app_mixer_remote_rollout_poller_pass_started_timestamp_seconds Unix time when the current pass started, or zero.',
+            '# TYPE app_mixer_remote_rollout_poller_pass_started_timestamp_seconds gauge',
+            `app_mixer_remote_rollout_poller_pass_started_timestamp_seconds ${(poller.passStartedAt ?? 0) / 1000}`,
+            '# HELP app_mixer_remote_rollout_poller_last_success_timestamp_seconds Unix time of the latest successful pass, or zero.',
+            '# TYPE app_mixer_remote_rollout_poller_last_success_timestamp_seconds gauge',
+            `app_mixer_remote_rollout_poller_last_success_timestamp_seconds ${(poller.lastSuccessAt ?? 0) / 1000}`,
+            '# HELP app_mixer_remote_rollout_poller_last_failure_timestamp_seconds Unix time of the latest failed pass, or zero.',
+            '# TYPE app_mixer_remote_rollout_poller_last_failure_timestamp_seconds gauge',
+            `app_mixer_remote_rollout_poller_last_failure_timestamp_seconds ${(poller.lastFailureAt ?? 0) / 1000}`
+          ]
+        : []),
+      ''
+    ].join('\n');
+  }
 }
-export type {Actor as RemoteRolloutMetricsActor};
+export type { Actor as RemoteRolloutMetricsActor };

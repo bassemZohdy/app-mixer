@@ -1,28 +1,275 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {AIMessage} from '@langchain/core/messages';
-import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentDefinitions,DurableAgentWorker,createConfiguredAgentRun,registerAgentManualStart} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'},manifest={manifestVersion:1,...scope,name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'model'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
-function setup(){const dir=mkdtempSync(join(tmpdir(),'manual-start-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),registry=new CapabilityRegistry(()=>{});return {dir,runs,triggers,registry};}
-async function serve(registry){const server=createCapabilityServer(registry,req=>req.headers.authorization==='valid'?actor:req.headers.authorization==='other'?{...actor,tenantId:'other'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));return {server,call:(input,auth='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/start/invoke`,{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})})};}
-async function close(s,server){if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
-test('manual start authenticates, deduplicates and binds request identity to the definition',async()=>{
- const s=setup();let server,version=1,allowed=true;try{const options={triggers:s.triggers,scope:{...scope},sourceId:'manual',operationId:'start',path:'/start',maxPendingRuns:1,clock:()=>100,getDefinition:()=>({version,manifest}),authorize:(_actor,action)=>action!=='start'||allowed};registerAgentManualStart(s.registry,options);options.scope.tenantId='other';const app=await serve(s.registry);server=app.server;const input={requestId:'request-1',definitionVersion:1};assert.equal((await app.call(input,'bad')).status,401);assert.equal((await app.call(input,'other')).status,403);assert.equal((await app.call({...input,agentId:'other'})).status,400);allowed=false;assert.equal((await app.call(input)).status,403);allowed=true;const first=await app.call(input);assert.equal(first.status,200);const created=(await first.json()).result;assert.equal(created.duplicate,false);const run=s.runs.get(scope,created.runId);assert.equal(run.status,'queued');assert.equal(run.deadline,1100);assert.equal(run.definitionVersion,1);const duplicate=(await (await app.call(input)).json()).result;assert.deepEqual(duplicate,{runId:created.runId,duplicate:true});assert.equal((await app.call({requestId:'request-2',definitionVersion:1})).status,429);version=2;assert.equal((await app.call(input)).status,409);assert.equal((await app.call({...input,definitionVersion:2})).status,409);assert.equal(s.triggers.get(scope,created.runId).principalId,'operator');assert.equal(s.runs.get({...scope,tenantId:'other'},created.runId),undefined);}finally{await close(s,server);}
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { AIMessage } from '@langchain/core/messages';
+import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import { SqliteAgentRuns, SqliteAgentTriggers, SqliteAgentDefinitions, DurableAgentWorker, createConfiguredAgentRun, registerAgentManualStart } from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  manifest = {
+    manifestVersion: 1,
+    ...scope,
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    model: { provider: 'local', model: 'model' },
+    allowedCapabilities: [],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 1000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  };
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), 'manual-start-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    registry = new CapabilityRegistry(() => {});
+  return { dir, runs, triggers, registry };
+}
+async function serve(registry) {
+  const server = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    call: (input, auth = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/start/invoke`, {
+        method: 'POST',
+        headers: { authorization: auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input })
+      })
+  };
+}
+async function close(s, server) {
+  if (server) {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+  s.triggers.close();
+  s.runs.close();
+  rmSync(s.dir, { recursive: true, force: true });
+}
+test('manual start authenticates, deduplicates and binds request identity to the definition', async () => {
+  const s = setup();
+  let server,
+    version = 1,
+    allowed = true;
+  try {
+    const options = {
+      triggers: s.triggers,
+      scope: { ...scope },
+      sourceId: 'manual',
+      operationId: 'start',
+      path: '/start',
+      maxPendingRuns: 1,
+      clock: () => 100,
+      getDefinition: () => ({ version, manifest }),
+      authorize: (_actor, action) => action !== 'start' || allowed
+    };
+    registerAgentManualStart(s.registry, options);
+    options.scope.tenantId = 'other';
+    const app = await serve(s.registry);
+    server = app.server;
+    const input = { requestId: 'request-1', definitionVersion: 1 };
+    assert.equal((await app.call(input, 'bad')).status, 401);
+    assert.equal((await app.call(input, 'other')).status, 403);
+    assert.equal((await app.call({ ...input, agentId: 'other' })).status, 400);
+    allowed = false;
+    assert.equal((await app.call(input)).status, 403);
+    allowed = true;
+    const first = await app.call(input);
+    assert.equal(first.status, 200);
+    const created = (await first.json()).result;
+    assert.equal(created.duplicate, false);
+    const run = s.runs.get(scope, created.runId);
+    assert.equal(run.status, 'queued');
+    assert.equal(run.deadline, 1100);
+    assert.equal(run.definitionVersion, 1);
+    const duplicate = (await (await app.call(input)).json()).result;
+    assert.deepEqual(duplicate, { runId: created.runId, duplicate: true });
+    assert.equal((await app.call({ requestId: 'request-2', definitionVersion: 1 })).status, 429);
+    version = 2;
+    assert.equal((await app.call(input)).status, 409);
+    assert.equal((await app.call({ ...input, definitionVersion: 2 })).status, 409);
+    assert.equal(s.triggers.get(scope, created.runId).principalId, 'operator');
+    assert.equal(s.runs.get({ ...scope, tenantId: 'other' }, created.runId), undefined);
+  } finally {
+    await close(s, server);
+  }
 });
-test('manual start fences definition changes and timed-out authorization',async()=>{
- for(const mode of ['changed','timeout']){const s=setup();let server,version=1,release,entered,signal,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);try{registerAgentManualStart(s.registry,{triggers:s.triggers,scope,sourceId:'manual',operationId:'start',path:'/start',maxPendingRuns:2,clock:()=>100,timeoutMs:100,maxPending:1,getDefinition:()=>({version,manifest}),authorize:async(_who,action,_definition,provided)=>{if(action==='start'&&block){if(mode==='changed'){block=false;version=2;return true;}signal=provided;entered();await gate;}return true;}});const app=await serve(s.registry);server=app.server;const input={requestId:'request',definitionVersion:1};if(mode==='changed'){assert.equal((await app.call(input)).status,409);}else{const pending=app.call(input);await ready;assert.equal((await pending).status,503);assert.equal(signal.aborted,true);assert.equal((await app.call(input)).status,503);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await app.call(input)).status,200);}assert.equal(s.runs.queuedPage(scope).runIds.length,mode==='changed'?0:1);}finally{release();await close(s,server);}}
+test('manual start fences definition changes and timed-out authorization', async () => {
+  for (const mode of ['changed', 'timeout']) {
+    const s = setup();
+    let server,
+      version = 1,
+      release,
+      entered,
+      signal,
+      block = true;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve));
+    try {
+      registerAgentManualStart(s.registry, {
+        triggers: s.triggers,
+        scope,
+        sourceId: 'manual',
+        operationId: 'start',
+        path: '/start',
+        maxPendingRuns: 2,
+        clock: () => 100,
+        timeoutMs: 100,
+        maxPending: 1,
+        getDefinition: () => ({ version, manifest }),
+        authorize: async (_who, action, _definition, provided) => {
+          if (action === 'start' && block) {
+            if (mode === 'changed') {
+              block = false;
+              version = 2;
+              return true;
+            }
+            signal = provided;
+            entered();
+            await gate;
+          }
+          return true;
+        }
+      });
+      const app = await serve(s.registry);
+      server = app.server;
+      const input = { requestId: 'request', definitionVersion: 1 };
+      if (mode === 'changed') {
+        assert.equal((await app.call(input)).status, 409);
+      } else {
+        const pending = app.call(input);
+        await ready;
+        assert.equal((await pending).status, 503);
+        assert.equal(signal.aborted, true);
+        assert.equal((await app.call(input)).status, 503);
+        block = false;
+        release();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal((await app.call(input)).status, 200);
+      }
+      assert.equal(s.runs.queuedPage(scope).runIds.length, mode === 'changed' ? 0 : 1);
+    } finally {
+      release();
+      await close(s, server);
+    }
+  }
 });
-test('a lost completion audit can be retried with the same durable request identity',async()=>{
- const s=setup();let server,fail=true;try{const registry=new CapabilityRegistry(event=>{if(fail&&event.outcome==='succeeded')throw Error('audit unavailable');});registerAgentManualStart(registry,{triggers:s.triggers,scope,sourceId:'manual',operationId:'start',path:'/start',maxPendingRuns:2,clock:()=>100,getDefinition:()=>({version:1,manifest}),authorize:()=>true});const app=await serve(registry);server=app.server;const input={requestId:'request',definitionVersion:1},first=await app.call(input);assert.equal(first.status,503);assert.equal((await first.json()).code,'CAPABILITY_OUTCOME_UNCERTAIN');const runIds=s.runs.queuedPage(scope).runIds;assert.equal(runIds.length,1);fail=false;const second=await app.call(input);assert.equal(second.status,200);assert.deepEqual((await second.json()).result,{runId:runIds[0],duplicate:true});assert.equal(s.runs.queuedPage(scope).runIds.length,1);}finally{await close(s,server);}
+test('a lost completion audit can be retried with the same durable request identity', async () => {
+  const s = setup();
+  let server,
+    fail = true;
+  try {
+    const registry = new CapabilityRegistry(event => {
+      if (fail && event.outcome === 'succeeded') throw Error('audit unavailable');
+    });
+    registerAgentManualStart(registry, {
+      triggers: s.triggers,
+      scope,
+      sourceId: 'manual',
+      operationId: 'start',
+      path: '/start',
+      maxPendingRuns: 2,
+      clock: () => 100,
+      getDefinition: () => ({ version: 1, manifest }),
+      authorize: () => true
+    });
+    const app = await serve(registry);
+    server = app.server;
+    const input = { requestId: 'request', definitionVersion: 1 },
+      first = await app.call(input);
+    assert.equal(first.status, 503);
+    assert.equal((await first.json()).code, 'CAPABILITY_OUTCOME_UNCERTAIN');
+    const runIds = s.runs.queuedPage(scope).runIds;
+    assert.equal(runIds.length, 1);
+    fail = false;
+    const second = await app.call(input);
+    assert.equal(second.status, 200);
+    assert.deepEqual((await second.json()).result, { runId: runIds[0], duplicate: true });
+    assert.equal(s.runs.queuedPage(scope).runIds.length, 1);
+  } finally {
+    await close(s, server);
+  }
 });
-test('a manually started run reaches the configured durable worker under its service identity',{timeout:30000},async()=>{
- const s=setup(),definitions=new SqliteAgentDefinitions(':memory:'),calls=[];let server;try{
-  const definition={...manifest,allowedCapabilities:['lookup'],lifecycle:{...manifest.lifecycle,runTimeoutMs:30000}};definitions.save(scope.tenantId,definition,0);const registry=new CapabilityRegistry(event=>calls.push(event));registry.register({operationId:'lookup',method:'GET',path:'/lookup'},{authorize:who=>who.tenantId===scope.tenantId&&who.principalId==='service',validate:()=>true,execute:()=>({value:'ready'})});registerAgentManualStart(registry,{triggers:s.triggers,scope,sourceId:'manual',operationId:'start',path:'/start',maxPendingRuns:5,getDefinition:(tenant,agent)=>definitions.get(tenant,agent),authorize:()=>true});const app=await serve(registry);server=app.server;const input={requestId:'manual-1',definitionVersion:1},response=await app.call(input);assert.equal(response.status,200);const {runId}=((await response.json()).result);const foreign=s.runs.create({...scope,tenantId:'other'},'foreign',{definitionVersion:1,maxAttempts:2,deadline:Date.now()+30000});
-  const worker=new DurableAgentWorker({runs:s.runs,definitions,workerId:'worker',leaseMs:5000,pollMs:25,authorizeStart:()=>true,execute:async(run,{signal,assertLease})=>{const agent=await createConfiguredAgentRun({definitions,tenantId:scope.tenantId,agentId:scope.agentId,expectedVersion:run.definitionVersion,bindings:[{operationId:'lookup',toolName:'lookup',description:'Lookup'}],registry,authorizeRun:()=>true,authorizeCapability:()=>{assertLease();return true;},createModel:()=>{let turn=0;return {async invoke(){return ++turn===1?new AIMessage({content:'',tool_calls:[{id:'call',name:'lookup',args:{}}]}):new AIMessage('Done');}};}});let final;for await(const event of agent.run({threadId:'manual-thread',runId,messages:[{role:'user',content:'Check'}]},{signal}))final=event;return final?.type==='RUN_FINISHED'?'succeeded':'uncertain';}});
-  assert.equal((await worker.runOnce(scope,runId)).status,'succeeded');assert.equal(calls.filter(event=>event.operationId==='lookup'&&event.principalId==='service'&&event.outcome==='succeeded').length,1);assert.equal(s.runs.get({...scope,tenantId:'other'},'foreign').revision,foreign.revision);const retry=await app.call(input);assert.deepEqual((await retry.json()).result,{runId,duplicate:true});assert.equal(s.runs.get(scope,runId).attempts,1);
- }finally{definitions.close();await close(s,server);}
+test('a manually started run reaches the configured durable worker under its service identity', { timeout: 30000 }, async () => {
+  const s = setup(),
+    definitions = new SqliteAgentDefinitions(':memory:'),
+    calls = [];
+  let server;
+  try {
+    const definition = { ...manifest, allowedCapabilities: ['lookup'], lifecycle: { ...manifest.lifecycle, runTimeoutMs: 30000 } };
+    definitions.save(scope.tenantId, definition, 0);
+    const registry = new CapabilityRegistry(event => calls.push(event));
+    registry.register(
+      { operationId: 'lookup', method: 'GET', path: '/lookup' },
+      { authorize: who => who.tenantId === scope.tenantId && who.principalId === 'service', validate: () => true, execute: () => ({ value: 'ready' }) }
+    );
+    registerAgentManualStart(registry, {
+      triggers: s.triggers,
+      scope,
+      sourceId: 'manual',
+      operationId: 'start',
+      path: '/start',
+      maxPendingRuns: 5,
+      getDefinition: (tenant, agent) => definitions.get(tenant, agent),
+      authorize: () => true
+    });
+    const app = await serve(registry);
+    server = app.server;
+    const input = { requestId: 'manual-1', definitionVersion: 1 },
+      response = await app.call(input);
+    assert.equal(response.status, 200);
+    const { runId } = (await response.json()).result;
+    const foreign = s.runs.create({ ...scope, tenantId: 'other' }, 'foreign', { definitionVersion: 1, maxAttempts: 2, deadline: Date.now() + 30000 });
+    const worker = new DurableAgentWorker({
+      runs: s.runs,
+      definitions,
+      workerId: 'worker',
+      leaseMs: 5000,
+      pollMs: 25,
+      authorizeStart: () => true,
+      execute: async (run, { signal, assertLease }) => {
+        const agent = await createConfiguredAgentRun({
+          definitions,
+          tenantId: scope.tenantId,
+          agentId: scope.agentId,
+          expectedVersion: run.definitionVersion,
+          bindings: [{ operationId: 'lookup', toolName: 'lookup', description: 'Lookup' }],
+          registry,
+          authorizeRun: () => true,
+          authorizeCapability: () => {
+            assertLease();
+            return true;
+          },
+          createModel: () => {
+            let turn = 0;
+            return {
+              async invoke() {
+                return ++turn === 1 ? new AIMessage({ content: '', tool_calls: [{ id: 'call', name: 'lookup', args: {} }] }) : new AIMessage('Done');
+              }
+            };
+          }
+        });
+        let final;
+        for await (const event of agent.run({ threadId: 'manual-thread', runId, messages: [{ role: 'user', content: 'Check' }] }, { signal })) final = event;
+        return final?.type === 'RUN_FINISHED' ? 'succeeded' : 'uncertain';
+      }
+    });
+    assert.equal((await worker.runOnce(scope, runId)).status, 'succeeded');
+    assert.equal(calls.filter(event => event.operationId === 'lookup' && event.principalId === 'service' && event.outcome === 'succeeded').length, 1);
+    assert.equal(s.runs.get({ ...scope, tenantId: 'other' }, 'foreign').revision, foreign.revision);
+    const retry = await app.call(input);
+    assert.deepEqual((await retry.json()).result, { runId, duplicate: true });
+    assert.equal(s.runs.get(scope, runId).attempts, 1);
+  } finally {
+    definitions.close();
+    await close(s, server);
+  }
 });

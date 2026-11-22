@@ -1,88 +1,311 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {SqliteDataProvider,CapabilityRegistry,registerDataCapability} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'};
-const migration=(preview,overrides={})=>({fromVersion:0,toVersion:1,digest:preview.digest,transform:value=>({fullName:value.name}),validate:value=>typeof value.fullName==='string',...overrides});
-
-test('migration is scoped, versioned and blocks old writers while preserving revision conflicts',()=>{
- const provider=new SqliteDataProvider(':memory:');try{
-  provider.put(scope,'people','one',{name:'Ada'},null);provider.put(scope,'people','two',{name:'Lin'},null);provider.put({...scope,tenantId:'other'},'people','one',{name:'Other'},null);
-  const before=provider.previewMigration(scope,'people');assert.equal(before.schemaVersion,0);assert.equal(before.count,2);
-  const after=provider.migrateCollection(scope,'people',migration(before));assert.equal(after.schemaVersion,1);assert.equal(after.count,2);assert.notEqual(after.digest,before.digest);
-  assert.deepEqual(provider.get(scope,'people','one'),{id:'one',revision:2,value:{fullName:'Ada'}});assert.equal(provider.get({...scope,tenantId:'other'},'people','one').value.name,'Other');
-  assert.throws(()=>provider.put(scope,'people','one',{name:'old'},2),/schema version conflict/);assert.throws(()=>provider.delete(scope,'people','one',2),/schema version conflict/);
-  assert.throws(()=>provider.put(scope,'people','one',{fullName:'new'},1,1),/revision conflict/);assert.equal(provider.put(scope,'people','one',{fullName:'new'},2,1).revision,3);provider.delete(scope,'people','one',3,1);assert.equal(provider.get(scope,'people','one'),undefined);
-  assert.throws(()=>provider.migrateCollection(scope,'people',migration(before)),/snapshot conflict/);
- }finally{provider.close();}
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { SqliteDataProvider, CapabilityRegistry, registerDataCapability } from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' };
+const migration = (preview, overrides = {}) => ({
+  fromVersion: 0,
+  toVersion: 1,
+  digest: preview.digest,
+  transform: value => ({ fullName: value.name }),
+  validate: value => typeof value.fullName === 'string',
+  ...overrides
 });
 
-test('stale preview, invalid transform and validation failure leave all data unchanged',()=>{
- const provider=new SqliteDataProvider(':memory:');try{
-  provider.put(scope,'people','a',{name:'Ada'},null);provider.put(scope,'people','b',{name:'Lin'},null);const stale=provider.previewMigration(scope,'people');provider.put(scope,'people','a',{name:'Changed'},1);
-  assert.throws(()=>provider.migrateCollection(scope,'people',migration(stale)),/snapshot conflict/);const preview=provider.previewMigration(scope,'people');
-  assert.throws(()=>provider.migrateCollection(scope,'people',migration(preview,{transform:(value,id)=>id==='b'?{bad:undefined}:value,validate:()=>true})),/Invalid data value/);
-  assert.throws(()=>provider.migrateCollection(scope,'people',migration(preview,{validate:(_value,id)=>id!=='b'})),/validation failed/);
-  assert.throws(()=>provider.migrateCollection(scope,'people',migration(preview,{transform:async value=>value})),/Invalid data value/);
-  assert.deepEqual(provider.previewMigration(scope,'people'),preview);assert.equal(provider.get(scope,'people','a').revision,2);assert.equal(provider.get(scope,'people','b').revision,1);
- }finally{provider.close();}
+test('migration is scoped, versioned and blocks old writers while preserving revision conflicts', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    provider.put(scope, 'people', 'one', { name: 'Ada' }, null);
+    provider.put(scope, 'people', 'two', { name: 'Lin' }, null);
+    provider.put({ ...scope, tenantId: 'other' }, 'people', 'one', { name: 'Other' }, null);
+    const before = provider.previewMigration(scope, 'people');
+    assert.equal(before.schemaVersion, 0);
+    assert.equal(before.count, 2);
+    const after = provider.migrateCollection(scope, 'people', migration(before));
+    assert.equal(after.schemaVersion, 1);
+    assert.equal(after.count, 2);
+    assert.notEqual(after.digest, before.digest);
+    assert.deepEqual(provider.get(scope, 'people', 'one'), { id: 'one', revision: 2, value: { fullName: 'Ada' } });
+    assert.equal(provider.get({ ...scope, tenantId: 'other' }, 'people', 'one').value.name, 'Other');
+    assert.throws(() => provider.put(scope, 'people', 'one', { name: 'old' }, 2), /schema version conflict/);
+    assert.throws(() => provider.delete(scope, 'people', 'one', 2), /schema version conflict/);
+    assert.throws(() => provider.put(scope, 'people', 'one', { fullName: 'new' }, 1, 1), /revision conflict/);
+    assert.equal(provider.put(scope, 'people', 'one', { fullName: 'new' }, 2, 1).revision, 3);
+    provider.delete(scope, 'people', 'one', 3, 1);
+    assert.equal(provider.get(scope, 'people', 'one'), undefined);
+    assert.throws(() => provider.migrateCollection(scope, 'people', migration(before)), /snapshot conflict/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration persists across connections and history failure rolls back',()=>{
- const dir=mkdtempSync(join(tmpdir(),'app-mixer-schema-')),path=join(dir,'data.sqlite');let a,b,db;
- try{a=new SqliteDataProvider(path);b=new SqliteDataProvider(path);a.put(scope,'people','x',{name:'Ada'},null);const preview=a.previewMigration(scope,'people');b.put(scope,'people','x',{name:'New'},1);assert.throws(()=>a.migrateCollection(scope,'people',migration(preview)),/snapshot conflict/);
-  db=new DatabaseSync(path);db.exec("CREATE TRIGGER fail_migration BEFORE INSERT ON business_schema_migrations BEGIN SELECT RAISE(ABORT,'test failure'); END;");const current=a.previewMigration(scope,'people');assert.throws(()=>a.migrateCollection(scope,'people',migration(current)),/test failure/);assert.deepEqual(a.previewMigration(scope,'people'),current);db.exec('DROP TRIGGER fail_migration');a.migrateCollection(scope,'people',migration(current));
-  assert.throws(()=>db.exec('DELETE FROM business_schema_migrations'),/immutable/);a.close();a=undefined;b.close();b=undefined;a=new SqliteDataProvider(path);assert.equal(a.getSchemaVersion(scope,'people'),1);assert.equal(a.get(scope,'people','x').value.fullName,'New');
- }finally{db?.close();a?.close();b?.close();rmSync(dir,{recursive:true,force:true});}
+test('stale preview, invalid transform and validation failure leave all data unchanged', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    provider.put(scope, 'people', 'b', { name: 'Lin' }, null);
+    const stale = provider.previewMigration(scope, 'people');
+    provider.put(scope, 'people', 'a', { name: 'Changed' }, 1);
+    assert.throws(() => provider.migrateCollection(scope, 'people', migration(stale)), /snapshot conflict/);
+    const preview = provider.previewMigration(scope, 'people');
+    assert.throws(
+      () => provider.migrateCollection(scope, 'people', migration(preview, { transform: (value, id) => (id === 'b' ? { bad: undefined } : value), validate: () => true })),
+      /Invalid data value/
+    );
+    assert.throws(() => provider.migrateCollection(scope, 'people', migration(preview, { validate: (_value, id) => id !== 'b' })), /validation failed/);
+    assert.throws(() => provider.migrateCollection(scope, 'people', migration(preview, { transform: async value => value })), /Invalid data value/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+    assert.equal(provider.get(scope, 'people', 'a').revision, 2);
+    assert.equal(provider.get(scope, 'people', 'b').revision, 1);
+  } finally {
+    provider.close();
+  }
 });
 
-test('data capabilities pass an explicit schema version through the authorization boundary',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{
-  const preview=provider.previewMigration(scope,'people');provider.migrateCollection(scope,'people',migration(preview));
-  registerDataCapability(registry,provider,{candidate:{operationId:'save',method:'PUT',path:'/people'},applicationId:'app',collection:'people',operation:'put',authorize:()=>true,validate:input=>input.value.fullName==='Ada'});
-  const context={tenantId:'tenant',principalId:'user',origin:'ui'};
-  await assert.rejects(registry.invoke('save',{id:'x',expectedRevision:null,value:{fullName:'Ada'}},context),/schema version conflict/);
-  await registry.invoke('save',{id:'x',expectedRevision:null,expectedSchemaVersion:1,value:{fullName:'Ada'}},context);assert.equal(provider.get(scope,'people','x').value.fullName,'Ada');
- }finally{provider.close();}
+test('migration persists across connections and history failure rolls back', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'app-mixer-schema-')),
+    path = join(dir, 'data.sqlite');
+  let a, b, db;
+  try {
+    a = new SqliteDataProvider(path);
+    b = new SqliteDataProvider(path);
+    a.put(scope, 'people', 'x', { name: 'Ada' }, null);
+    const preview = a.previewMigration(scope, 'people');
+    b.put(scope, 'people', 'x', { name: 'New' }, 1);
+    assert.throws(() => a.migrateCollection(scope, 'people', migration(preview)), /snapshot conflict/);
+    db = new DatabaseSync(path);
+    db.exec("CREATE TRIGGER fail_migration BEFORE INSERT ON business_schema_migrations BEGIN SELECT RAISE(ABORT,'test failure'); END;");
+    const current = a.previewMigration(scope, 'people');
+    assert.throws(() => a.migrateCollection(scope, 'people', migration(current)), /test failure/);
+    assert.deepEqual(a.previewMigration(scope, 'people'), current);
+    db.exec('DROP TRIGGER fail_migration');
+    a.migrateCollection(scope, 'people', migration(current));
+    assert.throws(() => db.exec('DELETE FROM business_schema_migrations'), /immutable/);
+    a.close();
+    a = undefined;
+    b.close();
+    b = undefined;
+    a = new SqliteDataProvider(path);
+    assert.equal(a.getSchemaVersion(scope, 'people'), 1);
+    assert.equal(a.get(scope, 'people', 'x').value.fullName, 'New');
+  } finally {
+    db?.close();
+    a?.close();
+    b?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('migration snapshots caller configuration and rejects asynchronous validators',()=>{
- const provider=new SqliteDataProvider(':memory:'),mutableScope={...scope};try{
-  provider.put(mutableScope,'people','a',{name:'Ada'},null);let preview=provider.previewMigration(mutableScope,'people');
-  assert.throws(()=>provider.migrateCollection(mutableScope,'people',migration(preview,{validate:async()=>true})),/validation failed/);
-  const spec=migration(preview);spec.transform=value=>{mutableScope.tenantId='other';spec.toVersion=9;return {fullName:value.name};};
-  provider.migrateCollection(mutableScope,'people',spec);assert.equal(provider.getSchemaVersion(scope,'people'),1);assert.equal(provider.get(scope,'people','a').value.fullName,'Ada');assert.equal(provider.getSchemaVersion(mutableScope,'people'),0);
- }finally{provider.close();}
+test('data capabilities pass an explicit schema version through the authorization boundary', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    const preview = provider.previewMigration(scope, 'people');
+    provider.migrateCollection(scope, 'people', migration(preview));
+    registerDataCapability(registry, provider, {
+      candidate: { operationId: 'save', method: 'PUT', path: '/people' },
+      applicationId: 'app',
+      collection: 'people',
+      operation: 'put',
+      authorize: () => true,
+      validate: input => input.value.fullName === 'Ada'
+    });
+    const context = { tenantId: 'tenant', principalId: 'user', origin: 'ui' };
+    await assert.rejects(registry.invoke('save', { id: 'x', expectedRevision: null, value: { fullName: 'Ada' } }, context), /schema version conflict/);
+    await registry.invoke('save', { id: 'x', expectedRevision: null, expectedSchemaVersion: 1, value: { fullName: 'Ada' } }, context);
+    assert.equal(provider.get(scope, 'people', 'x').value.fullName, 'Ada');
+  } finally {
+    provider.close();
+  }
 });
 
-
-test('collection migration refuses more than the bounded number of live records',()=>{
- const provider=new SqliteDataProvider(':memory:');try{
-  for(let i=0;i<1001;i++)provider.put(scope,'large',String(i),{name:'value'},null);
-  assert.throws(()=>provider.previewMigration(scope,'large'),/collection too large/);assert.equal(provider.getSchemaVersion(scope,'large'),0);
- }finally{provider.close();}
+test('migration snapshots caller configuration and rejects asynchronous validators', () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    mutableScope = { ...scope };
+  try {
+    provider.put(mutableScope, 'people', 'a', { name: 'Ada' }, null);
+    let preview = provider.previewMigration(mutableScope, 'people');
+    assert.throws(() => provider.migrateCollection(mutableScope, 'people', migration(preview, { validate: async () => true })), /validation failed/);
+    const spec = migration(preview);
+    spec.transform = value => {
+      mutableScope.tenantId = 'other';
+      spec.toVersion = 9;
+      return { fullName: value.name };
+    };
+    provider.migrateCollection(mutableScope, 'people', spec);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 1);
+    assert.equal(provider.get(scope, 'people', 'a').value.fullName, 'Ada');
+    assert.equal(provider.getSchemaVersion(mutableScope, 'people'), 0);
+  } finally {
+    provider.close();
+  }
 });
 
-test('host-configured migration limits allow larger collections and fence expanded output',()=>{
- const options={migrationLimits:{maxRecords:1001,maxBytes:32768}},provider=new SqliteDataProvider(':memory:',options);try{for(let i=0;i<1001;i++)provider.put(scope,'large',String(i),{name:'value'},null);options.migrationLimits.maxRecords=1;const rehearsal=provider.rehearseMigration(scope,'large',{fromVersion:0,transform:value=>({fullName:value.name}),validate:value=>typeof value.fullName==='string'});assert.equal(rehearsal.count,1001);assert.throws(()=>provider.rehearseMigration(scope,'large',{fromVersion:0,transform:value=>({fullName:value.name.repeat(100)}),validate:()=>true}),/collection too large/);assert.equal(provider.getSchemaVersion(scope,'large'),0);provider.migrateCollection(scope,'large',migration(rehearsal,{outputDigest:rehearsal.outputDigest}));assert.equal(provider.getSchemaVersion(scope,'large'),1);assert.equal(provider.get(scope,'large','1000',1).value.fullName,'value');provider.put(scope,'large','extra',{fullName:'value'},null,1);assert.throws(()=>provider.previewMigration(scope,'large'),/collection too large/);}finally{provider.close();}
- for(const migrationLimits of [{maxRecords:0},{maxRecords:10001},{maxBytes:0},{maxBytes:128*1024*1024+1},{maxRecords:1.5}])assert.throws(()=>new SqliteDataProvider(':memory:',{migrationLimits}),/Invalid migration limits/);
- const small=new SqliteDataProvider(':memory:',{migrationLimits:{maxRecords:2,maxBytes:10}});try{small.put(scope,'x','a',{name:'long'},null);assert.throws(()=>small.previewMigration(scope,'x'),/collection too large/);}finally{small.close();}
+test('collection migration refuses more than the bounded number of live records', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    for (let i = 0; i < 1001; i++) provider.put(scope, 'large', String(i), { name: 'value' }, null);
+    assert.throws(() => provider.previewMigration(scope, 'large'), /collection too large/);
+    assert.equal(provider.getSchemaVersion(scope, 'large'), 0);
+  } finally {
+    provider.close();
+  }
 });
 
-test('guarded record and list reads reject stale schemas while legacy reads remain available',()=>{const provider=new SqliteDataProvider(':memory:');try{provider.put(scope,'people','a',{name:'Ada'},null);assert.equal(provider.get(scope,'people','a',0).value.name,'Ada');assert.equal(provider.list(scope,'people',{expectedSchemaVersion:0}).items.length,1);const preview=provider.previewMigration(scope,'people');provider.migrateCollection(scope,'people',migration(preview));assert.throws(()=>provider.get(scope,'people','a',0),/schema version conflict/);assert.throws(()=>provider.get(scope,'people','missing',0),/schema version conflict/);assert.throws(()=>provider.list(scope,'people',{expectedSchemaVersion:0}),/schema version conflict/);assert.equal(provider.get(scope,'people','a',1).value.fullName,'Ada');assert.equal(provider.list(scope,'people',{expectedSchemaVersion:1}).items[0].value.fullName,'Ada');assert.equal(provider.get(scope,'people','a').value.fullName,'Ada');assert.equal(provider.list(scope,'people').items.length,1);assert.throws(()=>provider.get(scope,'people','a',-1),/Invalid schema version/);}finally{provider.close()}});
-
-test('guarded get capability fails closed when provider cannot enforce schema versions',async()=>{const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});try{provider.put(scope,'people','a',{name:'Ada'},null);const legacy={get:provider.get.bind(provider),put:provider.put.bind(provider),delete:provider.delete.bind(provider)};registerDataCapability(registry,legacy,{candidate:{operationId:'people.get',method:'GET',path:'/people'},applicationId:'app',collection:'people',operation:'get',authorize:()=>true,validate:()=>true});const context={tenantId:'tenant',principalId:'user',origin:'ui'};assert.equal((await registry.invoke('people.get',{id:'a'},context)).value.name,'Ada');await assert.rejects(registry.invoke('people.get',{id:'a',expectedSchemaVersion:0},context),/guard unavailable/);}finally{provider.close()}});
-
-test('rollback restores an earlier shape in a new generation without accepting stale writers',()=>{
- const p=new SqliteDataProvider(':memory:');try{p.put(scope,'people','a',{name:'Ada'},null);p.put(scope,'people','b',{name:'Lin'},null);p.put({...scope,tenantId:'other'},'people','a',{name:'Other'},null);const before=p.previewMigration(scope,'people');p.migrateCollection(scope,'people',migration(before));p.put(scope,'people','a',{fullName:'Grace'},2,1);const preview=p.previewMigration(scope,'people'),restored=p.rollbackCollection(scope,'people',{fromVersion:1,targetVersion:0,digest:preview.digest,transform:value=>({name:value.fullName}),validate:value=>typeof value.name==='string'});assert.equal(restored.schemaVersion,2);assert.deepEqual(p.get(scope,'people','a',2),{id:'a',revision:4,value:{name:'Grace'}});assert.deepEqual(p.get(scope,'people','b',2),{id:'b',revision:3,value:{name:'Lin'}});assert.equal(p.get({...scope,tenantId:'other'},'people','a').value.name,'Other');assert.throws(()=>p.get(scope,'people','a',0),/schema version conflict/);assert.throws(()=>p.put(scope,'people','a',{name:'stale'},4,1),/schema version conflict/);assert.equal(p.put(scope,'people','a',{name:'New'},4,2).revision,5);assert.deepEqual(p.rollbackHistory(scope,'people').items,[{fromVersion:1,toVersion:2,targetVersion:0,digest:preview.digest,recordCount:2}]);assert.deepEqual(p.rollbackHistory({...scope,tenantId:'other'},'people').items,[]);assert.throws(()=>p.rollbackCollection(scope,'people',{fromVersion:2,targetVersion:2,digest:preview.digest,transform:x=>x,validate:()=>true}),/Invalid data rollback/);const second=p.previewMigration(scope,'people');p.rollbackCollection(scope,'people',{fromVersion:2,targetVersion:1,digest:second.digest,transform:value=>({fullName:value.name}),validate:value=>typeof value.fullName==='string'});assert.equal(p.get(scope,'people','a',3).value.fullName,'New');const page=p.rollbackHistory(scope,'people',{limit:1});assert.equal(page.nextAfter,2);assert.deepEqual(p.rollbackHistory(scope,'people',{after:page.nextAfter}).items.map(event=>[event.fromVersion,event.toVersion,event.targetVersion]),[[2,3,1]]);
- }finally{p.close();}
+test('host-configured migration limits allow larger collections and fence expanded output', () => {
+  const options = { migrationLimits: { maxRecords: 1001, maxBytes: 32768 } },
+    provider = new SqliteDataProvider(':memory:', options);
+  try {
+    for (let i = 0; i < 1001; i++) provider.put(scope, 'large', String(i), { name: 'value' }, null);
+    options.migrationLimits.maxRecords = 1;
+    const rehearsal = provider.rehearseMigration(scope, 'large', { fromVersion: 0, transform: value => ({ fullName: value.name }), validate: value => typeof value.fullName === 'string' });
+    assert.equal(rehearsal.count, 1001);
+    assert.throws(() => provider.rehearseMigration(scope, 'large', { fromVersion: 0, transform: value => ({ fullName: value.name.repeat(100) }), validate: () => true }), /collection too large/);
+    assert.equal(provider.getSchemaVersion(scope, 'large'), 0);
+    provider.migrateCollection(scope, 'large', migration(rehearsal, { outputDigest: rehearsal.outputDigest }));
+    assert.equal(provider.getSchemaVersion(scope, 'large'), 1);
+    assert.equal(provider.get(scope, 'large', '1000', 1).value.fullName, 'value');
+    provider.put(scope, 'large', 'extra', { fullName: 'value' }, null, 1);
+    assert.throws(() => provider.previewMigration(scope, 'large'), /collection too large/);
+  } finally {
+    provider.close();
+  }
+  for (const migrationLimits of [{ maxRecords: 0 }, { maxRecords: 10001 }, { maxBytes: 0 }, { maxBytes: 128 * 1024 * 1024 + 1 }, { maxRecords: 1.5 }])
+    assert.throws(() => new SqliteDataProvider(':memory:', { migrationLimits }), /Invalid migration limits/);
+  const small = new SqliteDataProvider(':memory:', { migrationLimits: { maxRecords: 2, maxBytes: 10 } });
+  try {
+    small.put(scope, 'x', 'a', { name: 'long' }, null);
+    assert.throws(() => small.previewMigration(scope, 'x'), /collection too large/);
+  } finally {
+    small.close();
+  }
 });
 
-test('rollback rejects stale previews and rolls back data and provenance when history fails',()=>{
- const dir=mkdtempSync(join(tmpdir(),'app-mixer-rollback-')),path=join(dir,'data.sqlite');let p,db;try{p=new SqliteDataProvider(path);p.put(scope,'people','a',{name:'Ada'},null);const before=p.previewMigration(scope,'people');p.migrateCollection(scope,'people',migration(before));const stale=p.previewMigration(scope,'people');p.put(scope,'people','a',{fullName:'Changed'},2,1);const spec={fromVersion:1,targetVersion:0,digest:stale.digest,transform:value=>({name:value.fullName}),validate:value=>typeof value.name==='string'};assert.throws(()=>p.rollbackCollection(scope,'people',spec),/snapshot conflict/);const current=p.previewMigration(scope,'people');db=new DatabaseSync(path);db.exec("CREATE TRIGGER fail_rollback BEFORE INSERT ON business_schema_rollbacks BEGIN SELECT RAISE(ABORT,'rollback audit unavailable'); END");assert.throws(()=>p.rollbackCollection(scope,'people',{...spec,digest:current.digest}),/rollback audit unavailable/);assert.deepEqual(p.previewMigration(scope,'people'),current);assert.equal(p.get(scope,'people','a',1).value.fullName,'Changed');assert.deepEqual(p.rollbackHistory(scope,'people').items,[]);db.exec('DROP TRIGGER fail_rollback');p.rollbackCollection(scope,'people',{...spec,digest:current.digest});assert.throws(()=>db.exec('UPDATE business_schema_rollbacks SET target_version=1'),/immutable/);assert.throws(()=>db.exec('DELETE FROM business_schema_rollbacks'),/immutable/);p.close();p=undefined;p=new SqliteDataProvider(path);assert.equal(p.get(scope,'people','a',2).value.name,'Changed');assert.equal(p.rollbackHistory(scope,'people').items[0].targetVersion,0);
- }finally{db?.close();p?.close();rmSync(dir,{recursive:true,force:true});}
+test('guarded record and list reads reject stale schemas while legacy reads remain available', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    assert.equal(provider.get(scope, 'people', 'a', 0).value.name, 'Ada');
+    assert.equal(provider.list(scope, 'people', { expectedSchemaVersion: 0 }).items.length, 1);
+    const preview = provider.previewMigration(scope, 'people');
+    provider.migrateCollection(scope, 'people', migration(preview));
+    assert.throws(() => provider.get(scope, 'people', 'a', 0), /schema version conflict/);
+    assert.throws(() => provider.get(scope, 'people', 'missing', 0), /schema version conflict/);
+    assert.throws(() => provider.list(scope, 'people', { expectedSchemaVersion: 0 }), /schema version conflict/);
+    assert.equal(provider.get(scope, 'people', 'a', 1).value.fullName, 'Ada');
+    assert.equal(provider.list(scope, 'people', { expectedSchemaVersion: 1 }).items[0].value.fullName, 'Ada');
+    assert.equal(provider.get(scope, 'people', 'a').value.fullName, 'Ada');
+    assert.equal(provider.list(scope, 'people').items.length, 1);
+    assert.throws(() => provider.get(scope, 'people', 'a', -1), /Invalid schema version/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('guarded get capability fails closed when provider cannot enforce schema versions', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const legacy = { get: provider.get.bind(provider), put: provider.put.bind(provider), delete: provider.delete.bind(provider) };
+    registerDataCapability(registry, legacy, {
+      candidate: { operationId: 'people.get', method: 'GET', path: '/people' },
+      applicationId: 'app',
+      collection: 'people',
+      operation: 'get',
+      authorize: () => true,
+      validate: () => true
+    });
+    const context = { tenantId: 'tenant', principalId: 'user', origin: 'ui' };
+    assert.equal((await registry.invoke('people.get', { id: 'a' }, context)).value.name, 'Ada');
+    await assert.rejects(registry.invoke('people.get', { id: 'a', expectedSchemaVersion: 0 }, context), /guard unavailable/);
+  } finally {
+    provider.close();
+  }
+});
+
+test('rollback restores an earlier shape in a new generation without accepting stale writers', () => {
+  const p = new SqliteDataProvider(':memory:');
+  try {
+    p.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    p.put(scope, 'people', 'b', { name: 'Lin' }, null);
+    p.put({ ...scope, tenantId: 'other' }, 'people', 'a', { name: 'Other' }, null);
+    const before = p.previewMigration(scope, 'people');
+    p.migrateCollection(scope, 'people', migration(before));
+    p.put(scope, 'people', 'a', { fullName: 'Grace' }, 2, 1);
+    const preview = p.previewMigration(scope, 'people'),
+      restored = p.rollbackCollection(scope, 'people', {
+        fromVersion: 1,
+        targetVersion: 0,
+        digest: preview.digest,
+        transform: value => ({ name: value.fullName }),
+        validate: value => typeof value.name === 'string'
+      });
+    assert.equal(restored.schemaVersion, 2);
+    assert.deepEqual(p.get(scope, 'people', 'a', 2), { id: 'a', revision: 4, value: { name: 'Grace' } });
+    assert.deepEqual(p.get(scope, 'people', 'b', 2), { id: 'b', revision: 3, value: { name: 'Lin' } });
+    assert.equal(p.get({ ...scope, tenantId: 'other' }, 'people', 'a').value.name, 'Other');
+    assert.throws(() => p.get(scope, 'people', 'a', 0), /schema version conflict/);
+    assert.throws(() => p.put(scope, 'people', 'a', { name: 'stale' }, 4, 1), /schema version conflict/);
+    assert.equal(p.put(scope, 'people', 'a', { name: 'New' }, 4, 2).revision, 5);
+    assert.deepEqual(p.rollbackHistory(scope, 'people').items, [{ fromVersion: 1, toVersion: 2, targetVersion: 0, digest: preview.digest, recordCount: 2 }]);
+    assert.deepEqual(p.rollbackHistory({ ...scope, tenantId: 'other' }, 'people').items, []);
+    assert.throws(() => p.rollbackCollection(scope, 'people', { fromVersion: 2, targetVersion: 2, digest: preview.digest, transform: x => x, validate: () => true }), /Invalid data rollback/);
+    const second = p.previewMigration(scope, 'people');
+    p.rollbackCollection(scope, 'people', {
+      fromVersion: 2,
+      targetVersion: 1,
+      digest: second.digest,
+      transform: value => ({ fullName: value.name }),
+      validate: value => typeof value.fullName === 'string'
+    });
+    assert.equal(p.get(scope, 'people', 'a', 3).value.fullName, 'New');
+    const page = p.rollbackHistory(scope, 'people', { limit: 1 });
+    assert.equal(page.nextAfter, 2);
+    assert.deepEqual(
+      p.rollbackHistory(scope, 'people', { after: page.nextAfter }).items.map(event => [event.fromVersion, event.toVersion, event.targetVersion]),
+      [[2, 3, 1]]
+    );
+  } finally {
+    p.close();
+  }
+});
+
+test('rollback rejects stale previews and rolls back data and provenance when history fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'app-mixer-rollback-')),
+    path = join(dir, 'data.sqlite');
+  let p, db;
+  try {
+    p = new SqliteDataProvider(path);
+    p.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const before = p.previewMigration(scope, 'people');
+    p.migrateCollection(scope, 'people', migration(before));
+    const stale = p.previewMigration(scope, 'people');
+    p.put(scope, 'people', 'a', { fullName: 'Changed' }, 2, 1);
+    const spec = { fromVersion: 1, targetVersion: 0, digest: stale.digest, transform: value => ({ name: value.fullName }), validate: value => typeof value.name === 'string' };
+    assert.throws(() => p.rollbackCollection(scope, 'people', spec), /snapshot conflict/);
+    const current = p.previewMigration(scope, 'people');
+    db = new DatabaseSync(path);
+    db.exec("CREATE TRIGGER fail_rollback BEFORE INSERT ON business_schema_rollbacks BEGIN SELECT RAISE(ABORT,'rollback audit unavailable'); END");
+    assert.throws(() => p.rollbackCollection(scope, 'people', { ...spec, digest: current.digest }), /rollback audit unavailable/);
+    assert.deepEqual(p.previewMigration(scope, 'people'), current);
+    assert.equal(p.get(scope, 'people', 'a', 1).value.fullName, 'Changed');
+    assert.deepEqual(p.rollbackHistory(scope, 'people').items, []);
+    db.exec('DROP TRIGGER fail_rollback');
+    p.rollbackCollection(scope, 'people', { ...spec, digest: current.digest });
+    assert.throws(() => db.exec('UPDATE business_schema_rollbacks SET target_version=1'), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM business_schema_rollbacks'), /immutable/);
+    p.close();
+    p = undefined;
+    p = new SqliteDataProvider(path);
+    assert.equal(p.get(scope, 'people', 'a', 2).value.name, 'Changed');
+    assert.equal(p.rollbackHistory(scope, 'people').items[0].targetVersion, 0);
+  } finally {
+    db?.close();
+    p?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

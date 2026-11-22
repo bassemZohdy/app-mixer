@@ -7,4 +7,4 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-zone-placement: "true"}
+      matchLabels: { app-mixer.dev/enforce-zone-placement: 'true' }

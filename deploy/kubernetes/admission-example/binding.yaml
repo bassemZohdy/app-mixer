@@ -10,7 +10,7 @@ spec:
     parameterNotFoundAction: Deny
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -21,7 +21,7 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -32,7 +32,7 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -43,7 +43,7 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -54,4 +54,4 @@ spec:
   validationActions: [Deny]
   matchResources:
     namespaceSelector:
-      matchLabels: {app-mixer.dev/enforce-data-plane: "true"}
+      matchLabels: { app-mixer.dev/enforce-data-plane: 'true' }

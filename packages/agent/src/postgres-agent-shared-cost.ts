@@ -1,54 +1,425 @@
-import {isIdentifier,isNonNegativeInteger} from './validation.js';
-type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
-type Actor={tenantId:string;principalId:string};
-type Scope={tenantId:string;budgetId:string;currency:string;maxMicros:number};
-type Call={agentId:string;runId:string;callId:string};
-type Action='reserve'|'settle'|'reconcile'|'read'|'audit'|'pending'|'metrics';
-type Options={enabled:true;scope:Scope;query:Query;queryWithSignal?:(sql:string,args:unknown[],signal:AbortSignal)=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>;authorize:(actor:Actor,scope:Scope,action:Action,call:Call|undefined,signal:AbortSignal)=>boolean|Promise<boolean>;timeoutMs?:number;maxPending?:number};
-export type SharedCostReservation=Call&{reservedMicros:number;usedMicros:number|null;status:'reserved'|'settled';createdAt:number};
-export type SharedCostSummary={currency:string;limitMicros:number;reservedMicros:number;committedMicros:number;calls:number};
-export type SharedCostMetricsSnapshot={currency:string;limitMicros:number;reservedMicros:number;committedMicros:number;reservedCalls:number;settledCalls:number;overrunCalls:number;oldestReservationSeconds:number};
-export type SharedCostReconciliation=Call&{id:number;principalId:string;reference:string;usedMicros:number;recordedAt:number};
-const id=isIdentifier;
-const integer=isNonNegativeInteger;
-const dbNumber=(value:unknown):number=>{if(value===null||value===undefined||typeof value==='boolean'||(typeof value!=='string'&&typeof value!=='number')||(typeof value==='string'&&!/^(0|[1-9][0-9]*)$/.test(value)))throw Error('Invalid shared cost data');const n=Number(value);if(!integer(n))throw Error('Invalid shared cost data');return n;};
-const NOW='(extract(epoch from clock_timestamp())*1000)::bigint';
+import { isIdentifier, isNonNegativeInteger } from './validation.js';
+type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+type Actor = { tenantId: string; principalId: string };
+type Scope = { tenantId: string; budgetId: string; currency: string; maxMicros: number };
+type Call = { agentId: string; runId: string; callId: string };
+type Action = 'reserve' | 'settle' | 'reconcile' | 'read' | 'audit' | 'pending' | 'metrics';
+type Options = {
+  enabled: true;
+  scope: Scope;
+  query: Query;
+  queryWithSignal?: (sql: string, args: unknown[], signal: AbortSignal) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+  transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
+  authorize: (actor: Actor, scope: Scope, action: Action, call: Call | undefined, signal: AbortSignal) => boolean | Promise<boolean>;
+  timeoutMs?: number;
+  maxPending?: number;
+};
+export type SharedCostReservation = Call & { reservedMicros: number; usedMicros: number | null; status: 'reserved' | 'settled'; createdAt: number };
+export type SharedCostSummary = { currency: string; limitMicros: number; reservedMicros: number; committedMicros: number; calls: number };
+export type SharedCostMetricsSnapshot = {
+  currency: string;
+  limitMicros: number;
+  reservedMicros: number;
+  committedMicros: number;
+  reservedCalls: number;
+  settledCalls: number;
+  overrunCalls: number;
+  oldestReservationSeconds: number;
+};
+export type SharedCostReconciliation = Call & { id: number; principalId: string; reference: string; usedMicros: number; recordedAt: number };
+const id = isIdentifier;
+const integer = isNonNegativeInteger;
+const dbNumber = (value: unknown): number => {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'boolean' ||
+    (typeof value !== 'string' && typeof value !== 'number') ||
+    (typeof value === 'string' && !/^(0|[1-9][0-9]*)$/.test(value))
+  )
+    throw Error('Invalid shared cost data');
+  const n = Number(value);
+  if (!integer(n)) throw Error('Invalid shared cost data');
+  return n;
+};
+const NOW = '(extract(epoch from clock_timestamp())*1000)::bigint';
 /** One host-selected shared cost budget backed by an authoritative PostgreSQL primary. */
 export class PostgresAgentSharedCost {
- private readonly scope:Scope;private readonly query:Query;private readonly queryWithSignal:Options['queryWithSignal'];private readonly transaction:Options['transaction'];private readonly authorize:Options['authorize'];private readonly timeoutMs?:number;private readonly maxPending?:number;private pendingAuthorizations=0;
- constructor(options:Options){const scope=options?.scope;if(!options||options.enabled!==true||!scope||!id(scope.tenantId)||!id(scope.budgetId)||typeof scope.currency!=='string'||!/^[A-Z]{3}$/.test(scope.currency)||!integer(scope.maxMicros)||scope.maxMicros<1||scope.maxMicros>100000000000||typeof options.query!=='function'||(options.queryWithSignal!==undefined&&typeof options.queryWithSignal!=='function')||typeof options.transaction!=='function'||typeof options.authorize!=='function'||(options.timeoutMs===undefined)!==(options.maxPending===undefined)||(options.timeoutMs!==undefined&&(!integer(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30000))||(options.maxPending!==undefined&&(!integer(options.maxPending)||options.maxPending<1||options.maxPending>100)))throw Error('Invalid shared cost configuration');this.scope={tenantId:scope.tenantId,budgetId:scope.budgetId,currency:scope.currency,maxMicros:scope.maxMicros};this.query=options.query;this.queryWithSignal=options.queryWithSignal;this.transaction=options.transaction;this.authorize=options.authorize;this.timeoutMs=options.timeoutMs;this.maxPending=options.maxPending;}
- async initialize():Promise<void>{
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_budgets (tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros BIGINT NOT NULL,PRIMARY KEY(tenant_id,budget_id))',[]);
-  await this.query("CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_calls (tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved_micros BIGINT NOT NULL CHECK(reserved_micros>0),used_micros BIGINT,status TEXT NOT NULL CHECK(status IN ('reserved','settled')),created_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,budget_id,agent_id,run_id,call_id),UNIQUE(tenant_id,agent_id,run_id,call_id),CHECK((status='reserved' AND used_micros IS NULL) OR (status='settled' AND used_micros IS NOT NULL AND used_micros>=0)))",[]);
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_reconciliations (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_micros BIGINT NOT NULL,recorded_at BIGINT NOT NULL)',[]);
-  await this.query("CREATE INDEX IF NOT EXISTS app_mixer_shared_cost_outstanding ON app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id) WHERE status='reserved'",[]);
-  await this.query('CREATE INDEX IF NOT EXISTS app_mixer_shared_cost_reconciliations_scope ON app_mixer_shared_cost_reconciliations (tenant_id,budget_id,id)',[]);
-  await this.query("CREATE OR REPLACE FUNCTION app_mixer_shared_cost_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Shared cost reconciliation history is immutable'; END $$",[]);
-  await this.query('DO $$ BEGIN CREATE TRIGGER app_mixer_shared_cost_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_cost_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_cost_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',[]);
- }
- binding():Scope{return {...this.scope};}
- isBoundTo(tenantId:string,currency:string):boolean{return tenantId===this.scope.tenantId&&currency===this.scope.currency;}
- private actor(actor:Actor):Actor{if(!actor||actor.tenantId!==this.scope.tenantId||!id(actor.principalId))throw Error('Invalid shared cost actor');return {tenantId:actor.tenantId,principalId:actor.principalId};}
- private call(call:Call):Call{if(!call||!id(call.agentId)||!id(call.runId)||!id(call.callId))throw Error('Invalid shared cost call');return {agentId:call.agentId,runId:call.runId,callId:call.callId};}
- private async permit(actor:Actor,action:Action,call?:Call,parent?:AbortSignal):Promise<void>{const controller=new AbortController(),signal=parent?AbortSignal.any([parent,controller.signal]):controller.signal;if(signal.aborted)throw Error('Shared cost access unavailable');const check=async()=>{try{return await this.authorize({...actor},{...this.scope},action,call?{...call}:undefined,signal)===true&&!signal.aborted;}catch{return false;}};if(this.timeoutMs===undefined){const allowed=await check();if(signal.aborted)throw Error('Shared cost access unavailable');if(allowed)return;throw Error('Shared cost access denied');}if(this.pendingAuthorizations>=this.maxPending!)throw Error('Shared cost access unavailable');this.pendingAuthorizations++;const task=Promise.resolve().then(check);void task.then(()=>{this.pendingAuthorizations--;},()=>{this.pendingAuthorizations--;});let timer:ReturnType<typeof setTimeout>|undefined;try{const allowed=await Promise.race([task,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('Shared cost access unavailable'));},this.timeoutMs);})]);if(signal.aborted)throw Error('Shared cost access unavailable');if(!allowed)throw Error('Shared cost access denied');}finally{if(timer!==undefined)clearTimeout(timer);}}
- private async lock(query:Query):Promise<void>{const {tenantId,budgetId,currency,maxMicros}=this.scope;await query('INSERT INTO app_mixer_shared_cost_budgets (tenant_id,budget_id,currency,max_micros) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',[tenantId,budgetId,currency,maxMicros]);const rows=(await query('SELECT currency,max_micros FROM app_mixer_shared_cost_budgets WHERE tenant_id=$1 AND budget_id=$2 FOR UPDATE',[tenantId,budgetId])).rows;if(!Array.isArray(rows)||rows.length!==1||rows[0].currency!==currency||dbNumber(rows[0].max_micros)!==maxMicros)throw Error('Shared cost budget conflict');}
- private async checkReadConfig():Promise<void>{const rows=(await this.query('SELECT currency,max_micros FROM app_mixer_shared_cost_budgets WHERE tenant_id=$1 AND budget_id=$2',[this.scope.tenantId,this.scope.budgetId])).rows;if(!Array.isArray(rows)||rows.length>1)throw Error('Invalid shared cost data');if(rows[0]&&(rows[0].currency!==this.scope.currency||dbNumber(rows[0].max_micros)!==this.scope.maxMicros))throw Error('Shared cost budget conflict');}
- private values(call:Call):unknown[]{return [this.scope.tenantId,this.scope.budgetId,call.agentId,call.runId,call.callId];}
- private record(row:Record<string,unknown>):SharedCostReservation{const call=this.call({agentId:row.agent_id as string,runId:row.run_id as string,callId:row.call_id as string}),reservedMicros=dbNumber(row.reserved_micros),createdAt=dbNumber(row.created_at),status=row.status;if(reservedMicros<1||reservedMicros>100000000000||(status!=='reserved'&&status!=='settled')||(status==='reserved'&&row.used_micros!==null))throw Error('Invalid shared cost data');const usedMicros=row.used_micros===null?null:dbNumber(row.used_micros);if(status==='settled'&&(usedMicros===null||usedMicros>100000000000))throw Error('Invalid shared cost data');return {...call,reservedMicros,usedMicros,status,createdAt};}
- /** Reserve capacity before dispatch; an existing call is never permission to dispatch again. */
- async reserve(actor:Actor,call:Call,reservedMicros:number):Promise<SharedCostReservation>{const who=this.actor(actor),selected=this.call(call);if(!integer(reservedMicros)||reservedMicros<1||reservedMicros>this.scope.maxMicros)throw Error('Invalid shared cost reservation');await this.permit(who,'reserve',selected);try{return await this.transaction(async query=>{await this.lock(query);await this.permit(who,'reserve',selected);const existing=await query('SELECT 1 FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id=$4',[this.scope.tenantId,selected.agentId,selected.runId,selected.callId]);if(existing.rows.length)throw Error('Shared cost call already exists');const totals=(await query("SELECT COUNT(*) AS calls,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved_micros ELSE used_micros END),0) AS total,COUNT(*) FILTER (WHERE status='settled' AND used_micros>reserved_micros) AS overruns FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2",[this.scope.tenantId,this.scope.budgetId])).rows[0];if(!totals)throw Error('Invalid shared cost data');const calls=dbNumber(totals.calls),total=dbNumber(totals.total),overruns=dbNumber(totals.overruns);if(calls>=10000)throw Error('Shared cost history quota exceeded');if(overruns>0)throw Error('Shared cost provider limit violated');if(total+reservedMicros>this.scope.maxMicros)throw Error('Shared cost budget exhausted');await this.permit(who,'reserve',selected);const rows=(await query(`INSERT INTO app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved',${NOW}) RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at`,[...this.values(selected),reservedMicros])).rows;if(rows.length!==1)throw Error('Invalid shared cost data');return this.record(rows[0]);});}catch(error){if(error&&typeof error==='object'&&'code' in error&&(error as {code:unknown}).code==='23505')throw Error('Shared cost call already exists');throw error;}}
- /** Record known usage; the host must protect this operation and verify provider values. */
- async settle(actor:Actor,call:Call,usedMicros:number):Promise<SharedCostReservation>{return this.finish(actor,call,usedMicros);}
- /** Record independently verified usage and actor-attributed evidence atomically. */
- async reconcile(actor:Actor,call:Call,usedMicros:number,reference:string):Promise<SharedCostReservation>{if(!id(reference))throw Error('Invalid shared cost evidence');return this.finish(actor,call,usedMicros,reference);}
- private async finish(actor:Actor,call:Call,usedMicros:number,reference?:string):Promise<SharedCostReservation>{const who=this.actor(actor),selected=this.call(call),action=reference===undefined?'settle':'reconcile';if(!integer(usedMicros)||usedMicros>100000000000)throw Error('Invalid shared cost usage');await this.permit(who,action,selected);return this.transaction(async query=>{await this.lock(query);await this.permit(who,action,selected);const rows=(await query("UPDATE app_mixer_shared_cost_calls SET status='settled',used_micros=$6 WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5 AND status='reserved' RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at",[...this.values(selected),usedMicros])).rows;if(rows.length!==1)throw Error('Shared cost reservation unavailable');if(reference!==undefined)await query(`INSERT INTO app_mixer_shared_cost_reconciliations (tenant_id,budget_id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,${NOW})`,[...this.values(selected),who.principalId,reference,usedMicros]);return this.record(rows[0]);});}
- async get(actor:Actor,call:Call):Promise<SharedCostReservation|undefined>{const who=this.actor(actor),selected=this.call(call);await this.permit(who,'read',selected);await this.checkReadConfig();const rows=(await this.query('SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5',this.values(selected))).rows;if(!Array.isArray(rows)||rows.length>1)throw Error('Invalid shared cost data');const result=rows[0]?this.record(rows[0]):undefined;await this.permit(who,'read',selected);return result;}
- async summary(actor:Actor):Promise<SharedCostSummary>{const who=this.actor(actor);await this.permit(who,'read');const rows=(await this.query("SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed FROM app_mixer_shared_cost_budgets b LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=b.tenant_id AND c.budget_id=b.budget_id WHERE b.tenant_id=$1 AND b.budget_id=$2 GROUP BY b.currency,b.max_micros",[this.scope.tenantId,this.scope.budgetId])).rows;if(!Array.isArray(rows)||rows.length>1)throw Error('Invalid shared cost data');const row=rows[0];if(row&&(row.currency!==this.scope.currency||dbNumber(row.max_micros)!==this.scope.maxMicros))throw Error('Shared cost budget conflict');const result={currency:this.scope.currency,limitMicros:this.scope.maxMicros,reservedMicros:row?dbNumber(row.reserved):0,committedMicros:row?dbNumber(row.committed):0,calls:row?dbNumber(row.calls):0};await this.permit(who,'read');return result;}
- /** Return a single-snapshot budget aggregate under separate metrics authorization. */
- async metricsSnapshot(actor:Actor):Promise<SharedCostMetricsSnapshot>{return this.metricsSnapshotWithSignal(actor,new AbortController().signal);}
- async metricsSnapshotWithSignal(actor:Actor,signal:AbortSignal):Promise<SharedCostMetricsSnapshot>{if(!(signal instanceof AbortSignal))throw Error('Invalid shared cost signal');const who=this.actor(actor);await this.permit(who,'metrics',undefined,signal);const query=this.queryWithSignal?(sql:string,args:unknown[])=>this.queryWithSignal!(sql,args,signal):this.query;const rows=(await query(`SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COUNT(c.call_id) FILTER (WHERE c.status='reserved') AS reserved_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled') AS settled_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled' AND c.used_micros>c.reserved_micros) AS overruns,COUNT(c.call_id) FILTER (WHERE c.status IS NULL OR c.status NOT IN ('reserved','settled') OR c.reserved_micros<1 OR c.reserved_micros>100000000000 OR c.created_at<0 OR c.created_at>9007199254740991 OR (c.status='reserved' AND c.used_micros IS NOT NULL) OR (c.status='settled' AND (c.used_micros IS NULL OR c.used_micros<0 OR c.used_micros>100000000000))) AS invalid,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed,MIN(c.created_at) FILTER (WHERE c.status='reserved') AS oldest,${NOW} AS observed_at FROM (SELECT $1::text AS tenant_id,$2::text AS budget_id) s LEFT JOIN app_mixer_shared_cost_budgets b ON b.tenant_id=s.tenant_id AND b.budget_id=s.budget_id LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=s.tenant_id AND c.budget_id=s.budget_id GROUP BY b.currency,b.max_micros`,[this.scope.tenantId,this.scope.budgetId])).rows;if(signal.aborted)throw Error('Shared cost access unavailable');if(!Array.isArray(rows)||rows.length!==1)throw Error('Invalid shared cost metrics data');const row=rows[0];if(!row||typeof row!=='object')throw Error('Invalid shared cost metrics data');const calls=dbNumber(row.calls),reservedCalls=dbNumber(row.reserved_calls),settledCalls=dbNumber(row.settled_calls),overrunCalls=dbNumber(row.overruns),observedAt=dbNumber(row.observed_at);if(dbNumber(row.invalid)!==0||reservedCalls+settledCalls!==calls||overrunCalls>settledCalls||(row.currency===null?(row.max_micros!==null||calls!==0):(row.currency!==this.scope.currency||dbNumber(row.max_micros)!==this.scope.maxMicros)))throw Error('Invalid shared cost metrics data');if((reservedCalls===0)!==(row.oldest===null))throw Error('Invalid shared cost metrics data');const oldest=reservedCalls?dbNumber(row.oldest):observedAt,result={currency:this.scope.currency,limitMicros:this.scope.maxMicros,reservedMicros:dbNumber(row.reserved),committedMicros:dbNumber(row.committed),reservedCalls,settledCalls,overrunCalls,oldestReservationSeconds:Math.max(0,observedAt-oldest)/1000};await this.permit(who,'metrics',undefined,signal);return result;}
- /** List outstanding calls only when the host authorizes visibility of the whole budget. */
- async pending(actor:Actor,options:{after?:Call;limit?:number}={}):Promise<{items:SharedCostReservation[];nextAfter?:Call}>{const who=this.actor(actor);if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||(options.limit!==undefined&&(!integer(options.limit)||options.limit<1||options.limit>100)))throw Error('Invalid shared cost listing');const after=options.after===undefined?undefined:this.call(options.after),limit=options.limit??50;await this.permit(who,'pending');await this.checkReadConfig();const rows=(await this.query("SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND status='reserved' AND (agent_id,run_id,call_id)>($3,$4,$5) ORDER BY agent_id,run_id,call_id LIMIT $6",[this.scope.tenantId,this.scope.budgetId,after?.agentId??'',after?.runId??'',after?.callId??'',limit+1])).rows;if(!Array.isArray(rows)||rows.length>limit+1)throw Error('Invalid shared cost data');const items=rows.slice(0,limit).map(row=>{const item=this.record(row);if(item.status!=='reserved')throw Error('Invalid shared cost data');return item;});await this.checkReadConfig();await this.permit(who,'pending');const last=items.at(-1);return {items,...(rows.length>limit&&last?{nextAfter:{agentId:last.agentId,runId:last.runId,callId:last.callId}}:{})};}
- async history(actor:Actor,options:{after?:number;limit?:number}={}):Promise<{items:SharedCostReconciliation[];nextAfter?:number}>{const who=this.actor(actor),after=options?.after??0,limit=options?.limit??50;if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='after'&&key!=='limit')||!integer(after)||!integer(limit)||limit<1||limit>100)throw Error('Invalid shared cost history');await this.permit(who,'audit');await this.checkReadConfig();const rows=(await this.query('SELECT id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at FROM app_mixer_shared_cost_reconciliations WHERE tenant_id=$1 AND budget_id=$2 AND id>$3 ORDER BY id LIMIT $4',[this.scope.tenantId,this.scope.budgetId,after,limit+1])).rows;if(!Array.isArray(rows)||rows.length>limit+1)throw Error('Invalid shared cost data');const items=rows.slice(0,limit).map(row=>{const selected=this.call({agentId:row.agent_id as string,runId:row.run_id as string,callId:row.call_id as string});if(!id(row.principal_id)||!id(row.reference))throw Error('Invalid shared cost data');const eventId=dbNumber(row.id),usedMicros=dbNumber(row.used_micros),recordedAt=dbNumber(row.recorded_at);if(eventId<1||usedMicros>100000000000)throw Error('Invalid shared cost data');return {id:eventId,...selected,principalId:row.principal_id,reference:row.reference,usedMicros,recordedAt};});await this.permit(who,'audit');return {items,...(rows.length>limit?{nextAfter:items.at(-1)!.id}:{})};}
+  private readonly scope: Scope;
+  private readonly query: Query;
+  private readonly queryWithSignal: Options['queryWithSignal'];
+  private readonly transaction: Options['transaction'];
+  private readonly authorize: Options['authorize'];
+  private readonly timeoutMs?: number;
+  private readonly maxPending?: number;
+  private pendingAuthorizations = 0;
+  constructor(options: Options) {
+    const scope = options?.scope;
+    if (
+      !options ||
+      options.enabled !== true ||
+      !scope ||
+      !id(scope.tenantId) ||
+      !id(scope.budgetId) ||
+      typeof scope.currency !== 'string' ||
+      !/^[A-Z]{3}$/.test(scope.currency) ||
+      !integer(scope.maxMicros) ||
+      scope.maxMicros < 1 ||
+      scope.maxMicros > 100000000000 ||
+      typeof options.query !== 'function' ||
+      (options.queryWithSignal !== undefined && typeof options.queryWithSignal !== 'function') ||
+      typeof options.transaction !== 'function' ||
+      typeof options.authorize !== 'function' ||
+      (options.timeoutMs === undefined) !== (options.maxPending === undefined) ||
+      (options.timeoutMs !== undefined && (!integer(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)) ||
+      (options.maxPending !== undefined && (!integer(options.maxPending) || options.maxPending < 1 || options.maxPending > 100))
+    )
+      throw Error('Invalid shared cost configuration');
+    this.scope = { tenantId: scope.tenantId, budgetId: scope.budgetId, currency: scope.currency, maxMicros: scope.maxMicros };
+    this.query = options.query;
+    this.queryWithSignal = options.queryWithSignal;
+    this.transaction = options.transaction;
+    this.authorize = options.authorize;
+    this.timeoutMs = options.timeoutMs;
+    this.maxPending = options.maxPending;
+  }
+  async initialize(): Promise<void> {
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_budgets (tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,currency TEXT NOT NULL,max_micros BIGINT NOT NULL,PRIMARY KEY(tenant_id,budget_id))',
+      []
+    );
+    await this.query(
+      "CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_calls (tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,reserved_micros BIGINT NOT NULL CHECK(reserved_micros>0),used_micros BIGINT,status TEXT NOT NULL CHECK(status IN ('reserved','settled')),created_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,budget_id,agent_id,run_id,call_id),UNIQUE(tenant_id,agent_id,run_id,call_id),CHECK((status='reserved' AND used_micros IS NULL) OR (status='settled' AND used_micros IS NOT NULL AND used_micros>=0)))",
+      []
+    );
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_shared_cost_reconciliations (id BIGSERIAL PRIMARY KEY,tenant_id TEXT NOT NULL,budget_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,used_micros BIGINT NOT NULL,recorded_at BIGINT NOT NULL)',
+      []
+    );
+    await this.query("CREATE INDEX IF NOT EXISTS app_mixer_shared_cost_outstanding ON app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id) WHERE status='reserved'", []);
+    await this.query('CREATE INDEX IF NOT EXISTS app_mixer_shared_cost_reconciliations_scope ON app_mixer_shared_cost_reconciliations (tenant_id,budget_id,id)', []);
+    await this.query(
+      "CREATE OR REPLACE FUNCTION app_mixer_shared_cost_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Shared cost reconciliation history is immutable'; END $$",
+      []
+    );
+    await this.query(
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_shared_cost_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_shared_cost_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_shared_cost_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      []
+    );
+  }
+  binding(): Scope {
+    return { ...this.scope };
+  }
+  isBoundTo(tenantId: string, currency: string): boolean {
+    return tenantId === this.scope.tenantId && currency === this.scope.currency;
+  }
+  private actor(actor: Actor): Actor {
+    if (!actor || actor.tenantId !== this.scope.tenantId || !id(actor.principalId)) throw Error('Invalid shared cost actor');
+    return { tenantId: actor.tenantId, principalId: actor.principalId };
+  }
+  private call(call: Call): Call {
+    if (!call || !id(call.agentId) || !id(call.runId) || !id(call.callId)) throw Error('Invalid shared cost call');
+    return { agentId: call.agentId, runId: call.runId, callId: call.callId };
+  }
+  private async permit(actor: Actor, action: Action, call?: Call, parent?: AbortSignal): Promise<void> {
+    const controller = new AbortController(),
+      signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+    if (signal.aborted) throw Error('Shared cost access unavailable');
+    const check = async () => {
+      try {
+        return (await this.authorize({ ...actor }, { ...this.scope }, action, call ? { ...call } : undefined, signal)) === true && !signal.aborted;
+      } catch {
+        return false;
+      }
+    };
+    if (this.timeoutMs === undefined) {
+      const allowed = await check();
+      if (signal.aborted) throw Error('Shared cost access unavailable');
+      if (allowed) return;
+      throw Error('Shared cost access denied');
+    }
+    if (this.pendingAuthorizations >= this.maxPending!) throw Error('Shared cost access unavailable');
+    this.pendingAuthorizations++;
+    const task = Promise.resolve().then(check);
+    void task.then(
+      () => {
+        this.pendingAuthorizations--;
+      },
+      () => {
+        this.pendingAuthorizations--;
+      }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const allowed = await Promise.race([
+        task,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(Error('Shared cost access unavailable'));
+          }, this.timeoutMs);
+        })
+      ]);
+      if (signal.aborted) throw Error('Shared cost access unavailable');
+      if (!allowed) throw Error('Shared cost access denied');
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+  private async lock(query: Query): Promise<void> {
+    const { tenantId, budgetId, currency, maxMicros } = this.scope;
+    await query('INSERT INTO app_mixer_shared_cost_budgets (tenant_id,budget_id,currency,max_micros) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [tenantId, budgetId, currency, maxMicros]);
+    const rows = (await query('SELECT currency,max_micros FROM app_mixer_shared_cost_budgets WHERE tenant_id=$1 AND budget_id=$2 FOR UPDATE', [tenantId, budgetId])).rows;
+    if (!Array.isArray(rows) || rows.length !== 1 || rows[0].currency !== currency || dbNumber(rows[0].max_micros) !== maxMicros) throw Error('Shared cost budget conflict');
+  }
+  private async checkReadConfig(): Promise<void> {
+    const rows = (await this.query('SELECT currency,max_micros FROM app_mixer_shared_cost_budgets WHERE tenant_id=$1 AND budget_id=$2', [this.scope.tenantId, this.scope.budgetId])).rows;
+    if (!Array.isArray(rows) || rows.length > 1) throw Error('Invalid shared cost data');
+    if (rows[0] && (rows[0].currency !== this.scope.currency || dbNumber(rows[0].max_micros) !== this.scope.maxMicros)) throw Error('Shared cost budget conflict');
+  }
+  private values(call: Call): unknown[] {
+    return [this.scope.tenantId, this.scope.budgetId, call.agentId, call.runId, call.callId];
+  }
+  private record(row: Record<string, unknown>): SharedCostReservation {
+    const call = this.call({ agentId: row.agent_id as string, runId: row.run_id as string, callId: row.call_id as string }),
+      reservedMicros = dbNumber(row.reserved_micros),
+      createdAt = dbNumber(row.created_at),
+      status = row.status;
+    if (reservedMicros < 1 || reservedMicros > 100000000000 || (status !== 'reserved' && status !== 'settled') || (status === 'reserved' && row.used_micros !== null))
+      throw Error('Invalid shared cost data');
+    const usedMicros = row.used_micros === null ? null : dbNumber(row.used_micros);
+    if (status === 'settled' && (usedMicros === null || usedMicros > 100000000000)) throw Error('Invalid shared cost data');
+    return { ...call, reservedMicros, usedMicros, status, createdAt };
+  }
+  /** Reserve capacity before dispatch; an existing call is never permission to dispatch again. */
+  async reserve(actor: Actor, call: Call, reservedMicros: number): Promise<SharedCostReservation> {
+    const who = this.actor(actor),
+      selected = this.call(call);
+    if (!integer(reservedMicros) || reservedMicros < 1 || reservedMicros > this.scope.maxMicros) throw Error('Invalid shared cost reservation');
+    await this.permit(who, 'reserve', selected);
+    try {
+      return await this.transaction(async query => {
+        await this.lock(query);
+        await this.permit(who, 'reserve', selected);
+        const existing = await query('SELECT 1 FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id=$4', [
+          this.scope.tenantId,
+          selected.agentId,
+          selected.runId,
+          selected.callId
+        ]);
+        if (existing.rows.length) throw Error('Shared cost call already exists');
+        const totals = (
+          await query(
+            "SELECT COUNT(*) AS calls,COALESCE(SUM(CASE WHEN status='reserved' THEN reserved_micros ELSE used_micros END),0) AS total,COUNT(*) FILTER (WHERE status='settled' AND used_micros>reserved_micros) AS overruns FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2",
+            [this.scope.tenantId, this.scope.budgetId]
+          )
+        ).rows[0];
+        if (!totals) throw Error('Invalid shared cost data');
+        const calls = dbNumber(totals.calls),
+          total = dbNumber(totals.total),
+          overruns = dbNumber(totals.overruns);
+        if (calls >= 10000) throw Error('Shared cost history quota exceeded');
+        if (overruns > 0) throw Error('Shared cost provider limit violated');
+        if (total + reservedMicros > this.scope.maxMicros) throw Error('Shared cost budget exhausted');
+        await this.permit(who, 'reserve', selected);
+        const rows = (
+          await query(
+            `INSERT INTO app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved',${NOW}) RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at`,
+            [...this.values(selected), reservedMicros]
+          )
+        ).rows;
+        if (rows.length !== 1) throw Error('Invalid shared cost data');
+        return this.record(rows[0]);
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && (error as { code: unknown }).code === '23505') throw Error('Shared cost call already exists');
+      throw error;
+    }
+  }
+  /** Record known usage; the host must protect this operation and verify provider values. */
+  async settle(actor: Actor, call: Call, usedMicros: number): Promise<SharedCostReservation> {
+    return this.finish(actor, call, usedMicros);
+  }
+  /** Record independently verified usage and actor-attributed evidence atomically. */
+  async reconcile(actor: Actor, call: Call, usedMicros: number, reference: string): Promise<SharedCostReservation> {
+    if (!id(reference)) throw Error('Invalid shared cost evidence');
+    return this.finish(actor, call, usedMicros, reference);
+  }
+  private async finish(actor: Actor, call: Call, usedMicros: number, reference?: string): Promise<SharedCostReservation> {
+    const who = this.actor(actor),
+      selected = this.call(call),
+      action = reference === undefined ? 'settle' : 'reconcile';
+    if (!integer(usedMicros) || usedMicros > 100000000000) throw Error('Invalid shared cost usage');
+    await this.permit(who, action, selected);
+    return this.transaction(async query => {
+      await this.lock(query);
+      await this.permit(who, action, selected);
+      const rows = (
+        await query(
+          "UPDATE app_mixer_shared_cost_calls SET status='settled',used_micros=$6 WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5 AND status='reserved' RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at",
+          [...this.values(selected), usedMicros]
+        )
+      ).rows;
+      if (rows.length !== 1) throw Error('Shared cost reservation unavailable');
+      if (reference !== undefined)
+        await query(
+          `INSERT INTO app_mixer_shared_cost_reconciliations (tenant_id,budget_id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,${NOW})`,
+          [...this.values(selected), who.principalId, reference, usedMicros]
+        );
+      return this.record(rows[0]);
+    });
+  }
+  async get(actor: Actor, call: Call): Promise<SharedCostReservation | undefined> {
+    const who = this.actor(actor),
+      selected = this.call(call);
+    await this.permit(who, 'read', selected);
+    await this.checkReadConfig();
+    const rows = (
+      await this.query(
+        'SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5',
+        this.values(selected)
+      )
+    ).rows;
+    if (!Array.isArray(rows) || rows.length > 1) throw Error('Invalid shared cost data');
+    const result = rows[0] ? this.record(rows[0]) : undefined;
+    await this.permit(who, 'read', selected);
+    return result;
+  }
+  async summary(actor: Actor): Promise<SharedCostSummary> {
+    const who = this.actor(actor);
+    await this.permit(who, 'read');
+    const rows = (
+      await this.query(
+        "SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed FROM app_mixer_shared_cost_budgets b LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=b.tenant_id AND c.budget_id=b.budget_id WHERE b.tenant_id=$1 AND b.budget_id=$2 GROUP BY b.currency,b.max_micros",
+        [this.scope.tenantId, this.scope.budgetId]
+      )
+    ).rows;
+    if (!Array.isArray(rows) || rows.length > 1) throw Error('Invalid shared cost data');
+    const row = rows[0];
+    if (row && (row.currency !== this.scope.currency || dbNumber(row.max_micros) !== this.scope.maxMicros)) throw Error('Shared cost budget conflict');
+    const result = {
+      currency: this.scope.currency,
+      limitMicros: this.scope.maxMicros,
+      reservedMicros: row ? dbNumber(row.reserved) : 0,
+      committedMicros: row ? dbNumber(row.committed) : 0,
+      calls: row ? dbNumber(row.calls) : 0
+    };
+    await this.permit(who, 'read');
+    return result;
+  }
+  /** Return a single-snapshot budget aggregate under separate metrics authorization. */
+  async metricsSnapshot(actor: Actor): Promise<SharedCostMetricsSnapshot> {
+    return this.metricsSnapshotWithSignal(actor, new AbortController().signal);
+  }
+  async metricsSnapshotWithSignal(actor: Actor, signal: AbortSignal): Promise<SharedCostMetricsSnapshot> {
+    if (!(signal instanceof AbortSignal)) throw Error('Invalid shared cost signal');
+    const who = this.actor(actor);
+    await this.permit(who, 'metrics', undefined, signal);
+    const query = this.queryWithSignal ? (sql: string, args: unknown[]) => this.queryWithSignal!(sql, args, signal) : this.query;
+    const rows = (
+      await query(
+        `SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COUNT(c.call_id) FILTER (WHERE c.status='reserved') AS reserved_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled') AS settled_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled' AND c.used_micros>c.reserved_micros) AS overruns,COUNT(c.call_id) FILTER (WHERE c.status IS NULL OR c.status NOT IN ('reserved','settled') OR c.reserved_micros<1 OR c.reserved_micros>100000000000 OR c.created_at<0 OR c.created_at>9007199254740991 OR (c.status='reserved' AND c.used_micros IS NOT NULL) OR (c.status='settled' AND (c.used_micros IS NULL OR c.used_micros<0 OR c.used_micros>100000000000))) AS invalid,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed,MIN(c.created_at) FILTER (WHERE c.status='reserved') AS oldest,${NOW} AS observed_at FROM (SELECT $1::text AS tenant_id,$2::text AS budget_id) s LEFT JOIN app_mixer_shared_cost_budgets b ON b.tenant_id=s.tenant_id AND b.budget_id=s.budget_id LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=s.tenant_id AND c.budget_id=s.budget_id GROUP BY b.currency,b.max_micros`,
+        [this.scope.tenantId, this.scope.budgetId]
+      )
+    ).rows;
+    if (signal.aborted) throw Error('Shared cost access unavailable');
+    if (!Array.isArray(rows) || rows.length !== 1) throw Error('Invalid shared cost metrics data');
+    const row = rows[0];
+    if (!row || typeof row !== 'object') throw Error('Invalid shared cost metrics data');
+    const calls = dbNumber(row.calls),
+      reservedCalls = dbNumber(row.reserved_calls),
+      settledCalls = dbNumber(row.settled_calls),
+      overrunCalls = dbNumber(row.overruns),
+      observedAt = dbNumber(row.observed_at);
+    if (
+      dbNumber(row.invalid) !== 0 ||
+      reservedCalls + settledCalls !== calls ||
+      overrunCalls > settledCalls ||
+      (row.currency === null ? row.max_micros !== null || calls !== 0 : row.currency !== this.scope.currency || dbNumber(row.max_micros) !== this.scope.maxMicros)
+    )
+      throw Error('Invalid shared cost metrics data');
+    if ((reservedCalls === 0) !== (row.oldest === null)) throw Error('Invalid shared cost metrics data');
+    const oldest = reservedCalls ? dbNumber(row.oldest) : observedAt,
+      result = {
+        currency: this.scope.currency,
+        limitMicros: this.scope.maxMicros,
+        reservedMicros: dbNumber(row.reserved),
+        committedMicros: dbNumber(row.committed),
+        reservedCalls,
+        settledCalls,
+        overrunCalls,
+        oldestReservationSeconds: Math.max(0, observedAt - oldest) / 1000
+      };
+    await this.permit(who, 'metrics', undefined, signal);
+    return result;
+  }
+  /** List outstanding calls only when the host authorizes visibility of the whole budget. */
+  async pending(actor: Actor, options: { after?: Call; limit?: number } = {}): Promise<{ items: SharedCostReservation[]; nextAfter?: Call }> {
+    const who = this.actor(actor);
+    if (
+      !options ||
+      typeof options !== 'object' ||
+      Array.isArray(options) ||
+      Object.keys(options).some(key => key !== 'after' && key !== 'limit') ||
+      (options.limit !== undefined && (!integer(options.limit) || options.limit < 1 || options.limit > 100))
+    )
+      throw Error('Invalid shared cost listing');
+    const after = options.after === undefined ? undefined : this.call(options.after),
+      limit = options.limit ?? 50;
+    await this.permit(who, 'pending');
+    await this.checkReadConfig();
+    const rows = (
+      await this.query(
+        "SELECT agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2 AND status='reserved' AND (agent_id,run_id,call_id)>($3,$4,$5) ORDER BY agent_id,run_id,call_id LIMIT $6",
+        [this.scope.tenantId, this.scope.budgetId, after?.agentId ?? '', after?.runId ?? '', after?.callId ?? '', limit + 1]
+      )
+    ).rows;
+    if (!Array.isArray(rows) || rows.length > limit + 1) throw Error('Invalid shared cost data');
+    const items = rows.slice(0, limit).map(row => {
+      const item = this.record(row);
+      if (item.status !== 'reserved') throw Error('Invalid shared cost data');
+      return item;
+    });
+    await this.checkReadConfig();
+    await this.permit(who, 'pending');
+    const last = items.at(-1);
+    return { items, ...(rows.length > limit && last ? { nextAfter: { agentId: last.agentId, runId: last.runId, callId: last.callId } } : {}) };
+  }
+  async history(actor: Actor, options: { after?: number; limit?: number } = {}): Promise<{ items: SharedCostReconciliation[]; nextAfter?: number }> {
+    const who = this.actor(actor),
+      after = options?.after ?? 0,
+      limit = options?.limit ?? 50;
+    if (
+      !options ||
+      typeof options !== 'object' ||
+      Array.isArray(options) ||
+      Object.keys(options).some(key => key !== 'after' && key !== 'limit') ||
+      !integer(after) ||
+      !integer(limit) ||
+      limit < 1 ||
+      limit > 100
+    )
+      throw Error('Invalid shared cost history');
+    await this.permit(who, 'audit');
+    await this.checkReadConfig();
+    const rows = (
+      await this.query(
+        'SELECT id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at FROM app_mixer_shared_cost_reconciliations WHERE tenant_id=$1 AND budget_id=$2 AND id>$3 ORDER BY id LIMIT $4',
+        [this.scope.tenantId, this.scope.budgetId, after, limit + 1]
+      )
+    ).rows;
+    if (!Array.isArray(rows) || rows.length > limit + 1) throw Error('Invalid shared cost data');
+    const items = rows.slice(0, limit).map(row => {
+      const selected = this.call({ agentId: row.agent_id as string, runId: row.run_id as string, callId: row.call_id as string });
+      if (!id(row.principal_id) || !id(row.reference)) throw Error('Invalid shared cost data');
+      const eventId = dbNumber(row.id),
+        usedMicros = dbNumber(row.used_micros),
+        recordedAt = dbNumber(row.recorded_at);
+      if (eventId < 1 || usedMicros > 100000000000) throw Error('Invalid shared cost data');
+      return { id: eventId, ...selected, principalId: row.principal_id, reference: row.reference, usedMicros, recordedAt };
+    });
+    await this.permit(who, 'audit');
+    return { items, ...(rows.length > limit ? { nextAfter: items.at(-1)!.id } : {}) };
+  }
 }
-export type {Actor as SharedCostActor,Scope as SharedCostScope,Call as SharedCostCall,Options as PostgresAgentSharedCostOptions};
+export type { Actor as SharedCostActor, Scope as SharedCostScope, Call as SharedCostCall, Options as PostgresAgentSharedCostOptions };

@@ -1,1057 +1,7607 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {pathToFileURL} from 'node:url';
-import {JSDOM} from 'jsdom';
-import {createProject} from '../dist/index.js';
-import {createRecordFieldValidator,createRecordJsonSchemaValidator} from '../../core/dist/index.js';
-import {RECORD_EDITOR_PREVIEW} from '../../core/dist/data-editor-preview.js';
-const schema=[{key:'name',label:'Name',type:'string',required:true,maxLength:20},{key:'age',label:'Age',type:'integer',required:true,min:0,max:120},{key:'active',label:'Active',type:'boolean',required:true},{key:'tier',label:'Tier',type:'string',options:['standard','premium']},{key:'note',label:'Note',type:'string'}];
-const wait=async predicate=>{for(let n=0;n<200&&!predicate();n++)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate())};
-async function setup(){const dir=await mkdtemp(join(tmpdir(),'schema-form-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'data-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(RECORD_EDITOR_PREVIEW).toString('base64'));return {dir,runtime,preview};}
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { createProject } from '../dist/index.js';
+import { createRecordFieldValidator, createRecordJsonSchemaValidator } from '../../core/dist/index.js';
+import { RECORD_EDITOR_PREVIEW } from '../../core/dist/data-editor-preview.js';
+const schema = [
+  { key: 'name', label: 'Name', type: 'string', required: true, maxLength: 20 },
+  { key: 'age', label: 'Age', type: 'integer', required: true, min: 0, max: 120 },
+  { key: 'active', label: 'Active', type: 'boolean', required: true },
+  { key: 'tier', label: 'Tier', type: 'string', options: ['standard', 'premium'] },
+  { key: 'note', label: 'Note', type: 'string' }
+];
+const wait = async predicate => {
+  for (let n = 0; n < 200 && !predicate(); n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(predicate());
+};
+async function setup() {
+  const dir = await mkdtemp(join(tmpdir(), 'schema-form-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'data-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(RECORD_EDITOR_PREVIEW).toString('base64'));
+  return { dir, runtime, preview };
+}
 
-test('schema root titles label generated and preview forms with explicit label precedence',async()=>{
- const s=await setup();let dom;
- try{
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document;
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   const jsonSchema={type:'object',title:'Customer <record>',description:'Customer details',properties:{name:{type:'string'}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},editor=factory(options);jsonSchema.title='Changed';
-   const view=editor.render({},null,null,document);assert.equal(view.querySelector('h3').textContent,'Customer <record>');assert.equal(view.querySelector('h3').querySelector('record'),null);assert.ok(view.getAttribute('aria-describedby'));
-   assert.equal(editor.render({label:'Chosen label'},null,null,document).querySelector('h3').textContent,'Chosen label');
-   const refSchema={$schema:'https://json-schema.org/draft/2020-12/schema',$ref:'#/$defs/record',title:'Custom',$defs:{record:{type:'object',title:'Original',properties:{name:{type:'string'}}}}},referenced=factory({...options,jsonSchema:refSchema});assert.equal(referenced.render({},null,null,document).querySelector('h3').textContent,'Custom');assert.equal(createRecordJsonSchemaValidator(refSchema)({name:'Ada'}),true);
-   for(const title of [42,'',' '.repeat(2),'x'.repeat(121)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,title}}),/Unsupported/);
-   assert.throws(()=>factory({...options,jsonSchema:{$ref:'#/$defs/record',$defs:[]}}),/Unsupported/);
-   assert.throws(()=>factory({...options,jsonSchema:{...refSchema,$schema:'https://json-schema.org/draft/2019-09/schema'}}),/Unsupported/);
+test('schema root titles label generated and preview forms with explicit label precedence', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document;
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      const jsonSchema = { type: 'object', title: 'Customer <record>', description: 'Customer details', properties: { name: { type: 'string' } } },
+        options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+        editor = factory(options);
+      jsonSchema.title = 'Changed';
+      const view = editor.render({}, null, null, document);
+      assert.equal(view.querySelector('h3').textContent, 'Customer <record>');
+      assert.equal(view.querySelector('h3').querySelector('record'), null);
+      assert.ok(view.getAttribute('aria-describedby'));
+      assert.equal(editor.render({ label: 'Chosen label' }, null, null, document).querySelector('h3').textContent, 'Chosen label');
+      const refSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $ref: '#/$defs/record',
+          title: 'Custom',
+          $defs: { record: { type: 'object', title: 'Original', properties: { name: { type: 'string' } } } }
+        },
+        referenced = factory({ ...options, jsonSchema: refSchema });
+      assert.equal(referenced.render({}, null, null, document).querySelector('h3').textContent, 'Custom');
+      assert.equal(createRecordJsonSchemaValidator(refSchema)({ name: 'Ada' }), true);
+      for (const title of [42, '', ' '.repeat(2), 'x'.repeat(121)]) assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, title } }), /Unsupported/);
+      assert.throws(() => factory({ ...options, jsonSchema: { $ref: '#/$defs/record', $defs: [] } }), /Unsupported/);
+      assert.throws(() => factory({ ...options, jsonSchema: { ...refSchema, $schema: 'https://json-schema.org/draft/2019-09/schema' } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('schema comments are accepted as bounded non-displayed annotations',async()=>{
- const s=await setup();let dom;
- try{
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,jsonSchema={$schema:'https://json-schema.org/draft/2020-12/schema',$ref:'#/$defs/record',$comment:'private root comment',$defs:{record:{type:'object',$comment:'private record comment',properties:{name:{$ref:'#/$defs/name',$comment:'private reference comment'},tags:{type:'array',items:{type:'string',$comment:'private item comment'}}}},name:{type:'string',minLength:2,$comment:'private field comment'}}},validate=createRecordJsonSchemaValidator(jsonSchema);
-  assert.equal(validate({name:'Al',tags:['ok']}),true);assert.equal(validate({name:'A'}),false);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   const options={getOperation:'items.get',putOperation:'items.put',jsonSchema},view=factory(options).render({},null,null,document);assert.doesNotMatch(view.textContent,/private .* comment/);assert.ok([...view.querySelectorAll('label')].some(label=>label.textContent.includes('name')));
-   for(const comment of [4,null,'x'.repeat(1025)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,$comment:comment}}),/Unsupported/);
-   const invalid={...jsonSchema,$defs:{...jsonSchema.$defs,name:{type:'string',$comment:3}}};assert.throws(()=>factory({...options,jsonSchema:invalid}),/Unsupported/);
+test('schema comments are accepted as bounded non-displayed annotations', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      jsonSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        $ref: '#/$defs/record',
+        $comment: 'private root comment',
+        $defs: {
+          record: {
+            type: 'object',
+            $comment: 'private record comment',
+            properties: { name: { $ref: '#/$defs/name', $comment: 'private reference comment' }, tags: { type: 'array', items: { type: 'string', $comment: 'private item comment' } } }
+          },
+          name: { type: 'string', minLength: 2, $comment: 'private field comment' }
+        }
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    assert.equal(validate({ name: 'Al', tags: ['ok'] }), true);
+    assert.equal(validate({ name: 'A' }), false);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+        view = factory(options).render({}, null, null, document);
+      assert.doesNotMatch(view.textContent, /private .* comment/);
+      assert.ok([...view.querySelectorAll('label')].some(label => label.textContent.includes('name')));
+      for (const comment of [4, null, 'x'.repeat(1025)]) assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, $comment: comment } }), /Unsupported/);
+      const invalid = { ...jsonSchema, $defs: { ...jsonSchema.$defs, name: { type: 'string', $comment: 3 } } };
+      assert.throws(() => factory({ ...options, jsonSchema: invalid }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('array item titles label repeated and positional controls',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{tag:{type:'string',title:'Original'}},properties:{tags:{type:'array',title:'Tags',items:{$ref:'#/$defs/tag',title:'Label'}},tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string',title:'Code'},{type:'object',title:'Person',properties:{name:{type:'string'}}}],items:{type:'integer',title:'Count'}},groups:{type:'array',title:'Groups',items:{type:'object',title:'Member',properties:{name:{type:'string'}}}},nested:{type:'array',title:'Nested',items:{type:'array',title:'Batch',items:{type:'integer',title:'Score'}}}},required:['tags','tuple','groups','nested']},record={tags:['red','blue'],tuple:['ID',{name:'Ada'},2,3],groups:[{name:'Grace'}],nested:[[1,2]]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  for(const label of ['Tags Label 1','Tags Label 2','Tuple Code 1','Tuple Person 2','Tuple Count 3','Tuple Count 4','Groups Member 1','Nested Batch 1 Score 1','Nested Batch 1 Score 2'])assert.ok(root.textContent.includes(label),label);
-  buttons().find(x=>x.textContent==='Remove Tags Label 1').click();assert.ok(root.textContent.includes('Tags Label 1'));assert.ok(!root.textContent.includes('Tags Label 2'));buttons().find(x=>x.textContent==='Remove Tuple Count 3').click();assert.ok(!root.textContent.includes('Tuple Count 4'));buttons().find(x=>x.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{tags:['blue'],tuple:['ID',{name:'Ada'},3],groups:[{name:'Grace'}],nested:[[1,2]]});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const title of ['',42,'x'.repeat(121)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{...jsonSchema.properties,tags:{...jsonSchema.properties.tags,items:{type:'string',title}}}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('schema forms edit safe property names without interpreting punctuation as paths',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{'':{type:'string'},'first-name':{type:'string'},'city name':{type:'string'},'0':{type:'integer'},'a/b':{type:'string'},'δοκιμή':{type:'object',properties:{'':{type:'integer'},'x.y':{type:'string'}}},'item list':{type:'array',items:{type:'object',properties:{'part-id':{type:'integer'}}}}},required:['','first-name','city name','0','a/b','δοκιμή','item list']},record={'':'root-empty','first-name':'Ada','city name':'Dubai','0':2,'a/b':'slash','δοκιμή':{'':4,'x.y':'nested'},'item list':[{'part-id':7}]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const edit=(labelText,value)=>{const input=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith(labelText)).querySelector('input');input.value=value;input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));};edit('(empty property name) (required)','changed-empty');edit('first-name (required)','Grace');edit('a/b (required)','changed');edit('δοκιμή / (empty property name) (optional)','9');edit('δοκιμή / x.y (optional)','updated');buttons.find(x=>x.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,'':'changed-empty','first-name':'Grace','a/b':'changed','δοκιμή':{'':9,'x.y':'updated'}});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));for(const key of ['bad\nname','x'.repeat(65),'__proto__','constructor','prototype']){const properties=Object.create(null);properties[key]={type:'string',title:'Safe label'};assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties}}),/Unsupported/);}
-   assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',fields:[{key:'first-name',label:'Name',type:'string'}]}),/Invalid record fields/);
+test('array item titles label repeated and positional controls', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { tag: { type: 'string', title: 'Original' } },
+        properties: {
+          tags: { type: 'array', title: 'Tags', items: { $ref: '#/$defs/tag', title: 'Label' } },
+          tuple: {
+            type: 'array',
+            title: 'Tuple',
+            prefixItems: [
+              { type: 'string', title: 'Code' },
+              { type: 'object', title: 'Person', properties: { name: { type: 'string' } } }
+            ],
+            items: { type: 'integer', title: 'Count' }
+          },
+          groups: { type: 'array', title: 'Groups', items: { type: 'object', title: 'Member', properties: { name: { type: 'string' } } } },
+          nested: { type: 'array', title: 'Nested', items: { type: 'array', title: 'Batch', items: { type: 'integer', title: 'Score' } } }
+        },
+        required: ['tags', 'tuple', 'groups', 'nested']
+      },
+      record = { tags: ['red', 'blue'], tuple: ['ID', { name: 'Ada' }, 2, 3], groups: [{ name: 'Grace' }], nested: [[1, 2]] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(x => x.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    for (const label of ['Tags Label 1', 'Tags Label 2', 'Tuple Code 1', 'Tuple Person 2', 'Tuple Count 3', 'Tuple Count 4', 'Groups Member 1', 'Nested Batch 1 Score 1', 'Nested Batch 1 Score 2'])
+      assert.ok(root.textContent.includes(label), label);
+    buttons()
+      .find(x => x.textContent === 'Remove Tags Label 1')
+      .click();
+    assert.ok(root.textContent.includes('Tags Label 1'));
+    assert.ok(!root.textContent.includes('Tags Label 2'));
+    buttons()
+      .find(x => x.textContent === 'Remove Tuple Count 3')
+      .click();
+    assert.ok(!root.textContent.includes('Tuple Count 4'));
+    buttons()
+      .find(x => x.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { tags: ['blue'], tuple: ['ID', { name: 'Ada' }, 3], groups: [{ name: 'Grace' }], nested: [[1, 2]] });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const title of ['', 42, 'x'.repeat(121)])
+        assert.throws(
+          () => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { ...jsonSchema.properties, tags: { ...jsonSchema.properties.tags, items: { type: 'string', title } } } } }),
+          /Unsupported/
+        );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('record browser filters literal and empty property names',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'',label:'Empty name',type:'string'},{field:'a.b',label:'Literal dot',type:'number'},{field:'city name',label:'City',type:'string'}],rangeFilterFields:['a.b'],prefixFilterFields:[''],multipleFilters:true};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[]}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const field=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Filter field')).querySelector('select'),operator=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),value=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],change=control=>control.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
-  field.value=[...field.options].find(option=>option.textContent==='Empty name').value;change(field);assert.equal(operator.disabled,false);operator.value='prefix';change(operator);value.value='ab';buttons().find(button=>button.textContent==='Browse records').click();await wait(()=>calls.length===1&&!buttons().find(button=>button.textContent==='Browse records').disabled);assert.deepEqual(calls[0].filter,{field:'',operator:'prefix',value:'ab'});
-  field.value='a.b';change(field);operator.value='gte';change(operator);value.value='4';buttons().find(button=>button.textContent==='Browse records').click();await wait(()=>calls.length===2&&!buttons().find(button=>button.textContent==='Browse records').disabled);assert.deepEqual(calls[1].filter,{field:'a.b',operator:'gte',value:4});
-  buttons().find(button=>button.textContent==='Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(node=>node.querySelector('legend')?.textContent==='Additional filter'),extraField=[...extra.querySelectorAll('select')][0],extraOperator=[...extra.querySelectorAll('select')][1],extraValue=[...extra.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input');extraField.value=[...extraField.options].find(option=>option.textContent==='Empty name').value;change(extraField);extraOperator.value='prefix';change(extraOperator);extraValue.value='abc';buttons().find(button=>button.textContent==='Browse records').click();await wait(()=>calls.length===3);assert.deepEqual(calls[2].filters,[{field:'a.b',operator:'gte',value:4},{field:'',operator:'prefix',value:'abc'}]);
-  const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.ok([...preview.querySelectorAll('input,select,button')].every(control=>control.disabled));assert.ok([...preview.querySelectorAll('option')].some(option=>option.textContent==='Empty name'));
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser optionally selects record ID order and fences stale pages',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;try{
-  const scope={tenantId:'tenant',applicationId:'app'};for(let i=0;i<56;i++){const id='id-'+String(i).padStart(3,'0');provider.put(scope,'items',id,{owner:i===52?'other':'user'},null);}registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),allowIdPrefix:true,authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,request)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...request,body:JSON.stringify({origin:'ui',input:JSON.parse(request.body)})});
-  const options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',allowReverseOrder:true,allowIdPrefix:true};dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const label=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('Record order')),order=label.querySelector('select'),browse=[...root.querySelectorAll('button')].find(x=>x.textContent==='Browse records'),change=()=>order.dispatchEvent(new dom.window.Event('change',{bubbles:true}));browse.click();await wait(()=>root.querySelectorAll('li button').length===50&&!browse.disabled);const ids=()=>[...root.querySelectorAll('li button')].map(x=>x.textContent),next=[...root.querySelectorAll('button')].find(x=>x.textContent==='Next page');assert.equal(ids()[0],'id-000');assert.equal(ids().at(-1),'id-049');assert.equal(next.disabled,false);next.click();await wait(()=>ids().length===5&&!browse.disabled);assert.deepEqual(ids(),['id-050','id-051','id-053','id-054','id-055']);order.value='desc';change();assert.equal(root.querySelectorAll('li').length,0);browse.click();await wait(()=>ids().length===49&&!browse.disabled);assert.equal(ids()[0],'id-055');assert.equal(ids().at(-1),'id-006');assert.equal(ids().includes('id-052'),false);next.click();await wait(()=>ids().length===6&&!browse.disabled);assert.deepEqual(ids(),['id-005','id-004','id-003','id-002','id-001','id-000']);const prefix=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('Record ID starts with')).querySelector('input');prefix.value='id-00';prefix.dispatchEvent(new dom.window.Event('input',{bubbles:true}));assert.equal(ids().length,0);browse.click();await wait(()=>ids().length===10&&!browse.disabled);assert.deepEqual(ids(),Array.from({length:10},(_,i)=>'id-'+String(9-i).padStart(3,'0')));
-  let release;globalThis.fetch=()=>new Promise(resolve=>release=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}],nextCursor:'old'}})}));browse.click();await wait(()=>!!release);order.value='asc';change();release();await wait(()=>!browse.disabled);assert.equal(root.querySelectorAll('li button').length,0);assert.equal([...root.querySelectorAll('button')].find(x=>x.textContent==='Next page').disabled,true);release=undefined;browse.click();await wait(()=>!!release);prefix.value='id-01';prefix.dispatchEvent(new dom.window.Event('input',{bubbles:true}));release();await wait(()=>!browse.disabled);assert.equal(ids().length,0);assert.equal([...root.querySelectorAll('button')].find(x=>x.textContent==='Next page').disabled,true);const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.equal([...preview.querySelectorAll('label')].find(x=>x.textContent.startsWith('Record order')).querySelector('select').disabled,true);assert.equal([...preview.querySelectorAll('label')].find(x=>x.textContent.startsWith('Record ID starts with')).querySelector('input').disabled,true);for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.throws(()=>factory({...options,allowReverseOrder:'yes'}),/Invalid record order/);assert.throws(()=>factory({...options,allowIdPrefix:'yes'}),/Invalid record ID prefix/);assert.throws(()=>factory({...options,listOperation:undefined}),/Invalid record order/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser offers host-approved field presence filters',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
-  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'note',label:'Note',type:'string'},{field:'count',label:'Count',type:'number'}],existsFilterFields:['note'],multipleFilters:true};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[],nextCursor:'opaque'}})};};dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const label=name=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(name)),field=label('Filter field').querySelector('select'),operator=label('Comparison').querySelector('select'),value=label('Filter value').querySelector('input'),nullInput=root.querySelector('input[type=checkbox]'),buttons=()=>[...root.querySelectorAll('button')],browse=()=>buttons().find(x=>x.textContent==='Browse records'),change=control=>control.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
-  field.value='note';change(field);operator.value='exists';change(operator);assert.equal(value.disabled,true);assert.equal(nullInput.disabled,true);browse().click();await wait(()=>calls.length===1&&!browse().disabled);assert.deepEqual(calls[0].filter,{field:'note',operator:'exists',value:true});assert.equal(buttons().find(x=>x.textContent==='Next page').disabled,false);operator.value='missing';change(operator);assert.equal(buttons().find(x=>x.textContent==='Next page').disabled,true);browse().click();await wait(()=>calls.length===2&&!browse().disabled);assert.deepEqual(calls[1].filter,{field:'note',operator:'exists',value:false});field.value='count';change(field);assert.equal(operator.value,'eq');assert.equal([...operator.options].find(x=>x.value==='exists').disabled,true);assert.equal(value.disabled,false);
-  const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.ok([...preview.querySelectorAll('input,select,button')].every(x=>x.disabled));for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({...options,existsFilterFields:['unknown']}),/Invalid record filter fields/);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser field presence filters use the authorized capability service',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;try{
-  const scope={tenantId:'tenant',applicationId:'app'};for(const [id,value] of [['null',{owner:'user',note:null}],['missing',{owner:'user'}],['secret',{owner:'other',note:'hidden'}]])provider.put(scope,'items',id,value,null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['note'],existsFilterFields:['note'],authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,request)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...request,body:JSON.stringify({origin:'ui',input:JSON.parse(request.body)})});
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'note',label:'Note',type:'string'}],existsFilterFields:['note']}).render({},null,null,document);document.body.append(root);const label=name=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(name)),field=label('Filter field').querySelector('select'),operator=label('Comparison').querySelector('select'),browse=[...root.querySelectorAll('button')].find(x=>x.textContent==='Browse records'),change=x=>x.dispatchEvent(new dom.window.Event('change',{bubbles:true}));field.value='note';change(field);operator.value='exists';change(operator);browse.click();await wait(()=>root.querySelector('li button')?.textContent==='null'&&!browse.disabled);operator.value='missing';change(operator);browse.click();await wait(()=>root.querySelector('li button')?.textContent==='missing'&&!browse.disabled);assert.doesNotMatch(root.textContent,/secret/);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser offers host-approved array membership filters',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'tags',label:'Tags',type:'string'},{field:'state',label:'State',type:'string'}],arrayContainsFilterFields:['tags'],multipleFilters:true};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[]}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const field=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Filter field')).querySelector('select'),operator=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),value=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input'),nullInput=root.querySelector('input[type=checkbox]'),browse=[...root.querySelectorAll('button')].find(button=>button.textContent==='Browse records'),change=control=>control.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
-  field.value='tags';change(field);assert.equal([...operator.options].find(option=>option.value==='arrayContains').disabled,false);operator.value='arrayContains';change(operator);value.value='red';browse.click();await wait(()=>calls.length===1&&!browse.disabled);assert.deepEqual(calls[0].filter,{field:'tags',operator:'arrayContains',value:'red'});
-  nullInput.checked=true;change(nullInput);assert.equal(nullInput.disabled,false);browse.click();await wait(()=>calls.length===2&&!browse.disabled);assert.deepEqual(calls[1].filter,{field:'tags',operator:'arrayContains',value:null});nullInput.checked=false;change(nullInput);value.value='red';[...root.querySelectorAll('button')].find(button=>button.textContent==='Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(node=>node.querySelector('legend')?.textContent==='Additional filter'),extraField=extra.querySelectorAll('select')[0],extraOperator=extra.querySelectorAll('select')[1],extraValue=[...extra.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input');extraField.value='tags';change(extraField);extraOperator.value='arrayContains';change(extraOperator);extraValue.value='blue';browse.click();await wait(()=>calls.length===3&&!browse.disabled);assert.deepEqual(calls[2].filters,[{field:'tags',operator:'arrayContains',value:'red'},{field:'tags',operator:'arrayContains',value:'blue'}]);extraValue.value='red';browse.click();assert.equal(calls.length,3);assert.match(root.textContent,/Choose each array membership value only once/);field.value='state';change(field);assert.equal([...operator.options].find(option=>option.value==='arrayContains').disabled,true);assert.equal(operator.value,'eq');
-  const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.ok([...preview.querySelectorAll('input,select,button')].every(control=>control.disabled));for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({...options,arrayContainsFilterFields:['unknown']}),/Invalid record filter fields/);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser can opt into any-condition mode and clears stale cursors',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'priority',label:'Priority',type:'number'}],multipleFilters:true,allowAnyFilters:true};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[],nextCursor:'opaque'}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const findLabel=text=>[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith(text)),field=findLabel('Filter field').querySelector('select'),value=findLabel('Filter value').querySelector('input'),mode=findLabel('Match conditions').querySelector('select'),buttons=()=>[...root.querySelectorAll('button')],browse=()=>buttons().find(button=>button.textContent==='Browse records'),change=control=>control.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
-  field.value='state';change(field);value.value='open';buttons().find(button=>button.textContent==='Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(node=>node.querySelector('legend')?.textContent==='Additional filter'),extraField=extra.querySelector('select'),extraValue=[...extra.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input');extraField.value='priority';change(extraField);extraValue.value='9';mode.value='any';change(mode);browse().click();await wait(()=>calls.length===1&&!browse().disabled);assert.deepEqual(calls[0].filters,[{field:'state',value:'open'},{field:'priority',value:9}]);assert.equal(calls[0].filterMode,'any');assert.equal(buttons().find(button=>button.textContent==='Next page').disabled,false);
-  mode.value='all';change(mode);assert.equal(buttons().find(button=>button.textContent==='Next page').disabled,true);browse().click();await wait(()=>calls.length===2&&!browse().disabled);assert.deepEqual(calls[1].filters,calls[0].filters);assert.equal(Object.hasOwn(calls[1],'filterMode'),false);
-  let release;globalThis.fetch=async()=>new Promise(resolve=>{release=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}],nextCursor:'old'}})});});browse().click();await wait(()=>!!release);mode.value='any';change(mode);release();await wait(()=>!browse().disabled);assert.equal(root.querySelectorAll('li button').length,0);assert.equal(buttons().find(button=>button.textContent==='Next page').disabled,true);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.throws(()=>factory({...options,multipleFilters:false}),/Invalid record filter fields/);const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.equal([...preview.querySelectorAll('label')].find(label=>label.textContent.startsWith('Match conditions')).querySelector('select').disabled,true);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser any-condition mode uses the authorized capability service',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{
-  const scope={tenantId:'tenant',applicationId:'app'};for(const [id,value] of [['a',{owner:'user',state:'open',priority:1}],['b',{owner:'user',state:'closed',priority:9}],['secret',{owner:'other',state:'open',priority:9}]])provider.put(scope,'items',id,value,null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','priority'],allowAnyFilters:true,authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,request)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...request,body:JSON.stringify({origin:'ui',input:JSON.parse(request.body)})});
-  const options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'priority',label:'Priority',type:'number'}],multipleFilters:true,allowAnyFilters:true};dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const label=text=>[...root.querySelectorAll('label')].find(node=>node.textContent.startsWith(text)),field=label('Filter field').querySelector('select'),value=label('Filter value').querySelector('input'),mode=label('Match conditions').querySelector('select'),button=text=>[...root.querySelectorAll('button')].find(node=>node.textContent===text),change=node=>node.dispatchEvent(new dom.window.Event('change',{bubbles:true}));field.value='state';change(field);value.value='open';button('Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(node=>node.querySelector('legend')?.textContent==='Additional filter'),extraField=extra.querySelector('select'),extraValue=[...extra.querySelectorAll('label')].find(node=>node.textContent==='Filter value').querySelector('input');extraField.value='priority';change(extraField);extraValue.value='9';mode.value='any';change(mode);button('Browse records').click();await wait(()=>root.querySelectorAll('li button').length===2&&!button('Browse records').disabled);assert.deepEqual([...root.querySelectorAll('li button')].map(node=>node.textContent),['a','b']);assert.doesNotMatch(root.textContent,/secret/);
-  extraField.value='state';change(extraField);extraValue.value='closed';button('Browse records').click();await wait(()=>root.querySelectorAll('li button').length===2&&!button('Browse records').disabled);assert.deepEqual([...root.querySelectorAll('li button')].map(node=>node.textContent),['a','b']);extraValue.value='open';button('Browse records').click();assert.match(root.textContent,/Choose each filter condition only once/);extraField.value='priority';change(extraField);extraValue.value='9';
-  mode.value='all';change(mode);button('Browse records').click();await wait(()=>root.textContent.includes('No records on this page.')&&!button('Browse records').disabled);assert.equal(root.querySelectorAll('li button').length,0);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('pure null schema fields and array items can be included and saved',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{requiredNull:{type:'null',const:null,title:'Required null'},optionalNull:{type:'null',enum:[null],title:'Optional null'},values:{type:'array',title:'Values',items:{type:'null',title:'Null entry'}},tuple:{type:'array',title:'Tuple',prefixItems:[{type:'null',title:'Empty slot'},{type:'string'}],items:false},matrix:{type:'array',title:'Matrix',items:{type:'array',title:'Row',items:{type:'null',title:'Cell'}}},nested:{type:'object',properties:{nil:{type:'null'}}}},required:['requiredNull','values','tuple','matrix','nested']},record={requiredNull:null,values:[null],tuple:[null,'x'],matrix:[[null]],nested:{nil:null}},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:input.id==='bad'?{...record,requiredNull:'wrong'}:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='bad';id.dispatchEvent(new dom.window.Event('input'));buttons().find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));
-  id.value='good';id.dispatchEvent(new dom.window.Event('input'));buttons().find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const findLabel=text=>[...root.querySelectorAll('label')].find(label=>label.textContent.includes(text));assert.ok(findLabel('Required null (always null)').querySelector('input').disabled);assert.ok(findLabel('Values Null entry 1 (always null)'));assert.ok(findLabel('Tuple Empty slot 1 (always null)'));assert.ok(findLabel('Matrix Row 1 Cell 1 (always null)'));
-  const optional=findLabel('Include Optional null as null').querySelector('input');assert.equal(optional.checked,false);optional.checked=true;optional.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(x=>x.textContent==='Save').click();await wait(()=>saved.length===1&&!buttons().find(x=>x.textContent==='Save').disabled);assert.deepEqual(saved[0],{...record,optionalNull:null});
-  optional.checked=false;optional.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(x=>x.textContent==='Save').click();await wait(()=>saved.length===2);assert.deepEqual(saved[1],record);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{type:'null',const:'x'},{type:'null',enum:['x']},{type:'null',title:3}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('untyped scalar constants and enums produce typed form controls',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{fixed:{const:'x'}},properties:{code:{const:'fixed'},enabled:{const:true},nil:{const:null},mode:{enum:['auto','manual']},score:{enum:[1,1.5]},nullable:{enum:[null,'yes']},values:{type:'array',items:{$ref:'#/$defs/fixed'}},tuple:{type:'array',prefixItems:[{const:false},{enum:[null]}],items:false}},required:['code','enabled','nil','mode','score','nullable','values','tuple']},record={code:'fixed',enabled:true,nil:null,mode:'auto',score:1.5,nullable:null,values:['x'],tuple:[false,null]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:input.id==='bad'?{...record,code:'wrong'}:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='bad';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));
-  id.value='good';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],record);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{enum:['x',{}]},{const:{nested:'object'}},{enum:[null,{}]}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('mixed scalar enums retain their JSON types in fields and arrays',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{choice:{enum:['1',1,true,null]}},properties:{choice:{$ref:'#/$defs/choice'},items:{type:'array',items:{enum:['x',7,false,null]}},tuple:{type:'array',prefixItems:[{$ref:'#/$defs/choice'},{enum:['tail',2]}],items:false}},required:['choice','items','tuple']},record={choice:'1',items:[7,null,'x'],tuple:[true,2]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const select=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('choice (required)')).querySelector('select');for(const title of ['1 (text)','1 (number)','Yes (boolean)'])assert.ok([...select.options].some(option=>option.textContent===title));select.value=[...select.options].find(option=>option.textContent==='1 (number)').value;select.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,choice:1});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{enum:['x',1,{}]},{enum:['x',1,'x']},{enum:['x',1],minLength:-1},{type:'mixed'},{type:'mixed',_choices:['x',1]}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('explicit scalar type unions restrict enum controls to matching choices',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{choice:{type:['integer','string','null'],enum:['x',1,1.5,true,null]},items:{type:'array',items:{type:['string','boolean'],enum:['yes',false,1]}}},required:['choice','items']},record={choice:1,items:['yes',false]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const select=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('choice (required)')).querySelector('select'),texts=[...select.options].map(option=>option.textContent);assert.ok(texts.includes('x (text)'));assert.ok(texts.includes('1 (number)'));assert.ok(!texts.includes('1.5 (number)'));assert.ok(!texts.includes('Yes (boolean)'));select.value=[...select.options].find(option=>option.textContent==='x (text)').value;select.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,choice:'x'});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{type:['string','number']},{type:['string','number'],enum:[true]},{type:['string','string'],enum:['x']},{type:['string','object'],enum:['x',{}]}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('single scalar types filter enum values that cannot satisfy the type',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{name:{type:'string',enum:['Ada',1,null]},flag:{type:'boolean',enum:[true,0]},nil:{type:'null',enum:[null,'x']},maybe:{type:['number','null'],enum:[2,null,'x']},items:{type:'array',items:{type:'integer',enum:[1,1.5,'2']}}},required:['name','flag','nil','maybe','items']},record={name:'Ada',flag:true,nil:null,maybe:null,items:[1]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const name=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('name (required)')).querySelector('select');assert.deepEqual([...name.options].map(option=>option.textContent),['Select an option','Ada']);assert.ok(root.textContent.includes('nil (always null)'));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],record);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{type:'string',enum:[1,null]},{type:'integer',enum:[1.5]},{type:'null',enum:['x']},{type:'boolean',enum:[true,true]}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('mixed enum controls apply numeric and string constraints to the relevant choices',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const choice={enum:['a','abc',0.1,0.3,false,null],minLength:2,pattern:'^a',minimum:0.2,multipleOf:0.1},jsonSchema={type:'object',properties:{choice,items:{type:'array',items:choice},onlyNull:{enum:['x',1,null],minLength:2,minimum:2}},required:['choice','items','onlyNull']},record={choice:'abc',items:[0.3,false,null],onlyNull:null},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const select=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('choice (required)')).querySelector('select'),texts=[...select.options].map(option=>option.textContent);for(const text of ['abc (text)','0.3 (number)','No (boolean)'])assert.ok(texts.includes(text));for(const text of ['a (text)','0.1 (number)'])assert.ok(!texts.includes(text));assert.ok(root.textContent.includes('onlyNull (always null)'));select.value=[...select.options].find(option=>option.textContent==='No (boolean)').value;select.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,choice:false});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{enum:['x',1],minLength:2,minimum:2},{enum:['x',1],pattern:'['},{enum:['x',1],multipleOf:0}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('mixed enum controls apply bounded combinations and conditions',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const choice={enum:['a','alpha',1,3,false,null],anyOf:[{type:'string',minLength:4},{type:'number',maximum:5},{const:null}],allOf:[{not:{const:'forbidden'}}],if:{type:'number'},then:{minimum:2}},jsonSchema={type:'object',properties:{choice,items:{type:'array',items:choice}},required:['choice','items']},record={choice:'alpha',items:[3,null]},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const select=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('choice (required)')).querySelector('select'),texts=[...select.options].map(option=>option.textContent);for(const text of ['alpha (text)','3 (number)'])assert.ok(texts.includes(text));for(const text of ['a (text)','1 (number)','No (boolean)'])assert.ok(!texts.includes(text));select.value=[...select.options].find(option=>option.textContent==='3 (number)').value;select.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{...record,choice:3});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const bad of [{type:'string',allOf:[{minLength:5}]},{enum:['x',1],anyOf:[]},{enum:['x',1],if:{type:'number'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:bad}}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('single-type enum controls apply bounded combinations and conditions',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{kind:{type:'string',enum:['a','alpha','beta'],allOf:[{minLength:3}],not:{const:'beta'}},items:{type:'array',items:{type:'integer',enum:[1,2,3],if:{type:'number'},then:{minimum:2}}},flag:{const:true,oneOf:[{const:true},{const:false}]},maybe:{type:['number','null'],enum:[1,2,null],anyOf:[{const:null},{minimum:2}]}},required:['kind','items','flag','maybe']},record={kind:'alpha',items:[2,3],flag:true,maybe:null},saved=[],validate=createRecordJsonSchemaValidator(jsonSchema),options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons().find(button=>button.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');
-  const select=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('kind (required)')).querySelector('select'),texts=[...select.options].map(option=>option.textContent);assert.ok(texts.includes('alpha'));assert.ok(!texts.includes('a'));assert.ok(!texts.includes('beta'));buttons().find(button=>button.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],record);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const invalid of [{type:'string',enum:['a'],not:{const:'a'}},{type:'integer',enum:[1,2],anyOf:[]},{type:'string',enum:['a'],if:{type:'string'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:invalid}}}),/Unsupported/);}
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('record browser sends typed filters, resets pages and ignores stale responses',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
- const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'active',label:'Active',type:'boolean'}]};let resolvePending;
- globalThis.fetch=async(_path,request)=>{const input=JSON.parse(request.body);calls.push(input);if(input.filter?.value==='slow')return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',revision:1}]}})}));return {ok:true,json:async()=>({result:{items:[{id:'found',revision:1}],nextCursor:'opaque'}})}};
- const editor=s.runtime.createRecordEditor(options);options.filterFields[0].field='changed';dom=new JSDOM('<!doctype html>');const root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const field=root.querySelector('select'),value=[...root.querySelectorAll('label')].find(x=>x.textContent==='Filter value').querySelector('input'),nullBox=root.querySelector('input[type=checkbox]'),buttons=[...root.querySelectorAll('button')],browse=buttons.find(x=>x.textContent==='Browse records'),next=buttons.find(x=>x.textContent==='Next page'),change=control=>control.dispatchEvent(new dom.window.Event('change'));
- field.value='state';change(field);value.value='';change(value);browse.click();await wait(()=>calls.length===1&&!!root.querySelector('li button')&&!browse.disabled);assert.deepEqual(calls[0].filter,{field:'state',value:''});next.click();await wait(()=>calls.length===2&&!browse.disabled);assert.equal(calls[1].cursor,'opaque');
- field.value='count';change(field);assert.equal(next.disabled,true);assert.equal(root.querySelector('li button'),null);value.value='not a number';browse.click();assert.equal(calls.length,2);assert.match(root.textContent,/valid filter number/);value.value='42.5';browse.click();await wait(()=>calls.length===3&&!browse.disabled);assert.deepEqual(calls[2].filter,{field:'count',value:42.5});
- field.value='active';change(field);value.value='false';browse.click();await wait(()=>calls.length===4&&!browse.disabled);assert.deepEqual(calls[3].filter,{field:'active',value:false});nullBox.checked=true;change(nullBox);browse.click();await wait(()=>calls.length===5&&!browse.disabled);assert.deepEqual(calls[4].filter,{field:'active',value:null});
- nullBox.checked=false;field.value='state';value.value='slow';change(field);browse.click();await wait(()=>!!resolvePending);value.value='new';change(value);resolvePending();await wait(()=>!browse.disabled);assert.equal(root.querySelector('li button'),null);assert.equal(next.disabled,true);
- field.value='';change(field);browse.click();await wait(()=>calls.length===7);assert.equal(Object.hasOwn(calls[6],'filter'),false);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('record filter configuration is validated and preview controls are inert',async()=>{const s=await setup();let dom;try{const base={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list'};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const filterFields of [[],[{field:'bad\npath',label:'X',type:'string'}],[{field:'x',label:'X',type:'wrong'}],[{field:'x',label:'X',type:'string'},{field:'x',label:'Y',type:'number'}]])assert.throws(()=>factory({...base,filterFields}),/Invalid record filter fields/);dom=new JSDOM('<!doctype html>');const root=s.preview.createRecordEditor({...base,filterFields:[{field:'state',label:'State',type:'string'}]}).render({},null,null,dom.window.document);assert.ok([...root.querySelectorAll('input,select,button,textarea')].every(x=>x.disabled));assert.match(root.textContent,/Filter field/);}finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true})}});
-function render(factory,fields=schema){const dom=new JSDOM('<!doctype html>'),root=factory({getOperation:'items.get',putOperation:'items.put',fields}).render({label:'People'},null,null,dom.window.document);dom.window.document.body.appendChild(root);const labels=[...root.querySelectorAll('label')],controls=labels.map(label=>label.querySelector('input,select,textarea'));return {dom,root,controls,buttons:[...root.querySelectorAll('button')],status:root.querySelector('[role=status]')};}
-
-test('property name constraints protect preserved properties at every object level',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',propertyNames:{pattern:'^[a-z]+$',minLength:2},properties:{name:{type:'string'},profile:{type:['object','null'],propertyNames:{enum:['label','extra']},properties:{label:{type:'string'}}},people:{type:'array',items:{type:['object','null'],propertyNames:{maxLength:5,pattern:'^[a-z]+$'},properties:{name:{type:'string'}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const records={root:{name:'Ada',Bad:1},nested:{name:'Ada',profile:{label:'A',unknown:1}},item:{name:'Ada',people:[{name:'A',longname:true}]},valid:{name:'Ada',profile:{label:'A',extra:1},people:[null,{name:'B',more:true}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const record of ['root','nested','item']){id.value=record;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/property name that does not match/);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const propertyNames of [{pattern:'['},{minLength:-1},{enum:['x','x']},{type:'invalid'},{format:'email'},{const:undefined}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,propertyNames}}),/Unsupported/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('local references in validation rules agree with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{names:{pattern:'^[a-z]+$'},colors:{enum:['red','blue']},iscompany:{const:'company'},condition:{properties:{kind:{$ref:'#/$defs/iscompany'}},required:['kind']},company:{required:['company']},person:{required:['person']},phone:{required:['phone']}},propertyNames:{$ref:'#/$defs/names',description:'Names use lowercase'},properties:{kind:{type:'string'},company:{type:'string'},person:{type:'string'},email:{type:'string'},phone:{type:'string'},tags:{type:'array',items:{type:'string'},contains:{$ref:'#/$defs/colors'},minContains:1}},if:{$ref:'#/$defs/condition'},then:{$ref:'#/$defs/company'},else:{$ref:'#/$defs/person'},dependentSchemas:{email:{$ref:'#/$defs/phone'}}};
-  const options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={names:{kind:'company',company:'Acme',tags:['red'],Bad:1},contains:{kind:'company',company:'Acme',tags:['green']},condition:{kind:'company',tags:['red']},dependency:{kind:'company',company:'Acme',email:'a',tags:['red']},valid:{kind:'company',company:'Acme',email:'a',phone:'123',tags:['red']},person:{kind:'person',person:'Ada',tags:['blue']}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [name,error] of [['names',/property name that does not match/],['contains',/required number of matching items/],['condition',/company is required by a condition/],['dependency',/phone is required when email is provided/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','person']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===(name==='valid'?1:2)&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const bad of [{$ref:'#/$defs/missing'},{$ref:'#/$defs/loop'},{$ref:'https://example.com/schema'}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,$defs:{...jsonSchema.$defs,loop:{$ref:'#/$defs/loop'}},propertyNames:bad}}),/Unsupported/);
-   assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,propertyNames:{$ref:'#/$defs/names',description:42}}}),/Unsupported/);
-   assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,then:{$ref:'#/$defs/company',additionalProperties:false}}}),/Unsupported/);
+test('schema forms edit safe property names without interpreting punctuation as paths', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          '': { type: 'string' },
+          'first-name': { type: 'string' },
+          'city name': { type: 'string' },
+          0: { type: 'integer' },
+          'a/b': { type: 'string' },
+          δοκιμή: { type: 'object', properties: { '': { type: 'integer' }, 'x.y': { type: 'string' } } },
+          'item list': { type: 'array', items: { type: 'object', properties: { 'part-id': { type: 'integer' } } } }
+        },
+        required: ['', 'first-name', 'city name', '0', 'a/b', 'δοκιμή', 'item list']
+      },
+      record = { '': 'root-empty', 'first-name': 'Ada', 'city name': 'Dubai', 0: 2, 'a/b': 'slash', δοκιμή: { '': 4, 'x.y': 'nested' }, 'item list': [{ 'part-id': 7 }] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const edit = (labelText, value) => {
+      const input = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith(labelText)).querySelector('input');
+      input.value = value;
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    };
+    edit('(empty property name) (required)', 'changed-empty');
+    edit('first-name (required)', 'Grace');
+    edit('a/b (required)', 'changed');
+    edit('δοκιμή / (empty property name) (optional)', '9');
+    edit('δοκιμή / x.y (optional)', 'updated');
+    buttons.find(x => x.textContent === 'Save').click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { ...record, '': 'changed-empty', 'first-name': 'Grace', 'a/b': 'changed', δοκιμή: { '': 9, 'x.y': 'updated' } });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const key of ['bad\nname', 'x'.repeat(65), '__proto__', 'constructor', 'prototype']) {
+        const properties = Object.create(null);
+        properties[key] = { type: 'string', title: 'Safe label' };
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties } }), /Unsupported/);
+      }
+      assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', fields: [{ key: 'first-name', label: 'Name', type: 'string' }] }), /Invalid record fields/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('pattern and additional properties validate preserved values at every object level',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{extra:{type:'string',pattern:'^ok:'},nonnegative:{type:'number',minimum:0}},properties:{name:{type:'string'},groups:{type:'array',items:{type:'object',properties:{name:{type:'string'}},patternProperties:{'^flag_':{type:'boolean'}},additionalProperties:false}}},patternProperties:{'^x_':{$ref:'#/$defs/nonnegative'},'score$':{type:'number',maximum:10}},additionalProperties:{$ref:'#/$defs/extra'}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={overlap:{name:'Ada',x_score:11},negative:{name:'Ada',x_score:-1},additional:{name:'Ada',other:'bad'},wrongtype:{name:'Ada',other:42},nested:{name:'Ada',groups:[{name:'A',flag_good:'yes'}]},nestedextra:{name:'Ada',groups:[{name:'A',hidden:true}]},valid:{name:'Ada',x_score:5,x_count:2,other:'ok:test',groups:[{name:'A',flag_good:true}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['overlap','negative','additional','wrongtype','nested','nestedextra']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/does not satisfy the schema rules/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const bad of [{patternProperties:{'[':{type:'string'}}},{patternProperties:{'^x':{type:'string',format:'email'}}},{additionalProperties:{type:'string',format:'email'}},{patternProperties:[]},{additionalProperties:'yes'}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,...bad}}),/Unsupported/);
+test('record browser filters literal and empty property names', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [
+          { field: '', label: 'Empty name', type: 'string' },
+          { field: 'a.b', label: 'Literal dot', type: 'number' },
+          { field: 'city name', label: 'City', type: 'string' }
+        ],
+        rangeFilterFields: ['a.b'],
+        prefixFilterFields: [''],
+        multipleFilters: true
+      };
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [] } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const field = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Filter field')).querySelector('select'),
+      operator = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select'),
+      value = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      change = control => control.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = [...field.options].find(option => option.textContent === 'Empty name').value;
+    change(field);
+    assert.equal(operator.disabled, false);
+    operator.value = 'prefix';
+    change(operator);
+    value.value = 'ab';
+    buttons()
+      .find(button => button.textContent === 'Browse records')
+      .click();
+    await wait(() => calls.length === 1 && !buttons().find(button => button.textContent === 'Browse records').disabled);
+    assert.deepEqual(calls[0].filter, { field: '', operator: 'prefix', value: 'ab' });
+    field.value = 'a.b';
+    change(field);
+    operator.value = 'gte';
+    change(operator);
+    value.value = '4';
+    buttons()
+      .find(button => button.textContent === 'Browse records')
+      .click();
+    await wait(() => calls.length === 2 && !buttons().find(button => button.textContent === 'Browse records').disabled);
+    assert.deepEqual(calls[1].filter, { field: 'a.b', operator: 'gte', value: 4 });
+    buttons()
+      .find(button => button.textContent === 'Add filter')
+      .click();
+    const extra = [...root.querySelectorAll('fieldset')].find(node => node.querySelector('legend')?.textContent === 'Additional filter'),
+      extraField = [...extra.querySelectorAll('select')][0],
+      extraOperator = [...extra.querySelectorAll('select')][1],
+      extraValue = [...extra.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input');
+    extraField.value = [...extraField.options].find(option => option.textContent === 'Empty name').value;
+    change(extraField);
+    extraOperator.value = 'prefix';
+    change(extraOperator);
+    extraValue.value = 'abc';
+    buttons()
+      .find(button => button.textContent === 'Browse records')
+      .click();
+    await wait(() => calls.length === 3);
+    assert.deepEqual(calls[2].filters, [
+      { field: 'a.b', operator: 'gte', value: 4 },
+      { field: '', operator: 'prefix', value: 'abc' }
+    ]);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(control => control.disabled));
+    assert.ok([...preview.querySelectorAll('option')].some(option => option.textContent === 'Empty name'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('object property counts are checked for root, nested objects and array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',minProperties:2,maxProperties:3,properties:{name:{type:'string'},profile:{type:['object','null'],minProperties:1,maxProperties:1,properties:{label:{type:'string'}}},people:{type:'array',items:{type:['object','null'],minProperties:1,maxProperties:1,properties:{name:{type:'string'}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const records={root:{name:'Ada'},nested:{name:'Ada',profile:{label:'A',hidden:true}},item:{name:'Ada',people:[{}]},valid:{name:'Ada',profile:null,people:[null,{hidden:true}]}};let saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [record,message] of [['root',/Record requires at least 2 properties/],['nested',/profile allows at most 1 properties/],['item',/requires at least 1 properties/]]){id.value=record;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,message);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const limits of [{minProperties:-1},{maxProperties:1.5},{minProperties:2,maxProperties:1}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,...limits}}),/Unsupported/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('typed forms validate, preserve unknown data and retain edits on revision conflicts',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{let record={id:'one',revision:1,value:{name:'Ada',age:20,active:false,tier:'standard',note:'',extra:{keep:true}}},putCalls=0;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};putCalls++;if(input.expectedRevision!==record.revision)return {ok:false,status:409,json:async()=>({error:'conflict'})};record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})}};
- const f=render(s.runtime.createRecordEditor);dom=f.dom;const [id,name,age,active,tier,note]=f.controls,[load,save]=f.buttons;id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>f.status.textContent==='Record loaded.');assert.equal(name.value,'Ada');assert.equal(active.value,'false');assert.equal(tier.value,'standard');assert.equal(save.disabled,false);
- age.value='-1';age.dispatchEvent(new dom.window.Event('blur'));assert.match(age.parentElement.textContent,/at least 0/);save.click();assert.equal(putCalls,0);assert.equal(age.getAttribute('aria-invalid'),'true');age.value='21';age.dispatchEvent(new dom.window.Event('input'));active.value='true';active.dispatchEvent(new dom.window.Event('change'));name.value='Grace';name.dispatchEvent(new dom.window.Event('input'));save.click();await wait(()=>f.status.textContent==='Record saved.');assert.deepEqual(record.value,{name:'Grace',age:21,active:true,tier:'standard',note:'',extra:{keep:true}});assert.equal(age.hasAttribute('aria-invalid'),false);
- record={...record,revision:3,value:{...record.value,name:'External'}};name.value='Unsaved';name.dispatchEvent(new dom.window.Event('input'));save.click();await wait(()=>f.status.textContent.includes('changed elsewhere'));assert.equal(save.disabled,true);assert.equal(name.disabled,false);assert.equal(name.value,'Unsaved');
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('new records require fields and unsupported loaded values cannot be overwritten',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{let record=null,puts=0;globalThis.fetch=async(path,options)=>path.endsWith('items.get')?{ok:true,json:async()=>({result:record})}:{ok:true,json:async()=>{puts++;return {result:{id:JSON.parse(options.body).id,revision:1}}}};const f=render(s.runtime.createRecordEditor);dom=f.dom;const [id,name,age,active]=f.controls,[load,save]=f.buttons;id.value='new';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>f.status.textContent.startsWith('New record'));save.click();assert.equal(puts,0);assert.match(f.root.textContent,/This field is required/);assert.equal(name.getAttribute('aria-invalid'),'true');name.value='A';age.value='5';active.value='false';save.click();await wait(()=>f.status.textContent==='Record saved.');assert.equal(puts,1);
- record={id:'invalid',revision:2,value:{name:'A',age:'not-a-number',active:true}};id.value='invalid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>f.status.textContent.includes('cannot edit'));assert.equal(save.disabled,true);assert.equal(puts,1);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('preview and runtime validate the same field definitions and preview is inert',async()=>{const s=await setup();let dom;try{const options={getOperation:'items.get',putOperation:'items.put'},good={...options,fields:schema};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){for(const bad of [[],[{key:'constructor',label:'X',type:'string'}],[{key:'x',label:'X',type:'number',maxLength:2}],[{key:'x',label:'X',type:'string',options:['a','a']}],[{key:'x',label:'X',type:'boolean',required:'yes'}],[{key:'x',label:'X',type:'integer',min:5,max:2}]])assert.throws(()=>factory({...options,fields:bad}),/Invalid record fields/);assert.doesNotThrow(()=>factory(good));}
- for(const bad of [[],[{key:'constructor',label:'X',type:'string'}],[{key:'x',label:'X',type:'number',maxLength:2}],[{key:'x',label:'X',type:'string',options:['a','a']}],[{key:'x',label:'X',type:'boolean',required:'yes'}],[{key:'x',label:'X',type:'integer',min:5,max:2}]])assert.throws(()=>createRecordFieldValidator(bad),/Invalid record fields/);assert.doesNotThrow(()=>createRecordFieldValidator(schema));
- const f=render(s.preview.createRecordEditor);dom=f.dom;assert.ok([...f.root.querySelectorAll('button,input,select,textarea')].every(node=>node.disabled));assert.match(f.root.textContent,/Preview only/);assert.match(f.root.textContent,/Name \(required\)/);assert.equal(f.root.querySelector('script'),null);
- }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true})}});
-
-test('factory snapshots field options and rejects duplicate or unsafe keys',async()=>{const s=await setup();try{const fields=[{key:'tier',label:'Tier',type:'string',options:['standard','premium']}],editor=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',fields});fields[0].options.push('forged');const dom=new JSDOM('<!doctype html>');const root=editor.render({},null,null,dom.window.document);assert.deepEqual([...root.querySelectorAll('select option')].map(x=>x.value),['','standard','premium']);dom.window.close();for(const fields of [[{key:'x',label:'X',type:'string'},{key:'x',label:'Y',type:'string'}],[{key:'__proto__',label:'X',type:'string'}]])assert.throws(()=>s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',fields}),/Invalid/);}finally{await rm(s.dir,{recursive:true,force:true})}});
-
-test('record browsing handles filtered empty pages and selects IDs without HTML or silent edit loss',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const calls=[],record={id:' <img src=x> ',revision:1,value:{name:'Ada',age:20,active:true}};globalThis.fetch=async(path,options)=>{const data=JSON.parse(options.body);calls.push({path,data});if(path.endsWith('items.list'))return {ok:true,json:async()=>({result:data.cursor?{items:[record]}:{items:[],nextCursor:'opaque'}})};if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:data.id===record.id?record:null})};return {ok:true,json:async()=>({result:{id:data.id,revision:2}})}};
- const document=(dom=new JSDOM('<!doctype html>')).window.document,editor=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',fields:schema}),root=editor.render({label:'People'},null,null,document);document.body.appendChild(root);const buttons=()=>[...root.querySelectorAll('button')],browse=buttons().find(b=>b.textContent==='Browse records'),next=buttons().find(b=>b.textContent==='Next page');browse.click();await wait(()=>root.textContent.includes('No visible records'));assert.equal(next.disabled,false);next.click();await wait(()=>root.textContent.includes('1 record(s)'));assert.equal(root.querySelector('img'),null);const select=buttons().find(b=>b.textContent===record.id);select.click();await wait(()=>root.textContent.includes('Record loaded.'));assert.equal(calls.at(-1).data.id,record.id);
- const name=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Name')).querySelector('input');name.value='Unsaved';name.dispatchEvent(new dom.window.Event('input'));select.click();assert.match(root.textContent,/Save or copy your edits/);assert.equal(name.value,'Unsaved');assert.equal(calls.filter(x=>x.path.endsWith('items.get')).length,1);browse.click();await wait(()=>root.textContent.includes('No visible records'));select.click();assert.equal(calls.filter(x=>x.path.endsWith('items.get')).length,1);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('browse controls are optional, validated and inert in preview',async()=>{const s=await setup();let dom;try{const options={getOperation:'items.get',putOperation:'items.put'};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({...options,listOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=s.preview.createRecordEditor({...options,listOperation:'items.list'}).render({},null,null,dom.window.document);assert.ok([...root.querySelectorAll('button,input,textarea')].every(node=>node.disabled));assert.ok([...root.querySelectorAll('button')].some(node=>node.textContent==='Browse records'));const noBrowse=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);assert.equal([...noBrowse.querySelectorAll('button')].some(node=>node.textContent==='Browse records'),false);}finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true})}});
-
-test('JSON editor permits browsing after save but protects unsaved text',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{let revision=1,gets=0;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.list'))return {ok:true,json:async()=>({result:{items:[{id:'one',revision}]}})};if(path.endsWith('items.get')){gets++;return {ok:true,json:async()=>({result:{id:'one',revision,value:{name:'Ada'}}})}}revision++;return {ok:true,json:async()=>({result:{id:input.id,revision}})}};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list'}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);[...root.querySelectorAll('button')].find(b=>b.textContent==='Browse records').click();await wait(()=>root.querySelector('li button'));const select=root.querySelector('li button');select.click();await wait(()=>root.textContent.includes('Record loaded.'));const text=root.querySelector('textarea');text.value='{"name":"Grace"}';select.click();assert.equal(gets,1);assert.match(root.textContent,/Save or copy your edits/);[...root.querySelectorAll('button')].find(b=>b.textContent==='Save').click();await wait(()=>root.textContent.includes('Record saved.'));select.click();await wait(()=>gets===2);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('record editor sends the host schema version and preserves edits on schema conflict',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const calls=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);calls.push({path,input});if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:'one',revision:2,value:{name:'Ada'}}})};return {ok:false,status:409,json:async()=>({error:'Data schema version conflict'})}};const options={getOperation:'items.get',putOperation:'items.put',expectedSchemaVersion:2};const editor=s.runtime.createRecordEditor(options);options.expectedSchemaVersion=3;dom=new JSDOM('<!doctype html>');const root=editor.render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const input=root.querySelector('input'),text=root.querySelector('textarea'),[load,save]=root.querySelectorAll('button');input.value='one';input.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>root.textContent.includes('Record loaded.'));text.value='{"name":"Unsaved"}';save.click();await wait(()=>root.textContent.includes('Data schema changed.'));assert.equal(calls.at(-1).input.expectedSchemaVersion,2);assert.equal(text.value,'{"name":"Unsaved"}');assert.equal(save.disabled,true);
- for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const invalid of [-1,1.5,Number.MAX_SAFE_INTEGER+1,'1',null])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',expectedSchemaVersion:invalid}),/Invalid record schema version/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('configured schema version is sent on reads and rejects stale loads without enabling save',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const calls=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);calls.push({path,input});return {ok:false,status:409,json:async()=>({error:'Data schema version conflict'})}};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',expectedSchemaVersion:1}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const input=root.querySelector('input'),buttons=[...root.querySelectorAll('button')];input.value='one';input.dispatchEvent(new dom.window.Event('input'));buttons.find(b=>b.textContent==='Load').click();await wait(()=>root.textContent.includes('before loading'));assert.equal(calls[0].input.expectedSchemaVersion,1);assert.equal(buttons.find(b=>b.textContent==='Save').disabled,true);buttons.find(b=>b.textContent==='Browse records').click();await wait(()=>root.textContent.includes('before browsing'));assert.equal(calls[1].input.expectedSchemaVersion,1);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('schema conflict on a later load leaves existing typed edits available to copy',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{let calls=0;globalThis.fetch=async()=>{calls++;return calls===1?{ok:true,json:async()=>({result:{id:'one',revision:1,value:{name:'Ada',age:20,active:true}}})}:{ok:false,status:409,json:async()=>({error:'Data schema version conflict'})}};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',fields:schema,expectedSchemaVersion:0}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),[load,save]=root.querySelectorAll('button');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>root.textContent.includes('Record loaded.'));const name=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Name')).querySelector('input');name.value='Unsaved';name.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>root.textContent.includes('before loading'));assert.equal(name.value,'Unsaved');assert.equal(name.disabled,false);assert.equal(save.disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-test('a schema conflict during browsing clears previously displayed pages',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{let calls=0;globalThis.fetch=async()=>++calls===1?{ok:true,json:async()=>({result:{items:[{id:'one',revision:1}],nextCursor:'opaque'}})}:{ok:false,status:409,json:async()=>({error:'Data schema version conflict'})};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',expectedSchemaVersion:0}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const buttons=[...root.querySelectorAll('button')],browse=buttons.find(button=>button.textContent==='Browse records'),next=buttons.find(button=>button.textContent==='Next page');browse.click();await wait(()=>root.querySelector('li button'));next.click();await wait(()=>root.textContent.includes('before browsing'));assert.equal(root.querySelector('li button'),null);assert.equal(next.disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true})}});
-
-
-test('JSON Schema scalar form uses the same host schema for rendering and authoritative writes',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={$schema:'https://json-schema.org/draft/2020-12/schema',type:'object',properties:{name:{type:'string',title:'Name',minLength:1},quantity:{type:'integer',title:'Quantity',minimum:0},active:{type:'boolean',title:'Active'},tier:{type:'string',title:'Tier',enum:['basic','premium']}},required:['name'],additionalProperties:false},validate=createRecordJsonSchemaValidator(jsonSchema),editor=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema});jsonSchema.properties.tier.enum.push('forged');jsonSchema.properties.name.title='Changed';let saved;
- globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};if(!validate(input.value))return {ok:false,status:400,json:async()=>({error:'Invalid capability input'})};saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:input.value}})}};
- dom=new JSDOM('<!doctype html>');const root=editor.render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const labels=[...root.querySelectorAll('label')],controls=labels.map(label=>label.querySelector('input,select')),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');assert.match(root.textContent,/Name \(required\)/);assert.deepEqual([...controls[5].options].map(x=>x.textContent),['Select an option','basic','premium']);controls[0].value='one';controls[0].dispatchEvent(new dom.window.Event('input'));buttons[0].click();await wait(()=>status.textContent.startsWith('New record'));controls[1].value='Ada';controls[2].value='3';controls[3].value='false';controls[4].checked=true;controls[4].dispatchEvent(new dom.window.Event('change',{bubbles:true}));controls[5].value='2';buttons[1].click();await wait(()=>status.textContent==='Record saved.');assert.deepEqual(saved,{name:'Ada',quantity:3,active:false,tier:'premium'});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('JSON Schema form rejects unsupported constructs consistently in preview and runtime',async()=>{const s=await setup();let dom;try{const good={type:'object',properties:{name:{type:'string',minLength:1}},required:['name']},options={getOperation:'items.get',putOperation:'items.put'};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.throws(()=>factory({...options,fields:schema,jsonSchema:good}),/schema/);for(const bad of [{...good,if:{}},{...good,properties:{x:{type:'object'}}},{...good,properties:{name:{type:'string',maxLength:-1}}},{...good,required:['missing']},{...good,properties:{name:{type:'string',minLength:1,pattern:'['}}}])assert.throws(()=>factory({...options,jsonSchema:bad}),/Unsupported/);assert.doesNotThrow(()=>factory({...options,jsonSchema:good}));}dom=new JSDOM('<!doctype html>');const root=s.preview.createRecordEditor({...options,jsonSchema:good}).render({},null,null,dom.window.document);assert.ok([...root.querySelectorAll('button,input,select,textarea')].every(node=>node.disabled));assert.match(root.textContent,/name \(required\)/);}finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('nested JSON Schema forms preserve unknown values and explicitly add or remove optional objects',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{name:{type:'string',minLength:1},address:{type:'object',title:'Address',properties:{city:{type:'string',minLength:1},contact:{type:'object',title:'Contact',properties:{phone:{type:'string',minLength:1}},required:['phone']}},required:['city']}},required:['name'],additionalProperties:true},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{name:'Ada',address:{city:'Dubai',extra:'kept',contact:{phone:'123',unseen:true}},outside:42}},saved=[];
- globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};
- dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const inputs=[...root.querySelectorAll('input')],id=inputs[0],address=inputs[1],contact=inputs[2],name=inputs[3],city=inputs[4],phone=inputs[5],[load,save]=root.querySelectorAll('button'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');assert.equal(address.checked,true);assert.equal(contact.checked,true);assert.equal(phone.value,'123');city.value='Abu Dhabi';city.dispatchEvent(new dom.window.Event('input'));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{name:'Ada',address:{city:'Abu Dhabi',extra:'kept',contact:{phone:'123',unseen:true}},outside:42});
- contact.checked=false;contact.dispatchEvent(new dom.window.Event('change'));assert.equal(phone.disabled,true);save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{name:'Ada',address:{city:'Abu Dhabi',extra:'kept'},outside:42});address.checked=false;address.dispatchEvent(new dom.window.Event('change'));assert.equal(city.disabled,true);save.click();await wait(()=>saved.length===3&&!save.disabled);assert.deepEqual(saved[2],{name:'Ada',outside:42});address.checked=true;address.dispatchEvent(new dom.window.Event('change'));contact.checked=true;contact.dispatchEvent(new dom.window.Event('change'));phone.value='456';phone.dispatchEvent(new dom.window.Event('input'));save.click();await wait(()=>saved.length===4&&!save.disabled);assert.deepEqual(saved[3],{name:'Ada',address:{city:'Abu Dhabi',contact:{phone:'456'}},outside:42});assert.equal(name.value,'Ada');
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('nested form rejects incompatible loaded objects and previews optional object controls inertly',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{address:{type:'object',properties:{city:{type:'string',minLength:1}},required:['city']}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{address:'not an object'}}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),[load,save]=root.querySelectorAll('button'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(save.disabled,true);const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('button,input,select')].every(x=>x.disabled));assert.match(preview.textContent,/Include address/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('JSON Schema arrays support adding, removing and validating scalar items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{tags:{type:'array',title:'Tags',items:{type:'string',minLength:1},minItems:1,maxItems:2},metrics:{type:'object',properties:{scores:{type:'array',title:'Scores',items:{type:'integer',minimum:0},maxItems:3}}}},required:['tags']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{tags:['old'],metrics:{scores:[2],hidden:true},extra:7}},saved=[];
- globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};
- dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),load=[...root.querySelectorAll('button')].find(b=>b.textContent==='Load'),save=[...root.querySelectorAll('button')].find(b=>b.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const tags=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector('legend').textContent.startsWith('Tags')),scores=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector('legend').textContent.startsWith('metrics / Scores'));assert.equal(tags.querySelector('input').value,'old');const add=[...tags.querySelectorAll('button')].find(button=>button.textContent==='Add Tags item');add.click();assert.equal(add.disabled,true);const values=tags.querySelectorAll('input');values[1].value='new';values[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tags:['old','new'],metrics:{scores:[2],hidden:true},extra:7});tags.querySelector('div button').click();save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1].tags,['new']);tags.querySelector('div button').click();save.click();assert.match(tags.textContent,/between 1 and 2 items/);assert.equal(saved.length,2);assert.equal(scores.querySelector('input[type=checkbox]').checked,true);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('array forms preserve absent optional arrays and reject incompatible values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{flags:{type:'array',items:{type:'boolean'},maxItems:2}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};let record={id:'one',revision:1,value:{keep:true}},saved;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};saved=input.value;return {ok:true,json:async()=>({result:{id:'one',revision:2}})}};
- dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),load=[...root.querySelectorAll('button')].find(b=>b.textContent==='Load'),save=[...root.querySelectorAll('button')].find(b=>b.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const field=root.querySelector('fieldset'),include=field.querySelector('input[type=checkbox]'),add=field.querySelector('button');assert.equal(include.checked,false);save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{keep:true});include.checked=true;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));add.click();field.querySelector('select').value='false';field.querySelector('select').dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.flags&&!save.disabled);assert.deepEqual(saved.flags,[false]);record={id:'one',revision:3,value:{flags:[true,'invalid']}};load.click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(save.disabled,true);const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('button,input,select')].every(x=>x.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('JSON Schema strings distinguish empty from absent and count Unicode code points',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{requiredText:{type:'string',title:'Required text',maxLength:1},optionalText:{type:'string',title:'Optional text',minLength:0,maxLength:1},texts:{type:'array',items:{type:'string',maxLength:1},maxItems:2}},required:['requiredText']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved,record=null;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved=input.value;record={id:input.id,revision:1,value:saved};return {ok:true,json:async()=>({result:record})};};
- dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const buttons=[...root.querySelectorAll('button')],load=buttons.find(b=>b.textContent==='Load'),save=buttons.find(b=>b.textContent==='Save'),id=root.querySelector('input'),status=root.querySelector('[role=status]'),findLabel=t=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(t)),required=findLabel('Required text').querySelector('input'),optional=findLabel('Optional text').querySelector('input'),include=findLabel(' Include Optional text').querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.startsWith('New record'));save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{requiredText:''});include.checked=true;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));required.value='😀';required.dispatchEvent(new dom.window.Event('input',{bubbles:true}));optional.value='';optional.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.optionalText!==undefined&&!save.disabled);assert.deepEqual(saved,{requiredText:'😀',optionalText:''});optional.value='😀😀';save.click();assert.match(root.textContent,/no more than 1 characters/);assert.equal(saved.optionalText,'');optional.value='😀';include.checked=false;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>!Object.hasOwn(saved,'optionalText')&&!save.disabled);assert.deepEqual(saved,{requiredText:'😀'});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('JSON Schema array string items can represent empty strings',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{items:{type:'array',items:{type:'string',maxLength:2}}},required:['items']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(b=>b.textContent==='Load'),save=buttons.find(b=>b.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.startsWith('New record'));buttons.find(b=>b.textContent==='Add items item').click();save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{items:['']});}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('object arrays edit scalar fields and preserve undisplayed data across successive saves',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',title:'People',items:{type:'object',properties:{name:{type:'string',minLength:1},note:{type:'string'},age:{type:'integer',minimum:0}},required:['name']},minItems:1,maxItems:3}},required:['people']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{people:[{name:'Ada',note:'hello',hidden:{keep:true}}],other:1}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),load=[...root.querySelectorAll('button')].find(x=>x.textContent==='Load'),save=[...root.querySelectorAll('button')].find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const array=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector('legend').textContent.startsWith('People')),row=array.querySelector('fieldset'),labels=[...row.querySelectorAll('label')],name=labels.find(x=>x.textContent.startsWith('name')).querySelector('input'),include=labels.find(x=>x.textContent.startsWith(' Include note')).querySelector('input'),age=labels.find(x=>x.textContent.startsWith('age')).querySelector('input');name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));include.checked=false;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{people:[{name:'Grace',hidden:{keep:true}}],other:1});age.value='5';age.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{people:[{name:'Grace',age:5,hidden:{keep:true}}],other:1});[...array.querySelectorAll('button')].find(x=>x.textContent==='Add People item').click();const second=array.querySelectorAll('fieldset')[1],secondName=[...second.querySelectorAll('label')].find(x=>x.textContent.startsWith('name')).querySelector('input');secondName.value='Lin';secondName.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===3&&!save.disabled);assert.deepEqual(saved[2].people,[{name:'Grace',age:5,hidden:{keep:true}},{name:'Lin'}]);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('object array forms reject incompatible values and unsupported nested item schemas',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',items:{type:'object',properties:{name:{type:'string'}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{people:[{name:5}]}}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(buttons.find(x=>x.textContent==='Save').disabled,true);for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{people:{type:'array',items:{type:'object',properties:{nested:{type:'array',items:{type:'array'}}}}}}}}),/Unsupported/);const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('button,input,select')].every(x=>x.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('object array items support nested objects and scalar arrays without losing hidden values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',items:{type:'object',properties:{name:{type:'string',minLength:1},address:{type:'object',properties:{city:{type:'string',minLength:1},codes:{type:'array',items:{type:'string'},maxItems:3}},required:['city']}},required:['name']}}},required:['people']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{people:[{name:'Ada',address:{city:'Dubai',codes:['one'],hidden:true},extra:'keep'}]}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};
- dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const group=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include address')),check=group.querySelector('input'),city=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('address / city')).querySelector('input');assert.equal(check.checked,true);city.value='Abu Dhabi';city.dispatchEvent(new dom.window.Event('input',{bubbles:true}));const add=[...root.querySelectorAll('button')].find(x=>x.textContent==='Add address / codes item');add.click();const array=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector('legend').textContent.startsWith('address / codes')),texts=[...array.querySelectorAll('input[type=text]')];texts[1].value='two';texts[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{people:[{name:'Ada',address:{city:'Abu Dhabi',codes:['one','two'],hidden:true},extra:'keep'}]});check.checked=false;check.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{people:[{name:'Ada',extra:'keep'}]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('object array items reject incompatible nested data before editing',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',items:{type:'object',properties:{address:{type:'object',properties:{city:{type:'string'}}}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{people:[{address:'wrong'}]}}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(buttons.find(x=>x.textContent==='Save').disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('JSON Schema forms resolve local definitions for nested objects and array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={$schema:'https://json-schema.org/draft/2020-12/schema',type:'object',$defs:{'address/type':{type:'object',properties:{city:{$ref:'#/$defs/name'}},required:['city']},name:{type:'string',minLength:1},person:{type:'object',properties:{name:{$ref:'#/$defs/name'},address:{$ref:'#/$defs/address~1type'}},required:['name']}},properties:{people:{type:'array',title:'People',items:{$ref:'#/$defs/person'},minItems:1}},required:['people']},validate=createRecordJsonSchemaValidator(jsonSchema),editor=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema});jsonSchema.$defs.name.minLength=4;let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};dom=new JSDOM('<!doctype html>');const root=editor.render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.startsWith('New record'));buttons.find(x=>x.textContent==='Add People item').click();const name=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('name')).querySelector('input'),include=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include address')).querySelector('input'),city=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('address / city')).querySelector('input');name.value='A';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));include.checked=true;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));city.value='D';city.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{people:[{name:'A',address:{city:'D'}}]});const preview=s.preview.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema});assert.ok(preview);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('form reference resolution rejects remote, missing, cyclic and assertion siblings',async()=>{const s=await setup();try{const options={getOperation:'items.get',putOperation:'items.put'},badRefs=[{$ref:'https://example.test/schema'},{$ref:'#/$defs/missing'},{$ref:'#/$defs/self'},{$ref:'#/$defs/text',minLength:1},{$ref:'#/$defs/bad~2name'}];for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const ref of badRefs){const jsonSchema={type:'object',$defs:{self:{$ref:'#/$defs/self'},text:{type:'string'}},properties:{value:ref}};assert.throws(()=>factory({...options,jsonSchema}),/Unsupported/);}}finally{await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('dependentRequired validates present values, including empty strings, before saving',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{email:{type:'string',title:'Email'},phone:{type:'string',title:'Phone'}},dependentRequired:{email:['phone']}},validate=createRecordJsonSchemaValidator(jsonSchema);let saves=0,saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saves++;saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const labels=[...root.querySelectorAll('label')],id=root.querySelector('input'),email=labels.find(x=>x.textContent.startsWith(' Include Email')).querySelector('input'),phone=labels.find(x=>x.textContent.startsWith(' Include Phone')).querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.startsWith('New record'));email.checked=true;email.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();assert.equal(saves,0);assert.match(status.textContent,/phone is required when email is provided/);phone.checked=true;phone.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saves===1&&!save.disabled);assert.deepEqual(saved,{email:'',phone:''});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('dependentRequired applies inside nested objects and object-array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',items:{type:'object',properties:{contact:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentRequired:{email:['phone']}}}}}},required:['people']};let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:'one',revision:1,value:{people:[{contact:{email:'test'}}]}}})};saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.equal(saved,undefined);assert.match(root.textContent,/contact \/ phone is required when email is provided/);const include=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include contact / phone')).querySelector('input');include.checked=true;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{people:[{contact:{email:'test',phone:''}}]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('dependentRequired rejects invalid or undisplayed dependencies at configuration',async()=>{const s=await setup();try{for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const dependentRequired of [{other:['phone']},{email:['other']},{email:['phone','phone']},{email:'phone'}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentRequired}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
-
-test('dependentSchemas requires fields only when the trigger exists, including in array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const contact={type:'object',properties:{email:{type:['string','null']},phone:{type:'string'}},dependentSchemas:{email:{required:['phone']}}},jsonSchema={type:'object',properties:{primary:contact,people:{type:'array',items:contact}},required:['people']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved=[];globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:{people:[{email:null}]}}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const options={getOperation:'items.get',putOperation:'items.put',jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');buttons.find(x=>x.textContent==='Save').click();assert.equal(saved.length,0);assert.match(root.textContent,/phone is required when email is provided/);const include=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include phone')).querySelector('input');include.checked=true;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));buttons.find(x=>x.textContent==='Save').click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{people:[{email:null,phone:''}]});const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('input,select,button')].every(x=>x.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('dependent schema properties validate only when the trigger exists',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const contact={type:'object',properties:{email:{type:['string','null']},phone:{type:'string'},profile:{type:'object',properties:{verified:{type:'boolean'}}},tags:{type:'array',items:{type:'string'}}},dependentSchemas:{email:{$ref:'#/$defs/contactRule'}}},jsonSchema={...contact,$defs:{contact,contactRule:{required:['phone'],properties:{phone:{type:'string',pattern:'^\\+[0-9]+$'},profile:{type:'object',properties:{verified:{const:true}},required:['verified']},tags:{type:'array',contains:{const:'yes'}}}}},properties:{...contact.properties,people:{type:'array',items:{$ref:'#/$defs/contact'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const records={missing:{email:null},phone:{email:null,phone:'123'},profile:{email:'a',phone:'+123',profile:{verified:false}},tags:{email:'a',phone:'+123',tags:['no']},item:{people:[{email:null,phone:'123'}]},valid:{email:null,phone:'+123',profile:{verified:true},tags:['yes'],people:[{email:null,phone:'+456'}]},skip:{phone:'bad',profile:{verified:false},tags:['no'],people:[]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [name,error] of [['missing',/phone is required when email is provided/],['phone',/phone does not satisfy the dependency for email/],['profile',/profile does not satisfy the dependency for email/],['tags',/tags does not satisfy the dependency for email/],['item',/phone does not satisfy the dependency for email/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','skip']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const rule of [{properties:{unknown:{const:1}}},{properties:{phone:{type:'string',format:'email'}}},{required:['unknown']},{additionalProperties:{type:'string',format:'email'}},{}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,dependentSchemas:{email:rule}}}),/Unsupported/);
+test('record browser optionally selects record ID order and fences stale pages', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (let i = 0; i < 56; i++) {
+      const id = 'id-' + String(i).padStart(3, '0');
+      provider.put(scope, 'items', id, { owner: i === 52 ? 'other' : 'user' }, null);
+    }
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      allowIdPrefix: true,
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, request) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...request,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(request.body) })
+      });
+    const options = { getOperation: 'items.get', putOperation: 'items.put', listOperation: 'items.list', allowReverseOrder: true, allowIdPrefix: true };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const label = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('Record order')),
+      order = label.querySelector('select'),
+      browse = [...root.querySelectorAll('button')].find(x => x.textContent === 'Browse records'),
+      change = () => order.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    browse.click();
+    await wait(() => root.querySelectorAll('li button').length === 50 && !browse.disabled);
+    const ids = () => [...root.querySelectorAll('li button')].map(x => x.textContent),
+      next = [...root.querySelectorAll('button')].find(x => x.textContent === 'Next page');
+    assert.equal(ids()[0], 'id-000');
+    assert.equal(ids().at(-1), 'id-049');
+    assert.equal(next.disabled, false);
+    next.click();
+    await wait(() => ids().length === 5 && !browse.disabled);
+    assert.deepEqual(ids(), ['id-050', 'id-051', 'id-053', 'id-054', 'id-055']);
+    order.value = 'desc';
+    change();
+    assert.equal(root.querySelectorAll('li').length, 0);
+    browse.click();
+    await wait(() => ids().length === 49 && !browse.disabled);
+    assert.equal(ids()[0], 'id-055');
+    assert.equal(ids().at(-1), 'id-006');
+    assert.equal(ids().includes('id-052'), false);
+    next.click();
+    await wait(() => ids().length === 6 && !browse.disabled);
+    assert.deepEqual(ids(), ['id-005', 'id-004', 'id-003', 'id-002', 'id-001', 'id-000']);
+    const prefix = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('Record ID starts with')).querySelector('input');
+    prefix.value = 'id-00';
+    prefix.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal(ids().length, 0);
+    browse.click();
+    await wait(() => ids().length === 10 && !browse.disabled);
+    assert.deepEqual(
+      ids(),
+      Array.from({ length: 10 }, (_, i) => 'id-' + String(9 - i).padStart(3, '0'))
+    );
+    let release;
+    globalThis.fetch = () => new Promise(resolve => (release = () => resolve({ ok: true, json: async () => ({ result: { items: [{ id: 'stale', revision: 1 }], nextCursor: 'old' } }) })));
+    browse.click();
+    await wait(() => !!release);
+    order.value = 'asc';
+    change();
+    release();
+    await wait(() => !browse.disabled);
+    assert.equal(root.querySelectorAll('li button').length, 0);
+    assert.equal([...root.querySelectorAll('button')].find(x => x.textContent === 'Next page').disabled, true);
+    release = undefined;
+    browse.click();
+    await wait(() => !!release);
+    prefix.value = 'id-01';
+    prefix.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    release();
+    await wait(() => !browse.disabled);
+    assert.equal(ids().length, 0);
+    assert.equal([...root.querySelectorAll('button')].find(x => x.textContent === 'Next page').disabled, true);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, document);
+    assert.equal([...preview.querySelectorAll('label')].find(x => x.textContent.startsWith('Record order')).querySelector('select').disabled, true);
+    assert.equal([...preview.querySelectorAll('label')].find(x => x.textContent.startsWith('Record ID starts with')).querySelector('input').disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.throws(() => factory({ ...options, allowReverseOrder: 'yes' }), /Invalid record order/);
+      assert.throws(() => factory({ ...options, allowIdPrefix: 'yes' }), /Invalid record ID prefix/);
+      assert.throws(() => factory({ ...options, listOperation: undefined }), /Invalid record order/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('dependentSchemas rejects unsupported assertions and unknown fields in runtime and preview',async()=>{const s=await setup();try{for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const dependentSchemas of [{other:{required:['phone']}},{email:{required:['other']}},{email:{required:['phone','phone']}},{email:{properties:{phone:{type:'string',format:'email'}}}},{email:'invalid'},{email:{required:['phone'],additionalProperties:{type:'string',format:'email'}}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{email:{type:'string'},phone:{type:'string'}},dependentSchemas}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('if/then/else validates conditional required fields against the assembled record',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{kind:{type:'string',title:'Kind',enum:['company','person']},company:{type:'string',title:'Company'},person:{type:'string',title:'Person'}},if:{properties:{kind:{const:'company'}},required:['kind']},then:{required:['company']},else:{required:['person']}},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]'),include=text=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include '+text)).querySelector('input'),control=text=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(text+' (')).querySelector('input,select');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.startsWith('New record'));save.click();assert.match(status.textContent,/person is required by a condition/);include('Kind').checked=true;include('Kind').dispatchEvent(new dom.window.Event('change',{bubbles:true}));control('Kind').value='1';save.click();assert.match(status.textContent,/company is required by a condition/);include('Company').checked=true;include('Company').dispatchEvent(new dom.window.Event('change',{bubbles:true}));control('Company').value='Acme';save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{kind:'company',company:'Acme'});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('typed and structured conditional predicates agree with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{threshold:{type:'number',minimum:10,multipleOf:0.5},vip:{const:'vip'}},properties:{score:{type:'number'},code:{type:'string'},detail:{type:'object',properties:{approved:{type:'boolean'},tags:{type:'array',items:{type:'string'}}}},thenlabel:{type:'string'},elselabel:{type:'string'}},if:{properties:{score:{$ref:'#/$defs/threshold'},code:{type:'string',pattern:'^X',minLength:2},detail:{type:'object',properties:{approved:{type:'boolean',const:true},tags:{type:'array',contains:{$ref:'#/$defs/vip'}}},required:['approved','tags']}},required:['score','code','detail']},then:{required:['thenlabel']},else:{required:['elselabel']}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const condition={score:10.5,code:'X1',detail:{approved:true,tags:['vip']}},records={missingthen:condition,missingelse:{...condition,score:9.5},absent:{code:'X1',detail:condition.detail},nested:{...condition,detail:{approved:true,tags:['other']}},valid:{...condition,thenlabel:'Approved'},validelse:{...condition,score:9.5,elselabel:'Review'}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [name,error] of [['missingthen',/thenlabel is required by a condition/],['missingelse',/elselabel is required by a condition/],['absent',/elselabel is required by a condition/],['nested',/elselabel is required by a condition/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','validelse']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===(name==='valid'?1:2)&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const test of [{type:'string',format:'email'},{type:'number',multipleOf:0},{anyOf:[]},{type:'object',properties:{x:{type:'string'}},additionalProperties:{type:'string',format:'email'}}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{code:test}},then:{required:['thenlabel']},else:undefined}}),/Unsupported/);
+test('record browser offers host-approved field presence filters', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [
+          { field: 'note', label: 'Note', type: 'string' },
+          { field: 'count', label: 'Count', type: 'number' }
+        ],
+        existsFilterFields: ['note'],
+        multipleFilters: true
+      };
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [], nextCursor: 'opaque' } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const label = name => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(name)),
+      field = label('Filter field').querySelector('select'),
+      operator = label('Comparison').querySelector('select'),
+      value = label('Filter value').querySelector('input'),
+      nullInput = root.querySelector('input[type=checkbox]'),
+      buttons = () => [...root.querySelectorAll('button')],
+      browse = () => buttons().find(x => x.textContent === 'Browse records'),
+      change = control => control.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = 'note';
+    change(field);
+    operator.value = 'exists';
+    change(operator);
+    assert.equal(value.disabled, true);
+    assert.equal(nullInput.disabled, true);
+    browse().click();
+    await wait(() => calls.length === 1 && !browse().disabled);
+    assert.deepEqual(calls[0].filter, { field: 'note', operator: 'exists', value: true });
+    assert.equal(buttons().find(x => x.textContent === 'Next page').disabled, false);
+    operator.value = 'missing';
+    change(operator);
+    assert.equal(buttons().find(x => x.textContent === 'Next page').disabled, true);
+    browse().click();
+    await wait(() => calls.length === 2 && !browse().disabled);
+    assert.deepEqual(calls[1].filter, { field: 'note', operator: 'exists', value: false });
+    field.value = 'count';
+    change(field);
+    assert.equal(operator.value, 'eq');
+    assert.equal([...operator.options].find(x => x.value === 'exists').disabled, true);
+    assert.equal(value.disabled, false);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(x => x.disabled));
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.throws(() => factory({ ...options, existsFilterFields: ['unknown'] }), /Invalid record filter fields/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('conditional branches validate typed fields and preserve optional-field semantics',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{price:{type:'number',minimum:100,multipleOf:0.5},contract:{required:['price'],properties:{price:{$ref:'#/$defs/price'},policy:{type:'object',properties:{status:{const:'active'}},required:['status']},badges:{type:'array',contains:{const:'approved'}}}}},properties:{kind:{type:'string'},price:{type:'number'},policy:{type:'object',properties:{status:{type:'string'}}},badges:{type:'array',items:{type:'string'}}},if:{properties:{kind:{const:'contract'}},required:['kind']},then:{$ref:'#/$defs/contract'},else:{properties:{price:{type:'number',maximum:99}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),base={kind:'contract',price:120,policy:{status:'active'},badges:['approved']};
-  const records={missing:{kind:'contract'},low:{...base,price:99},fraction:{...base,price:100.25},policy:{...base,policy:{status:'inactive'}},badge:{...base,badges:['other']},retail:{kind:'retail',price:100},valid:base,validelse:{kind:'retail',price:99},optional:{kind:'retail'}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [name,error] of [['missing',/price is required by a condition/],['low',/price does not satisfy a condition/],['fraction',/price does not satisfy a condition/],['policy',/policy does not satisfy a condition/],['badge',/badges does not satisfy a condition/],['retail',/price does not satisfy a condition/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','validelse','optional']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const then of [{properties:{unknown:{const:1}}},{properties:{price:{type:'number',multipleOf:0}}},{required:['unknown']},{additionalProperties:{type:'string',format:'email'}},{}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,then}}),/Unsupported/);
+test('record browser field presence filters use the authorized capability service', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (const [id, value] of [
+      ['null', { owner: 'user', note: null }],
+      ['missing', { owner: 'user' }],
+      ['secret', { owner: 'other', note: 'hidden' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['note'],
+      existsFilterFields: ['note'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, request) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...request,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(request.body) })
+      });
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime
+        .createRecordEditor({
+          getOperation: 'items.get',
+          putOperation: 'items.put',
+          listOperation: 'items.list',
+          filterFields: [{ field: 'note', label: 'Note', type: 'string' }],
+          existsFilterFields: ['note']
+        })
+        .render({}, null, null, document);
+    document.body.append(root);
+    const label = name => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(name)),
+      field = label('Filter field').querySelector('select'),
+      operator = label('Comparison').querySelector('select'),
+      browse = [...root.querySelectorAll('button')].find(x => x.textContent === 'Browse records'),
+      change = x => x.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = 'note';
+    change(field);
+    operator.value = 'exists';
+    change(operator);
+    browse.click();
+    await wait(() => root.querySelector('li button')?.textContent === 'null' && !browse.disabled);
+    operator.value = 'missing';
+    change(operator);
+    browse.click();
+    await wait(() => root.querySelector('li button')?.textContent === 'missing' && !browse.disabled);
+    assert.doesNotMatch(root.textContent, /secret/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('conditional branch predicates validate object-array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{people:{type:'array',items:{type:'object',properties:{active:{type:'boolean'},age:{type:'integer'}},if:{properties:{active:{const:true}},required:['active']},then:{properties:{age:{type:'integer',minimum:18}},required:['age']}}}},required:['people']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={bad:{people:[{active:true,age:17}]},valid:{people:[{active:true,age:18},{active:false,age:4}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  id.value='bad';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/age does not satisfy a condition/);assert.equal(validate(records.bad),false);assert.equal(saved.length,0);
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('combined matching rules agree with server conditional and array validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const score={allOf:[{type:'number',minimum:10},{type:'number',maximum:20}],anyOf:[{enum:[12,15,16,18]}],oneOf:[{type:'integer',multipleOf:2},{enum:[12,15]}],not:{const:18}},jsonSchema={type:'object',$defs:{score},properties:{score:{type:'number'},result:{type:'string'},reason:{type:'string'},scores:{type:'array',items:{type:'number'},contains:{$ref:'#/$defs/score'}}},if:{properties:{score:{$ref:'#/$defs/score'}},required:['score']},then:{required:['result'],properties:{result:{type:'string',anyOf:[{const:'accepted'},{const:'override'}],not:{const:'revoked'}}}},else:{required:['reason']}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const records={matched:{score:15,scores:[15]},overlap:{score:12,scores:[15]},excluded:{score:18,scores:[15]},outside:{score:13,scores:[15]},missing:{scores:[15]},branch:{score:16,result:'bad',scores:[15]},nomatch:{score:15,result:'accepted',scores:[12,18]},valid:{score:15,result:'accepted',scores:[12,15]},valid2:{score:16,result:'override',scores:[16]},validelse:{score:12,reason:'Review',scores:[15]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [name,error] of [['matched',/result is required by a condition/],['overlap',/reason is required by a condition/],['excluded',/reason is required by a condition/],['outside',/reason is required by a condition/],['missing',/reason is required by a condition/],['branch',/result does not satisfy a condition/],['nomatch',/required number of matching items/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','valid2','validelse']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const rule of [{allOf:[]},{anyOf:[null]},{oneOf:Array(41).fill({const:1})},{not:null},{anyOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,if:{properties:{score:rule}},then:{required:['result']},else:undefined}}),/Unsupported/);
+test('record browser offers host-approved array membership filters', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [
+          { field: 'tags', label: 'Tags', type: 'string' },
+          { field: 'state', label: 'State', type: 'string' }
+        ],
+        arrayContainsFilterFields: ['tags'],
+        multipleFilters: true
+      };
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [] } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const field = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Filter field')).querySelector('select'),
+      operator = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select'),
+      value = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input'),
+      nullInput = root.querySelector('input[type=checkbox]'),
+      browse = [...root.querySelectorAll('button')].find(button => button.textContent === 'Browse records'),
+      change = control => control.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = 'tags';
+    change(field);
+    assert.equal([...operator.options].find(option => option.value === 'arrayContains').disabled, false);
+    operator.value = 'arrayContains';
+    change(operator);
+    value.value = 'red';
+    browse.click();
+    await wait(() => calls.length === 1 && !browse.disabled);
+    assert.deepEqual(calls[0].filter, { field: 'tags', operator: 'arrayContains', value: 'red' });
+    nullInput.checked = true;
+    change(nullInput);
+    assert.equal(nullInput.disabled, false);
+    browse.click();
+    await wait(() => calls.length === 2 && !browse.disabled);
+    assert.deepEqual(calls[1].filter, { field: 'tags', operator: 'arrayContains', value: null });
+    nullInput.checked = false;
+    change(nullInput);
+    value.value = 'red';
+    [...root.querySelectorAll('button')].find(button => button.textContent === 'Add filter').click();
+    const extra = [...root.querySelectorAll('fieldset')].find(node => node.querySelector('legend')?.textContent === 'Additional filter'),
+      extraField = extra.querySelectorAll('select')[0],
+      extraOperator = extra.querySelectorAll('select')[1],
+      extraValue = [...extra.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input');
+    extraField.value = 'tags';
+    change(extraField);
+    extraOperator.value = 'arrayContains';
+    change(extraOperator);
+    extraValue.value = 'blue';
+    browse.click();
+    await wait(() => calls.length === 3 && !browse.disabled);
+    assert.deepEqual(calls[2].filters, [
+      { field: 'tags', operator: 'arrayContains', value: 'red' },
+      { field: 'tags', operator: 'arrayContains', value: 'blue' }
+    ]);
+    extraValue.value = 'red';
+    browse.click();
+    assert.equal(calls.length, 3);
+    assert.match(root.textContent, /Choose each array membership value only once/);
+    field.value = 'state';
+    change(field);
+    assert.equal([...operator.options].find(option => option.value === 'arrayContains').disabled, true);
+    assert.equal(operator.value, 'eq');
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(control => control.disabled));
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      assert.throws(() => factory({ ...options, arrayContainsFilterFields: ['unknown'] }), /Invalid record filter fields/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('conditional and dependent object rules check counts and property names',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{names:{pattern:'^[a-z]+$'},dependency:{minProperties:2,maxProperties:3,propertyNames:{$ref:'#/$defs/names'}}},properties:{kind:{type:'string'},name:{type:'string'},note:{type:'string'}},dependentSchemas:{kind:{$ref:'#/$defs/dependency'}},if:{properties:{kind:{const:'special'}},required:['kind']},then:{maxProperties:2}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={few:{kind:'plain'},badname:{kind:'plain',name:'A',Bad:1},many:{kind:'plain',name:'A',note:'N',extra:1},conditional:{kind:'special',name:'A',note:'N'},valid:{kind:'plain',name:'A'},skip:{name:'A',Bad:1}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const [name,error] of [['few',/object does not satisfy the dependency for kind/],['badname',/object does not satisfy the dependency for kind/],['many',/object does not satisfy the dependency for kind/],['conditional',/object does not satisfy a condition/]]){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,error);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','skip']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rule of [{minProperties:-1},{maxProperties:1.5},{propertyNames:{pattern:'['}},{propertyNames:{$ref:'#/$defs/missing'}}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,then:rule}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('object matching counts and validates property names in array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{items:{type:'array',items:{type:'object',properties:{name:{type:'string'},note:{type:'string'}}},contains:{type:'object',minProperties:2,maxProperties:2,propertyNames:{pattern:'^[a-z]+$'}}}},required:['items']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={few:{items:[{name:'A'}]},many:{items:[{name:'A',note:'N',extra:1}]},bad:{items:[{name:'A',Bad:1}]},valid:{items:[{name:'A',note:'N'}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['few','many','bad']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('closed object conditions and dependencies respect their own declared properties',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const conditional={type:'object',properties:{kind:{type:'string'},name:{type:'string'},note:{type:'string'}},if:{required:['kind'],properties:{kind:{const:'special'},name:{}},minProperties:2,maxProperties:2,propertyNames:{pattern:'^[a-z]+$'},additionalProperties:false},then:{properties:{kind:{},name:{type:'string',pattern:'^OK'}},additionalProperties:false},else:{properties:{kind:{},name:{},note:{}},additionalProperties:false}},dependent={type:'object',properties:{email:{type:['string','null']},phone:{type:'string'},note:{type:'string'}},dependentSchemas:{email:{properties:{email:{},phone:{type:'string'}},additionalProperties:false}}};
-  const scenarios=[{jsonSchema:conditional,records:{bad:{kind:'special',name:'bad'},extra:{kind:'ordinary',name:'A',extra:1},valid:{kind:'special',name:'OK'},fallback:{kind:'special',name:'bad',note:'N'}},invalid:['bad','extra'],valid:['valid','fallback'],error:/does not satisfy a condition/},{jsonSchema:dependent,records:{extra:{email:null,phone:'123',note:'not allowed'},valid:{email:null,phone:'123'},skip:{note:'N',extra:1}},invalid:['extra'],valid:['valid','skip'],error:/object does not satisfy the dependency for email/}],saved=[];
-  let records,validate;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');for(const scenario of scenarios){records=scenario.records;validate=createRecordJsonSchemaValidator(scenario.jsonSchema);const options={getOperation:'items.get',putOperation:'items.put',jsonSchema:scenario.jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-   for(const name of scenario.invalid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();assert.match(root.textContent,scenario.error);assert.equal(validate(records[name]),false);assert.equal(saved.length,before);}
-   for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
+test('record browser can opt into any-condition mode and clears stale cursors', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [
+          { field: 'state', label: 'State', type: 'string' },
+          { field: 'priority', label: 'Priority', type: 'number' }
+        ],
+        multipleFilters: true,
+        allowAnyFilters: true
+      };
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [], nextCursor: 'opaque' } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const findLabel = text => [...root.querySelectorAll('label')].find(label => label.textContent.startsWith(text)),
+      field = findLabel('Filter field').querySelector('select'),
+      value = findLabel('Filter value').querySelector('input'),
+      mode = findLabel('Match conditions').querySelector('select'),
+      buttons = () => [...root.querySelectorAll('button')],
+      browse = () => buttons().find(button => button.textContent === 'Browse records'),
+      change = control => control.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = 'state';
+    change(field);
+    value.value = 'open';
+    buttons()
+      .find(button => button.textContent === 'Add filter')
+      .click();
+    const extra = [...root.querySelectorAll('fieldset')].find(node => node.querySelector('legend')?.textContent === 'Additional filter'),
+      extraField = extra.querySelector('select'),
+      extraValue = [...extra.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input');
+    extraField.value = 'priority';
+    change(extraField);
+    extraValue.value = '9';
+    mode.value = 'any';
+    change(mode);
+    browse().click();
+    await wait(() => calls.length === 1 && !browse().disabled);
+    assert.deepEqual(calls[0].filters, [
+      { field: 'state', value: 'open' },
+      { field: 'priority', value: 9 }
+    ]);
+    assert.equal(calls[0].filterMode, 'any');
+    assert.equal(buttons().find(button => button.textContent === 'Next page').disabled, false);
+    mode.value = 'all';
+    change(mode);
+    assert.equal(buttons().find(button => button.textContent === 'Next page').disabled, true);
+    browse().click();
+    await wait(() => calls.length === 2 && !browse().disabled);
+    assert.deepEqual(calls[1].filters, calls[0].filters);
+    assert.equal(Object.hasOwn(calls[1], 'filterMode'), false);
+    let release;
+    globalThis.fetch = async () =>
+      new Promise(resolve => {
+        release = () => resolve({ ok: true, json: async () => ({ result: { items: [{ id: 'stale', revision: 1 }], nextCursor: 'old' } }) });
+      });
+    browse().click();
+    await wait(() => !!release);
+    mode.value = 'any';
+    change(mode);
+    release();
+    await wait(() => !browse().disabled);
+    assert.equal(root.querySelectorAll('li button').length, 0);
+    assert.equal(buttons().find(button => button.textContent === 'Next page').disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.throws(() => factory({ ...options, multipleFilters: false }), /Invalid record filter fields/);
+      const preview = s.preview.createRecordEditor(options).render({}, null, null, document);
+      assert.equal([...preview.querySelectorAll('label')].find(label => label.textContent.startsWith('Match conditions')).querySelector('select').disabled, true);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rule of [{additionalProperties:'false'},{additionalProperties:{type:'string',format:'email'}},{minProperties:-1},{propertyNames:{pattern:'['}}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,if:rule}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('combined object rules validate records and object-array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{adult:{properties:{age:{type:'integer',minimum:18}}}},properties:{age:{type:'integer'},status:{type:'string'},note:{type:'string'},people:{type:'array',items:{type:'object',properties:{age:{type:'integer'}},allOf:[{$ref:'#/$defs/adult'}]}}},allOf:[{$ref:'#/$defs/adult'},{anyOf:[{required:['status']},{required:['note']}]},{dependentRequired:{status:['age']},dependentSchemas:{status:{properties:{age:{type:'integer',minimum:18}}}}}],oneOf:[{required:['status']},{required:['note']}],not:{properties:{status:{const:'banned'}},required:['status']}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const records={minor:{age:17,status:'ok'},missing:{age:20},both:{age:20,status:'ok',note:'N'},banned:{age:20,status:'banned'},nested:{age:20,status:'ok',people:[{age:17}]},valid:{age:20,status:'ok',people:[{age:18}]},valid2:{note:'N'}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['minor','missing','both','banned','nested']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/does not satisfy the schema rules/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['valid','valid2']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const rule of [{allOf:[]},{oneOf:[null]},{not:null},{anyOf:[{required:['missing']}]},{allOf:[{properties:{unknown:{const:1}}}]},{allOf:[{$ref:'#/$defs/missing'}]}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,...rule}}),/Unsupported/);
+test('record browser any-condition mode uses the authorized capability service', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (const [id, value] of [
+      ['a', { owner: 'user', state: 'open', priority: 1 }],
+      ['b', { owner: 'user', state: 'closed', priority: 9 }],
+      ['secret', { owner: 'other', state: 'open', priority: 9 }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state', 'priority'],
+      allowAnyFilters: true,
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, request) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...request,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(request.body) })
+      });
+    const options = {
+      getOperation: 'items.get',
+      putOperation: 'items.put',
+      listOperation: 'items.list',
+      filterFields: [
+        { field: 'state', label: 'State', type: 'string' },
+        { field: 'priority', label: 'Priority', type: 'number' }
+      ],
+      multipleFilters: true,
+      allowAnyFilters: true
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const label = text => [...root.querySelectorAll('label')].find(node => node.textContent.startsWith(text)),
+      field = label('Filter field').querySelector('select'),
+      value = label('Filter value').querySelector('input'),
+      mode = label('Match conditions').querySelector('select'),
+      button = text => [...root.querySelectorAll('button')].find(node => node.textContent === text),
+      change = node => node.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = 'state';
+    change(field);
+    value.value = 'open';
+    button('Add filter').click();
+    const extra = [...root.querySelectorAll('fieldset')].find(node => node.querySelector('legend')?.textContent === 'Additional filter'),
+      extraField = extra.querySelector('select'),
+      extraValue = [...extra.querySelectorAll('label')].find(node => node.textContent === 'Filter value').querySelector('input');
+    extraField.value = 'priority';
+    change(extraField);
+    extraValue.value = '9';
+    mode.value = 'any';
+    change(mode);
+    button('Browse records').click();
+    await wait(() => root.querySelectorAll('li button').length === 2 && !button('Browse records').disabled);
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(node => node.textContent),
+      ['a', 'b']
+    );
+    assert.doesNotMatch(root.textContent, /secret/);
+    extraField.value = 'state';
+    change(extraField);
+    extraValue.value = 'closed';
+    button('Browse records').click();
+    await wait(() => root.querySelectorAll('li button').length === 2 && !button('Browse records').disabled);
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(node => node.textContent),
+      ['a', 'b']
+    );
+    extraValue.value = 'open';
+    button('Browse records').click();
+    assert.match(root.textContent, /Choose each filter condition only once/);
+    extraField.value = 'priority';
+    change(extraField);
+    extraValue.value = '9';
+    mode.value = 'all';
+    change(mode);
+    button('Browse records').click();
+    await wait(() => root.textContent.includes('No records on this page.') && !button('Browse records').disabled);
+    assert.equal(root.querySelectorAll('li button').length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('combined conditional and dependent branches agree with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const conditional={type:'object',properties:{mode:{type:'string'},phone:{type:'string'},email:{type:'string'},note:{type:'string'}},if:{anyOf:[{required:['phone']},{properties:{mode:{const:'company'}},required:['mode']}],not:{required:['note']}},then:{oneOf:[{required:['email']},{required:['phone']}]},else:{not:{required:['email']}}},dependent={type:'object',$defs:{rule:{anyOf:[{required:['email']},{required:['phone']}],not:{required:['note']}}},properties:{trigger:{type:'string'},phone:{type:'string'},email:{type:'string'},note:{type:'string'}},dependentSchemas:{trigger:{$ref:'#/$defs/rule'}}};
-  const scenarios=[{jsonSchema:conditional,records:{missing:{mode:'company'},overlap:{mode:'company',phone:'1',email:'e'},elsebad:{mode:'personal',email:'e'},note:{mode:'company',note:'n',email:'e'},valid:{mode:'company',email:'e'},fallback:{mode:'personal',note:'n'},phone:{phone:'1'}},invalid:['missing','overlap','elsebad','note'],valid:['valid','fallback','phone'],error:/object does not satisfy a condition/},{jsonSchema:dependent,records:{missing:{trigger:'yes'},forbidden:{trigger:'yes',email:'e',note:'n'},valid:{trigger:'yes',phone:'1'},skip:{note:'n'}},invalid:['missing','forbidden'],valid:['valid','skip'],error:/object does not satisfy the dependency for trigger/}],saved=[];
-  let records,validate;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');for(const scenario of scenarios){records=scenario.records;validate=createRecordJsonSchemaValidator(scenario.jsonSchema);const options={getOperation:'items.get',putOperation:'items.put',jsonSchema:scenario.jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-   for(const name of scenario.invalid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();assert.match(root.textContent,scenario.error);assert.equal(validate(records[name]),false);assert.equal(saved.length,before);}
-   for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
+test('pure null schema fields and array items can be included and saved', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          requiredNull: { type: 'null', const: null, title: 'Required null' },
+          optionalNull: { type: 'null', enum: [null], title: 'Optional null' },
+          values: { type: 'array', title: 'Values', items: { type: 'null', title: 'Null entry' } },
+          tuple: { type: 'array', title: 'Tuple', prefixItems: [{ type: 'null', title: 'Empty slot' }, { type: 'string' }], items: false },
+          matrix: { type: 'array', title: 'Matrix', items: { type: 'array', title: 'Row', items: { type: 'null', title: 'Cell' } } },
+          nested: { type: 'object', properties: { nil: { type: 'null' } } }
+        },
+        required: ['requiredNull', 'values', 'tuple', 'matrix', 'nested']
+      },
+      record = { requiredNull: null, values: [null], tuple: [null, 'x'], matrix: [[null]], nested: { nil: null } },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: input.id === 'bad' ? { ...record, requiredNull: 'wrong' } : record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'bad';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(x => x.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    id.value = 'good';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(x => x.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const findLabel = text => [...root.querySelectorAll('label')].find(label => label.textContent.includes(text));
+    assert.ok(findLabel('Required null (always null)').querySelector('input').disabled);
+    assert.ok(findLabel('Values Null entry 1 (always null)'));
+    assert.ok(findLabel('Tuple Empty slot 1 (always null)'));
+    assert.ok(findLabel('Matrix Row 1 Cell 1 (always null)'));
+    const optional = findLabel('Include Optional null as null').querySelector('input');
+    assert.equal(optional.checked, false);
+    optional.checked = true;
+    optional.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons()
+      .find(x => x.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1 && !buttons().find(x => x.textContent === 'Save').disabled);
+    assert.deepEqual(saved[0], { ...record, optionalNull: null });
+    optional.checked = false;
+    optional.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons()
+      .find(x => x.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 2);
+    assert.deepEqual(saved[1], record);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [
+        { type: 'null', const: 'x' },
+        { type: 'null', enum: ['x'] },
+        { type: 'null', title: 3 }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rule of [{anyOf:[]},{not:null},{allOf:[{required:['unknown']}]},{oneOf:[{properties:{unknown:{const:1}}}]}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,then:rule}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('boolean schemas and references agree with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const conditional={type:'object',$defs:{yes:true,no:false},properties:{trigger:{type:'string'},label:{type:'string'},flags:{type:'array',items:{type:'boolean'},contains:{$ref:'#/$defs/no'},minContains:0,maxContains:0}},if:{$ref:'#/$defs/yes',title:'Always'},then:{required:['label']},else:false,dependentSchemas:{trigger:{$ref:'#/$defs/no'}},allOf:[true],oneOf:[true,false],not:false},names={type:'object',$defs:{no:false},properties:{label:{type:'string'}},propertyNames:{$ref:'#/$defs/no'}},nested={type:'object',properties:{matrix:{type:'array',items:{type:'array',items:{type:'string'}},contains:{type:'array',items:false}}},required:['matrix']},reverse={type:'object',properties:{label:{type:'string'}},if:false,then:false,else:{required:['label']}};
-  const scenarios=[{jsonSchema:conditional,records:{missing:{flags:[true]},trigger:{label:'ok',trigger:'x'},valid:{label:'ok',flags:[true,false]}},invalid:['missing','trigger'],valid:['valid']},{jsonSchema:names,records:{bad:{label:'x'},empty:{}},invalid:['bad'],valid:['empty']},{jsonSchema:nested,records:{bad:{matrix:[['a']]},valid:{matrix:[['a'],[]]}},invalid:['bad'],valid:['valid']},{jsonSchema:reverse,records:{missing:{},valid:{label:'ok'}},invalid:['missing'],valid:['valid']}],saved=[];
-  let records,validate;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');for(const scenario of scenarios){records=scenario.records;validate=createRecordJsonSchemaValidator(scenario.jsonSchema);const options={getOperation:'items.get',putOperation:'items.put',jsonSchema:scenario.jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-   for(const name of scenario.invalid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();assert.equal(validate(records[name]),false);assert.equal(saved.length,before);assert.notEqual(status.textContent,'Record saved.');}
-   for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
+test('untyped scalar constants and enums produce typed form controls', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { fixed: { const: 'x' } },
+        properties: {
+          code: { const: 'fixed' },
+          enabled: { const: true },
+          nil: { const: null },
+          mode: { enum: ['auto', 'manual'] },
+          score: { enum: [1, 1.5] },
+          nullable: { enum: [null, 'yes'] },
+          values: { type: 'array', items: { $ref: '#/$defs/fixed' } },
+          tuple: { type: 'array', prefixItems: [{ const: false }, { enum: [null] }], items: false }
+        },
+        required: ['code', 'enabled', 'nil', 'mode', 'score', 'nullable', 'values', 'tuple']
+      },
+      record = { code: 'fixed', enabled: true, nil: null, mode: 'auto', score: 1.5, nullable: null, values: ['x'], tuple: [false, null] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: input.id === 'bad' ? { ...record, code: 'wrong' } : record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'bad';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    id.value = 'good';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], record);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [{ enum: ['x', {}] }, { const: { nested: 'object' } }, { enum: [null, {}] }])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const bad of [{title:42},{description:'x'.repeat(1025)},{minimum:1}])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...conditional,if:{$ref:'#/$defs/yes',...bad}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('conditional and dependent pattern rules apply to preserved properties',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const conditional={type:'object',properties:{mode:{type:'string'},name:{type:'string'},fallback:{type:'string'}},if:{properties:{mode:{const:'special'}},required:['mode'],patternProperties:{'^x_':{type:'number',minimum:1}}},then:{required:['name'],properties:{mode:{},name:{}},patternProperties:{'^x_':{type:'number',maximum:10}},additionalProperties:{type:'string',pattern:'^ok:'}},else:{required:['fallback']}},dependent={type:'object',properties:{trigger:{type:['string','null']},name:{type:'string'}},dependentSchemas:{trigger:{properties:{trigger:{},name:{}},patternProperties:{'^x_':{type:'number',minimum:0}},additionalProperties:{type:'string',pattern:'^ok:'}}}};
-  const scenarios=[{jsonSchema:conditional,records:{pattern:{mode:'special',name:'A',x_n:11},extra:{mode:'special',name:'A',x_n:2,other:'bad'},fallback:{mode:'special',x_n:-1},valid:{mode:'special',name:'A',x_n:2,other:'ok:value'},validelse:{mode:'special',x_n:-1,fallback:'review'}},invalid:['pattern','extra','fallback'],valid:['valid','validelse'],error:/(does not satisfy (a condition|the schema rules)|is required by a condition)/},{jsonSchema:dependent,records:{pattern:{trigger:null,x_n:-1},extra:{trigger:'yes',other:'bad'},valid:{trigger:null,name:'A',x_n:2,other:'ok:value'},skip:{x_n:-1,other:'bad'}},invalid:['pattern','extra'],valid:['valid','skip'],error:/does not satisfy the dependency for trigger/}],saved=[];
-  let records,validate;globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');for(const scenario of scenarios){records=scenario.records;validate=createRecordJsonSchemaValidator(scenario.jsonSchema);const options={getOperation:'items.get',putOperation:'items.put',jsonSchema:scenario.jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-   for(const name of scenario.invalid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();assert.match(root.textContent,scenario.error);assert.equal(validate(records[name]),false);assert.equal(saved.length,before);}
-   for(const name of scenario.valid){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-   for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.doesNotThrow(()=>factory(options));root.remove();
+test('mixed scalar enums retain their JSON types in fields and arrays', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { choice: { enum: ['1', 1, true, null] } },
+        properties: {
+          choice: { $ref: '#/$defs/choice' },
+          items: { type: 'array', items: { enum: ['x', 7, false, null] } },
+          tuple: { type: 'array', prefixItems: [{ $ref: '#/$defs/choice' }, { enum: ['tail', 2] }], items: false }
+        },
+        required: ['choice', 'items', 'tuple']
+      },
+      record = { choice: '1', items: [7, null, 'x'], tuple: [true, 2] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const select = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('choice (required)')).querySelector('select');
+    for (const title of ['1 (text)', '1 (number)', 'Yes (boolean)']) assert.ok([...select.options].some(option => option.textContent === title));
+    select.value = [...select.options].find(option => option.textContent === '1 (number)').value;
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { ...record, choice: 1 });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [{ enum: ['x', 1, {}] }, { enum: ['x', 1, 'x'] }, { enum: ['x', 1], minLength: -1 }, { type: 'mixed' }, { type: 'mixed', _choices: ['x', 1] }])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('mixed types and type-specific rules agree with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{scoreCondition:{type:['number','null'],minimum:10}},propertyNames:{anyOf:[{pattern:'^[a-z]+$'},{const:'X'}]},properties:{score:{type:['number','null']},name:{type:'string'},label:{type:'string'},arr:{type:'array',items:{type:['string','null']},contains:{type:['number','null'],minimum:10}}},if:{properties:{score:{$ref:'#/$defs/scoreCondition'}},required:['score']},then:{required:['name']},else:{required:['label']}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={nullMissing:{score:null},below:{score:9},matched:{score:11},arrbad:{score:null,name:'A',arr:['x']},badkey:{score:null,name:'A',Bad:1},valid:{score:null,name:'A',arr:['x',null],X:1},valid2:{score:9,label:'review'},absent:{label:'review'}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const editor=s.runtime.createRecordEditor(options);jsonSchema.$defs.scoreCondition.type.splice(1,1);const root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['nullMissing','below','matched','arrbad','badkey']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.equal(validate(records[name]),false);assert.equal(saved.length,0);assert.notEqual(status.textContent,'Record saved.');}
-  for(const name of ['valid','valid2','absent']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const test of [{type:[]},{type:['string','string']},{type:['number','bad']},{minimum:'bad'},{pattern:'['}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{value:{type:'string'}},if:{properties:{value:test}},then:{required:['value']}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('conditional required fields work in object-array items and absent-property conditions match JSON Schema',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',items:{type:'object',properties:{kind:{type:'string',enum:['a','b']},note:{type:'string'}},if:{properties:{kind:{enum:['a']}}},then:{required:['note']}}}},required:['people']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:'one',revision:1,value:{people:[{}]}}})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/note is required by a condition/);const note=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include note')).querySelector('input');note.checked=true;note.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{people:[{note:''}]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('conditional forms reject assertions and branch shapes they cannot represent',async()=>{const s=await setup();try{const base={type:'object',properties:{kind:{type:'string'},name:{type:'string'}}},bad=[{if:{properties:{kind:{pattern:'['}}},then:{required:['name']}},{if:{properties:{kind:{const:'x'}}},then:{properties:{name:{minLength:-1}}}},{if:{required:['missing']},then:{required:['name']}},{then:{required:['name']}}];for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const value of bad)assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{...base,...value}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('recursive object arrays preserve hidden values and deletions across successive saves',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{families:{type:'array',title:'Families',items:{type:'object',properties:{name:{type:'string',minLength:1},children:{type:'array',title:'Children',items:{type:'object',properties:{name:{type:'string',minLength:1},note:{type:'string'}},required:['name']}}},required:['name']}}},required:['families']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{families:[{name:'Family',children:[{name:'Ada',note:'old',hidden:true}],other:2}],rootExtra:3}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const family=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Families (required)'),children=[...family.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Children (optional)'),child=[...children.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Children item 1'),labels=[...child.querySelectorAll('label')],note=labels.find(x=>x.textContent.startsWith(' Include note')).querySelector('input'),name=labels.find(x=>x.textContent.startsWith('name')).querySelector('input');note.checked=false;note.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{families:[{name:'Family',children:[{name:'Ada',hidden:true}],other:2}],rootExtra:3});name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{families:[{name:'Family',children:[{name:'Grace',hidden:true}],other:2}],rootExtra:3});const add=[...children.querySelectorAll('button')].find(x=>x.textContent==='Add Children item');add.click();const second=[...children.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Children item 2'),secondName=[...second.querySelectorAll('label')].find(x=>x.textContent.startsWith('name')).querySelector('input');secondName.value='Lin';secondName.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===3&&!save.disabled);assert.deepEqual(saved[2].families[0].children,[{name:'Grace',hidden:true},{name:'Lin'}]);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('recursive arrays reject incompatible values and excessive schema nesting',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const nested={type:'object',properties:{name:{type:'string'}}};for(let i=0;i<4;i++)nested.properties={next:{type:'array',items:{type:'object',properties:nested.properties}}};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:nested}),/Unsupported/);const jsonSchema={type:'object',properties:{families:{type:'array',items:{type:'object',properties:{children:{type:'array',items:{type:'object',properties:{name:{type:'string'}}}}}}}}};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{families:[{children:[{name:5}]}]}}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(buttons.find(x=>x.textContent==='Save').disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('recursive array load bounds the number of checked items before rendering',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const leaf={type:'object',properties:{name:{type:'string'}}},middle={type:'object',properties:{next:{type:'array',items:leaf}}},outer={type:'object',properties:{next:{type:'array',items:middle}}},jsonSchema={type:'object',properties:{items:{type:'array',items:outer}}},value={items:Array.from({length:20},()=>({next:Array.from({length:20},()=>({next:Array.from({length:25},()=>({}))}))}))};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(root.querySelectorAll('fieldset').length,1);assert.equal(buttons.find(x=>x.textContent==='Save').disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('nullable scalar fields distinguish null, missing and non-null values across saves',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{name:{type:['string','null'],title:'Name'},count:{type:['integer','null'],title:'Count',minimum:0},active:{type:['boolean','null'],title:'Active'}},required:['name']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{name:null,count:null,active:false,hidden:3}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const labels=[...root.querySelectorAll('label')],label=text=>labels.find(x=>x.textContent.startsWith(text)).querySelector('input,select'),id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const nullName=label(' Set Name to null'),nullCount=label(' Set Count to null'),name=label('Name ('),count=label('Count ('),nullActive=label(' Set Active to null');assert.equal(nullName.checked,true);assert.equal(name.disabled,true);assert.equal(nullCount.checked,true);save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{name:null,count:null,active:false,hidden:3});nullName.checked=false;nullName.dispatchEvent(new dom.window.Event('change',{bubbles:true}));name.value='';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));nullCount.checked=false;nullCount.dispatchEvent(new dom.window.Event('change',{bubbles:true}));count.value='0';count.dispatchEvent(new dom.window.Event('input',{bubbles:true}));nullActive.checked=true;nullActive.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{name:'',count:0,active:null,hidden:3});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('nullable array items preserve null and enforce enum restrictions',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{values:{type:'array',items:{type:['string','null'],enum:['x',null]}}},required:['values']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:'one',revision:1,value:{values:[null,'x']}}})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const field=root.querySelector('fieldset'),toggles=[...field.querySelectorAll('label')].filter(x=>x.textContent.startsWith(' Set values item ') && x.textContent.endsWith(' to null')).map(x=>x.querySelector('input'));assert.equal(toggles[0].checked,true);assert.equal(toggles[1].checked,false);save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{values:[null,'x']});for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{x:{type:'string',_nullable:true}}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('nullable objects and arrays preserve null, missing and concrete values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{profile:{type:['object','null'],title:'Profile',properties:{name:{type:'string',minLength:1},email:{type:'string'},phone:{type:'string'}},required:['name'],dependentRequired:{email:['phone']}},tags:{type:['array','null'],title:'Tags',items:{type:'string'}}},required:['profile']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{profile:null,tags:null,hidden:1}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const labels=()=>[...root.querySelectorAll('label')],toggle=t=>labels().find(x=>x.textContent.startsWith(t)).querySelector('input'),id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const nullProfile=toggle(' Set Profile to null'),includeTags=toggle(' Include Tags'),nullTags=toggle(' Set Tags to null'),name=labels().find(x=>x.textContent.startsWith('Profile / name')).querySelector('input');assert.equal(nullProfile.checked,true);assert.equal(name.disabled,true);assert.equal(includeTags.checked,true);assert.equal(nullTags.checked,true);save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{profile:null,tags:null,hidden:1});nullProfile.checked=false;nullProfile.dispatchEvent(new dom.window.Event('change',{bubbles:true}));name.value='Ada';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));nullTags.checked=false;nullTags.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{profile:{name:'Ada'},tags:[],hidden:1});includeTags.checked=false;includeTags.dispatchEvent(new dom.window.Event('change',{bubbles:true}));nullProfile.checked=true;nullProfile.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===3&&!save.disabled);assert.deepEqual(saved[2],{profile:null,hidden:1});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('nullable containers inside object-array items are editable and previews remain inert',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{items:{type:'array',items:{type:'object',properties:{address:{type:['object','null'],properties:{city:{type:'string'}},dependentRequired:{city:[]}},notes:{type:['array','null'],items:{type:'string'}}}}}},required:['items']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:'one',revision:1,value:{items:[{address:null,notes:null,hidden:true}]}}})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const options={getOperation:'items.get',putOperation:'items.put',jsonSchema},root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{items:[{address:null,notes:null,hidden:true}]});const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('button,input,select')].every(x=>x.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('nullable object-array items preserve null and allow explicit transitions',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',title:'People',items:{type:['object','null'],properties:{name:{type:'string',minLength:1},note:{type:'string'}},required:['name'],dependentRequired:{note:['name']}}}},required:['people']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{people:[null,{name:'Ada',hidden:true}]}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const row=n=>[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='People item '+n),toggle=box=>[...box.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Set People item ') && x.textContent.endsWith(' to null')).querySelector('input'),name=box=>[...box.querySelectorAll('label')].find(x=>x.textContent.startsWith('name')).querySelector('input');assert.equal(toggle(row(1)).checked,true);assert.equal(name(row(1)).disabled,true);save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{people:[null,{name:'Ada',hidden:true}]});toggle(row(1)).checked=false;toggle(row(1)).dispatchEvent(new dom.window.Event('change',{bubbles:true}));name(row(1)).value='Lin';name(row(1)).dispatchEvent(new dom.window.Event('input',{bubbles:true}));toggle(row(2)).checked=true;toggle(row(2)).dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{people:[{name:'Lin'},null]});toggle(row(2)).checked=false;toggle(row(2)).dispatchEvent(new dom.window.Event('change',{bubbles:true}));name(row(2)).value='Grace';name(row(2)).dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===3&&!save.disabled);assert.deepEqual(saved[2],{people:[{name:'Lin'},{name:'Grace'}]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('pattern constraints validate Unicode strings in fields and array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{code:{type:'string',title:'Code',pattern:'^[A-Z]{2}$'},tags:{type:'array',title:'Tags',items:{type:'string',pattern:'^[0-9]+$'}}},required:['code','tags']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]'),code=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('Code (')).querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.startsWith('New record'));code.value='ab';save.click();assert.match(root.textContent,/matching the required pattern/);code.value='AB';buttons.find(x=>x.textContent==='Add Tags item').click();const tag=root.querySelector('fieldset input');tag.value='bad';save.click();assert.match(root.textContent,/matching the required pattern/);tag.value='42';save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{code:'AB',tags:['42']});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('uniqueItems rejects equal object values regardless of property order',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{people:{type:'array',uniqueItems:true,items:{type:'object',properties:{first:{type:'string'},last:{type:'string'}}}}},required:['people']};let record={id:'one',revision:1,value:{people:[{first:'Ada',last:'Lovelace'},{last:'Lovelace',first:'Ada'}]}},saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.equal(saved,undefined);assert.match(root.textContent,/Items must be unique/);const rows=[...root.querySelectorAll('fieldset')].filter(x=>/^people item /.test(x.querySelector(':scope > legend')?.textContent??'')),last=[...rows[1].querySelectorAll('label')].find(x=>x.textContent.startsWith('last')).querySelector('input');last.value='Byron';last.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved&&!save.disabled);assert.equal(saved.people[1].last,'Byron');
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('form constraint configuration rejects malformed patterns and uniqueness flags',async()=>{const s=await setup();try{const bad=[{type:'string',pattern:'['},{type:'integer',pattern:'x'},{type:'array',items:{type:'string'},uniqueItems:'yes'}];for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const property of bad)assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{value:property}}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('numeric constraints enforce exclusive bounds and multiples in fields and array items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{price:{type:'number',title:'Price',exclusiveMinimum:0,exclusiveMaximum:10,multipleOf:0.1},quantities:{type:'array',title:'Quantities',items:{type:'integer',exclusiveMinimum:0,multipleOf:2}}},required:['price','quantities']},validate=createRecordJsonSchemaValidator(jsonSchema);let saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:null})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:1}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]'),price=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('Price (')).querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.startsWith('New record'));price.value='0';save.click();assert.match(root.textContent,/greater than 0/);price.value='10';save.click();assert.match(root.textContent,/less than 10/);price.value='0.31';save.click();assert.match(root.textContent,/multiple of 0.1/);assert.equal(validate({price:0.31,quantities:[]}),false);assert.equal(validate({price:0.3,quantities:[]}),true);price.value='0.3';buttons.find(x=>x.textContent==='Add Quantities item').click();const qty=root.querySelector('fieldset input[type=number]');qty.value='3';save.click();assert.match(root.textContent,/multiple of 2/);qty.value='4';save.click();await wait(()=>saved&&!save.disabled);assert.deepEqual(saved,{price:0.3,quantities:[4]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('numeric form constraints reject invalid schemas in runtime and preview',async()=>{const s=await setup();try{const bad=[{type:'string',multipleOf:2},{type:'number',multipleOf:0},{type:'number',multipleOf:-1},{type:'number',exclusiveMinimum:'1'},{type:'number',exclusiveMaximum:Infinity}];for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const field of bad)assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{value:field}}}),/Unsupported/);}finally{await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('typed JSON Schema enums preserve false, zero, empty string and null values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{quantity:{type:'integer',title:'Quantity',enum:[0,2]},active:{type:'boolean',title:'Active',enum:[false,true]},text:{type:'string',title:'Text',enum:['','x']},maybe:{type:['number','null'],title:'Maybe',enum:[null,1.5]},choices:{type:'array',title:'Choices',items:{type:'boolean',enum:[false,true]}}},required:['quantity','active','text','maybe','choices']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{quantity:0,active:false,text:'',maybe:null,choices:[false,true],hidden:3}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]'),get=text=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(text)).querySelector('input,select');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');assert.equal(get(' Set Maybe to null').checked,true);assert.equal(get('Text (').selectedOptions[0].textContent,'(empty)');save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{quantity:0,active:false,text:'',maybe:null,choices:[false,true],hidden:3});const nullToggle=get(' Set Maybe to null');nullToggle.checked=false;nullToggle.dispatchEvent(new dom.window.Event('change',{bubbles:true}));get('Maybe (').value='1';get('Quantity (').value='2';get('Active (').value='2';get('Text (').value='2';save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{quantity:2,active:true,text:'x',maybe:1.5,choices:[false,true],hidden:3});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('typed enum schemas reject impossible choices and snapshot host configuration',async()=>{const s=await setup();let dom;try{const options={getOperation:'items.get',putOperation:'items.put'},jsonSchema={type:'object',properties:{level:{type:'integer',enum:[0,2]}}},editor=s.runtime.createRecordEditor({...options,jsonSchema});jsonSchema.properties.level.enum.push(7);dom=new JSDOM('<!doctype html>');const root=editor.render({},null,null,dom.window.document);assert.deepEqual([...root.querySelector('select').options].map(x=>x.textContent),['Select an option','0','2']);for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const property of [{type:'integer',enum:['2']},{type:'boolean',enum:[0]},{type:'number',enum:[1,1]},{type:'string',enum:[null]},{type:'string',_choices:['x']}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{value:property}}}),/Unsupported/);}finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('nested arrays preserve object edits and null items across successive saves',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{matrix:{type:'array',title:'Matrix',items:{type:['array','null'],items:{type:'object',properties:{name:{type:'string',minLength:1},note:{type:'string'}},required:['name']}}}},required:['matrix']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{matrix:[[{name:'Ada',note:'old',hidden:true}],null],other:2}},saved=[];globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved.push(input.value);record={id:input.id,revision:record.revision+1,value:input.value};return {ok:true,json:async()=>({result:record})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');const fields=[...root.querySelectorAll('fieldset')],inner=fields.find(x=>x.querySelector(':scope > legend')?.textContent==='Matrix item 1 (required)'),row=[...inner.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Matrix item 1 item 1'),labels=[...row.querySelectorAll('label')],include=labels.find(x=>x.textContent.startsWith(' Include note')).querySelector('input'),name=labels.find(x=>x.textContent.startsWith('name')).querySelector('input');include.checked=false;include.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{matrix:[[{name:'Ada',hidden:true}],null],other:2});name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{matrix:[[{name:'Grace',hidden:true}],null],other:2});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('nested arrays reject incompatible items and excessive nesting in runtime and preview',async()=>{const s=await setup(),originalFetch=globalThis.fetch;let dom;try{let field={type:'string'};for(let i=0;i<5;i++)field={type:'array',items:field};for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({getOperation:'items.get',putOperation:'items.put',jsonSchema:{type:'object',properties:{value:field}}}),/Unsupported/);const jsonSchema={type:'object',properties:{matrix:{type:'array',items:{type:'array',items:{type:'integer'}}}}};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{matrix:[[1,'bad']]}}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(buttons.find(x=>x.textContent==='Save').disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}});
-
-
-test('scalar const fields and array items preserve typed fixed values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',properties:{kind:{type:'string',title:'Kind',const:'invoice',enum:['invoice','quote']},zero:{type:'integer',title:'Zero',const:0},active:{type:'boolean',title:'Active',const:false},empty:{type:'string',title:'Empty',const:''},nothing:{type:['string','null'],title:'Nothing',const:null},flags:{type:'array',title:'Flags',items:{type:'boolean',const:false}},entries:{type:'array',title:'Entries',items:{type:'object',properties:{code:{type:'string',const:'x'}},required:['code']}}},required:['kind','zero','active','empty','nothing','flags','entries']},validate=createRecordJsonSchemaValidator(jsonSchema);let record={id:'one',revision:1,value:{kind:'invoice',zero:0,active:false,empty:'',nothing:null,flags:[false],entries:[{code:'x',hidden:1}],hidden:true}},saved;globalThis.fetch=async(path,options)=>{const input=JSON.parse(options.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:record})};assert.equal(validate(input.value),true);saved=input.value;return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent==='Record loaded.');assert.equal([...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Set Nothing to null')).querySelector('input').checked,true);buttons.find(x=>x.textContent==='Save').click();await wait(()=>!!saved);assert.deepEqual(saved,record.value);const preview=s.preview.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('input,select,button')].every(x=>x.disabled));}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('scalar const rejects incompatible schema and loaded values in runtime and preview',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const opts={getOperation:'items.get',putOperation:'items.put'},bad=[{type:'string',const:3},{type:'integer',const:1.5},{type:'boolean',const:null},{type:['string','null'],const:'x',enum:['y']},{type:'object',properties:{},const:{}},{type:'array',items:{type:'string'},const:[]},{type:'string',const:'x',enum:[4]}];for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const property of bad)assert.throws(()=>factory({...opts,jsonSchema:{type:'object',properties:{value:property}}}),/Unsupported/);const jsonSchema={type:'object',properties:{kind:{type:'string',const:'invoice'}},required:['kind']};globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{kind:'quote'}}})});dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({...opts,jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));buttons.find(x=>x.textContent==='Load').click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(buttons.find(x=>x.textContent==='Save').disabled,true);}finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('array contains constraints validate before saving and agree with server schema',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
-  const jsonSchema={type:'object',properties:{tags:{type:'array',items:{type:'string'},contains:{enum:['red','blue']},minContains:2,maxContains:2},nested:{type:'array',items:{type:'object',properties:{flags:{type:'array',items:{type:'boolean'},contains:{const:true}}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={few:{tags:['red']},many:{tags:['red','blue','red']},nested:{tags:['red','blue'],nested:[{flags:[false]}]},valid:{tags:['red','blue','green'],nested:[{flags:[true,false]}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.appendChild(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const record of ['few','many','nested']){id.value=record;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(saved.length,0);assert.equal(validate(records[record]),false);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.doesNotThrow(()=>factory(options));for(const unsupported of [{contains:{type:'unknown'}},{contains:{enum:[]}},{contains:{const:{x:undefined}}},{contains:{const:'red'},minContains:2,maxContains:1},{minContains:1}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tags:{type:'array',items:{type:'string'},...unsupported}}}}),/Unsupported/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('typed array contains rules agree with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{score:{type:'number',minimum:0.2,maximum:0.3,exclusiveMinimum:0.1,exclusiveMaximum:0.4,multipleOf:0.1}},properties:{scores:{type:'array',items:{type:'number'},contains:{$ref:'#/$defs/score'},minContains:2,maxContains:2},labels:{type:'array',items:{type:'string'},contains:{type:'string',pattern:'^\\u{1F600}',minLength:2,maxLength:3}},people:{type:'array',items:{type:['object','null'],properties:{name:{type:'string'}}},contains:{type:'object'},minContains:1},any:{type:'array',items:{type:'boolean'},contains:{}},maybe:{type:'array',items:{type:['string','null']},contains:{type:'null'}},flags:{type:'array',items:{type:'boolean'},contains:{type:'boolean',const:true,enum:[true,false]}}},required:['scores','labels','people','any','maybe','flags']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const base={scores:[0.2,0.3,1],labels:['\u{1F600}x'],people:[{name:'Ada'},null],any:[false],maybe:[null],flags:[true]},records={few:{...base,scores:[0.2,0.25]},badlabel:{...base,labels:['\u{1F600}']},noobject:{...base,people:[null]},empty:{...base,any:[]},nonull:{...base,maybe:['x']},noflag:{...base,flags:[false]},valid:base},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['few','badlabel','noobject','empty','nonull','noflag']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],base);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const contains of [{type:'number',multipleOf:0},{type:'string',pattern:'['},{type:'number',minLength:-1},{type:'string',minimum:'bad'},{minimum:'bad'},{type:'boolean',const:{bad:undefined}},{type:'array',items:{format:'email'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
+test('explicit scalar type unions restrict enum controls to matching choices', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { choice: { type: ['integer', 'string', 'null'], enum: ['x', 1, 1.5, true, null] }, items: { type: 'array', items: { type: ['string', 'boolean'], enum: ['yes', false, 1] } } },
+        required: ['choice', 'items']
+      },
+      record = { choice: 1, items: ['yes', false] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const select = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('choice (required)')).querySelector('select'),
+      texts = [...select.options].map(option => option.textContent);
+    assert.ok(texts.includes('x (text)'));
+    assert.ok(texts.includes('1 (number)'));
+    assert.ok(!texts.includes('1.5 (number)'));
+    assert.ok(!texts.includes('Yes (boolean)'));
+    select.value = [...select.options].find(option => option.textContent === 'x (text)').value;
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { ...record, choice: 'x' });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [
+        { type: ['string', 'number'] },
+        { type: ['string', 'number'], enum: [true] },
+        { type: ['string', 'string'], enum: ['x'] },
+        { type: ['string', 'object'], enum: ['x', {}] }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('object array contains checks nested properties and required fields',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{active:{type:'string',const:'active'}},properties:{people:{type:'array',items:{type:['object','null'],properties:{name:{type:'string'},status:{type:'string'},profile:{type:'object',properties:{rank:{type:'integer'}}}}},contains:{type:'object',properties:{name:{type:'string'},status:{$ref:'#/$defs/active'},profile:{type:'object',properties:{rank:{type:'integer',minimum:2}},required:['rank'],additionalProperties:false}},required:['status','profile'],additionalProperties:false},minContains:1,maxContains:1}},required:['people']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const valid={people:[null,{name:'Ada',status:'active',profile:{rank:2}}]},records={valid,inactive:{people:[{status:'inactive',profile:{rank:2}}]},missing:{people:[{status:'active'}]},low:{people:[{status:'active',profile:{rank:1}}]},extra:{people:[{status:'active',profile:{rank:2},other:true}]},twice:{people:[{status:'active',profile:{rank:2}},{status:'active',profile:{rank:3}}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['inactive','missing','low','extra','twice']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],valid);
-  let tooDeep={type:'string'};for(let i=0;i<7;i++)tooDeep={type:'object',properties:{child:tooDeep}};
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const contains of [{properties:{x:{format:'email'}}},{type:'object',required:['x','x']},{type:'object',additionalProperties:{type:'string',format:'email'}},{type:'object',properties:{x:{pattern:'['}}},tooDeep])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
+test('single scalar types filter enum values that cannot satisfy the type', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string', enum: ['Ada', 1, null] },
+          flag: { type: 'boolean', enum: [true, 0] },
+          nil: { type: 'null', enum: [null, 'x'] },
+          maybe: { type: ['number', 'null'], enum: [2, null, 'x'] },
+          items: { type: 'array', items: { type: 'integer', enum: [1, 1.5, '2'] } }
+        },
+        required: ['name', 'flag', 'nil', 'maybe', 'items']
+      },
+      record = { name: 'Ada', flag: true, nil: null, maybe: null, items: [1] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const name = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('name (required)')).querySelector('select');
+    assert.deepEqual(
+      [...name.options].map(option => option.textContent),
+      ['Select an option', 'Ada']
+    );
+    assert.ok(root.textContent.includes('nil (always null)'));
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], record);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [
+        { type: 'string', enum: [1, null] },
+        { type: 'integer', enum: [1.5] },
+        { type: 'null', enum: ['x'] },
+        { type: 'boolean', enum: [true, true] }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('nested array matching checks item rules, uniqueness and match counts',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{core:{type:'string',pattern:'^core:'}},properties:{people:{type:'array',items:{type:'object',properties:{name:{type:'string'},skills:{type:'array',items:{type:'string'}}}},contains:{type:'object',properties:{skills:{type:'array',items:{type:'string',pattern:'^(core|support):'},minItems:2,maxItems:3,uniqueItems:true,contains:{$ref:'#/$defs/core'},minContains:1,maxContains:1}},required:['skills']}}},required:['people']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema);
-  const valid={people:[{name:'Ada',skills:['core:js','support:ops']}]},records={valid,short:{people:[{skills:['core:js']}]},long:{people:[{skills:['core:a','support:b','support:c','support:d']}]},duplicate:{people:[{skills:['core:js','core:js']}]},baditem:{people:[{skills:['core:js','bad']}]},nocore:{people:[{skills:['support:a','support:b']}]},twocore:{people:[{skills:['core:a','core:b']}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['short','long','duplicate','baditem','nocore','twocore']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const contains of [{type:'array',uniqueItems:'yes'},{type:'array',minItems:-1},{type:'array',minContains:1},{type:'array',contains:{type:'string'},minContains:2,maxContains:1},{type:'string',items:{format:'email'}},{type:'array',items:{type:'string',format:'email'}}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
+test('mixed enum controls apply numeric and string constraints to the relevant choices', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const choice = { enum: ['a', 'abc', 0.1, 0.3, false, null], minLength: 2, pattern: '^a', minimum: 0.2, multipleOf: 0.1 },
+      jsonSchema = {
+        type: 'object',
+        properties: { choice, items: { type: 'array', items: choice }, onlyNull: { enum: ['x', 1, null], minLength: 2, minimum: 2 } },
+        required: ['choice', 'items', 'onlyNull']
+      },
+      record = { choice: 'abc', items: [0.3, false, null], onlyNull: null },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const select = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('choice (required)')).querySelector('select'),
+      texts = [...select.options].map(option => option.textContent);
+    for (const text of ['abc (text)', '0.3 (number)', 'No (boolean)']) assert.ok(texts.includes(text));
+    for (const text of ['a (text)', '0.1 (number)']) assert.ok(!texts.includes(text));
+    assert.ok(root.textContent.includes('onlyNull (always null)'));
+    select.value = [...select.options].find(option => option.textContent === 'No (boolean)').value;
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { ...record, choice: false });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [
+        { enum: ['x', 1], minLength: 2, minimum: 2 },
+        { enum: ['x', 1], pattern: '[' },
+        { enum: ['x', 1], multipleOf: 0 }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('structured contains constants use JSON equality and snapshot their values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{target:{const:{first:'Ada',last:'Lovelace'}}},properties:{people:{type:'array',items:{type:'object',properties:{first:{type:'string'},last:{type:'string'}}},contains:{$ref:'#/$defs/target'}},matrix:{type:'array',items:{type:'array',items:{type:'integer'}},contains:{enum:[[1,2],[3,4]]}}},required:['people','matrix']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),valid={people:[{last:'Lovelace',first:'Ada'}],matrix:[[3,4]]},records={valid,person:{...valid,people:[{first:'Ada',last:'Byron'}]},matrix:{...valid,matrix:[[4,3]]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const editor=s.runtime.createRecordEditor(options);jsonSchema.$defs.target.const.last='Changed after configuration';const root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['person','matrix']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],valid);
-  const cycle={};cycle.self=cycle;const sparse=Array(1);sparse.extra=1;
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const contains of [{const:cycle},{const:new Date()},{const:sparse},{const:{bad:undefined}},{enum:[{a:1,b:2},{b:2,a:1}]},{const:Array(1001).fill(1)}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{values:{type:'array',items:{type:'string'},contains}}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('nested conditional matching agrees with server array validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{isA:{type:'object',properties:{kind:{const:'a'}},required:['kind']},a:{type:'object',properties:{score:{type:'number',minimum:10}},required:['score']},b:{type:'object',properties:{confirmed:{const:true}},required:['confirmed']},match:{type:'object',if:{$ref:'#/$defs/isA'},then:{$ref:'#/$defs/a'},else:{$ref:'#/$defs/b'}}},properties:{items:{type:'array',items:{type:'object',properties:{kind:{type:'string'},score:{type:'number'},confirmed:{type:'boolean'}}},contains:{$ref:'#/$defs/match'}}},required:['items']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={low:{items:[{kind:'a',score:9}]},unconfirmed:{items:[{kind:'b',confirmed:false}]},missing:{items:[{}]},validA:{items:[{kind:'a',score:10}]},validB:{items:[{kind:'b',confirmed:true}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['low','unconfirmed','missing']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['validA','validB']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const contains of [{if:true},{then:false},{if:true,then:null},{if:{$ref:'#/$defs/missing'},then:true}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{items:{...jsonSchema.properties.items,contains}}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('nested dependent rules match object-array items consistently with server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{phoneRule:{required:['phone'],properties:{phone:{type:'string',pattern:'^\\+[0-9]+$'}}}},properties:{items:{type:'array',items:{type:'object',properties:{name:{type:'string'},email:{type:['string','null']},mode:{type:['string','null']},phone:{type:'string'}}},contains:{type:'object',required:['name'],dependentRequired:{email:['phone']},dependentSchemas:{mode:{$ref:'#/$defs/phoneRule'}}}}},required:['items']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={missing:{items:[{name:'A',email:null}]},wrong:{items:[{name:'A',mode:null,phone:'123'}]},mode:{items:[{name:'A',mode:null}]},empty:{items:[{name:'A'}]},valid:{items:[{name:'A',email:null,mode:null,phone:'+123'}]},mixed:{items:[{name:'A',email:null},{name:'B'}]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['missing','wrong','mode']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  for(const name of ['empty','valid','mixed']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const before=saved.length;save.click();await wait(()=>saved.length===before+1&&!save.disabled);assert.deepEqual(saved.at(-1),records[name]);}
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const contains of [{type:'object',dependentRequired:{email:'phone'}},{type:'object',dependentRequired:{email:['phone','phone']}},{type:'object',dependentSchemas:{email:null}},{type:'object',dependentSchemas:{email:{$ref:'#/$defs/missing'}}},{type:'string',dependentRequired:{email:[1]}}])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{items:{...jsonSchema.properties.items,contains}}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('repeated array controls retain clear labels and keyboard focus',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{people:{type:'array',title:'People',items:{type:['object','null'],properties:{name:{type:'string'}},required:['name']}},tags:{type:'array',title:'Tags',items:{type:'string'}}},required:['people','tags']},record={people:[null,{name:'Ada'}],tags:['old']},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>',{pretendToBeVisual:true});const document=dom.window.document,root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  const people=()=>[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='People (required)'),removePeople=()=>[...people().querySelectorAll('button')].filter(x=>x.textContent.startsWith('Remove People item'));assert.deepEqual(removePeople().map(x=>x.textContent),['Remove People item 1','Remove People item 2']);assert.deepEqual([...people().querySelectorAll('label')].filter(x=>x.textContent.includes('to null')).map(x=>x.textContent.trim()),['Set People item 1 to null','Set People item 2 to null']);
-  removePeople()[0].focus();removePeople()[0].click();const addPeople=buttons().find(x=>x.textContent==='Add People item');assert.equal(document.activeElement,addPeople);assert.equal(removePeople()[0].textContent,'Remove People item 1');assert.ok([...people().querySelectorAll('label')].some(x=>x.textContent.trim()==='Set People item 1 to null'));addPeople.focus();addPeople.click();assert.equal(document.activeElement.closest('fieldset').querySelector(':scope > legend').textContent,'People item 2');
-  const addTags=buttons().find(x=>x.textContent==='Add Tags item');addTags.focus();addTags.click();const tagInputs=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Tags (required)').querySelectorAll('input[type=text]');assert.equal(document.activeElement,tagInputs[1]);tagInputs[1].value='new';tagInputs[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));const removeTag=buttons().find(x=>x.textContent==='Remove Tags item 1');removeTag.focus();removeTag.click();assert.equal(document.activeElement,addTags);assert.ok(buttons().some(x=>x.textContent==='Remove Tags item 1'));
-  const peopleRows=[...people().querySelectorAll('fieldset')],newName=peopleRows[1].querySelector('input[type=text]');newName.value='Lin';newName.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{people:[{name:'Ada'},{name:'Lin'}],tags:['new']});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('percent-encoded local references match server validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{'first name':{type:'string',minLength:2},'café':{type:'integer',minimum:1},'a/b':{type:'boolean'},'%2F':{type:'array',items:{type:'string'},contains:{$ref:'#/$defs/word%20rule'}},'word rule':{type:'string',pattern:'^ok$'}},properties:{name:{$ref:'#/%24defs/first%20name',description:'Name help'},count:{$ref:'#/$defs/caf%C3%A9'},enabled:{$ref:'#/$defs/a%2Fb'},also:{$ref:'#/$defs/a%7E1b'},tags:{$ref:'#/$defs/%252F'}},required:['name','count','enabled','also','tags']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={name:'Ada',count:2,enabled:true,also:false,tags:['ok']},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const name=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('name (')).querySelector('input');assert.equal(document.getElementById(name.getAttribute('aria-describedby')).textContent,'Name help');name.value='A';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();assert.equal(saved.length,0);assert.equal(validate({...record,name:'A'}),false);name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{...record,name:'Grace'});
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){factory(options);for(const ref of ['#/$defs/%','#/$defs/%E0%A4%A','#/$defs/%7E2bad','#/$defs/missing%20name','https://example.com/schema'])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{value:{$ref:ref}}}}),/Unsupported/);const cycle={type:'object',$defs:{self:{$ref:'#/$defs/%73elf'}},properties:{value:{$ref:'#/$defs/self'}}};assert.throws(()=>factory({...options,jsonSchema:cycle}),/Unsupported/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('local references can select schemas inside arrays through the capability service',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataCapability,createCapabilityServer}=await import('../../core/dist/index.js'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{
-  const scope={tenantId:'tenant',applicationId:'app'},jsonSchema={type:'object',$defs:{tuple:{type:'array',prefixItems:[{type:'string',minLength:2},{type:'integer',minimum:1}],items:false},rules:{anyOf:[{type:'string',pattern:'^ok$'},{type:'integer'}]}},properties:{name:{$ref:'#/$defs/tuple/prefixItems/%30'},count:{$ref:'#/$defs/tuple/prefixItems/1'},tags:{type:'array',items:{type:'string'},contains:{$ref:'#/$defs/rules/anyOf/0'}}},required:['name','count','tags']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},common={applicationId:'app',collection:'items',authorize:actor=>actor.principalId==='user',validate:()=>true};provider.put(scope,'items','one',{name:'Ada',count:2,tags:['ok'],extra:'keep'},null);
-  for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,...(operation==='put'?{jsonSchema}:{}),candidate:{operationId:`items.${operation}`,method,path:'/items'}});
-  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,request)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...request,body:JSON.stringify({origin:'ui',input:JSON.parse(request.body)})});
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');const name=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('name (')).querySelector('input');name.value='A';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();assert.match(root.textContent,/at least 2 characters/);assert.deepEqual(provider.get(scope,'items','one').value,{name:'Ada',count:2,tags:['ok'],extra:'keep'});name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>status.textContent==='Record saved.');assert.deepEqual(provider.get(scope,'items','one').value,{name:'Grace',count:2,tags:['ok'],extra:'keep'});
-  await assert.rejects(registry.invoke('items.put',{id:'one',expectedRevision:2,value:{name:'Grace',count:0,tags:['ok']}},{tenantId:'tenant',principalId:'user',origin:'ui'}),/Invalid capability input/);assert.equal(provider.get(scope,'items','one').revision,2);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){factory(options);for(const index of ['00','-1','2','length','constructor'])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{name:{$ref:'#/$defs/tuple/prefixItems/'+index}},required:['name']}}),/Unsupported/);const cycle={type:'object',$defs:{tuple:{type:'array',prefixItems:[{$ref:'#/$defs/tuple/prefixItems/%30'}],items:false}},properties:{name:{$ref:'#/$defs/tuple/prefixItems/0'}}};assert.throws(()=>factory({...options,jsonSchema:cycle}),/Unsupported/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('tuple forms edit positional values without shifting earlier fields',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{name:{type:'string',minLength:1}},properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{$ref:'#/$defs/name',description:'Person name'},{type:'integer',minimum:0},{type:'boolean'}],items:false,minItems:3,maxItems:3}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={good:{tuple:['Ada',37,true]},bad:{tuple:['Ada','thirty',true]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>',{pretendToBeVisual:true});const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  id.value='good';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  let fieldset=root.querySelector('fieldset'),name=fieldset.querySelector('input[type=text]'),age=fieldset.querySelector('input[type=number]'),active=fieldset.querySelector('select');assert.equal(name.value,'Ada');assert.equal(age.value,'37');assert.equal(active.value,'true');assert.equal(dom.window.document.getElementById(name.getAttribute('aria-describedby')).textContent,'Person name');
-  const remove=()=>buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));assert.deepEqual(remove().map(x=>x.disabled),[true,true,false]);assert.equal(buttons().find(x=>x.textContent==='Add Tuple item').disabled,true);
-  name.value='Grace';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));age.value='38';age.dispatchEvent(new dom.window.Event('input',{bubbles:true}));active.value='false';active.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:['Grace',38,false]});
-  remove()[2].focus();remove()[2].click();const add=buttons().find(x=>x.textContent==='Add Tuple item');assert.equal(dom.window.document.activeElement,add);save.click();assert.match(root.textContent,/between 3 and 3 items/);assert.equal(saved.length,1);add.click();fieldset=root.querySelector('fieldset');active=fieldset.querySelector('select');assert.equal(dom.window.document.activeElement,active);active.value='true';active.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:['Grace',38,true]});
-  id.value='bad';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(save.disabled,true);assert.equal(validate(records.bad),false);
-  const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('input,select,button')].every(x=>x.disabled));
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const tuple of [{prefixItems:[],items:false},{prefixItems:[{type:'string'}]},{prefixItems:[{type:'string'}],items:true},{prefixItems:[true],items:false}])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{tuple:{type:'array',...tuple}}}}),/Unsupported/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('tuple forms edit object positions and preserve undisplayed values',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const person={type:'object',description:'Person details',properties:{name:{type:'string',minLength:1},age:{type:'integer',minimum:0}},required:['name']},jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[person,{type:'integer'}],items:person,minItems:2,maxItems:4}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={tuple:[{name:'Ada',extra:'keep'},3,{name:'Grace',extra:'also keep'}]},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:saved.length+1}})};};
-  dom=new JSDOM('<!doctype html>',{pretendToBeVisual:true});const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  const names=()=>[...root.querySelectorAll('fieldset input[type=text]')];assert.deepEqual(names().map(x=>x.value),['Ada','Grace']);const boxes=[...root.querySelectorAll('fieldset')].filter(x=>x.querySelector(':scope > legend')?.textContent.startsWith('Tuple item'));assert.equal(boxes.length,2);assert.equal(dom.window.document.getElementById(boxes[0].getAttribute('aria-describedby')).textContent,'Person details');
-  names()[0].value='Augusta';names()[0].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:[{name:'Augusta',extra:'keep'},3,{name:'Grace',extra:'also keep'}]});
-  names()[1].value='Hopper';names()[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:[{name:'Augusta',extra:'keep'},3,{name:'Hopper',extra:'also keep'}]});
-  const removes=buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));assert.deepEqual(removes.map(x=>x.disabled),[true,true,false]);removes[2].click();buttons().find(x=>x.textContent==='Add Tuple item').click();names()[1].value='New';names()[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===3&&!save.disabled);assert.deepEqual(saved[2],{tuple:[{name:'Augusta',extra:'keep'},3,{name:'New'}]});
-  const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.ok([...preview.querySelectorAll('input,select,button')].every(x=>x.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('nullable tuple objects enforce nested rules before saving',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const person={type:['object','null'],properties:{name:{type:'string',minLength:1},code:{type:'string'}},required:['name'],dependentRequired:{code:['name']}},jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[person],items:false,minItems:1}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:input.id==='bad'?{tuple:[42]}:{tuple:[null]}}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:[null]});const toggle=[...root.querySelectorAll('label')].find(x=>x.textContent.includes('Set Tuple item 1 to null')).querySelector('input');toggle.checked=false;toggle.dispatchEvent(new dom.window.Event('change',{bubbles:true}));save.click();assert.equal(saved.length,1);assert.match(root.textContent,/at least 1 characters/);const name=root.querySelector('fieldset input[type=text]');name.value='Ada';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:[{name:'Ada'}]});
-  id.value='bad';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent.includes('cannot edit'));assert.equal(save.disabled,true);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('tuple positions can contain editable nested arrays',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'},{type:'array',items:{type:'integer'},minItems:1}],items:false,minItems:2,maxItems:2}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={tuple:['Ada',[1,2]]},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  const nested=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Tuple item 2 (required)');assert.ok(nested);const add=[...nested.querySelectorAll('button')].find(x=>x.textContent==='Add Tuple item 2 item');assert.ok(add);add.click();const numbers=[...nested.querySelectorAll('input[type=number]')];assert.equal(numbers.length,3);numbers[2].value='3';numbers[2].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],{tuple:['Ada',[1,2,3]]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-
-test('nested array controls update their labels when trailing items move',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'}],items:{type:'array',items:{type:['string','null']}},minItems:1,maxItems:4}},required:['tuple']},record={tuple:['key',['first'],['second']]},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>',{pretendToBeVisual:true});const document=dom.window.document,root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,document);document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  buttons().find(x=>x.textContent==='Remove Tuple item 2').click();const nested=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector(':scope > legend')?.textContent==='Tuple item 2 (required)');assert.ok(nested);assert.ok([...nested.querySelectorAll('button')].some(x=>x.textContent==='Add Tuple item 2 item'));assert.ok([...nested.querySelectorAll('button')].some(x=>x.textContent==='Remove Tuple item 2 item 1'));assert.ok([...nested.querySelectorAll('label')].some(x=>x.textContent.trim()==='Set Tuple item 2 item 1 to null'));assert.equal(nested.querySelector('input[type=text]').value,'second');
-  const add=[...nested.querySelectorAll('button')].find(x=>x.textContent==='Add Tuple item 2 item');add.focus();add.click();assert.equal(document.activeElement.type,'checkbox');const inputs=nested.querySelectorAll('input[type=text]');inputs[1].value='third';inputs[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:['key',['second','third']]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('tuple forms preserve typed trailing items when an item is removed',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'}],items:{type:'integer'},minItems:1,maxItems:4}},required:['tuple']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),record={tuple:['Ada',1,2]},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:record}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  const remove=()=>buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));assert.deepEqual(remove().map(x=>x.disabled),[true,false,false]);remove()[1].click();assert.deepEqual([...root.querySelectorAll('input[type=number]')].map(x=>x.value),['2']);save.click();await wait(()=>saved.length===1&&!save.disabled);assert.deepEqual(saved[0],{tuple:['Ada',2]});
-  buttons().find(x=>x.textContent==='Add Tuple item').click();const numbers=[...root.querySelectorAll('input[type=number]')];numbers[1].value='3';numbers[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>saved.length===2&&!save.disabled);assert.deepEqual(saved[1],{tuple:['Ada',2,3]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('tuple forms save typed trailing items through the capability service',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataCapability,createCapabilityServer}=await import('../../core/dist/index.js'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{
-  const scope={tenantId:'tenant',applicationId:'app'},jsonSchema={type:'object',properties:{tuple:{type:'array',title:'Tuple',prefixItems:[{type:'string'},{type:'object',properties:{name:{type:'string'}},required:['name']}],items:{type:'integer'},minItems:2,maxItems:5}},required:['tuple']},common={applicationId:'app',collection:'items',authorize:actor=>actor.principalId==='user',validate:()=>true};
-  provider.put(scope,'items','one',{tuple:['Ada',{name:'Lovelace',extra:'preserved'},1,2]},null);
-  for(const [operation,method] of [['get','GET'],['put','PUT']])registerDataCapability(registry,provider,{...common,operation,...(operation==='put'?{jsonSchema}:{}),candidate:{operationId:`items.${operation}`,method,path:'/items'}});
-  server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,options)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',jsonSchema}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=()=>[...root.querySelectorAll('button')],load=buttons().find(x=>x.textContent==='Load'),save=buttons().find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');id.value='one';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');
-  const removes=buttons().filter(x=>x.textContent.startsWith('Remove Tuple item'));removes[2].click();const name=root.querySelector('fieldset fieldset input[type=text]');name.value='Byron';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));const numbers=[...root.querySelectorAll('input[type=number]')];numbers[0].value='8';numbers[0].dispatchEvent(new dom.window.Event('input',{bubbles:true}));save.click();await wait(()=>status.textContent==='Record saved.');assert.deepEqual(provider.get(scope,'items','one').value,{tuple:['Ada',{name:'Byron',extra:'preserved'},8]});
-  await assert.rejects(registry.invoke('items.put',{id:'one',expectedRevision:2,value:{tuple:['Ada',{name:'Byron'},'bad']}},{tenantId:'tenant',principalId:'user',origin:'ui'}),/Invalid capability input/);assert.deepEqual(provider.get(scope,'items','one').value,{tuple:['Ada',{name:'Byron',extra:'preserved'},8]});
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
-});
-
-test('positional array matching agrees with server tuple validation',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const jsonSchema={type:'object',$defs:{id:{type:'string',pattern:'^ID:'}},properties:{matrix:{type:'array',items:{type:'array',items:{type:'string'}},contains:{type:'array',prefixItems:[{$ref:'#/$defs/id'},{enum:['open','closed']}],items:false,minItems:2}}},required:['matrix']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema},validate=createRecordJsonSchemaValidator(jsonSchema),records={short:{matrix:[['ID:1']]},order:{matrix:[['open','ID:1']]},extra:{matrix:[['ID:1','open','extra']]},none:{matrix:[['bad','open']]},valid:{matrix:[['bad','open'],['ID:1','closed']]}},saved=[];
-  globalThis.fetch=async(path,request)=>{const input=JSON.parse(request.body);if(path.endsWith('items.get'))return {ok:true,json:async()=>({result:{id:input.id,revision:1,value:records[input.id]}})};assert.equal(validate(input.value),true);saved.push(input.value);return {ok:true,json:async()=>({result:{id:input.id,revision:2}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input'),buttons=[...root.querySelectorAll('button')],load=buttons.find(x=>x.textContent==='Load'),save=buttons.find(x=>x.textContent==='Save'),status=root.querySelector('[role=status]');
-  for(const name of ['short','order','extra','none']){id.value=name;id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();assert.match(root.textContent,/required number of matching items/);assert.equal(validate(records[name]),false);assert.equal(saved.length,0);}
-  id.value='valid';id.dispatchEvent(new dom.window.Event('input'));load.click();await wait(()=>status.textContent==='Record loaded.');save.click();await wait(()=>saved.length===1);assert.deepEqual(saved[0],records.valid);
-  for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   assert.doesNotThrow(()=>factory(options));
-   for(const prefixItems of [[],[null],Array(41).fill(true),[{type:'string',format:'email'}],[{$ref:'#/$defs/missing'}]])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{matrix:{...jsonSchema.properties.matrix,contains:{type:'array',prefixItems}}}}}),/Unsupported/);
+test('mixed enum controls apply bounded combinations and conditions', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const choice = {
+        enum: ['a', 'alpha', 1, 3, false, null],
+        anyOf: [{ type: 'string', minLength: 4 }, { type: 'number', maximum: 5 }, { const: null }],
+        allOf: [{ not: { const: 'forbidden' } }],
+        if: { type: 'number' },
+        then: { minimum: 2 }
+      },
+      jsonSchema = { type: 'object', properties: { choice, items: { type: 'array', items: choice } }, required: ['choice', 'items'] },
+      record = { choice: 'alpha', items: [3, null] },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const select = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('choice (required)')).querySelector('select'),
+      texts = [...select.options].map(option => option.textContent);
+    for (const text of ['alpha (text)', '3 (number)']) assert.ok(texts.includes(text));
+    for (const text of ['a (text)', '1 (number)', 'No (boolean)']) assert.ok(!texts.includes(text));
+    select.value = [...select.options].find(option => option.textContent === '3 (number)').value;
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { ...record, choice: 3 });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const bad of [
+        { type: 'string', allOf: [{ minLength: 5 }] },
+        { enum: ['x', 1], anyOf: [] },
+        { enum: ['x', 1], if: { type: 'number' } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { values: { type: 'array', items: bad } } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('JSON Schema scalar descriptions are safely associated with controls in runtime and preview',async()=>{
- const s=await setup();let dom;try{
-  const jsonSchema={type:'object',properties:{name:{type:'string',description:'Use <strong>plain text</strong>.'},count:{type:'integer',description:'Count of items'},tags:{type:'array',items:{type:'string',description:'Tag help'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};
-  dom=new JSDOM('<!doctype html>');for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){
-   const editor=factory(options),root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const name=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('name (optional)')),control=name.querySelector('input[type=text]'),help=root.querySelector('#'+control.getAttribute('aria-describedby'));assert.equal(help.textContent,'Use <strong>plain text</strong>.');assert.equal(help.querySelector('strong'),null);assert.equal(dom.window.document.getElementById(control.getAttribute('aria-labelledby')).textContent,'name (optional)');
-   const count=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('count (optional)')).querySelector('input');assert.notEqual(count.getAttribute('aria-describedby'),control.getAttribute('aria-describedby'));assert.equal(root.querySelector('#'+count.getAttribute('aria-describedby')).textContent,'Count of items');
-   for(const description of [42,'x'.repeat(1025)])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{name:{type:'string',description}}}}),/Unsupported/);
-   root.remove();
+test('single-type enum controls apply bounded combinations and conditions', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['a', 'alpha', 'beta'], allOf: [{ minLength: 3 }], not: { const: 'beta' } },
+          items: { type: 'array', items: { type: 'integer', enum: [1, 2, 3], if: { type: 'number' }, then: { minimum: 2 } } },
+          flag: { const: true, oneOf: [{ const: true }, { const: false }] },
+          maybe: { type: ['number', 'null'], enum: [1, 2, null], anyOf: [{ const: null }, { minimum: 2 }] }
+        },
+        required: ['kind', 'items', 'flag', 'maybe']
+      },
+      record = { kind: 'alpha', items: [2, 3], flag: true, maybe: null },
+      saved = [],
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons()
+      .find(button => button.textContent === 'Load')
+      .click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const select = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('kind (required)')).querySelector('select'),
+      texts = [...select.options].map(option => option.textContent);
+    assert.ok(texts.includes('alpha'));
+    assert.ok(!texts.includes('a'));
+    assert.ok(!texts.includes('beta'));
+    buttons()
+      .find(button => button.textContent === 'Save')
+      .click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], record);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const invalid of [
+        { type: 'string', enum: ['a'], not: { const: 'a' } },
+        { type: 'integer', enum: [1, 2], anyOf: [] },
+        { type: 'string', enum: ['a'], if: { type: 'string' } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: invalid } } }), /Unsupported/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
   }
- }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
 });
 
-test('JSON Schema descriptions remain associated with repeated array controls',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
-  const jsonSchema={type:'object',properties:{tags:{type:'array',items:{type:'string',description:'Enter a tag'}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};let saved;
-  globalThis.fetch=async(path,request)=>path.endsWith('items.get')?{ok:true,json:async()=>({result:{id:'one',revision:1,value:{tags:['first','second']}}})}:{ok:true,json:async()=>{saved=JSON.parse(request.body).value;return {result:{id:'one',revision:2,value:saved}};}};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));[...root.querySelectorAll('button')].find(x=>x.textContent==='Load').click();await wait(()=>root.querySelector('[role=status]').textContent==='Record loaded.');
-  const controls=[...root.querySelectorAll('input[aria-describedby]')];assert.equal(controls.length,2);assert.notEqual(controls[0].getAttribute('aria-describedby'),controls[1].getAttribute('aria-describedby'));for(const [index,control] of controls.entries()){assert.equal(dom.window.document.getElementById(control.getAttribute('aria-describedby')).textContent,'Enter a tag');assert.equal(dom.window.document.getElementById(control.getAttribute('aria-labelledby')).textContent,'tags item '+(index+1)+' (required)');}
-  [...root.querySelectorAll('button')].find(x=>x.textContent==='Save').click();await wait(()=>saved!==undefined);assert.deepEqual(saved,{tags:['first','second']});assert.equal(createRecordJsonSchemaValidator(jsonSchema)(saved),true);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+test('record browser sends typed filters, resets pages and ignores stale responses', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [
+          { field: 'state', label: 'State', type: 'string' },
+          { field: 'count', label: 'Count', type: 'number' },
+          { field: 'active', label: 'Active', type: 'boolean' }
+        ]
+      };
+    let resolvePending;
+    globalThis.fetch = async (_path, request) => {
+      const input = JSON.parse(request.body);
+      calls.push(input);
+      if (input.filter?.value === 'slow') return new Promise(resolve => (resolvePending = () => resolve({ ok: true, json: async () => ({ result: { items: [{ id: 'stale', revision: 1 }] } }) })));
+      return { ok: true, json: async () => ({ result: { items: [{ id: 'found', revision: 1 }], nextCursor: 'opaque' } }) };
+    };
+    const editor = s.runtime.createRecordEditor(options);
+    options.filterFields[0].field = 'changed';
+    dom = new JSDOM('<!doctype html>');
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const field = root.querySelector('select'),
+      value = [...root.querySelectorAll('label')].find(x => x.textContent === 'Filter value').querySelector('input'),
+      nullBox = root.querySelector('input[type=checkbox]'),
+      buttons = [...root.querySelectorAll('button')],
+      browse = buttons.find(x => x.textContent === 'Browse records'),
+      next = buttons.find(x => x.textContent === 'Next page'),
+      change = control => control.dispatchEvent(new dom.window.Event('change'));
+    field.value = 'state';
+    change(field);
+    value.value = '';
+    change(value);
+    browse.click();
+    await wait(() => calls.length === 1 && !!root.querySelector('li button') && !browse.disabled);
+    assert.deepEqual(calls[0].filter, { field: 'state', value: '' });
+    next.click();
+    await wait(() => calls.length === 2 && !browse.disabled);
+    assert.equal(calls[1].cursor, 'opaque');
+    field.value = 'count';
+    change(field);
+    assert.equal(next.disabled, true);
+    assert.equal(root.querySelector('li button'), null);
+    value.value = 'not a number';
+    browse.click();
+    assert.equal(calls.length, 2);
+    assert.match(root.textContent, /valid filter number/);
+    value.value = '42.5';
+    browse.click();
+    await wait(() => calls.length === 3 && !browse.disabled);
+    assert.deepEqual(calls[2].filter, { field: 'count', value: 42.5 });
+    field.value = 'active';
+    change(field);
+    value.value = 'false';
+    browse.click();
+    await wait(() => calls.length === 4 && !browse.disabled);
+    assert.deepEqual(calls[3].filter, { field: 'active', value: false });
+    nullBox.checked = true;
+    change(nullBox);
+    browse.click();
+    await wait(() => calls.length === 5 && !browse.disabled);
+    assert.deepEqual(calls[4].filter, { field: 'active', value: null });
+    nullBox.checked = false;
+    field.value = 'state';
+    value.value = 'slow';
+    change(field);
+    browse.click();
+    await wait(() => !!resolvePending);
+    value.value = 'new';
+    change(value);
+    resolvePending();
+    await wait(() => !browse.disabled);
+    assert.equal(root.querySelector('li button'), null);
+    assert.equal(next.disabled, true);
+    field.value = '';
+    change(field);
+    browse.click();
+    await wait(() => calls.length === 7);
+    assert.equal(Object.hasOwn(calls[6], 'filter'), false);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('opt-in multiple filters combine typed values, reset cursors and reject duplicate fields',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{
-  const options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',multipleFilters:true,filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'},{field:'flag',label:'Flag',type:'boolean'}]},calls=[];
-  globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[],nextCursor:'cursor'}})};};
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const change=element=>element.dispatchEvent(new dom.window.Event('change',{bubbles:true}));const first=root.querySelector('select'),firstValue=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);first.value='state';change(first);firstValue.value='open';change(firstValue);button('Add filter').click();button('Browse records').click();assert.equal(calls.length,0);assert.match(root.textContent,/Choose a field for each additional filter/);let row=root.querySelector('fieldset'),second=row.querySelector('select'),secondValue=row.querySelector('input:not([type=checkbox])');second.value='count';change(second);secondValue.value='2';change(secondValue);button('Browse records').click();await wait(()=>calls.length===1&&!button('Browse records').disabled);assert.deepEqual(calls[0].filters,[{field:'state',value:'open'},{field:'count',value:2}]);assert.equal(button('Next page').disabled,false);
-  second.value='state';change(second);assert.equal(button('Next page').disabled,true);button('Browse records').click();assert.equal(calls.length,1);assert.match(root.textContent,/each filter field and comparison only once/);second.value='flag';change(second);row.querySelector('input[type=checkbox]').checked=true;change(row.querySelector('input[type=checkbox]'));button('Browse records').click();await wait(()=>calls.length===2&&!button('Browse records').disabled);assert.deepEqual(calls[1].filters,[{field:'state',value:'open'},{field:'flag',value:null}]);button('Remove filter').click();assert.equal(button('Next page').disabled,true);button('Browse records').click();await wait(()=>calls.length===3&&!button('Browse records').disabled);assert.deepEqual(calls[2].filter,{field:'state',value:'open'});assert.equal(calls[2].filters,undefined);for(let i=0;i<9;i++)button('Add filter').click();assert.equal(root.querySelectorAll('fieldset').length,9);assert.equal(button('Add filter').disabled,true);
-  const preview=s.preview.createRecordEditor(options).render({},null,null,dom.window.document);assert.equal([...preview.querySelectorAll('button')].find(element=>element.textContent==='Add filter').disabled,true);for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){assert.throws(()=>factory({...options,filterFields:undefined}),/filter/);assert.throws(()=>factory({...options,multipleFilters:'yes'}),/filter/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+test('record filter configuration is validated and preview controls are inert', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const base = { getOperation: 'items.get', putOperation: 'items.put', listOperation: 'items.list' };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const filterFields of [
+        [],
+        [{ field: 'bad\npath', label: 'X', type: 'string' }],
+        [{ field: 'x', label: 'X', type: 'wrong' }],
+        [
+          { field: 'x', label: 'X', type: 'string' },
+          { field: 'x', label: 'Y', type: 'number' }
+        ]
+      ])
+        assert.throws(() => factory({ ...base, filterFields }), /Invalid record filter fields/);
+    dom = new JSDOM('<!doctype html>');
+    const root = s.preview.createRecordEditor({ ...base, filterFields: [{ field: 'state', label: 'State', type: 'string' }] }).render({}, null, null, dom.window.document);
+    assert.ok([...root.querySelectorAll('input,select,button,textarea')].every(x => x.disabled));
+    assert.match(root.textContent, /Filter field/);
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+function render(factory, fields = schema) {
+  const dom = new JSDOM('<!doctype html>'),
+    root = factory({ getOperation: 'items.get', putOperation: 'items.put', fields }).render({ label: 'People' }, null, null, dom.window.document);
+  dom.window.document.body.appendChild(root);
+  const labels = [...root.querySelectorAll('label')],
+    controls = labels.map(label => label.querySelector('input,select,textarea'));
+  return { dom, root, controls, buttons: [...root.querySelectorAll('button')], status: root.querySelector('[role=status]') };
+}
+
+test('property name constraints protect preserved properties at every object level', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        propertyNames: { pattern: '^[a-z]+$', minLength: 2 },
+        properties: {
+          name: { type: 'string' },
+          profile: { type: ['object', 'null'], propertyNames: { enum: ['label', 'extra'] }, properties: { label: { type: 'string' } } },
+          people: { type: 'array', items: { type: ['object', 'null'], propertyNames: { maxLength: 5, pattern: '^[a-z]+$' }, properties: { name: { type: 'string' } } } }
+        }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const records = {
+        root: { name: 'Ada', Bad: 1 },
+        nested: { name: 'Ada', profile: { label: 'A', unknown: 1 } },
+        item: { name: 'Ada', people: [{ name: 'A', longname: true }] },
+        valid: { name: 'Ada', profile: { label: 'A', extra: 1 }, people: [null, { name: 'B', more: true }] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const record of ['root', 'nested', 'item']) {
+      id.value = record;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /property name that does not match/);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const propertyNames of [{ pattern: '[' }, { minLength: -1 }, { enum: ['x', 'x'] }, { type: 'invalid' }, { format: 'email' }, { const: undefined }])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, propertyNames } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('multi-filter editor browses authorized records through the capability server',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{const scope={tenantId:'tenant',applicationId:'app'};for(const [id,value] of [['a',{owner:'other',state:'open',count:2}],['b',{owner:'user',state:'open',count:2}],['c',{owner:'user',state:'open',count:3}]])provider.put(scope,'items',id,value,null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state','count'],authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,options)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});
-  dom=new JSDOM('<!doctype html>');const root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',multipleFilters:true,filterFields:[{field:'state',label:'State',type:'string'},{field:'count',label:'Count',type:'number'}]}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const change=element=>element.dispatchEvent(new dom.window.Event('change',{bubbles:true})),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text),first=root.querySelector('select'),value=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input');first.value='state';change(first);value.value='open';change(value);button('Add filter').click();const row=root.querySelector('fieldset'),second=row.querySelector('select'),number=row.querySelector('input:not([type=checkbox])');second.value='count';change(second);number.value='2';change(number);button('Browse records').click();await wait(()=>root.querySelector('li button'));assert.deepEqual([...root.querySelectorAll('li button')].map(item=>item.textContent),['b']);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
+test('local references in validation rules agree with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+      type: 'object',
+      $defs: {
+        names: { pattern: '^[a-z]+$' },
+        colors: { enum: ['red', 'blue'] },
+        iscompany: { const: 'company' },
+        condition: { properties: { kind: { $ref: '#/$defs/iscompany' } }, required: ['kind'] },
+        company: { required: ['company'] },
+        person: { required: ['person'] },
+        phone: { required: ['phone'] }
+      },
+      propertyNames: { $ref: '#/$defs/names', description: 'Names use lowercase' },
+      properties: {
+        kind: { type: 'string' },
+        company: { type: 'string' },
+        person: { type: 'string' },
+        email: { type: 'string' },
+        phone: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' }, contains: { $ref: '#/$defs/colors' }, minContains: 1 }
+      },
+      if: { $ref: '#/$defs/condition' },
+      then: { $ref: '#/$defs/company' },
+      else: { $ref: '#/$defs/person' },
+      dependentSchemas: { email: { $ref: '#/$defs/phone' } }
+    };
+    const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        names: { kind: 'company', company: 'Acme', tags: ['red'], Bad: 1 },
+        contains: { kind: 'company', company: 'Acme', tags: ['green'] },
+        condition: { kind: 'company', tags: ['red'] },
+        dependency: { kind: 'company', company: 'Acme', email: 'a', tags: ['red'] },
+        valid: { kind: 'company', company: 'Acme', email: 'a', phone: '123', tags: ['red'] },
+        person: { kind: 'person', person: 'Ada', tags: ['blue'] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [name, error] of [
+      ['names', /property name that does not match/],
+      ['contains', /required number of matching items/],
+      ['condition', /company is required by a condition/],
+      ['dependency', /phone is required when email is provided/]
+    ]) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, error);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'person']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      await wait(() => saved.length === (name === 'valid' ? 1 : 2) && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const bad of [{ $ref: '#/$defs/missing' }, { $ref: '#/$defs/loop' }, { $ref: 'https://example.com/schema' }])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, $defs: { ...jsonSchema.$defs, loop: { $ref: '#/$defs/loop' } }, propertyNames: bad } }), /Unsupported/);
+      assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, propertyNames: { $ref: '#/$defs/names', description: 42 } } }), /Unsupported/);
+      assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, then: { $ref: '#/$defs/company', additionalProperties: false } } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('record editor supports host-approved numeric ranges with bounded results',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{const scope={tenantId:'tenant',applicationId:'app'};for(const [id,value] of [['a',{owner:'user',count:1}],['b',{owner:'user',count:2}],['c',{owner:'user',count:3}],['d',{owner:'other',count:2}],['e',{owner:'user',count:'2'}]])provider.put(scope,'items',id,value,null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['count','owner'],rangeFilterFields:['count'],authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const calls=[];globalThis.fetch=(url,options)=>{const input=JSON.parse(options.body);calls.push(input);return originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input})});};
-  const options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',multipleFilters:true,filterFields:[{field:'count',label:'Count',type:'number'},{field:'owner',label:'Owner',type:'string'}],rangeFilterFields:['count']};dom=new JSDOM('<!doctype html>');const editor=s.runtime.createRecordEditor(options);options.rangeFilterFields.length=0;const root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const change=element=>element.dispatchEvent(new dom.window.Event('change',{bubbles:true})),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text),field=root.querySelector('select'),operator=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),number=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input'),nullControl=[...root.querySelectorAll('label')].find(label=>label.textContent===' Match null').querySelector('input');
-  assert.equal(operator.disabled,true);field.value='count';change(field);assert.equal(operator.disabled,false);nullControl.checked=true;change(nullControl);operator.value='gte';change(operator);assert.equal(nullControl.checked,false);assert.equal(nullControl.disabled,true);number.value='2';change(number);button('Add filter').click();const row=root.querySelector('fieldset'),rowField=row.querySelector('select'),rowOperator=[...row.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),rowValue=row.querySelector('input:not([type=checkbox])');rowField.value='count';change(rowField);rowOperator.value='lt';change(rowOperator);rowValue.value='3';change(rowValue);button('Browse records').click();await wait(()=>root.querySelector('li button'));assert.deepEqual(calls[0].filters,[{field:'count',value:2,operator:'gte'},{field:'count',value:3,operator:'lt'}]);assert.deepEqual([...root.querySelectorAll('li button')].map(item=>item.textContent),['b']);
-  rowOperator.value='gte';change(rowOperator);button('Browse records').click();assert.equal(calls.length,1);assert.match(root.textContent,/field and comparison only once/);field.value='owner';change(field);assert.equal(operator.value,'eq');assert.equal(operator.disabled,true);assert.equal(nullControl.disabled,false);
-  const preview=s.preview.createRecordEditor({...options,rangeFilterFields:['count']}).render({},null,null,dom.window.document);assert.equal([...preview.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select').disabled,true);for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const rangeFilterFields of [['owner'],['count','count'],['unknown']])assert.throws(()=>factory({...options,rangeFilterFields}),/filter/);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
+test('pattern and additional properties validate preserved values at every object level', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { extra: { type: 'string', pattern: '^ok:' }, nonnegative: { type: 'number', minimum: 0 } },
+        properties: {
+          name: { type: 'string' },
+          groups: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' } }, patternProperties: { '^flag_': { type: 'boolean' } }, additionalProperties: false } }
+        },
+        patternProperties: { '^x_': { $ref: '#/$defs/nonnegative' }, score$: { type: 'number', maximum: 10 } },
+        additionalProperties: { $ref: '#/$defs/extra' }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        overlap: { name: 'Ada', x_score: 11 },
+        negative: { name: 'Ada', x_score: -1 },
+        additional: { name: 'Ada', other: 'bad' },
+        wrongtype: { name: 'Ada', other: 42 },
+        nested: { name: 'Ada', groups: [{ name: 'A', flag_good: 'yes' }] },
+        nestedextra: { name: 'Ada', groups: [{ name: 'A', hidden: true }] },
+        valid: { name: 'Ada', x_score: 5, x_count: 2, other: 'ok:test', groups: [{ name: 'A', flag_good: true }] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['overlap', 'negative', 'additional', 'wrongtype', 'nested', 'nestedextra']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /does not satisfy the schema rules/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const bad of [
+        { patternProperties: { '[': { type: 'string' } } },
+        { patternProperties: { '^x': { type: 'string', format: 'email' } } },
+        { additionalProperties: { type: 'string', format: 'email' } },
+        { patternProperties: [] },
+        { additionalProperties: 'yes' }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, ...bad } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('local references support per-use scalar descriptions in runtime and preview',async()=>{
- const s=await setup();let dom;try{const jsonSchema={type:'object',$defs:{shared:{type:'string',description:'Shared guidance',minLength:2}},properties:{first:{$ref:'#/$defs/shared',title:'First',description:'First <b>guidance</b>'},second:{$ref:'#/$defs/shared'},third:{$ref:'#/$defs/shared',description:''}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};const validate=createRecordJsonSchemaValidator(jsonSchema);assert.equal(validate({first:'x'}),false);assert.equal(validate({first:'ok'}),true);dom=new JSDOM('<!doctype html>');for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){const root=factory(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const getControl=prefix=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(prefix)).querySelector('input[type=text]'),first=getControl('First (optional)'),second=getControl('second (optional)'),third=getControl('third (optional)');assert.equal(dom.window.document.getElementById(first.getAttribute('aria-describedby')).textContent,'First <b>guidance</b>');assert.equal(root.querySelector('b'),null);assert.equal(dom.window.document.getElementById(second.getAttribute('aria-describedby')).textContent,'Shared guidance');assert.equal(third.hasAttribute('aria-describedby'),false);for(const description of [42,'x'.repeat(1025)])assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{first:{$ref:'#/$defs/shared',description}}}}),/Unsupported/);assert.throws(()=>factory({...options,jsonSchema:{...jsonSchema,properties:{first:{$ref:'#/$defs/shared',description:'help',minLength:1}}}}),/Unsupported/);root.remove();}
- }finally{dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+test('object property counts are checked for root, nested objects and array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        minProperties: 2,
+        maxProperties: 3,
+        properties: {
+          name: { type: 'string' },
+          profile: { type: ['object', 'null'], minProperties: 1, maxProperties: 1, properties: { label: { type: 'string' } } },
+          people: { type: 'array', items: { type: ['object', 'null'], minProperties: 1, maxProperties: 1, properties: { name: { type: 'string' } } } }
+        }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const records = {
+      root: { name: 'Ada' },
+      nested: { name: 'Ada', profile: { label: 'A', hidden: true } },
+      item: { name: 'Ada', people: [{}] },
+      valid: { name: 'Ada', profile: null, people: [null, { hidden: true }] }
+    };
+    let saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [record, message] of [
+      ['root', /Record requires at least 2 properties/],
+      ['nested', /profile allows at most 1 properties/],
+      ['item', /requires at least 1 properties/]
+    ]) {
+      id.value = record;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, message);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const limits of [{ minProperties: -1 }, { maxProperties: 1.5 }, { minProperties: 2, maxProperties: 1 }])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, ...limits } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('array descriptions are associated with fieldsets, including repeated nested arrays',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',$defs:{tags:{type:'array',description:'Default help',items:{type:'string'}}},properties:{tags:{$ref:'#/$defs/tags',description:'Use <b>plain text</b>'},people:{type:'array',description:'People help',items:{type:'object',properties:{aliases:{$ref:'#/$defs/tags',description:'Alias help'}}}}}},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};dom=new JSDOM('<!doctype html>');for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){const root=factory(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const fields=[...root.querySelectorAll('fieldset[aria-describedby]')];assert.deepEqual(fields.map(x=>dom.window.document.getElementById(x.getAttribute('aria-describedby')).textContent),['Use <b>plain text</b>','People help']);assert.equal(root.querySelector('b'),null);assert.equal(new Set(fields.map(x=>x.getAttribute('aria-describedby'))).size,2);root.remove();for(const description of [123,'x'.repeat(1025)])assert.throws(()=>factory({...options,jsonSchema:{type:'object',properties:{bad:{type:'array',description,items:{type:'string'}}}}}),/Unsupported/);}
-  globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{people:[{aliases:['a']},{aliases:['b']}]}}})});const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));[...root.querySelectorAll('button')].find(x=>x.textContent==='Load').click();await wait(()=>root.querySelector('[role=status]').textContent==='Record loaded.');const nested=[...root.querySelectorAll('fieldset[aria-describedby]')].filter(x=>dom.window.document.getElementById(x.getAttribute('aria-describedby')).textContent==='Alias help');assert.equal(nested.length,2);assert.notEqual(nested[0].getAttribute('aria-describedby'),nested[1].getAttribute('aria-describedby'));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+test('typed forms validate, preserve unknown data and retain edits on revision conflicts', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    let record = { id: 'one', revision: 1, value: { name: 'Ada', age: 20, active: false, tier: 'standard', note: '', extra: { keep: true } } },
+      putCalls = 0;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      putCalls++;
+      if (input.expectedRevision !== record.revision) return { ok: false, status: 409, json: async () => ({ error: 'conflict' }) };
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    const f = render(s.runtime.createRecordEditor);
+    dom = f.dom;
+    const [id, name, age, active, tier, note] = f.controls,
+      [load, save] = f.buttons;
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => f.status.textContent === 'Record loaded.');
+    assert.equal(name.value, 'Ada');
+    assert.equal(active.value, 'false');
+    assert.equal(tier.value, 'standard');
+    assert.equal(save.disabled, false);
+    age.value = '-1';
+    age.dispatchEvent(new dom.window.Event('blur'));
+    assert.match(age.parentElement.textContent, /at least 0/);
+    save.click();
+    assert.equal(putCalls, 0);
+    assert.equal(age.getAttribute('aria-invalid'), 'true');
+    age.value = '21';
+    age.dispatchEvent(new dom.window.Event('input'));
+    active.value = 'true';
+    active.dispatchEvent(new dom.window.Event('change'));
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input'));
+    save.click();
+    await wait(() => f.status.textContent === 'Record saved.');
+    assert.deepEqual(record.value, { name: 'Grace', age: 21, active: true, tier: 'standard', note: '', extra: { keep: true } });
+    assert.equal(age.hasAttribute('aria-invalid'), false);
+    record = { ...record, revision: 3, value: { ...record.value, name: 'External' } };
+    name.value = 'Unsaved';
+    name.dispatchEvent(new dom.window.Event('input'));
+    save.click();
+    await wait(() => f.status.textContent.includes('changed elsewhere'));
+    assert.equal(save.disabled, true);
+    assert.equal(name.disabled, false);
+    assert.equal(name.value, 'Unsaved');
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('object descriptions are accessible for root, referenced groups and repeated object items',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;try{const jsonSchema={type:'object',description:'Root <b>help</b>',$defs:{address:{type:'object',description:'Default address help',properties:{city:{type:'string',description:'City help'}}},person:{type:'object',description:'Person item help',properties:{name:{type:'string'},address:{$ref:'#/$defs/address',description:'Nested address help'}}}},properties:{home:{$ref:'#/$defs/address',description:'Home help'},work:{$ref:'#/$defs/address',description:''},billing:{$ref:'#/$defs/address',description:'Billing help'},people:{type:'array',items:{$ref:'#/$defs/person',description:'Per-person help'}}},required:['billing']},options={getOperation:'items.get',putOperation:'items.put',jsonSchema};dom=new JSDOM('<!doctype html>');for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor]){const root=factory(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);assert.equal(dom.window.document.getElementById(root.getAttribute('aria-describedby')).textContent,'Root <b>help</b>');const home=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include home')).querySelector('input');assert.equal(dom.window.document.getElementById(home.getAttribute('aria-describedby')).textContent,'Home help');const city=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('home / city (optional)')).querySelector('input[type=text]');assert.deepEqual(city.getAttribute('aria-describedby').split(' ').map(id=>dom.window.document.getElementById(id).textContent),['City help','Home help']);const billing=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith('billing / city (optional)')).querySelector('input[type=text]');assert.deepEqual(billing.getAttribute('aria-describedby').split(' ').map(id=>dom.window.document.getElementById(id).textContent),['City help','Billing help']);const work=[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include work')).querySelector('input');assert.equal(work.hasAttribute('aria-describedby'),false);assert.equal(root.querySelector('b'),null);for(const description of [42,'x'.repeat(1025)])for(const schema of [{...jsonSchema,description},{...jsonSchema,properties:{home:{$ref:'#/$defs/address',description}}},{...jsonSchema,properties:{people:{type:'array',items:{$ref:'#/$defs/person',description}}}}])assert.throws(()=>factory({...options,jsonSchema:schema}),/Unsupported/);root.remove();}
-  globalThis.fetch=async()=>({ok:true,json:async()=>({result:{id:'one',revision:1,value:{people:[{name:'Ada',address:{city:'A'}},{name:'Lin',address:{city:'B'}}]}}})});const root=s.runtime.createRecordEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const id=root.querySelector('input');id.value='one';id.dispatchEvent(new dom.window.Event('input'));[...root.querySelectorAll('button')].find(x=>x.textContent==='Load').click();await wait(()=>root.querySelector('[role=status]').textContent==='Record loaded.');const boxes=[...root.querySelectorAll('fieldset[aria-describedby]')].filter(box=>dom.window.document.getElementById(box.getAttribute('aria-describedby')).textContent==='Per-person help');assert.equal(boxes.length,2);assert.notEqual(boxes[0].getAttribute('aria-describedby'),boxes[1].getAttribute('aria-describedby'));for(const box of boxes){const toggle=[...box.querySelectorAll('label')].find(x=>x.textContent.startsWith(' Include address')).querySelector('input');assert.equal(dom.window.document.getElementById(toggle.getAttribute('aria-describedby')).textContent,'Nested address help');}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(s.dir,{recursive:true,force:true});}
+test('new records require fields and unsupported loaded values cannot be overwritten', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    let record = null,
+      puts = 0;
+    globalThis.fetch = async (path, options) =>
+      path.endsWith('items.get')
+        ? { ok: true, json: async () => ({ result: record }) }
+        : {
+            ok: true,
+            json: async () => {
+              puts++;
+              return { result: { id: JSON.parse(options.body).id, revision: 1 } };
+            }
+          };
+    const f = render(s.runtime.createRecordEditor);
+    dom = f.dom;
+    const [id, name, age, active] = f.controls,
+      [load, save] = f.buttons;
+    id.value = 'new';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => f.status.textContent.startsWith('New record'));
+    save.click();
+    assert.equal(puts, 0);
+    assert.match(f.root.textContent, /This field is required/);
+    assert.equal(name.getAttribute('aria-invalid'), 'true');
+    name.value = 'A';
+    age.value = '5';
+    active.value = 'false';
+    save.click();
+    await wait(() => f.status.textContent === 'Record saved.');
+    assert.equal(puts, 1);
+    record = { id: 'invalid', revision: 2, value: { name: 'A', age: 'not-a-number', active: true } };
+    id.value = 'invalid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => f.status.textContent.includes('cannot edit'));
+    assert.equal(save.disabled, true);
+    assert.equal(puts, 1);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('record editor supports host-approved text prefixes and switches comparisons by field',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{const scope={tenantId:'tenant',applicationId:'app'};for(const [id,value] of [['a',{owner:'user',name:'Alpha',count:2}],['b',{owner:'user',name:'Alpine',count:1}],['c',{owner:'other',name:'Alpha',count:2}],['d',{owner:'user',name:'alpha',count:2}]])provider.put(scope,'items',id,value,null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['name','count'],prefixFilterFields:['name'],containsFilterFields:['name'],rangeFilterFields:['count'],authorize:()=>true,authorizeItem:(actor,item)=>actor.principalId===item.value.owner});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const calls=[];globalThis.fetch=(url,options)=>{const input=JSON.parse(options.body);calls.push(input);return originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input})});};
-  const options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',multipleFilters:true,filterFields:[{field:'name',label:'Name',type:'string'},{field:'count',label:'Count',type:'number'}],prefixFilterFields:['name'],containsFilterFields:['name'],rangeFilterFields:['count']};dom=new JSDOM('<!doctype html>');const editor=s.runtime.createRecordEditor(options);options.prefixFilterFields.length=0;options.containsFilterFields.length=0;const root=editor.render({},null,null,dom.window.document);dom.window.document.body.append(root);const change=element=>element.dispatchEvent(new dom.window.Event('change',{bubbles:true})),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text),field=root.querySelector('select'),operator=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),value=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input');field.value='name';change(field);assert.equal(operator.disabled,false);assert.equal(operator.querySelector('[value=gt]').disabled,true);operator.value='prefix';change(operator);value.value='Al';change(value);button('Browse records').click();await wait(()=>root.querySelector('li button'));assert.deepEqual(calls[0].filter,{field:'name',value:'Al',operator:'prefix'});assert.deepEqual([...root.querySelectorAll('li button')].map(item=>item.textContent),['a','b']);operator.value='contains';change(operator);value.value='ph';change(value);button('Browse records').click();await wait(()=>calls.length===2&&root.querySelectorAll('li button').length===2);assert.deepEqual(calls[1].filter,{field:'name',value:'ph',operator:'contains'});assert.deepEqual([...root.querySelectorAll('li button')].map(item=>item.textContent),['a','d']);field.value='count';change(field);assert.equal(operator.value,'eq');assert.equal(operator.querySelector('[value=prefix]').disabled,true);assert.equal(operator.querySelector('[value=contains]').disabled,true);assert.equal(operator.querySelector('[value=gt]').disabled,false);
-  const standalone=s.runtime.createRecordEditor({...options,rangeFilterFields:[],prefixFilterFields:[],containsFilterFields:['name']}).render({},null,null,dom.window.document);dom.window.document.body.append(standalone);const standaloneField=standalone.querySelector('select'),standaloneOperator=[...standalone.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select');standaloneField.value='name';change(standaloneField);assert.equal(standaloneOperator.disabled,false);assert.equal(standaloneOperator.querySelector('[value=contains]').disabled,false);assert.equal(standaloneOperator.querySelector('[value=prefix]').disabled,true);
-  const preview=s.preview.createRecordEditor({...options,prefixFilterFields:[],containsFilterFields:['name'],rangeFilterFields:[]}).render({},null,null,dom.window.document);assert.equal([...preview.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select').disabled,true);for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])for(const bad of [['count'],['name','name'],['unknown']]){assert.throws(()=>factory({...options,prefixFilterFields:bad}),/filter/);assert.throws(()=>factory({...options,containsFilterFields:bad}),/filter/);}
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
+test('preview and runtime validate the same field definitions and preview is inert', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const options = { getOperation: 'items.get', putOperation: 'items.put' },
+      good = { ...options, fields: schema };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      for (const bad of [
+        [],
+        [{ key: 'constructor', label: 'X', type: 'string' }],
+        [{ key: 'x', label: 'X', type: 'number', maxLength: 2 }],
+        [{ key: 'x', label: 'X', type: 'string', options: ['a', 'a'] }],
+        [{ key: 'x', label: 'X', type: 'boolean', required: 'yes' }],
+        [{ key: 'x', label: 'X', type: 'integer', min: 5, max: 2 }]
+      ])
+        assert.throws(() => factory({ ...options, fields: bad }), /Invalid record fields/);
+      assert.doesNotThrow(() => factory(good));
+    }
+    for (const bad of [
+      [],
+      [{ key: 'constructor', label: 'X', type: 'string' }],
+      [{ key: 'x', label: 'X', type: 'number', maxLength: 2 }],
+      [{ key: 'x', label: 'X', type: 'string', options: ['a', 'a'] }],
+      [{ key: 'x', label: 'X', type: 'boolean', required: 'yes' }],
+      [{ key: 'x', label: 'X', type: 'integer', min: 5, max: 2 }]
+    ])
+      assert.throws(() => createRecordFieldValidator(bad), /Invalid record fields/);
+    assert.doesNotThrow(() => createRecordFieldValidator(schema));
+    const f = render(s.preview.createRecordEditor);
+    dom = f.dom;
+    assert.ok([...f.root.querySelectorAll('button,input,select,textarea')].every(node => node.disabled));
+    assert.match(f.root.textContent, /Preview only/);
+    assert.match(f.root.textContent, /Name \(required\)/);
+    assert.equal(f.root.querySelector('script'), null);
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('record browser offers approved not-equal comparisons and null exclusions',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'},{field:'owner',label:'Owner',type:'string'}],notEqualFilterFields:['state'],multipleFilters:true};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[]}})};};
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const change=control=>control.dispatchEvent(new dom.window.Event('change',{bubbles:true})),buttons=()=>[...root.querySelectorAll('button')],field=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Filter field')).querySelector('select'),operator=[...root.querySelectorAll('label')].find(label=>label.textContent.startsWith('Comparison')).querySelector('select'),value=[...root.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input'),nullInput=root.querySelector('input[type=checkbox]'),browse=buttons().find(button=>button.textContent==='Browse records');
-  field.value='state';change(field);assert.equal([...operator.options].find(option=>option.value==='neq').disabled,false);operator.value='neq';change(operator);assert.match(nullInput.parentElement.textContent,/Compare with null/);value.value='closed';browse.click();await wait(()=>calls.length===1&&!browse.disabled);assert.deepEqual(calls[0].filter,{field:'state',operator:'neq',value:'closed'});
-  nullInput.checked=true;change(nullInput);assert.equal(nullInput.disabled,false);browse.click();await wait(()=>calls.length===2&&!browse.disabled);assert.deepEqual(calls[1].filter,{field:'state',operator:'neq',value:null});nullInput.checked=false;change(nullInput);value.value='closed';buttons().find(button=>button.textContent==='Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(node=>node.querySelector('legend')?.textContent==='Additional filter'),extraField=extra.querySelectorAll('select')[0],extraOperator=extra.querySelectorAll('select')[1],extraValue=[...extra.querySelectorAll('label')].find(label=>label.textContent==='Filter value').querySelector('input');extraField.value='state';change(extraField);extraOperator.value='neq';change(extraOperator);extraValue.value='pending';browse.click();await wait(()=>calls.length===3&&!browse.disabled);assert.deepEqual(calls[2].filters,[{field:'state',operator:'neq',value:'closed'},{field:'state',operator:'neq',value:'pending'}]);extraValue.value='closed';browse.click();assert.equal(calls.length,3);assert.match(root.textContent,/Choose each excluded value only once/);
-  field.value='owner';change(field);assert.equal([...operator.options].find(option=>option.value==='neq').disabled,true);assert.equal(operator.value,'eq');const preview=s.preview.createRecordEditor(options).render({},null,null,document);assert.ok([...preview.querySelectorAll('input,select,button')].every(control=>control.disabled));for(const factory of [s.runtime.createRecordEditor,s.preview.createRecordEditor])assert.throws(()=>factory({...options,notEqualFilterFields:['unknown']}),/Invalid record filter fields/);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+test('factory snapshots field options and rejects duplicate or unsafe keys', async () => {
+  const s = await setup();
+  try {
+    const fields = [{ key: 'tier', label: 'Tier', type: 'string', options: ['standard', 'premium'] }],
+      editor = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', fields });
+    fields[0].options.push('forged');
+    const dom = new JSDOM('<!doctype html>');
+    const root = editor.render({}, null, null, dom.window.document);
+    assert.deepEqual(
+      [...root.querySelectorAll('select option')].map(x => x.value),
+      ['', 'standard', 'premium']
+    );
+    dom.window.close();
+    for (const fields of [
+      [
+        { key: 'x', label: 'X', type: 'string' },
+        { key: 'x', label: 'Y', type: 'string' }
+      ],
+      [{ key: '__proto__', label: 'X', type: 'string' }]
+    ])
+      assert.throws(() => s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', fields }), /Invalid/);
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('record browser not-equal filtering uses the authorized capability service',async()=>{
- const {CapabilityRegistry,SqliteDataProvider,registerDataListCapability,createCapabilityServer}=await import('../../core/dist/index.js'),{randomBytes}=await import('node:crypto'),s=await setup(),originalFetch=globalThis.fetch,provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let dom,server;
- try{
-  const scope={tenantId:'tenant',applicationId:'app'};for(const [id,value] of [['open',{owner:'user',state:'open'}],['closed',{owner:'user',state:'closed'}],['null',{owner:'user',state:null}],['missing',{owner:'user'}],['secret',{owner:'other',state:'open'}]])provider.put(scope,'items',id,value,null);registerDataListCapability(registry,provider,{candidate:{operationId:'items.list',method:'GET',path:'/items'},applicationId:'app',collection:'items',cursorKey:randomBytes(32),filterFields:['state'],notEqualFilterFields:['state'],authorize:()=>true,authorizeItem:(actor,item)=>item.value.owner===actor.principalId});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'user'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,request)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...request,body:JSON.stringify({origin:'ui',input:JSON.parse(request.body)})});
-  dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'}],notEqualFilterFields:['state']}).render({},null,null,document);document.body.append(root);const label=name=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(name)),field=label('Filter field').querySelector('select'),operator=label('Comparison').querySelector('select'),value=label('Filter value').querySelector('input'),nullInput=root.querySelector('input[type=checkbox]'),browse=[...root.querySelectorAll('button')].find(x=>x.textContent==='Browse records'),change=x=>x.dispatchEvent(new dom.window.Event('change',{bubbles:true})),ids=()=>[...root.querySelectorAll('li button')].map(x=>x.textContent);field.value='state';change(field);operator.value='neq';change(operator);value.value='closed';browse.click();await wait(()=>ids().length===2&&!browse.disabled);assert.deepEqual(ids(),['null','open']);nullInput.checked=true;change(nullInput);browse.click();await wait(()=>ids().length===2&&!browse.disabled);assert.deepEqual(ids(),['closed','open']);assert.doesNotMatch(root.textContent,/secret/);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();if(server?.listening)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));provider.close();await rm(s.dir,{recursive:true,force:true});}
+test('record browsing handles filtered empty pages and selects IDs without HTML or silent edit loss', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      record = { id: ' <img src=x> ', revision: 1, value: { name: 'Ada', age: 20, active: true } };
+    globalThis.fetch = async (path, options) => {
+      const data = JSON.parse(options.body);
+      calls.push({ path, data });
+      if (path.endsWith('items.list')) return { ok: true, json: async () => ({ result: data.cursor ? { items: [record] } : { items: [], nextCursor: 'opaque' } }) };
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: data.id === record.id ? record : null }) };
+      return { ok: true, json: async () => ({ result: { id: data.id, revision: 2 } }) };
+    };
+    const document = (dom = new JSDOM('<!doctype html>')).window.document,
+      editor = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', listOperation: 'items.list', fields: schema }),
+      root = editor.render({ label: 'People' }, null, null, document);
+    document.body.appendChild(root);
+    const buttons = () => [...root.querySelectorAll('button')],
+      browse = buttons().find(b => b.textContent === 'Browse records'),
+      next = buttons().find(b => b.textContent === 'Next page');
+    browse.click();
+    await wait(() => root.textContent.includes('No visible records'));
+    assert.equal(next.disabled, false);
+    next.click();
+    await wait(() => root.textContent.includes('1 record(s)'));
+    assert.equal(root.querySelector('img'), null);
+    const select = buttons().find(b => b.textContent === record.id);
+    select.click();
+    await wait(() => root.textContent.includes('Record loaded.'));
+    assert.equal(calls.at(-1).data.id, record.id);
+    const name = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Name')).querySelector('input');
+    name.value = 'Unsaved';
+    name.dispatchEvent(new dom.window.Event('input'));
+    select.click();
+    assert.match(root.textContent, /Save or copy your edits/);
+    assert.equal(name.value, 'Unsaved');
+    assert.equal(calls.filter(x => x.path.endsWith('items.get')).length, 1);
+    browse.click();
+    await wait(() => root.textContent.includes('No visible records'));
+    select.click();
+    assert.equal(calls.filter(x => x.path.endsWith('items.get')).length, 1);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });
 
-test('record browser combines not-equal filters with any-condition mode',async()=>{
- const s=await setup(),originalFetch=globalThis.fetch;let dom;
- try{
-  const calls=[],options={getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',filterFields:[{field:'state',label:'State',type:'string'}],notEqualFilterFields:['state'],multipleFilters:true,allowAnyFilters:true};globalThis.fetch=async(_path,request)=>{calls.push(JSON.parse(request.body));return {ok:true,json:async()=>({result:{items:[]}})};};dom=new JSDOM('<!doctype html>');const document=dom.window.document,root=s.runtime.createRecordEditor(options).render({},null,null,document);document.body.append(root);const label=text=>[...root.querySelectorAll('label')].find(x=>x.textContent.startsWith(text)),field=label('Filter field').querySelector('select'),operator=label('Comparison').querySelector('select'),value=label('Filter value').querySelector('input'),mode=label('Match conditions').querySelector('select'),buttons=()=>[...root.querySelectorAll('button')],browse=buttons().find(x=>x.textContent==='Browse records'),change=x=>x.dispatchEvent(new dom.window.Event('change',{bubbles:true}));field.value='state';change(field);operator.value='neq';change(operator);value.value='closed';buttons().find(x=>x.textContent==='Add filter').click();const extra=[...root.querySelectorAll('fieldset')].find(x=>x.querySelector('legend')?.textContent==='Additional filter'),extraField=extra.querySelector('select'),extraValue=[...extra.querySelectorAll('label')].find(x=>x.textContent==='Filter value').querySelector('input');extraField.value='state';change(extraField);extraValue.value='pending';mode.value='any';change(mode);browse.click();await wait(()=>calls.length===1&&!browse.disabled);assert.equal(calls[0].filterMode,'any');assert.deepEqual(calls[0].filters,[{field:'state',operator:'neq',value:'closed'},{field:'state',value:'pending'}]);
- }finally{globalThis.fetch=originalFetch;dom?.window.close();await rm(s.dir,{recursive:true,force:true});}
+test('browse controls are optional, validated and inert in preview', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const options = { getOperation: 'items.get', putOperation: 'items.put' };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.throws(() => factory({ ...options, listOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = s.preview.createRecordEditor({ ...options, listOperation: 'items.list' }).render({}, null, null, dom.window.document);
+    assert.ok([...root.querySelectorAll('button,input,textarea')].every(node => node.disabled));
+    assert.ok([...root.querySelectorAll('button')].some(node => node.textContent === 'Browse records'));
+    const noBrowse = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.equal(
+      [...noBrowse.querySelectorAll('button')].some(node => node.textContent === 'Browse records'),
+      false
+    );
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON editor permits browsing after save but protects unsaved text', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    let revision = 1,
+      gets = 0;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.list')) return { ok: true, json: async () => ({ result: { items: [{ id: 'one', revision }] } }) };
+      if (path.endsWith('items.get')) {
+        gets++;
+        return { ok: true, json: async () => ({ result: { id: 'one', revision, value: { name: 'Ada' } } }) };
+      }
+      revision++;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', listOperation: 'items.list' }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    [...root.querySelectorAll('button')].find(b => b.textContent === 'Browse records').click();
+    await wait(() => root.querySelector('li button'));
+    const select = root.querySelector('li button');
+    select.click();
+    await wait(() => root.textContent.includes('Record loaded.'));
+    const text = root.querySelector('textarea');
+    text.value = '{"name":"Grace"}';
+    select.click();
+    assert.equal(gets, 1);
+    assert.match(root.textContent, /Save or copy your edits/);
+    [...root.querySelectorAll('button')].find(b => b.textContent === 'Save').click();
+    await wait(() => root.textContent.includes('Record saved.'));
+    select.click();
+    await wait(() => gets === 2);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('record editor sends the host schema version and preserves edits on schema conflict', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      calls.push({ path, input });
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: 'one', revision: 2, value: { name: 'Ada' } } }) };
+      return { ok: false, status: 409, json: async () => ({ error: 'Data schema version conflict' }) };
+    };
+    const options = { getOperation: 'items.get', putOperation: 'items.put', expectedSchemaVersion: 2 };
+    const editor = s.runtime.createRecordEditor(options);
+    options.expectedSchemaVersion = 3;
+    dom = new JSDOM('<!doctype html>');
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const input = root.querySelector('input'),
+      text = root.querySelector('textarea'),
+      [load, save] = root.querySelectorAll('button');
+    input.value = 'one';
+    input.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => root.textContent.includes('Record loaded.'));
+    text.value = '{"name":"Unsaved"}';
+    save.click();
+    await wait(() => root.textContent.includes('Data schema changed.'));
+    assert.equal(calls.at(-1).input.expectedSchemaVersion, 2);
+    assert.equal(text.value, '{"name":"Unsaved"}');
+    assert.equal(save.disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const invalid of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', null])
+        assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', expectedSchemaVersion: invalid }), /Invalid record schema version/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('configured schema version is sent on reads and rejects stale loads without enabling save', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      calls.push({ path, input });
+      return { ok: false, status: 409, json: async () => ({ error: 'Data schema version conflict' }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime
+      .createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', listOperation: 'items.list', expectedSchemaVersion: 1 })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const input = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')];
+    input.value = 'one';
+    input.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(b => b.textContent === 'Load').click();
+    await wait(() => root.textContent.includes('before loading'));
+    assert.equal(calls[0].input.expectedSchemaVersion, 1);
+    assert.equal(buttons.find(b => b.textContent === 'Save').disabled, true);
+    buttons.find(b => b.textContent === 'Browse records').click();
+    await wait(() => root.textContent.includes('before browsing'));
+    assert.equal(calls[1].input.expectedSchemaVersion, 1);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('schema conflict on a later load leaves existing typed edits available to copy', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return calls === 1
+        ? { ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { name: 'Ada', age: 20, active: true } } }) }
+        : { ok: false, status: 409, json: async () => ({ error: 'Data schema version conflict' }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', fields: schema, expectedSchemaVersion: 0 }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      [load, save] = root.querySelectorAll('button');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => root.textContent.includes('Record loaded.'));
+    const name = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Name')).querySelector('input');
+    name.value = 'Unsaved';
+    name.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => root.textContent.includes('before loading'));
+    assert.equal(name.value, 'Unsaved');
+    assert.equal(name.disabled, false);
+    assert.equal(save.disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('a schema conflict during browsing clears previously displayed pages', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    let calls = 0;
+    globalThis.fetch = async () =>
+      ++calls === 1
+        ? { ok: true, json: async () => ({ result: { items: [{ id: 'one', revision: 1 }], nextCursor: 'opaque' } }) }
+        : { ok: false, status: 409, json: async () => ({ error: 'Data schema version conflict' }) };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime
+      .createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', listOperation: 'items.list', expectedSchemaVersion: 0 })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const buttons = [...root.querySelectorAll('button')],
+      browse = buttons.find(button => button.textContent === 'Browse records'),
+      next = buttons.find(button => button.textContent === 'Next page');
+    browse.click();
+    await wait(() => root.querySelector('li button'));
+    next.click();
+    await wait(() => root.textContent.includes('before browsing'));
+    assert.equal(root.querySelector('li button'), null);
+    assert.equal(next.disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema scalar form uses the same host schema for rendering and authoritative writes', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string', title: 'Name', minLength: 1 },
+          quantity: { type: 'integer', title: 'Quantity', minimum: 0 },
+          active: { type: 'boolean', title: 'Active' },
+          tier: { type: 'string', title: 'Tier', enum: ['basic', 'premium'] }
+        },
+        required: ['name'],
+        additionalProperties: false
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      editor = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema });
+    jsonSchema.properties.tier.enum.push('forged');
+    jsonSchema.properties.name.title = 'Changed';
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      if (!validate(input.value)) return { ok: false, status: 400, json: async () => ({ error: 'Invalid capability input' }) };
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: input.value } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const labels = [...root.querySelectorAll('label')],
+      controls = labels.map(label => label.querySelector('input,select')),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    assert.match(root.textContent, /Name \(required\)/);
+    assert.deepEqual(
+      [...controls[5].options].map(x => x.textContent),
+      ['Select an option', 'basic', 'premium']
+    );
+    controls[0].value = 'one';
+    controls[0].dispatchEvent(new dom.window.Event('input'));
+    buttons[0].click();
+    await wait(() => status.textContent.startsWith('New record'));
+    controls[1].value = 'Ada';
+    controls[2].value = '3';
+    controls[3].value = 'false';
+    controls[4].checked = true;
+    controls[4].dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    controls[5].value = '2';
+    buttons[1].click();
+    await wait(() => status.textContent === 'Record saved.');
+    assert.deepEqual(saved, { name: 'Ada', quantity: 3, active: false, tier: 'premium' });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema form rejects unsupported constructs consistently in preview and runtime', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const good = { type: 'object', properties: { name: { type: 'string', minLength: 1 } }, required: ['name'] },
+      options = { getOperation: 'items.get', putOperation: 'items.put' };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.throws(() => factory({ ...options, fields: schema, jsonSchema: good }), /schema/);
+      for (const bad of [
+        { ...good, if: {} },
+        { ...good, properties: { x: { type: 'object' } } },
+        { ...good, properties: { name: { type: 'string', maxLength: -1 } } },
+        { ...good, required: ['missing'] },
+        { ...good, properties: { name: { type: 'string', minLength: 1, pattern: '[' } } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: bad }), /Unsupported/);
+      assert.doesNotThrow(() => factory({ ...options, jsonSchema: good }));
+    }
+    dom = new JSDOM('<!doctype html>');
+    const root = s.preview.createRecordEditor({ ...options, jsonSchema: good }).render({}, null, null, dom.window.document);
+    assert.ok([...root.querySelectorAll('button,input,select,textarea')].every(node => node.disabled));
+    assert.match(root.textContent, /name \(required\)/);
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested JSON Schema forms preserve unknown values and explicitly add or remove optional objects', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string', minLength: 1 },
+          address: {
+            type: 'object',
+            title: 'Address',
+            properties: { city: { type: 'string', minLength: 1 }, contact: { type: 'object', title: 'Contact', properties: { phone: { type: 'string', minLength: 1 } }, required: ['phone'] } },
+            required: ['city']
+          }
+        },
+        required: ['name'],
+        additionalProperties: true
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { name: 'Ada', address: { city: 'Dubai', extra: 'kept', contact: { phone: '123', unseen: true } }, outside: 42 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const inputs = [...root.querySelectorAll('input')],
+      id = inputs[0],
+      address = inputs[1],
+      contact = inputs[2],
+      name = inputs[3],
+      city = inputs[4],
+      phone = inputs[5],
+      [load, save] = root.querySelectorAll('button'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    assert.equal(address.checked, true);
+    assert.equal(contact.checked, true);
+    assert.equal(phone.value, '123');
+    city.value = 'Abu Dhabi';
+    city.dispatchEvent(new dom.window.Event('input'));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { name: 'Ada', address: { city: 'Abu Dhabi', extra: 'kept', contact: { phone: '123', unseen: true } }, outside: 42 });
+    contact.checked = false;
+    contact.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(phone.disabled, true);
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { name: 'Ada', address: { city: 'Abu Dhabi', extra: 'kept' }, outside: 42 });
+    address.checked = false;
+    address.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(city.disabled, true);
+    save.click();
+    await wait(() => saved.length === 3 && !save.disabled);
+    assert.deepEqual(saved[2], { name: 'Ada', outside: 42 });
+    address.checked = true;
+    address.dispatchEvent(new dom.window.Event('change'));
+    contact.checked = true;
+    contact.dispatchEvent(new dom.window.Event('change'));
+    phone.value = '456';
+    phone.dispatchEvent(new dom.window.Event('input'));
+    save.click();
+    await wait(() => saved.length === 4 && !save.disabled);
+    assert.deepEqual(saved[3], { name: 'Ada', address: { city: 'Abu Dhabi', contact: { phone: '456' } }, outside: 42 });
+    assert.equal(name.value, 'Ada');
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested form rejects incompatible loaded objects and previews optional object controls inertly', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { address: { type: 'object', properties: { city: { type: 'string', minLength: 1 } }, required: ['city'] } } },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { address: 'not an object' } } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      [load, save] = root.querySelectorAll('button'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(save.disabled, true);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('button,input,select')].every(x => x.disabled));
+    assert.match(preview.textContent, /Include address/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema arrays support adding, removing and validating scalar items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          tags: { type: 'array', title: 'Tags', items: { type: 'string', minLength: 1 }, minItems: 1, maxItems: 2 },
+          metrics: { type: 'object', properties: { scores: { type: 'array', title: 'Scores', items: { type: 'integer', minimum: 0 }, maxItems: 3 } } }
+        },
+        required: ['tags']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { tags: ['old'], metrics: { scores: [2], hidden: true }, extra: 7 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      load = [...root.querySelectorAll('button')].find(b => b.textContent === 'Load'),
+      save = [...root.querySelectorAll('button')].find(b => b.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const tags = [...root.querySelectorAll('fieldset')].find(x => x.querySelector('legend').textContent.startsWith('Tags')),
+      scores = [...root.querySelectorAll('fieldset')].find(x => x.querySelector('legend').textContent.startsWith('metrics / Scores'));
+    assert.equal(tags.querySelector('input').value, 'old');
+    const add = [...tags.querySelectorAll('button')].find(button => button.textContent === 'Add Tags item');
+    add.click();
+    assert.equal(add.disabled, true);
+    const values = tags.querySelectorAll('input');
+    values[1].value = 'new';
+    values[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { tags: ['old', 'new'], metrics: { scores: [2], hidden: true }, extra: 7 });
+    tags.querySelector('div button').click();
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1].tags, ['new']);
+    tags.querySelector('div button').click();
+    save.click();
+    assert.match(tags.textContent, /between 1 and 2 items/);
+    assert.equal(saved.length, 2);
+    assert.equal(scores.querySelector('input[type=checkbox]').checked, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('array forms preserve absent optional arrays and reject incompatible values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { flags: { type: 'array', items: { type: 'boolean' }, maxItems: 2 } } },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    let record = { id: 'one', revision: 1, value: { keep: true } },
+      saved;
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: 'one', revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      load = [...root.querySelectorAll('button')].find(b => b.textContent === 'Load'),
+      save = [...root.querySelectorAll('button')].find(b => b.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const field = root.querySelector('fieldset'),
+      include = field.querySelector('input[type=checkbox]'),
+      add = field.querySelector('button');
+    assert.equal(include.checked, false);
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { keep: true });
+    include.checked = true;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    add.click();
+    field.querySelector('select').value = 'false';
+    field.querySelector('select').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.flags && !save.disabled);
+    assert.deepEqual(saved.flags, [false]);
+    record = { id: 'one', revision: 3, value: { flags: [true, 'invalid'] } };
+    load.click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(save.disabled, true);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('button,input,select')].every(x => x.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema strings distinguish empty from absent and count Unicode code points', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          requiredText: { type: 'string', title: 'Required text', maxLength: 1 },
+          optionalText: { type: 'string', title: 'Optional text', minLength: 0, maxLength: 1 },
+          texts: { type: 'array', items: { type: 'string', maxLength: 1 }, maxItems: 2 }
+        },
+        required: ['requiredText']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved,
+      record = null;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      record = { id: input.id, revision: 1, value: saved };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(b => b.textContent === 'Load'),
+      save = buttons.find(b => b.textContent === 'Save'),
+      id = root.querySelector('input'),
+      status = root.querySelector('[role=status]'),
+      findLabel = t => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(t)),
+      required = findLabel('Required text').querySelector('input'),
+      optional = findLabel('Optional text').querySelector('input'),
+      include = findLabel(' Include Optional text').querySelector('input');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent.startsWith('New record'));
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { requiredText: '' });
+    include.checked = true;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    required.value = '😀';
+    required.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    optional.value = '';
+    optional.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.optionalText !== undefined && !save.disabled);
+    assert.deepEqual(saved, { requiredText: '😀', optionalText: '' });
+    optional.value = '😀😀';
+    save.click();
+    assert.match(root.textContent, /no more than 1 characters/);
+    assert.equal(saved.optionalText, '');
+    optional.value = '😀';
+    include.checked = false;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => !Object.hasOwn(saved, 'optionalText') && !save.disabled);
+    assert.deepEqual(saved, { requiredText: '😀' });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema array string items can represent empty strings', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { items: { type: 'array', items: { type: 'string', maxLength: 2 } } }, required: ['items'] },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(b => b.textContent === 'Load'),
+      save = buttons.find(b => b.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent.startsWith('New record'));
+    buttons.find(b => b.textContent === 'Add items item').click();
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { items: [''] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object arrays edit scalar fields and preserve undisplayed data across successive saves', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          people: {
+            type: 'array',
+            title: 'People',
+            items: { type: 'object', properties: { name: { type: 'string', minLength: 1 }, note: { type: 'string' }, age: { type: 'integer', minimum: 0 } }, required: ['name'] },
+            minItems: 1,
+            maxItems: 3
+          }
+        },
+        required: ['people']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { people: [{ name: 'Ada', note: 'hello', hidden: { keep: true } }], other: 1 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      load = [...root.querySelectorAll('button')].find(x => x.textContent === 'Load'),
+      save = [...root.querySelectorAll('button')].find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const array = [...root.querySelectorAll('fieldset')].find(x => x.querySelector('legend').textContent.startsWith('People')),
+      row = array.querySelector('fieldset'),
+      labels = [...row.querySelectorAll('label')],
+      name = labels.find(x => x.textContent.startsWith('name')).querySelector('input'),
+      include = labels.find(x => x.textContent.startsWith(' Include note')).querySelector('input'),
+      age = labels.find(x => x.textContent.startsWith('age')).querySelector('input');
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    include.checked = false;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { people: [{ name: 'Grace', hidden: { keep: true } }], other: 1 });
+    age.value = '5';
+    age.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { people: [{ name: 'Grace', age: 5, hidden: { keep: true } }], other: 1 });
+    [...array.querySelectorAll('button')].find(x => x.textContent === 'Add People item').click();
+    const second = array.querySelectorAll('fieldset')[1],
+      secondName = [...second.querySelectorAll('label')].find(x => x.textContent.startsWith('name')).querySelector('input');
+    secondName.value = 'Lin';
+    secondName.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 3 && !save.disabled);
+    assert.deepEqual(saved[2].people, [{ name: 'Grace', age: 5, hidden: { keep: true } }, { name: 'Lin' }]);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object array forms reject incompatible values and unsupported nested item schemas', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { people: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' } } } } } },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { people: [{ name: 5 }] } } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(buttons.find(x => x.textContent === 'Save').disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      assert.throws(
+        () =>
+          factory({
+            ...options,
+            jsonSchema: { type: 'object', properties: { people: { type: 'array', items: { type: 'object', properties: { nested: { type: 'array', items: { type: 'array' } } } } } } }
+          }),
+        /Unsupported/
+      );
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('button,input,select')].every(x => x.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object array items support nested objects and scalar arrays without losing hidden values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          people: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', minLength: 1 },
+                address: { type: 'object', properties: { city: { type: 'string', minLength: 1 }, codes: { type: 'array', items: { type: 'string' }, maxItems: 3 } }, required: ['city'] }
+              },
+              required: ['name']
+            }
+          }
+        },
+        required: ['people']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { people: [{ name: 'Ada', address: { city: 'Dubai', codes: ['one'], hidden: true }, extra: 'keep' }] } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const group = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include address')),
+      check = group.querySelector('input'),
+      city = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('address / city')).querySelector('input');
+    assert.equal(check.checked, true);
+    city.value = 'Abu Dhabi';
+    city.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    const add = [...root.querySelectorAll('button')].find(x => x.textContent === 'Add address / codes item');
+    add.click();
+    const array = [...root.querySelectorAll('fieldset')].find(x => x.querySelector('legend').textContent.startsWith('address / codes')),
+      texts = [...array.querySelectorAll('input[type=text]')];
+    texts[1].value = 'two';
+    texts[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { people: [{ name: 'Ada', address: { city: 'Abu Dhabi', codes: ['one', 'two'], hidden: true }, extra: 'keep' }] });
+    check.checked = false;
+    check.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { people: [{ name: 'Ada', extra: 'keep' }] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object array items reject incompatible nested data before editing', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { people: { type: 'array', items: { type: 'object', properties: { address: { type: 'object', properties: { city: { type: 'string' } } } } } } } },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { people: [{ address: 'wrong' }] } } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(buttons.find(x => x.textContent === 'Save').disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema forms resolve local definitions for nested objects and array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        $defs: {
+          'address/type': { type: 'object', properties: { city: { $ref: '#/$defs/name' } }, required: ['city'] },
+          name: { type: 'string', minLength: 1 },
+          person: { type: 'object', properties: { name: { $ref: '#/$defs/name' }, address: { $ref: '#/$defs/address~1type' } }, required: ['name'] }
+        },
+        properties: { people: { type: 'array', title: 'People', items: { $ref: '#/$defs/person' }, minItems: 1 } },
+        required: ['people']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      editor = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema });
+    jsonSchema.$defs.name.minLength = 4;
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent.startsWith('New record'));
+    buttons.find(x => x.textContent === 'Add People item').click();
+    const name = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('name')).querySelector('input'),
+      include = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include address')).querySelector('input'),
+      city = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('address / city')).querySelector('input');
+    name.value = 'A';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    include.checked = true;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    city.value = 'D';
+    city.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { people: [{ name: 'A', address: { city: 'D' } }] });
+    const preview = s.preview.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema });
+    assert.ok(preview);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('form reference resolution rejects remote, missing, cyclic and assertion siblings', async () => {
+  const s = await setup();
+  try {
+    const options = { getOperation: 'items.get', putOperation: 'items.put' },
+      badRefs = [{ $ref: 'https://example.test/schema' }, { $ref: '#/$defs/missing' }, { $ref: '#/$defs/self' }, { $ref: '#/$defs/text', minLength: 1 }, { $ref: '#/$defs/bad~2name' }];
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const ref of badRefs) {
+        const jsonSchema = { type: 'object', $defs: { self: { $ref: '#/$defs/self' }, text: { type: 'string' } }, properties: { value: ref } };
+        assert.throws(() => factory({ ...options, jsonSchema }), /Unsupported/);
+      }
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('dependentRequired validates present values, including empty strings, before saving', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { email: { type: 'string', title: 'Email' }, phone: { type: 'string', title: 'Phone' } }, dependentRequired: { email: ['phone'] } },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saves = 0,
+      saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      assert.equal(validate(input.value), true);
+      saves++;
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const labels = [...root.querySelectorAll('label')],
+      id = root.querySelector('input'),
+      email = labels.find(x => x.textContent.startsWith(' Include Email')).querySelector('input'),
+      phone = labels.find(x => x.textContent.startsWith(' Include Phone')).querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.startsWith('New record'));
+    email.checked = true;
+    email.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    assert.equal(saves, 0);
+    assert.match(status.textContent, /phone is required when email is provided/);
+    phone.checked = true;
+    phone.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saves === 1 && !save.disabled);
+    assert.deepEqual(saved, { email: '', phone: '' });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('dependentRequired applies inside nested objects and object-array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+      type: 'object',
+      properties: {
+        people: {
+          type: 'array',
+          items: { type: 'object', properties: { contact: { type: 'object', properties: { email: { type: 'string' }, phone: { type: 'string' } }, dependentRequired: { email: ['phone'] } } } }
+        }
+      },
+      required: ['people']
+    };
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { people: [{ contact: { email: 'test' } }] } } }) };
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    assert.equal(saved, undefined);
+    assert.match(root.textContent, /contact \/ phone is required when email is provided/);
+    const include = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include contact / phone')).querySelector('input');
+    include.checked = true;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { people: [{ contact: { email: 'test', phone: '' } }] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('dependentRequired rejects invalid or undisplayed dependencies at configuration', async () => {
+  const s = await setup();
+  try {
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const dependentRequired of [{ other: ['phone'] }, { email: ['other'] }, { email: ['phone', 'phone'] }, { email: 'phone' }])
+        assert.throws(
+          () =>
+            factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { type: 'object', properties: { email: { type: 'string' }, phone: { type: 'string' } }, dependentRequired } }),
+          /Unsupported/
+        );
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('dependentSchemas requires fields only when the trigger exists, including in array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const contact = { type: 'object', properties: { email: { type: ['string', 'null'] }, phone: { type: 'string' } }, dependentSchemas: { email: { required: ['phone'] } } },
+      jsonSchema = { type: 'object', properties: { primary: contact, people: { type: 'array', items: contact } }, required: ['people'] },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: { people: [{ email: null }] } } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    buttons.find(x => x.textContent === 'Save').click();
+    assert.equal(saved.length, 0);
+    assert.match(root.textContent, /phone is required when email is provided/);
+    const include = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include phone')).querySelector('input');
+    include.checked = true;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    buttons.find(x => x.textContent === 'Save').click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { people: [{ email: null, phone: '' }] });
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(x => x.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('dependent schema properties validate only when the trigger exists', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const contact = {
+        type: 'object',
+        properties: {
+          email: { type: ['string', 'null'] },
+          phone: { type: 'string' },
+          profile: { type: 'object', properties: { verified: { type: 'boolean' } } },
+          tags: { type: 'array', items: { type: 'string' } }
+        },
+        dependentSchemas: { email: { $ref: '#/$defs/contactRule' } }
+      },
+      jsonSchema = {
+        ...contact,
+        $defs: {
+          contact,
+          contactRule: {
+            required: ['phone'],
+            properties: {
+              phone: { type: 'string', pattern: '^\\+[0-9]+$' },
+              profile: { type: 'object', properties: { verified: { const: true } }, required: ['verified'] },
+              tags: { type: 'array', contains: { const: 'yes' } }
+            }
+          }
+        },
+        properties: { ...contact.properties, people: { type: 'array', items: { $ref: '#/$defs/contact' } } }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const records = {
+        missing: { email: null },
+        phone: { email: null, phone: '123' },
+        profile: { email: 'a', phone: '+123', profile: { verified: false } },
+        tags: { email: 'a', phone: '+123', tags: ['no'] },
+        item: { people: [{ email: null, phone: '123' }] },
+        valid: { email: null, phone: '+123', profile: { verified: true }, tags: ['yes'], people: [{ email: null, phone: '+456' }] },
+        skip: { phone: 'bad', profile: { verified: false }, tags: ['no'], people: [] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [name, error] of [
+      ['missing', /phone is required when email is provided/],
+      ['phone', /phone does not satisfy the dependency for email/],
+      ['profile', /profile does not satisfy the dependency for email/],
+      ['tags', /tags does not satisfy the dependency for email/],
+      ['item', /phone does not satisfy the dependency for email/]
+    ]) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, error);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'skip']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const rule of [
+        { properties: { unknown: { const: 1 } } },
+        { properties: { phone: { type: 'string', format: 'email' } } },
+        { required: ['unknown'] },
+        { additionalProperties: { type: 'string', format: 'email' } },
+        {}
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, dependentSchemas: { email: rule } } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('dependentSchemas rejects unsupported assertions and unknown fields in runtime and preview', async () => {
+  const s = await setup();
+  try {
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const dependentSchemas of [
+        { other: { required: ['phone'] } },
+        { email: { required: ['other'] } },
+        { email: { required: ['phone', 'phone'] } },
+        { email: { properties: { phone: { type: 'string', format: 'email' } } } },
+        { email: 'invalid' },
+        { email: { required: ['phone'], additionalProperties: { type: 'string', format: 'email' } } }
+      ])
+        assert.throws(
+          () =>
+            factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { type: 'object', properties: { email: { type: 'string' }, phone: { type: 'string' } }, dependentSchemas } }),
+          /Unsupported/
+        );
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('if/then/else validates conditional required fields against the assembled record', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { kind: { type: 'string', title: 'Kind', enum: ['company', 'person'] }, company: { type: 'string', title: 'Company' }, person: { type: 'string', title: 'Person' } },
+        if: { properties: { kind: { const: 'company' } }, required: ['kind'] },
+        then: { required: ['company'] },
+        else: { required: ['person'] }
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]'),
+      include = text => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include ' + text)).querySelector('input'),
+      control = text => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(text + ' (')).querySelector('input,select');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.startsWith('New record'));
+    save.click();
+    assert.match(status.textContent, /person is required by a condition/);
+    include('Kind').checked = true;
+    include('Kind').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    control('Kind').value = '1';
+    save.click();
+    assert.match(status.textContent, /company is required by a condition/);
+    include('Company').checked = true;
+    include('Company').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    control('Company').value = 'Acme';
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { kind: 'company', company: 'Acme' });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('typed and structured conditional predicates agree with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { threshold: { type: 'number', minimum: 10, multipleOf: 0.5 }, vip: { const: 'vip' } },
+        properties: {
+          score: { type: 'number' },
+          code: { type: 'string' },
+          detail: { type: 'object', properties: { approved: { type: 'boolean' }, tags: { type: 'array', items: { type: 'string' } } } },
+          thenlabel: { type: 'string' },
+          elselabel: { type: 'string' }
+        },
+        if: {
+          properties: {
+            score: { $ref: '#/$defs/threshold' },
+            code: { type: 'string', pattern: '^X', minLength: 2 },
+            detail: { type: 'object', properties: { approved: { type: 'boolean', const: true }, tags: { type: 'array', contains: { $ref: '#/$defs/vip' } } }, required: ['approved', 'tags'] }
+          },
+          required: ['score', 'code', 'detail']
+        },
+        then: { required: ['thenlabel'] },
+        else: { required: ['elselabel'] }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const condition = { score: 10.5, code: 'X1', detail: { approved: true, tags: ['vip'] } },
+      records = {
+        missingthen: condition,
+        missingelse: { ...condition, score: 9.5 },
+        absent: { code: 'X1', detail: condition.detail },
+        nested: { ...condition, detail: { approved: true, tags: ['other'] } },
+        valid: { ...condition, thenlabel: 'Approved' },
+        validelse: { ...condition, score: 9.5, elselabel: 'Review' }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [name, error] of [
+      ['missingthen', /thenlabel is required by a condition/],
+      ['missingelse', /elselabel is required by a condition/],
+      ['absent', /elselabel is required by a condition/],
+      ['nested', /elselabel is required by a condition/]
+    ]) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, error);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'validelse']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      await wait(() => saved.length === (name === 'valid' ? 1 : 2) && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const test of [
+        { type: 'string', format: 'email' },
+        { type: 'number', multipleOf: 0 },
+        { anyOf: [] },
+        { type: 'object', properties: { x: { type: 'string' } }, additionalProperties: { type: 'string', format: 'email' } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, if: { properties: { code: test } }, then: { required: ['thenlabel'] }, else: undefined } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('conditional branches validate typed fields and preserve optional-field semantics', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: {
+          price: { type: 'number', minimum: 100, multipleOf: 0.5 },
+          contract: {
+            required: ['price'],
+            properties: {
+              price: { $ref: '#/$defs/price' },
+              policy: { type: 'object', properties: { status: { const: 'active' } }, required: ['status'] },
+              badges: { type: 'array', contains: { const: 'approved' } }
+            }
+          }
+        },
+        properties: {
+          kind: { type: 'string' },
+          price: { type: 'number' },
+          policy: { type: 'object', properties: { status: { type: 'string' } } },
+          badges: { type: 'array', items: { type: 'string' } }
+        },
+        if: { properties: { kind: { const: 'contract' } }, required: ['kind'] },
+        then: { $ref: '#/$defs/contract' },
+        else: { properties: { price: { type: 'number', maximum: 99 } } }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      base = { kind: 'contract', price: 120, policy: { status: 'active' }, badges: ['approved'] };
+    const records = {
+        missing: { kind: 'contract' },
+        low: { ...base, price: 99 },
+        fraction: { ...base, price: 100.25 },
+        policy: { ...base, policy: { status: 'inactive' } },
+        badge: { ...base, badges: ['other'] },
+        retail: { kind: 'retail', price: 100 },
+        valid: base,
+        validelse: { kind: 'retail', price: 99 },
+        optional: { kind: 'retail' }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [name, error] of [
+      ['missing', /price is required by a condition/],
+      ['low', /price does not satisfy a condition/],
+      ['fraction', /price does not satisfy a condition/],
+      ['policy', /policy does not satisfy a condition/],
+      ['badge', /badges does not satisfy a condition/],
+      ['retail', /price does not satisfy a condition/]
+    ]) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, error);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'validelse', 'optional']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const then of [
+        { properties: { unknown: { const: 1 } } },
+        { properties: { price: { type: 'number', multipleOf: 0 } } },
+        { required: ['unknown'] },
+        { additionalProperties: { type: 'string', format: 'email' } },
+        {}
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, then } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('conditional branch predicates validate object-array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          people: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { active: { type: 'boolean' }, age: { type: 'integer' } },
+              if: { properties: { active: { const: true } }, required: ['active'] },
+              then: { properties: { age: { type: 'integer', minimum: 18 } }, required: ['age'] }
+            }
+          }
+        },
+        required: ['people']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        bad: { people: [{ active: true, age: 17 }] },
+        valid: {
+          people: [
+            { active: true, age: 18 },
+            { active: false, age: 4 }
+          ]
+        }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'bad';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    assert.match(root.textContent, /age does not satisfy a condition/);
+    assert.equal(validate(records.bad), false);
+    assert.equal(saved.length, 0);
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('combined matching rules agree with server conditional and array validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const score = {
+        allOf: [
+          { type: 'number', minimum: 10 },
+          { type: 'number', maximum: 20 }
+        ],
+        anyOf: [{ enum: [12, 15, 16, 18] }],
+        oneOf: [{ type: 'integer', multipleOf: 2 }, { enum: [12, 15] }],
+        not: { const: 18 }
+      },
+      jsonSchema = {
+        type: 'object',
+        $defs: { score },
+        properties: { score: { type: 'number' }, result: { type: 'string' }, reason: { type: 'string' }, scores: { type: 'array', items: { type: 'number' }, contains: { $ref: '#/$defs/score' } } },
+        if: { properties: { score: { $ref: '#/$defs/score' } }, required: ['score'] },
+        then: { required: ['result'], properties: { result: { type: 'string', anyOf: [{ const: 'accepted' }, { const: 'override' }], not: { const: 'revoked' } } } },
+        else: { required: ['reason'] }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const records = {
+        matched: { score: 15, scores: [15] },
+        overlap: { score: 12, scores: [15] },
+        excluded: { score: 18, scores: [15] },
+        outside: { score: 13, scores: [15] },
+        missing: { scores: [15] },
+        branch: { score: 16, result: 'bad', scores: [15] },
+        nomatch: { score: 15, result: 'accepted', scores: [12, 18] },
+        valid: { score: 15, result: 'accepted', scores: [12, 15] },
+        valid2: { score: 16, result: 'override', scores: [16] },
+        validelse: { score: 12, reason: 'Review', scores: [15] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [name, error] of [
+      ['matched', /result is required by a condition/],
+      ['overlap', /reason is required by a condition/],
+      ['excluded', /reason is required by a condition/],
+      ['outside', /reason is required by a condition/],
+      ['missing', /reason is required by a condition/],
+      ['branch', /result does not satisfy a condition/],
+      ['nomatch', /required number of matching items/]
+    ]) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, error);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'valid2', 'validelse']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const rule of [{ allOf: [] }, { anyOf: [null] }, { oneOf: Array(41).fill({ const: 1 }) }, { not: null }, { anyOf: [{ $ref: '#/$defs/missing' }] }])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, if: { properties: { score: rule } }, then: { required: ['result'] }, else: undefined } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('conditional and dependent object rules check counts and property names', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { names: { pattern: '^[a-z]+$' }, dependency: { minProperties: 2, maxProperties: 3, propertyNames: { $ref: '#/$defs/names' } } },
+        properties: { kind: { type: 'string' }, name: { type: 'string' }, note: { type: 'string' } },
+        dependentSchemas: { kind: { $ref: '#/$defs/dependency' } },
+        if: { properties: { kind: { const: 'special' } }, required: ['kind'] },
+        then: { maxProperties: 2 }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        few: { kind: 'plain' },
+        badname: { kind: 'plain', name: 'A', Bad: 1 },
+        many: { kind: 'plain', name: 'A', note: 'N', extra: 1 },
+        conditional: { kind: 'special', name: 'A', note: 'N' },
+        valid: { kind: 'plain', name: 'A' },
+        skip: { name: 'A', Bad: 1 }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const [name, error] of [
+      ['few', /object does not satisfy the dependency for kind/],
+      ['badname', /object does not satisfy the dependency for kind/],
+      ['many', /object does not satisfy the dependency for kind/],
+      ['conditional', /object does not satisfy a condition/]
+    ]) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, error);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'skip']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const rule of [{ minProperties: -1 }, { maxProperties: 1.5 }, { propertyNames: { pattern: '[' } }, { propertyNames: { $ref: '#/$defs/missing' } }])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, then: rule } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object matching counts and validates property names in array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            items: { type: 'object', properties: { name: { type: 'string' }, note: { type: 'string' } } },
+            contains: { type: 'object', minProperties: 2, maxProperties: 2, propertyNames: { pattern: '^[a-z]+$' } }
+          }
+        },
+        required: ['items']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = { few: { items: [{ name: 'A' }] }, many: { items: [{ name: 'A', note: 'N', extra: 1 }] }, bad: { items: [{ name: 'A', Bad: 1 }] }, valid: { items: [{ name: 'A', note: 'N' }] } },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['few', 'many', 'bad']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('closed object conditions and dependencies respect their own declared properties', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const conditional = {
+        type: 'object',
+        properties: { kind: { type: 'string' }, name: { type: 'string' }, note: { type: 'string' } },
+        if: { required: ['kind'], properties: { kind: { const: 'special' }, name: {} }, minProperties: 2, maxProperties: 2, propertyNames: { pattern: '^[a-z]+$' }, additionalProperties: false },
+        then: { properties: { kind: {}, name: { type: 'string', pattern: '^OK' } }, additionalProperties: false },
+        else: { properties: { kind: {}, name: {}, note: {} }, additionalProperties: false }
+      },
+      dependent = {
+        type: 'object',
+        properties: { email: { type: ['string', 'null'] }, phone: { type: 'string' }, note: { type: 'string' } },
+        dependentSchemas: { email: { properties: { email: {}, phone: { type: 'string' } }, additionalProperties: false } }
+      };
+    const scenarios = [
+        {
+          jsonSchema: conditional,
+          records: {
+            bad: { kind: 'special', name: 'bad' },
+            extra: { kind: 'ordinary', name: 'A', extra: 1 },
+            valid: { kind: 'special', name: 'OK' },
+            fallback: { kind: 'special', name: 'bad', note: 'N' }
+          },
+          invalid: ['bad', 'extra'],
+          valid: ['valid', 'fallback'],
+          error: /does not satisfy a condition/
+        },
+        {
+          jsonSchema: dependent,
+          records: { extra: { email: null, phone: '123', note: 'not allowed' }, valid: { email: null, phone: '123' }, skip: { note: 'N', extra: 1 } },
+          invalid: ['extra'],
+          valid: ['valid', 'skip'],
+          error: /object does not satisfy the dependency for email/
+        }
+      ],
+      saved = [];
+    let records, validate;
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    for (const scenario of scenarios) {
+      records = scenario.records;
+      validate = createRecordJsonSchemaValidator(scenario.jsonSchema);
+      const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema: scenario.jsonSchema },
+        root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const id = root.querySelector('input'),
+        buttons = [...root.querySelectorAll('button')],
+        load = buttons.find(x => x.textContent === 'Load'),
+        save = buttons.find(x => x.textContent === 'Save'),
+        status = root.querySelector('[role=status]');
+      for (const name of scenario.invalid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        assert.match(root.textContent, scenario.error);
+        assert.equal(validate(records[name]), false);
+        assert.equal(saved.length, before);
+      }
+      for (const name of scenario.valid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        await wait(() => saved.length === before + 1 && !save.disabled);
+        assert.deepEqual(saved.at(-1), records[name]);
+      }
+      for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.doesNotThrow(() => factory(options));
+      root.remove();
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const rule of [{ additionalProperties: 'false' }, { additionalProperties: { type: 'string', format: 'email' } }, { minProperties: -1 }, { propertyNames: { pattern: '[' } }])
+        assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { ...conditional, if: rule } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('combined object rules validate records and object-array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { adult: { properties: { age: { type: 'integer', minimum: 18 } } } },
+        properties: {
+          age: { type: 'integer' },
+          status: { type: 'string' },
+          note: { type: 'string' },
+          people: { type: 'array', items: { type: 'object', properties: { age: { type: 'integer' } }, allOf: [{ $ref: '#/$defs/adult' }] } }
+        },
+        allOf: [
+          { $ref: '#/$defs/adult' },
+          { anyOf: [{ required: ['status'] }, { required: ['note'] }] },
+          { dependentRequired: { status: ['age'] }, dependentSchemas: { status: { properties: { age: { type: 'integer', minimum: 18 } } } } }
+        ],
+        oneOf: [{ required: ['status'] }, { required: ['note'] }],
+        not: { properties: { status: { const: 'banned' } }, required: ['status'] }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const records = {
+        minor: { age: 17, status: 'ok' },
+        missing: { age: 20 },
+        both: { age: 20, status: 'ok', note: 'N' },
+        banned: { age: 20, status: 'banned' },
+        nested: { age: 20, status: 'ok', people: [{ age: 17 }] },
+        valid: { age: 20, status: 'ok', people: [{ age: 18 }] },
+        valid2: { note: 'N' }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['minor', 'missing', 'both', 'banned', 'nested']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /does not satisfy the schema rules/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['valid', 'valid2']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const rule of [
+        { allOf: [] },
+        { oneOf: [null] },
+        { not: null },
+        { anyOf: [{ required: ['missing'] }] },
+        { allOf: [{ properties: { unknown: { const: 1 } } }] },
+        { allOf: [{ $ref: '#/$defs/missing' }] }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, ...rule } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('combined conditional and dependent branches agree with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const conditional = {
+        type: 'object',
+        properties: { mode: { type: 'string' }, phone: { type: 'string' }, email: { type: 'string' }, note: { type: 'string' } },
+        if: { anyOf: [{ required: ['phone'] }, { properties: { mode: { const: 'company' } }, required: ['mode'] }], not: { required: ['note'] } },
+        then: { oneOf: [{ required: ['email'] }, { required: ['phone'] }] },
+        else: { not: { required: ['email'] } }
+      },
+      dependent = {
+        type: 'object',
+        $defs: { rule: { anyOf: [{ required: ['email'] }, { required: ['phone'] }], not: { required: ['note'] } } },
+        properties: { trigger: { type: 'string' }, phone: { type: 'string' }, email: { type: 'string' }, note: { type: 'string' } },
+        dependentSchemas: { trigger: { $ref: '#/$defs/rule' } }
+      };
+    const scenarios = [
+        {
+          jsonSchema: conditional,
+          records: {
+            missing: { mode: 'company' },
+            overlap: { mode: 'company', phone: '1', email: 'e' },
+            elsebad: { mode: 'personal', email: 'e' },
+            note: { mode: 'company', note: 'n', email: 'e' },
+            valid: { mode: 'company', email: 'e' },
+            fallback: { mode: 'personal', note: 'n' },
+            phone: { phone: '1' }
+          },
+          invalid: ['missing', 'overlap', 'elsebad', 'note'],
+          valid: ['valid', 'fallback', 'phone'],
+          error: /object does not satisfy a condition/
+        },
+        {
+          jsonSchema: dependent,
+          records: { missing: { trigger: 'yes' }, forbidden: { trigger: 'yes', email: 'e', note: 'n' }, valid: { trigger: 'yes', phone: '1' }, skip: { note: 'n' } },
+          invalid: ['missing', 'forbidden'],
+          valid: ['valid', 'skip'],
+          error: /object does not satisfy the dependency for trigger/
+        }
+      ],
+      saved = [];
+    let records, validate;
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    for (const scenario of scenarios) {
+      records = scenario.records;
+      validate = createRecordJsonSchemaValidator(scenario.jsonSchema);
+      const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema: scenario.jsonSchema },
+        root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const id = root.querySelector('input'),
+        buttons = [...root.querySelectorAll('button')],
+        load = buttons.find(x => x.textContent === 'Load'),
+        save = buttons.find(x => x.textContent === 'Save'),
+        status = root.querySelector('[role=status]');
+      for (const name of scenario.invalid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        assert.match(root.textContent, scenario.error);
+        assert.equal(validate(records[name]), false);
+        assert.equal(saved.length, before);
+      }
+      for (const name of scenario.valid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        await wait(() => saved.length === before + 1 && !save.disabled);
+        assert.deepEqual(saved.at(-1), records[name]);
+      }
+      for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.doesNotThrow(() => factory(options));
+      root.remove();
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const rule of [{ anyOf: [] }, { not: null }, { allOf: [{ required: ['unknown'] }] }, { oneOf: [{ properties: { unknown: { const: 1 } } }] }])
+        assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { ...conditional, then: rule } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('boolean schemas and references agree with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const conditional = {
+        type: 'object',
+        $defs: { yes: true, no: false },
+        properties: { trigger: { type: 'string' }, label: { type: 'string' }, flags: { type: 'array', items: { type: 'boolean' }, contains: { $ref: '#/$defs/no' }, minContains: 0, maxContains: 0 } },
+        if: { $ref: '#/$defs/yes', title: 'Always' },
+        then: { required: ['label'] },
+        else: false,
+        dependentSchemas: { trigger: { $ref: '#/$defs/no' } },
+        allOf: [true],
+        oneOf: [true, false],
+        not: false
+      },
+      names = { type: 'object', $defs: { no: false }, properties: { label: { type: 'string' } }, propertyNames: { $ref: '#/$defs/no' } },
+      nested = { type: 'object', properties: { matrix: { type: 'array', items: { type: 'array', items: { type: 'string' } }, contains: { type: 'array', items: false } } }, required: ['matrix'] },
+      reverse = { type: 'object', properties: { label: { type: 'string' } }, if: false, then: false, else: { required: ['label'] } };
+    const scenarios = [
+        {
+          jsonSchema: conditional,
+          records: { missing: { flags: [true] }, trigger: { label: 'ok', trigger: 'x' }, valid: { label: 'ok', flags: [true, false] } },
+          invalid: ['missing', 'trigger'],
+          valid: ['valid']
+        },
+        { jsonSchema: names, records: { bad: { label: 'x' }, empty: {} }, invalid: ['bad'], valid: ['empty'] },
+        { jsonSchema: nested, records: { bad: { matrix: [['a']] }, valid: { matrix: [['a'], []] } }, invalid: ['bad'], valid: ['valid'] },
+        { jsonSchema: reverse, records: { missing: {}, valid: { label: 'ok' } }, invalid: ['missing'], valid: ['valid'] }
+      ],
+      saved = [];
+    let records, validate;
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    for (const scenario of scenarios) {
+      records = scenario.records;
+      validate = createRecordJsonSchemaValidator(scenario.jsonSchema);
+      const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema: scenario.jsonSchema },
+        root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const id = root.querySelector('input'),
+        buttons = [...root.querySelectorAll('button')],
+        load = buttons.find(x => x.textContent === 'Load'),
+        save = buttons.find(x => x.textContent === 'Save'),
+        status = root.querySelector('[role=status]');
+      for (const name of scenario.invalid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        assert.equal(validate(records[name]), false);
+        assert.equal(saved.length, before);
+        assert.notEqual(status.textContent, 'Record saved.');
+      }
+      for (const name of scenario.valid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        await wait(() => saved.length === before + 1 && !save.disabled);
+        assert.deepEqual(saved.at(-1), records[name]);
+      }
+      for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.doesNotThrow(() => factory(options));
+      root.remove();
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const bad of [{ title: 42 }, { description: 'x'.repeat(1025) }, { minimum: 1 }])
+        assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { ...conditional, if: { $ref: '#/$defs/yes', ...bad } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('conditional and dependent pattern rules apply to preserved properties', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const conditional = {
+        type: 'object',
+        properties: { mode: { type: 'string' }, name: { type: 'string' }, fallback: { type: 'string' } },
+        if: { properties: { mode: { const: 'special' } }, required: ['mode'], patternProperties: { '^x_': { type: 'number', minimum: 1 } } },
+        then: { required: ['name'], properties: { mode: {}, name: {} }, patternProperties: { '^x_': { type: 'number', maximum: 10 } }, additionalProperties: { type: 'string', pattern: '^ok:' } },
+        else: { required: ['fallback'] }
+      },
+      dependent = {
+        type: 'object',
+        properties: { trigger: { type: ['string', 'null'] }, name: { type: 'string' } },
+        dependentSchemas: {
+          trigger: { properties: { trigger: {}, name: {} }, patternProperties: { '^x_': { type: 'number', minimum: 0 } }, additionalProperties: { type: 'string', pattern: '^ok:' } }
+        }
+      };
+    const scenarios = [
+        {
+          jsonSchema: conditional,
+          records: {
+            pattern: { mode: 'special', name: 'A', x_n: 11 },
+            extra: { mode: 'special', name: 'A', x_n: 2, other: 'bad' },
+            fallback: { mode: 'special', x_n: -1 },
+            valid: { mode: 'special', name: 'A', x_n: 2, other: 'ok:value' },
+            validelse: { mode: 'special', x_n: -1, fallback: 'review' }
+          },
+          invalid: ['pattern', 'extra', 'fallback'],
+          valid: ['valid', 'validelse'],
+          error: /(does not satisfy (a condition|the schema rules)|is required by a condition)/
+        },
+        {
+          jsonSchema: dependent,
+          records: { pattern: { trigger: null, x_n: -1 }, extra: { trigger: 'yes', other: 'bad' }, valid: { trigger: null, name: 'A', x_n: 2, other: 'ok:value' }, skip: { x_n: -1, other: 'bad' } },
+          invalid: ['pattern', 'extra'],
+          valid: ['valid', 'skip'],
+          error: /does not satisfy the dependency for trigger/
+        }
+      ],
+      saved = [];
+    let records, validate;
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    for (const scenario of scenarios) {
+      records = scenario.records;
+      validate = createRecordJsonSchemaValidator(scenario.jsonSchema);
+      const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema: scenario.jsonSchema },
+        root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const id = root.querySelector('input'),
+        buttons = [...root.querySelectorAll('button')],
+        load = buttons.find(x => x.textContent === 'Load'),
+        save = buttons.find(x => x.textContent === 'Save'),
+        status = root.querySelector('[role=status]');
+      for (const name of scenario.invalid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        assert.match(root.textContent, scenario.error);
+        assert.equal(validate(records[name]), false);
+        assert.equal(saved.length, before);
+      }
+      for (const name of scenario.valid) {
+        id.value = name;
+        id.dispatchEvent(new dom.window.Event('input'));
+        load.click();
+        await wait(() => status.textContent === 'Record loaded.');
+        const before = saved.length;
+        save.click();
+        await wait(() => saved.length === before + 1 && !save.disabled);
+        assert.deepEqual(saved.at(-1), records[name]);
+      }
+      for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.doesNotThrow(() => factory(options));
+      root.remove();
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('mixed types and type-specific rules agree with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { scoreCondition: { type: ['number', 'null'], minimum: 10 } },
+        propertyNames: { anyOf: [{ pattern: '^[a-z]+$' }, { const: 'X' }] },
+        properties: {
+          score: { type: ['number', 'null'] },
+          name: { type: 'string' },
+          label: { type: 'string' },
+          arr: { type: 'array', items: { type: ['string', 'null'] }, contains: { type: ['number', 'null'], minimum: 10 } }
+        },
+        if: { properties: { score: { $ref: '#/$defs/scoreCondition' } }, required: ['score'] },
+        then: { required: ['name'] },
+        else: { required: ['label'] }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        nullMissing: { score: null },
+        below: { score: 9 },
+        matched: { score: 11 },
+        arrbad: { score: null, name: 'A', arr: ['x'] },
+        badkey: { score: null, name: 'A', Bad: 1 },
+        valid: { score: null, name: 'A', arr: ['x', null], X: 1 },
+        valid2: { score: 9, label: 'review' },
+        absent: { label: 'review' }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const editor = s.runtime.createRecordEditor(options);
+    jsonSchema.$defs.scoreCondition.type.splice(1, 1);
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['nullMissing', 'below', 'matched', 'arrbad', 'badkey']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+      assert.notEqual(status.textContent, 'Record saved.');
+    }
+    for (const name of ['valid', 'valid2', 'absent']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const test of [{ type: [] }, { type: ['string', 'string'] }, { type: ['number', 'bad'] }, { minimum: 'bad' }, { pattern: '[' }])
+        assert.throws(
+          () => factory({ ...options, jsonSchema: { type: 'object', properties: { value: { type: 'string' } }, if: { properties: { value: test } }, then: { required: ['value'] } } }),
+          /Unsupported/
+        );
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('conditional required fields work in object-array items and absent-property conditions match JSON Schema', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          people: {
+            type: 'array',
+            items: { type: 'object', properties: { kind: { type: 'string', enum: ['a', 'b'] }, note: { type: 'string' } }, if: { properties: { kind: { enum: ['a'] } } }, then: { required: ['note'] } }
+          }
+        },
+        required: ['people']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { people: [{}] } } }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    assert.match(root.textContent, /note is required by a condition/);
+    const note = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include note')).querySelector('input');
+    note.checked = true;
+    note.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { people: [{ note: '' }] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('conditional forms reject assertions and branch shapes they cannot represent', async () => {
+  const s = await setup();
+  try {
+    const base = { type: 'object', properties: { kind: { type: 'string' }, name: { type: 'string' } } },
+      bad = [
+        { if: { properties: { kind: { pattern: '[' } } }, then: { required: ['name'] } },
+        { if: { properties: { kind: { const: 'x' } } }, then: { properties: { name: { minLength: -1 } } } },
+        { if: { required: ['missing'] }, then: { required: ['name'] } },
+        { then: { required: ['name'] } }
+      ];
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const value of bad) assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { ...base, ...value } }), /Unsupported/);
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('recursive object arrays preserve hidden values and deletions across successive saves', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          families: {
+            type: 'array',
+            title: 'Families',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', minLength: 1 },
+                children: { type: 'array', title: 'Children', items: { type: 'object', properties: { name: { type: 'string', minLength: 1 }, note: { type: 'string' } }, required: ['name'] } }
+              },
+              required: ['name']
+            }
+          }
+        },
+        required: ['families']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { families: [{ name: 'Family', children: [{ name: 'Ada', note: 'old', hidden: true }], other: 2 }], rootExtra: 3 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const family = [...root.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Families (required)'),
+      children = [...family.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Children (optional)'),
+      child = [...children.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Children item 1'),
+      labels = [...child.querySelectorAll('label')],
+      note = labels.find(x => x.textContent.startsWith(' Include note')).querySelector('input'),
+      name = labels.find(x => x.textContent.startsWith('name')).querySelector('input');
+    note.checked = false;
+    note.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { families: [{ name: 'Family', children: [{ name: 'Ada', hidden: true }], other: 2 }], rootExtra: 3 });
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { families: [{ name: 'Family', children: [{ name: 'Grace', hidden: true }], other: 2 }], rootExtra: 3 });
+    const add = [...children.querySelectorAll('button')].find(x => x.textContent === 'Add Children item');
+    add.click();
+    const second = [...children.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Children item 2'),
+      secondName = [...second.querySelectorAll('label')].find(x => x.textContent.startsWith('name')).querySelector('input');
+    secondName.value = 'Lin';
+    secondName.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 3 && !save.disabled);
+    assert.deepEqual(saved[2].families[0].children, [{ name: 'Grace', hidden: true }, { name: 'Lin' }]);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('recursive arrays reject incompatible values and excessive schema nesting', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const nested = { type: 'object', properties: { name: { type: 'string' } } };
+    for (let i = 0; i < 4; i++) nested.properties = { next: { type: 'array', items: { type: 'object', properties: nested.properties } } };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: nested }), /Unsupported/);
+    const jsonSchema = {
+      type: 'object',
+      properties: { families: { type: 'array', items: { type: 'object', properties: { children: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' } } } } } } } }
+    };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { families: [{ children: [{ name: 5 }] }] } } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(buttons.find(x => x.textContent === 'Save').disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('recursive array load bounds the number of checked items before rendering', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const leaf = { type: 'object', properties: { name: { type: 'string' } } },
+      middle = { type: 'object', properties: { next: { type: 'array', items: leaf } } },
+      outer = { type: 'object', properties: { next: { type: 'array', items: middle } } },
+      jsonSchema = { type: 'object', properties: { items: { type: 'array', items: outer } } },
+      value = { items: Array.from({ length: 20 }, () => ({ next: Array.from({ length: 20 }, () => ({ next: Array.from({ length: 25 }, () => ({})) })) })) };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(root.querySelectorAll('fieldset').length, 1);
+    assert.equal(buttons.find(x => x.textContent === 'Save').disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nullable scalar fields distinguish null, missing and non-null values across saves', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { name: { type: ['string', 'null'], title: 'Name' }, count: { type: ['integer', 'null'], title: 'Count', minimum: 0 }, active: { type: ['boolean', 'null'], title: 'Active' } },
+        required: ['name']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { name: null, count: null, active: false, hidden: 3 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const labels = [...root.querySelectorAll('label')],
+      label = text => labels.find(x => x.textContent.startsWith(text)).querySelector('input,select'),
+      id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const nullName = label(' Set Name to null'),
+      nullCount = label(' Set Count to null'),
+      name = label('Name ('),
+      count = label('Count ('),
+      nullActive = label(' Set Active to null');
+    assert.equal(nullName.checked, true);
+    assert.equal(name.disabled, true);
+    assert.equal(nullCount.checked, true);
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { name: null, count: null, active: false, hidden: 3 });
+    nullName.checked = false;
+    nullName.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    name.value = '';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    nullCount.checked = false;
+    nullCount.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    count.value = '0';
+    count.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    nullActive.checked = true;
+    nullActive.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { name: '', count: 0, active: null, hidden: 3 });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nullable array items preserve null and enforce enum restrictions', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { values: { type: 'array', items: { type: ['string', 'null'], enum: ['x', null] } } }, required: ['values'] },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { values: [null, 'x'] } } }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const field = root.querySelector('fieldset'),
+      toggles = [...field.querySelectorAll('label')].filter(x => x.textContent.startsWith(' Set values item ') && x.textContent.endsWith(' to null')).map(x => x.querySelector('input'));
+    assert.equal(toggles[0].checked, true);
+    assert.equal(toggles[1].checked, false);
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { values: [null, 'x'] });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { type: 'object', properties: { x: { type: 'string', _nullable: true } } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nullable objects and arrays preserve null, missing and concrete values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          profile: {
+            type: ['object', 'null'],
+            title: 'Profile',
+            properties: { name: { type: 'string', minLength: 1 }, email: { type: 'string' }, phone: { type: 'string' } },
+            required: ['name'],
+            dependentRequired: { email: ['phone'] }
+          },
+          tags: { type: ['array', 'null'], title: 'Tags', items: { type: 'string' } }
+        },
+        required: ['profile']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { profile: null, tags: null, hidden: 1 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const labels = () => [...root.querySelectorAll('label')],
+      toggle = t =>
+        labels()
+          .find(x => x.textContent.startsWith(t))
+          .querySelector('input'),
+      id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const nullProfile = toggle(' Set Profile to null'),
+      includeTags = toggle(' Include Tags'),
+      nullTags = toggle(' Set Tags to null'),
+      name = labels()
+        .find(x => x.textContent.startsWith('Profile / name'))
+        .querySelector('input');
+    assert.equal(nullProfile.checked, true);
+    assert.equal(name.disabled, true);
+    assert.equal(includeTags.checked, true);
+    assert.equal(nullTags.checked, true);
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { profile: null, tags: null, hidden: 1 });
+    nullProfile.checked = false;
+    nullProfile.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    name.value = 'Ada';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    nullTags.checked = false;
+    nullTags.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { profile: { name: 'Ada' }, tags: [], hidden: 1 });
+    includeTags.checked = false;
+    includeTags.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    nullProfile.checked = true;
+    nullProfile.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 3 && !save.disabled);
+    assert.deepEqual(saved[2], { profile: null, hidden: 1 });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nullable containers inside object-array items are editable and previews remain inert', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                address: { type: ['object', 'null'], properties: { city: { type: 'string' } }, dependentRequired: { city: [] } },
+                notes: { type: ['array', 'null'], items: { type: 'string' } }
+              }
+            }
+          }
+        },
+        required: ['items']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { items: [{ address: null, notes: null, hidden: true }] } } }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { items: [{ address: null, notes: null, hidden: true }] });
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('button,input,select')].every(x => x.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nullable object-array items preserve null and allow explicit transitions', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          people: {
+            type: 'array',
+            title: 'People',
+            items: { type: ['object', 'null'], properties: { name: { type: 'string', minLength: 1 }, note: { type: 'string' } }, required: ['name'], dependentRequired: { note: ['name'] } }
+          }
+        },
+        required: ['people']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { people: [null, { name: 'Ada', hidden: true }] } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const row = n => [...root.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'People item ' + n),
+      toggle = box => [...box.querySelectorAll('label')].find(x => x.textContent.startsWith(' Set People item ') && x.textContent.endsWith(' to null')).querySelector('input'),
+      name = box => [...box.querySelectorAll('label')].find(x => x.textContent.startsWith('name')).querySelector('input');
+    assert.equal(toggle(row(1)).checked, true);
+    assert.equal(name(row(1)).disabled, true);
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { people: [null, { name: 'Ada', hidden: true }] });
+    toggle(row(1)).checked = false;
+    toggle(row(1)).dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    name(row(1)).value = 'Lin';
+    name(row(1)).dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    toggle(row(2)).checked = true;
+    toggle(row(2)).dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { people: [{ name: 'Lin' }, null] });
+    toggle(row(2)).checked = false;
+    toggle(row(2)).dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    name(row(2)).value = 'Grace';
+    name(row(2)).dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 3 && !save.disabled);
+    assert.deepEqual(saved[2], { people: [{ name: 'Lin' }, { name: 'Grace' }] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('pattern constraints validate Unicode strings in fields and array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { code: { type: 'string', title: 'Code', pattern: '^[A-Z]{2}$' }, tags: { type: 'array', title: 'Tags', items: { type: 'string', pattern: '^[0-9]+$' } } },
+        required: ['code', 'tags']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]'),
+      code = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('Code (')).querySelector('input');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.startsWith('New record'));
+    code.value = 'ab';
+    save.click();
+    assert.match(root.textContent, /matching the required pattern/);
+    code.value = 'AB';
+    buttons.find(x => x.textContent === 'Add Tags item').click();
+    const tag = root.querySelector('fieldset input');
+    tag.value = 'bad';
+    save.click();
+    assert.match(root.textContent, /matching the required pattern/);
+    tag.value = '42';
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { code: 'AB', tags: ['42'] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('uniqueItems rejects equal object values regardless of property order', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+      type: 'object',
+      properties: { people: { type: 'array', uniqueItems: true, items: { type: 'object', properties: { first: { type: 'string' }, last: { type: 'string' } } } } },
+      required: ['people']
+    };
+    let record = {
+        id: 'one',
+        revision: 1,
+        value: {
+          people: [
+            { first: 'Ada', last: 'Lovelace' },
+            { last: 'Lovelace', first: 'Ada' }
+          ]
+        }
+      },
+      saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    assert.equal(saved, undefined);
+    assert.match(root.textContent, /Items must be unique/);
+    const rows = [...root.querySelectorAll('fieldset')].filter(x => /^people item /.test(x.querySelector(':scope > legend')?.textContent ?? '')),
+      last = [...rows[1].querySelectorAll('label')].find(x => x.textContent.startsWith('last')).querySelector('input');
+    last.value = 'Byron';
+    last.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.equal(saved.people[1].last, 'Byron');
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('form constraint configuration rejects malformed patterns and uniqueness flags', async () => {
+  const s = await setup();
+  try {
+    const bad = [
+      { type: 'string', pattern: '[' },
+      { type: 'integer', pattern: 'x' },
+      { type: 'array', items: { type: 'string' }, uniqueItems: 'yes' }
+    ];
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const property of bad)
+        assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { type: 'object', properties: { value: property } } }), /Unsupported/);
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('numeric constraints enforce exclusive bounds and multiples in fields and array items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          price: { type: 'number', title: 'Price', exclusiveMinimum: 0, exclusiveMaximum: 10, multipleOf: 0.1 },
+          quantities: { type: 'array', title: 'Quantities', items: { type: 'integer', exclusiveMinimum: 0, multipleOf: 2 } }
+        },
+        required: ['price', 'quantities']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: null }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]'),
+      price = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('Price (')).querySelector('input');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.startsWith('New record'));
+    price.value = '0';
+    save.click();
+    assert.match(root.textContent, /greater than 0/);
+    price.value = '10';
+    save.click();
+    assert.match(root.textContent, /less than 10/);
+    price.value = '0.31';
+    save.click();
+    assert.match(root.textContent, /multiple of 0.1/);
+    assert.equal(validate({ price: 0.31, quantities: [] }), false);
+    assert.equal(validate({ price: 0.3, quantities: [] }), true);
+    price.value = '0.3';
+    buttons.find(x => x.textContent === 'Add Quantities item').click();
+    const qty = root.querySelector('fieldset input[type=number]');
+    qty.value = '3';
+    save.click();
+    assert.match(root.textContent, /multiple of 2/);
+    qty.value = '4';
+    save.click();
+    await wait(() => saved && !save.disabled);
+    assert.deepEqual(saved, { price: 0.3, quantities: [4] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('numeric form constraints reject invalid schemas in runtime and preview', async () => {
+  const s = await setup();
+  try {
+    const bad = [
+      { type: 'string', multipleOf: 2 },
+      { type: 'number', multipleOf: 0 },
+      { type: 'number', multipleOf: -1 },
+      { type: 'number', exclusiveMinimum: '1' },
+      { type: 'number', exclusiveMaximum: Infinity }
+    ];
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const field of bad) assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { type: 'object', properties: { value: field } } }), /Unsupported/);
+  } finally {
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('typed JSON Schema enums preserve false, zero, empty string and null values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          quantity: { type: 'integer', title: 'Quantity', enum: [0, 2] },
+          active: { type: 'boolean', title: 'Active', enum: [false, true] },
+          text: { type: 'string', title: 'Text', enum: ['', 'x'] },
+          maybe: { type: ['number', 'null'], title: 'Maybe', enum: [null, 1.5] },
+          choices: { type: 'array', title: 'Choices', items: { type: 'boolean', enum: [false, true] } }
+        },
+        required: ['quantity', 'active', 'text', 'maybe', 'choices']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { quantity: 0, active: false, text: '', maybe: null, choices: [false, true], hidden: 3 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]'),
+      get = text => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(text)).querySelector('input,select');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    assert.equal(get(' Set Maybe to null').checked, true);
+    assert.equal(get('Text (').selectedOptions[0].textContent, '(empty)');
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { quantity: 0, active: false, text: '', maybe: null, choices: [false, true], hidden: 3 });
+    const nullToggle = get(' Set Maybe to null');
+    nullToggle.checked = false;
+    nullToggle.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    get('Maybe (').value = '1';
+    get('Quantity (').value = '2';
+    get('Active (').value = '2';
+    get('Text (').value = '2';
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { quantity: 2, active: true, text: 'x', maybe: 1.5, choices: [false, true], hidden: 3 });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('typed enum schemas reject impossible choices and snapshot host configuration', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const options = { getOperation: 'items.get', putOperation: 'items.put' },
+      jsonSchema = { type: 'object', properties: { level: { type: 'integer', enum: [0, 2] } } },
+      editor = s.runtime.createRecordEditor({ ...options, jsonSchema });
+    jsonSchema.properties.level.enum.push(7);
+    dom = new JSDOM('<!doctype html>');
+    const root = editor.render({}, null, null, dom.window.document);
+    assert.deepEqual(
+      [...root.querySelector('select').options].map(x => x.textContent),
+      ['Select an option', '0', '2']
+    );
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const property of [
+        { type: 'integer', enum: ['2'] },
+        { type: 'boolean', enum: [0] },
+        { type: 'number', enum: [1, 1] },
+        { type: 'string', enum: [null] },
+        { type: 'string', _choices: ['x'] }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { value: property } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested arrays preserve object edits and null items across successive saves', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          matrix: {
+            type: 'array',
+            title: 'Matrix',
+            items: { type: ['array', 'null'], items: { type: 'object', properties: { name: { type: 'string', minLength: 1 }, note: { type: 'string' } }, required: ['name'] } }
+          }
+        },
+        required: ['matrix']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { matrix: [[{ name: 'Ada', note: 'old', hidden: true }], null], other: 2 } },
+      saved = [];
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      record = { id: input.id, revision: record.revision + 1, value: input.value };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const fields = [...root.querySelectorAll('fieldset')],
+      inner = fields.find(x => x.querySelector(':scope > legend')?.textContent === 'Matrix item 1 (required)'),
+      row = [...inner.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Matrix item 1 item 1'),
+      labels = [...row.querySelectorAll('label')],
+      include = labels.find(x => x.textContent.startsWith(' Include note')).querySelector('input'),
+      name = labels.find(x => x.textContent.startsWith('name')).querySelector('input');
+    include.checked = false;
+    include.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { matrix: [[{ name: 'Ada', hidden: true }], null], other: 2 });
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { matrix: [[{ name: 'Grace', hidden: true }], null], other: 2 });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested arrays reject incompatible items and excessive nesting in runtime and preview', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    let field = { type: 'string' };
+    for (let i = 0; i < 5; i++) field = { type: 'array', items: field };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      assert.throws(() => factory({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema: { type: 'object', properties: { value: field } } }), /Unsupported/);
+    const jsonSchema = { type: 'object', properties: { matrix: { type: 'array', items: { type: 'array', items: { type: 'integer' } } } } };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { matrix: [[1, 'bad']] } } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(buttons.find(x => x.textContent === 'Save').disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('scalar const fields and array items preserve typed fixed values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', title: 'Kind', const: 'invoice', enum: ['invoice', 'quote'] },
+          zero: { type: 'integer', title: 'Zero', const: 0 },
+          active: { type: 'boolean', title: 'Active', const: false },
+          empty: { type: 'string', title: 'Empty', const: '' },
+          nothing: { type: ['string', 'null'], title: 'Nothing', const: null },
+          flags: { type: 'array', title: 'Flags', items: { type: 'boolean', const: false } },
+          entries: { type: 'array', title: 'Entries', items: { type: 'object', properties: { code: { type: 'string', const: 'x' } }, required: ['code'] } }
+        },
+        required: ['kind', 'zero', 'active', 'empty', 'nothing', 'flags', 'entries']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let record = { id: 'one', revision: 1, value: { kind: 'invoice', zero: 0, active: false, empty: '', nothing: null, flags: [false], entries: [{ code: 'x', hidden: 1 }], hidden: true } },
+      saved;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent === 'Record loaded.');
+    assert.equal([...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Set Nothing to null')).querySelector('input').checked, true);
+    buttons.find(x => x.textContent === 'Save').click();
+    await wait(() => !!saved);
+    assert.deepEqual(saved, record.value);
+    const preview = s.preview.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(x => x.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('scalar const rejects incompatible schema and loaded values in runtime and preview', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const opts = { getOperation: 'items.get', putOperation: 'items.put' },
+      bad = [
+        { type: 'string', const: 3 },
+        { type: 'integer', const: 1.5 },
+        { type: 'boolean', const: null },
+        { type: ['string', 'null'], const: 'x', enum: ['y'] },
+        { type: 'object', properties: {}, const: {} },
+        { type: 'array', items: { type: 'string' }, const: [] },
+        { type: 'string', const: 'x', enum: [4] }
+      ];
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const property of bad) assert.throws(() => factory({ ...opts, jsonSchema: { type: 'object', properties: { value: property } } }), /Unsupported/);
+    const jsonSchema = { type: 'object', properties: { kind: { type: 'string', const: 'invoice' } }, required: ['kind'] };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { kind: 'quote' } } }) });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ ...opts, jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    buttons.find(x => x.textContent === 'Load').click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(buttons.find(x => x.textContent === 'Save').disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('array contains constraints validate before saving and agree with server schema', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          tags: { type: 'array', items: { type: 'string' }, contains: { enum: ['red', 'blue'] }, minContains: 2, maxContains: 2 },
+          nested: { type: 'array', items: { type: 'object', properties: { flags: { type: 'array', items: { type: 'boolean' }, contains: { const: true } } } } }
+        }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        few: { tags: ['red'] },
+        many: { tags: ['red', 'blue', 'red'] },
+        nested: { tags: ['red', 'blue'], nested: [{ flags: [false] }] },
+        valid: { tags: ['red', 'blue', 'green'], nested: [{ flags: [true, false] }] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.appendChild(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const record of ['few', 'many', 'nested']) {
+      id.value = record;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(saved.length, 0);
+      assert.equal(validate(records[record]), false);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const unsupported of [
+        { contains: { type: 'unknown' } },
+        { contains: { enum: [] } },
+        { contains: { const: { x: undefined } } },
+        { contains: { const: 'red' }, minContains: 2, maxContains: 1 },
+        { minContains: 1 }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { tags: { type: 'array', items: { type: 'string' }, ...unsupported } } } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('typed array contains rules agree with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { score: { type: 'number', minimum: 0.2, maximum: 0.3, exclusiveMinimum: 0.1, exclusiveMaximum: 0.4, multipleOf: 0.1 } },
+        properties: {
+          scores: { type: 'array', items: { type: 'number' }, contains: { $ref: '#/$defs/score' }, minContains: 2, maxContains: 2 },
+          labels: { type: 'array', items: { type: 'string' }, contains: { type: 'string', pattern: '^\\u{1F600}', minLength: 2, maxLength: 3 } },
+          people: { type: 'array', items: { type: ['object', 'null'], properties: { name: { type: 'string' } } }, contains: { type: 'object' }, minContains: 1 },
+          any: { type: 'array', items: { type: 'boolean' }, contains: {} },
+          maybe: { type: 'array', items: { type: ['string', 'null'] }, contains: { type: 'null' } },
+          flags: { type: 'array', items: { type: 'boolean' }, contains: { type: 'boolean', const: true, enum: [true, false] } }
+        },
+        required: ['scores', 'labels', 'people', 'any', 'maybe', 'flags']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const base = { scores: [0.2, 0.3, 1], labels: ['\u{1F600}x'], people: [{ name: 'Ada' }, null], any: [false], maybe: [null], flags: [true] },
+      records = {
+        few: { ...base, scores: [0.2, 0.25] },
+        badlabel: { ...base, labels: ['\u{1F600}'] },
+        noobject: { ...base, people: [null] },
+        empty: { ...base, any: [] },
+        nonull: { ...base, maybe: ['x'] },
+        noflag: { ...base, flags: [false] },
+        valid: base
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['few', 'badlabel', 'noobject', 'empty', 'nonull', 'noflag']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], base);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const contains of [
+        { type: 'number', multipleOf: 0 },
+        { type: 'string', pattern: '[' },
+        { type: 'number', minLength: -1 },
+        { type: 'string', minimum: 'bad' },
+        { minimum: 'bad' },
+        { type: 'boolean', const: { bad: undefined } },
+        { type: 'array', items: { format: 'email' } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { values: { type: 'array', items: { type: 'string' }, contains } } } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object array contains checks nested properties and required fields', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { active: { type: 'string', const: 'active' } },
+        properties: {
+          people: {
+            type: 'array',
+            items: { type: ['object', 'null'], properties: { name: { type: 'string' }, status: { type: 'string' }, profile: { type: 'object', properties: { rank: { type: 'integer' } } } } },
+            contains: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                status: { $ref: '#/$defs/active' },
+                profile: { type: 'object', properties: { rank: { type: 'integer', minimum: 2 } }, required: ['rank'], additionalProperties: false }
+              },
+              required: ['status', 'profile'],
+              additionalProperties: false
+            },
+            minContains: 1,
+            maxContains: 1
+          }
+        },
+        required: ['people']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const valid = { people: [null, { name: 'Ada', status: 'active', profile: { rank: 2 } }] },
+      records = {
+        valid,
+        inactive: { people: [{ status: 'inactive', profile: { rank: 2 } }] },
+        missing: { people: [{ status: 'active' }] },
+        low: { people: [{ status: 'active', profile: { rank: 1 } }] },
+        extra: { people: [{ status: 'active', profile: { rank: 2 }, other: true }] },
+        twice: {
+          people: [
+            { status: 'active', profile: { rank: 2 } },
+            { status: 'active', profile: { rank: 3 } }
+          ]
+        }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['inactive', 'missing', 'low', 'extra', 'twice']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], valid);
+    let tooDeep = { type: 'string' };
+    for (let i = 0; i < 7; i++) tooDeep = { type: 'object', properties: { child: tooDeep } };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const contains of [
+        { properties: { x: { format: 'email' } } },
+        { type: 'object', required: ['x', 'x'] },
+        { type: 'object', additionalProperties: { type: 'string', format: 'email' } },
+        { type: 'object', properties: { x: { pattern: '[' } } },
+        tooDeep
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { values: { type: 'array', items: { type: 'string' }, contains } } } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested array matching checks item rules, uniqueness and match counts', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { core: { type: 'string', pattern: '^core:' } },
+        properties: {
+          people: {
+            type: 'array',
+            items: { type: 'object', properties: { name: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } } } },
+            contains: {
+              type: 'object',
+              properties: {
+                skills: {
+                  type: 'array',
+                  items: { type: 'string', pattern: '^(core|support):' },
+                  minItems: 2,
+                  maxItems: 3,
+                  uniqueItems: true,
+                  contains: { $ref: '#/$defs/core' },
+                  minContains: 1,
+                  maxContains: 1
+                }
+              },
+              required: ['skills']
+            }
+          }
+        },
+        required: ['people']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    const valid = { people: [{ name: 'Ada', skills: ['core:js', 'support:ops'] }] },
+      records = {
+        valid,
+        short: { people: [{ skills: ['core:js'] }] },
+        long: { people: [{ skills: ['core:a', 'support:b', 'support:c', 'support:d'] }] },
+        duplicate: { people: [{ skills: ['core:js', 'core:js'] }] },
+        baditem: { people: [{ skills: ['core:js', 'bad'] }] },
+        nocore: { people: [{ skills: ['support:a', 'support:b'] }] },
+        twocore: { people: [{ skills: ['core:a', 'core:b'] }] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['short', 'long', 'duplicate', 'baditem', 'nocore', 'twocore']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], valid);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const contains of [
+        { type: 'array', uniqueItems: 'yes' },
+        { type: 'array', minItems: -1 },
+        { type: 'array', minContains: 1 },
+        { type: 'array', contains: { type: 'string' }, minContains: 2, maxContains: 1 },
+        { type: 'string', items: { format: 'email' } },
+        { type: 'array', items: { type: 'string', format: 'email' } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { values: { type: 'array', items: { type: 'string' }, contains } } } }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('structured contains constants use JSON equality and snapshot their values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { target: { const: { first: 'Ada', last: 'Lovelace' } } },
+        properties: {
+          people: { type: 'array', items: { type: 'object', properties: { first: { type: 'string' }, last: { type: 'string' } } }, contains: { $ref: '#/$defs/target' } },
+          matrix: {
+            type: 'array',
+            items: { type: 'array', items: { type: 'integer' } },
+            contains: {
+              enum: [
+                [1, 2],
+                [3, 4]
+              ]
+            }
+          }
+        },
+        required: ['people', 'matrix']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      valid = { people: [{ last: 'Lovelace', first: 'Ada' }], matrix: [[3, 4]] },
+      records = { valid, person: { ...valid, people: [{ first: 'Ada', last: 'Byron' }] }, matrix: { ...valid, matrix: [[4, 3]] } },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const editor = s.runtime.createRecordEditor(options);
+    jsonSchema.$defs.target.const.last = 'Changed after configuration';
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['person', 'matrix']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], valid);
+    const cycle = {};
+    cycle.self = cycle;
+    const sparse = Array(1);
+    sparse.extra = 1;
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const contains of [
+        { const: cycle },
+        { const: new Date() },
+        { const: sparse },
+        { const: { bad: undefined } },
+        {
+          enum: [
+            { a: 1, b: 2 },
+            { b: 2, a: 1 }
+          ]
+        },
+        { const: Array(1001).fill(1) }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { values: { type: 'array', items: { type: 'string' }, contains } } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested conditional matching agrees with server array validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: {
+          isA: { type: 'object', properties: { kind: { const: 'a' } }, required: ['kind'] },
+          a: { type: 'object', properties: { score: { type: 'number', minimum: 10 } }, required: ['score'] },
+          b: { type: 'object', properties: { confirmed: { const: true } }, required: ['confirmed'] },
+          match: { type: 'object', if: { $ref: '#/$defs/isA' }, then: { $ref: '#/$defs/a' }, else: { $ref: '#/$defs/b' } }
+        },
+        properties: {
+          items: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, score: { type: 'number' }, confirmed: { type: 'boolean' } } }, contains: { $ref: '#/$defs/match' } }
+        },
+        required: ['items']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        low: { items: [{ kind: 'a', score: 9 }] },
+        unconfirmed: { items: [{ kind: 'b', confirmed: false }] },
+        missing: { items: [{}] },
+        validA: { items: [{ kind: 'a', score: 10 }] },
+        validB: { items: [{ kind: 'b', confirmed: true }] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['low', 'unconfirmed', 'missing']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['validA', 'validB']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const contains of [{ if: true }, { then: false }, { if: true, then: null }, { if: { $ref: '#/$defs/missing' }, then: true }])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { items: { ...jsonSchema.properties.items, contains } } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested dependent rules match object-array items consistently with server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { phoneRule: { required: ['phone'], properties: { phone: { type: 'string', pattern: '^\\+[0-9]+$' } } } },
+        properties: {
+          items: {
+            type: 'array',
+            items: { type: 'object', properties: { name: { type: 'string' }, email: { type: ['string', 'null'] }, mode: { type: ['string', 'null'] }, phone: { type: 'string' } } },
+            contains: { type: 'object', required: ['name'], dependentRequired: { email: ['phone'] }, dependentSchemas: { mode: { $ref: '#/$defs/phoneRule' } } }
+          }
+        },
+        required: ['items']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        missing: { items: [{ name: 'A', email: null }] },
+        wrong: { items: [{ name: 'A', mode: null, phone: '123' }] },
+        mode: { items: [{ name: 'A', mode: null }] },
+        empty: { items: [{ name: 'A' }] },
+        valid: { items: [{ name: 'A', email: null, mode: null, phone: '+123' }] },
+        mixed: { items: [{ name: 'A', email: null }, { name: 'B' }] }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['missing', 'wrong', 'mode']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    for (const name of ['empty', 'valid', 'mixed']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      const before = saved.length;
+      save.click();
+      await wait(() => saved.length === before + 1 && !save.disabled);
+      assert.deepEqual(saved.at(-1), records[name]);
+    }
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const contains of [
+        { type: 'object', dependentRequired: { email: 'phone' } },
+        { type: 'object', dependentRequired: { email: ['phone', 'phone'] } },
+        { type: 'object', dependentSchemas: { email: null } },
+        { type: 'object', dependentSchemas: { email: { $ref: '#/$defs/missing' } } },
+        { type: 'string', dependentRequired: { email: [1] } }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { items: { ...jsonSchema.properties.items, contains } } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('repeated array controls retain clear labels and keyboard focus', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          people: { type: 'array', title: 'People', items: { type: ['object', 'null'], properties: { name: { type: 'string' } }, required: ['name'] } },
+          tags: { type: 'array', title: 'Tags', items: { type: 'string' } }
+        },
+        required: ['people', 'tags']
+      },
+      record = { people: [null, { name: 'Ada' }], tags: ['old'] },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>', { pretendToBeVisual: true });
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const people = () => [...root.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'People (required)'),
+      removePeople = () => [...people().querySelectorAll('button')].filter(x => x.textContent.startsWith('Remove People item'));
+    assert.deepEqual(
+      removePeople().map(x => x.textContent),
+      ['Remove People item 1', 'Remove People item 2']
+    );
+    assert.deepEqual(
+      [...people().querySelectorAll('label')].filter(x => x.textContent.includes('to null')).map(x => x.textContent.trim()),
+      ['Set People item 1 to null', 'Set People item 2 to null']
+    );
+    removePeople()[0].focus();
+    removePeople()[0].click();
+    const addPeople = buttons().find(x => x.textContent === 'Add People item');
+    assert.equal(document.activeElement, addPeople);
+    assert.equal(removePeople()[0].textContent, 'Remove People item 1');
+    assert.ok([...people().querySelectorAll('label')].some(x => x.textContent.trim() === 'Set People item 1 to null'));
+    addPeople.focus();
+    addPeople.click();
+    assert.equal(document.activeElement.closest('fieldset').querySelector(':scope > legend').textContent, 'People item 2');
+    const addTags = buttons().find(x => x.textContent === 'Add Tags item');
+    addTags.focus();
+    addTags.click();
+    const tagInputs = [...root.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Tags (required)').querySelectorAll('input[type=text]');
+    assert.equal(document.activeElement, tagInputs[1]);
+    tagInputs[1].value = 'new';
+    tagInputs[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    const removeTag = buttons().find(x => x.textContent === 'Remove Tags item 1');
+    removeTag.focus();
+    removeTag.click();
+    assert.equal(document.activeElement, addTags);
+    assert.ok(buttons().some(x => x.textContent === 'Remove Tags item 1'));
+    const peopleRows = [...people().querySelectorAll('fieldset')],
+      newName = peopleRows[1].querySelector('input[type=text]');
+    newName.value = 'Lin';
+    newName.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { people: [{ name: 'Ada' }, { name: 'Lin' }], tags: ['new'] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('percent-encoded local references match server validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: {
+          'first name': { type: 'string', minLength: 2 },
+          café: { type: 'integer', minimum: 1 },
+          'a/b': { type: 'boolean' },
+          '%2F': { type: 'array', items: { type: 'string' }, contains: { $ref: '#/$defs/word%20rule' } },
+          'word rule': { type: 'string', pattern: '^ok$' }
+        },
+        properties: {
+          name: { $ref: '#/%24defs/first%20name', description: 'Name help' },
+          count: { $ref: '#/$defs/caf%C3%A9' },
+          enabled: { $ref: '#/$defs/a%2Fb' },
+          also: { $ref: '#/$defs/a%7E1b' },
+          tags: { $ref: '#/$defs/%252F' }
+        },
+        required: ['name', 'count', 'enabled', 'also', 'tags']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      record = { name: 'Ada', count: 2, enabled: true, also: false, tags: ['ok'] },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const name = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('name (')).querySelector('input');
+    assert.equal(document.getElementById(name.getAttribute('aria-describedby')).textContent, 'Name help');
+    name.value = 'A';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    assert.equal(saved.length, 0);
+    assert.equal(validate({ ...record, name: 'A' }), false);
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { ...record, name: 'Grace' });
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      factory(options);
+      for (const ref of ['#/$defs/%', '#/$defs/%E0%A4%A', '#/$defs/%7E2bad', '#/$defs/missing%20name', 'https://example.com/schema'])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { value: { $ref: ref } } } }), /Unsupported/);
+      const cycle = { type: 'object', $defs: { self: { $ref: '#/$defs/%73elf' } }, properties: { value: { $ref: '#/$defs/self' } } };
+      assert.throws(() => factory({ ...options, jsonSchema: cycle }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('local references can select schemas inside arrays through the capability service', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' },
+      jsonSchema = {
+        type: 'object',
+        $defs: {
+          tuple: {
+            type: 'array',
+            prefixItems: [
+              { type: 'string', minLength: 2 },
+              { type: 'integer', minimum: 1 }
+            ],
+            items: false
+          },
+          rules: { anyOf: [{ type: 'string', pattern: '^ok$' }, { type: 'integer' }] }
+        },
+        properties: {
+          name: { $ref: '#/$defs/tuple/prefixItems/%30' },
+          count: { $ref: '#/$defs/tuple/prefixItems/1' },
+          tags: { type: 'array', items: { type: 'string' }, contains: { $ref: '#/$defs/rules/anyOf/0' } }
+        },
+        required: ['name', 'count', 'tags']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      common = { applicationId: 'app', collection: 'items', authorize: actor => actor.principalId === 'user', validate: () => true };
+    provider.put(scope, 'items', 'one', { name: 'Ada', count: 2, tags: ['ok'], extra: 'keep' }, null);
+    for (const [operation, method] of [
+      ['get', 'GET'],
+      ['put', 'PUT']
+    ])
+      registerDataCapability(registry, provider, { ...common, operation, ...(operation === 'put' ? { jsonSchema } : {}), candidate: { operationId: `items.${operation}`, method, path: '/items' } });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, request) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...request,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(request.body) })
+      });
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const name = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('name (')).querySelector('input');
+    name.value = 'A';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    assert.match(root.textContent, /at least 2 characters/);
+    assert.deepEqual(provider.get(scope, 'items', 'one').value, { name: 'Ada', count: 2, tags: ['ok'], extra: 'keep' });
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => status.textContent === 'Record saved.');
+    assert.deepEqual(provider.get(scope, 'items', 'one').value, { name: 'Grace', count: 2, tags: ['ok'], extra: 'keep' });
+    await assert.rejects(
+      registry.invoke('items.put', { id: 'one', expectedRevision: 2, value: { name: 'Grace', count: 0, tags: ['ok'] } }, { tenantId: 'tenant', principalId: 'user', origin: 'ui' }),
+      /Invalid capability input/
+    );
+    assert.equal(provider.get(scope, 'items', 'one').revision, 2);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      factory(options);
+      for (const index of ['00', '-1', '2', 'length', 'constructor'])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { name: { $ref: '#/$defs/tuple/prefixItems/' + index } }, required: ['name'] } }), /Unsupported/);
+      const cycle = {
+        type: 'object',
+        $defs: { tuple: { type: 'array', prefixItems: [{ $ref: '#/$defs/tuple/prefixItems/%30' }], items: false } },
+        properties: { name: { $ref: '#/$defs/tuple/prefixItems/0' } }
+      };
+      assert.throws(() => factory({ ...options, jsonSchema: cycle }), /Unsupported/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('tuple forms edit positional values without shifting earlier fields', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { name: { type: 'string', minLength: 1 } },
+        properties: {
+          tuple: {
+            type: 'array',
+            title: 'Tuple',
+            prefixItems: [{ $ref: '#/$defs/name', description: 'Person name' }, { type: 'integer', minimum: 0 }, { type: 'boolean' }],
+            items: false,
+            minItems: 3,
+            maxItems: 3
+          }
+        },
+        required: ['tuple']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = { good: { tuple: ['Ada', 37, true] }, bad: { tuple: ['Ada', 'thirty', true] } },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>', { pretendToBeVisual: true });
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'good';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    let fieldset = root.querySelector('fieldset'),
+      name = fieldset.querySelector('input[type=text]'),
+      age = fieldset.querySelector('input[type=number]'),
+      active = fieldset.querySelector('select');
+    assert.equal(name.value, 'Ada');
+    assert.equal(age.value, '37');
+    assert.equal(active.value, 'true');
+    assert.equal(dom.window.document.getElementById(name.getAttribute('aria-describedby')).textContent, 'Person name');
+    const remove = () => buttons().filter(x => x.textContent.startsWith('Remove Tuple item'));
+    assert.deepEqual(
+      remove().map(x => x.disabled),
+      [true, true, false]
+    );
+    assert.equal(buttons().find(x => x.textContent === 'Add Tuple item').disabled, true);
+    name.value = 'Grace';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    age.value = '38';
+    age.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    active.value = 'false';
+    active.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { tuple: ['Grace', 38, false] });
+    remove()[2].focus();
+    remove()[2].click();
+    const add = buttons().find(x => x.textContent === 'Add Tuple item');
+    assert.equal(dom.window.document.activeElement, add);
+    save.click();
+    assert.match(root.textContent, /between 3 and 3 items/);
+    assert.equal(saved.length, 1);
+    add.click();
+    fieldset = root.querySelector('fieldset');
+    active = fieldset.querySelector('select');
+    assert.equal(dom.window.document.activeElement, active);
+    active.value = 'true';
+    active.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { tuple: ['Grace', 38, true] });
+    id.value = 'bad';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(save.disabled, true);
+    assert.equal(validate(records.bad), false);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(x => x.disabled));
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const tuple of [{ prefixItems: [], items: false }, { prefixItems: [{ type: 'string' }] }, { prefixItems: [{ type: 'string' }], items: true }, { prefixItems: [true], items: false }])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { tuple: { type: 'array', ...tuple } } } }), /Unsupported/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('tuple forms edit object positions and preserve undisplayed values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const person = { type: 'object', description: 'Person details', properties: { name: { type: 'string', minLength: 1 }, age: { type: 'integer', minimum: 0 } }, required: ['name'] },
+      jsonSchema = {
+        type: 'object',
+        properties: { tuple: { type: 'array', title: 'Tuple', prefixItems: [person, { type: 'integer' }], items: person, minItems: 2, maxItems: 4 } },
+        required: ['tuple']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      record = { tuple: [{ name: 'Ada', extra: 'keep' }, 3, { name: 'Grace', extra: 'also keep' }] },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: saved.length + 1 } }) };
+    };
+    dom = new JSDOM('<!doctype html>', { pretendToBeVisual: true });
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const names = () => [...root.querySelectorAll('fieldset input[type=text]')];
+    assert.deepEqual(
+      names().map(x => x.value),
+      ['Ada', 'Grace']
+    );
+    const boxes = [...root.querySelectorAll('fieldset')].filter(x => x.querySelector(':scope > legend')?.textContent.startsWith('Tuple item'));
+    assert.equal(boxes.length, 2);
+    assert.equal(dom.window.document.getElementById(boxes[0].getAttribute('aria-describedby')).textContent, 'Person details');
+    names()[0].value = 'Augusta';
+    names()[0].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { tuple: [{ name: 'Augusta', extra: 'keep' }, 3, { name: 'Grace', extra: 'also keep' }] });
+    names()[1].value = 'Hopper';
+    names()[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { tuple: [{ name: 'Augusta', extra: 'keep' }, 3, { name: 'Hopper', extra: 'also keep' }] });
+    const removes = buttons().filter(x => x.textContent.startsWith('Remove Tuple item'));
+    assert.deepEqual(
+      removes.map(x => x.disabled),
+      [true, true, false]
+    );
+    removes[2].click();
+    buttons()
+      .find(x => x.textContent === 'Add Tuple item')
+      .click();
+    names()[1].value = 'New';
+    names()[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 3 && !save.disabled);
+    assert.deepEqual(saved[2], { tuple: [{ name: 'Augusta', extra: 'keep' }, 3, { name: 'New' }] });
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(x => x.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nullable tuple objects enforce nested rules before saving', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const person = { type: ['object', 'null'], properties: { name: { type: 'string', minLength: 1 }, code: { type: 'string' } }, required: ['name'], dependentRequired: { code: ['name'] } },
+      jsonSchema = { type: 'object', properties: { tuple: { type: 'array', title: 'Tuple', prefixItems: [person], items: false, minItems: 1 } }, required: ['tuple'] },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: input.id === 'bad' ? { tuple: [42] } : { tuple: [null] } } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { tuple: [null] });
+    const toggle = [...root.querySelectorAll('label')].find(x => x.textContent.includes('Set Tuple item 1 to null')).querySelector('input');
+    toggle.checked = false;
+    toggle.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    save.click();
+    assert.equal(saved.length, 1);
+    assert.match(root.textContent, /at least 1 characters/);
+    const name = root.querySelector('fieldset input[type=text]');
+    name.value = 'Ada';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { tuple: [{ name: 'Ada' }] });
+    id.value = 'bad';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent.includes('cannot edit'));
+    assert.equal(save.disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('tuple positions can contain editable nested arrays', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { tuple: { type: 'array', title: 'Tuple', prefixItems: [{ type: 'string' }, { type: 'array', items: { type: 'integer' }, minItems: 1 }], items: false, minItems: 2, maxItems: 2 } },
+        required: ['tuple']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      record = { tuple: ['Ada', [1, 2]] },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const nested = [...root.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Tuple item 2 (required)');
+    assert.ok(nested);
+    const add = [...nested.querySelectorAll('button')].find(x => x.textContent === 'Add Tuple item 2 item');
+    assert.ok(add);
+    add.click();
+    const numbers = [...nested.querySelectorAll('input[type=number]')];
+    assert.equal(numbers.length, 3);
+    numbers[2].value = '3';
+    numbers[2].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], { tuple: ['Ada', [1, 2, 3]] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('nested array controls update their labels when trailing items move', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { tuple: { type: 'array', title: 'Tuple', prefixItems: [{ type: 'string' }], items: { type: 'array', items: { type: ['string', 'null'] } }, minItems: 1, maxItems: 4 } },
+        required: ['tuple']
+      },
+      record = { tuple: ['key', ['first'], ['second']] },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>', { pretendToBeVisual: true });
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, document);
+    document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    buttons()
+      .find(x => x.textContent === 'Remove Tuple item 2')
+      .click();
+    const nested = [...root.querySelectorAll('fieldset')].find(x => x.querySelector(':scope > legend')?.textContent === 'Tuple item 2 (required)');
+    assert.ok(nested);
+    assert.ok([...nested.querySelectorAll('button')].some(x => x.textContent === 'Add Tuple item 2 item'));
+    assert.ok([...nested.querySelectorAll('button')].some(x => x.textContent === 'Remove Tuple item 2 item 1'));
+    assert.ok([...nested.querySelectorAll('label')].some(x => x.textContent.trim() === 'Set Tuple item 2 item 1 to null'));
+    assert.equal(nested.querySelector('input[type=text]').value, 'second');
+    const add = [...nested.querySelectorAll('button')].find(x => x.textContent === 'Add Tuple item 2 item');
+    add.focus();
+    add.click();
+    assert.equal(document.activeElement.type, 'checkbox');
+    const inputs = nested.querySelectorAll('input[type=text]');
+    inputs[1].value = 'third';
+    inputs[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { tuple: ['key', ['second', 'third']] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('tuple forms preserve typed trailing items when an item is removed', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: { tuple: { type: 'array', title: 'Tuple', prefixItems: [{ type: 'string' }], items: { type: 'integer' }, minItems: 1, maxItems: 4 } },
+        required: ['tuple']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      record = { tuple: ['Ada', 1, 2] },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: record } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const remove = () => buttons().filter(x => x.textContent.startsWith('Remove Tuple item'));
+    assert.deepEqual(
+      remove().map(x => x.disabled),
+      [true, false, false]
+    );
+    remove()[1].click();
+    assert.deepEqual(
+      [...root.querySelectorAll('input[type=number]')].map(x => x.value),
+      ['2']
+    );
+    save.click();
+    await wait(() => saved.length === 1 && !save.disabled);
+    assert.deepEqual(saved[0], { tuple: ['Ada', 2] });
+    buttons()
+      .find(x => x.textContent === 'Add Tuple item')
+      .click();
+    const numbers = [...root.querySelectorAll('input[type=number]')];
+    numbers[1].value = '3';
+    numbers[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => saved.length === 2 && !save.disabled);
+    assert.deepEqual(saved[1], { tuple: ['Ada', 2, 3] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('tuple forms save typed trailing items through the capability service', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' },
+      jsonSchema = {
+        type: 'object',
+        properties: {
+          tuple: {
+            type: 'array',
+            title: 'Tuple',
+            prefixItems: [{ type: 'string' }, { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }],
+            items: { type: 'integer' },
+            minItems: 2,
+            maxItems: 5
+          }
+        },
+        required: ['tuple']
+      },
+      common = { applicationId: 'app', collection: 'items', authorize: actor => actor.principalId === 'user', validate: () => true };
+    provider.put(scope, 'items', 'one', { tuple: ['Ada', { name: 'Lovelace', extra: 'preserved' }, 1, 2] }, null);
+    for (const [operation, method] of [
+      ['get', 'GET'],
+      ['put', 'PUT']
+    ])
+      registerDataCapability(registry, provider, { ...common, operation, ...(operation === 'put' ? { jsonSchema } : {}), candidate: { operationId: `items.${operation}`, method, path: '/items' } });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, options) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = () => [...root.querySelectorAll('button')],
+      load = buttons().find(x => x.textContent === 'Load'),
+      save = buttons().find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    const removes = buttons().filter(x => x.textContent.startsWith('Remove Tuple item'));
+    removes[2].click();
+    const name = root.querySelector('fieldset fieldset input[type=text]');
+    name.value = 'Byron';
+    name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    const numbers = [...root.querySelectorAll('input[type=number]')];
+    numbers[0].value = '8';
+    numbers[0].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    save.click();
+    await wait(() => status.textContent === 'Record saved.');
+    assert.deepEqual(provider.get(scope, 'items', 'one').value, { tuple: ['Ada', { name: 'Byron', extra: 'preserved' }, 8] });
+    await assert.rejects(
+      registry.invoke('items.put', { id: 'one', expectedRevision: 2, value: { tuple: ['Ada', { name: 'Byron' }, 'bad'] } }, { tenantId: 'tenant', principalId: 'user', origin: 'ui' }),
+      /Invalid capability input/
+    );
+    assert.deepEqual(provider.get(scope, 'items', 'one').value, { tuple: ['Ada', { name: 'Byron', extra: 'preserved' }, 8] });
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('positional array matching agrees with server tuple validation', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { id: { type: 'string', pattern: '^ID:' } },
+        properties: {
+          matrix: {
+            type: 'array',
+            items: { type: 'array', items: { type: 'string' } },
+            contains: { type: 'array', prefixItems: [{ $ref: '#/$defs/id' }, { enum: ['open', 'closed'] }], items: false, minItems: 2 }
+          }
+        },
+        required: ['matrix']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema },
+      validate = createRecordJsonSchemaValidator(jsonSchema),
+      records = {
+        short: { matrix: [['ID:1']] },
+        order: { matrix: [['open', 'ID:1']] },
+        extra: { matrix: [['ID:1', 'open', 'extra']] },
+        none: { matrix: [['bad', 'open']] },
+        valid: {
+          matrix: [
+            ['bad', 'open'],
+            ['ID:1', 'closed']
+          ]
+        }
+      },
+      saved = [];
+    globalThis.fetch = async (path, request) => {
+      const input = JSON.parse(request.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: { id: input.id, revision: 1, value: records[input.id] } }) };
+      assert.equal(validate(input.value), true);
+      saved.push(input.value);
+      return { ok: true, json: async () => ({ result: { id: input.id, revision: 2 } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input'),
+      buttons = [...root.querySelectorAll('button')],
+      load = buttons.find(x => x.textContent === 'Load'),
+      save = buttons.find(x => x.textContent === 'Save'),
+      status = root.querySelector('[role=status]');
+    for (const name of ['short', 'order', 'extra', 'none']) {
+      id.value = name;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => status.textContent === 'Record loaded.');
+      save.click();
+      assert.match(root.textContent, /required number of matching items/);
+      assert.equal(validate(records[name]), false);
+      assert.equal(saved.length, 0);
+    }
+    id.value = 'valid';
+    id.dispatchEvent(new dom.window.Event('input'));
+    load.click();
+    await wait(() => status.textContent === 'Record loaded.');
+    save.click();
+    await wait(() => saved.length === 1);
+    assert.deepEqual(saved[0], records.valid);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory(options));
+      for (const prefixItems of [[], [null], Array(41).fill(true), [{ type: 'string', format: 'email' }], [{ $ref: '#/$defs/missing' }]])
+        assert.throws(
+          () => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { matrix: { ...jsonSchema.properties.matrix, contains: { type: 'array', prefixItems } } } } }),
+          /Unsupported/
+        );
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema scalar descriptions are safely associated with controls in runtime and preview', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Use <strong>plain text</strong>.' },
+          count: { type: 'integer', description: 'Count of items' },
+          tags: { type: 'array', items: { type: 'string', description: 'Tag help' } }
+        }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    dom = new JSDOM('<!doctype html>');
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      const editor = factory(options),
+        root = editor.render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const name = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('name (optional)')),
+        control = name.querySelector('input[type=text]'),
+        help = root.querySelector('#' + control.getAttribute('aria-describedby'));
+      assert.equal(help.textContent, 'Use <strong>plain text</strong>.');
+      assert.equal(help.querySelector('strong'), null);
+      assert.equal(dom.window.document.getElementById(control.getAttribute('aria-labelledby')).textContent, 'name (optional)');
+      const count = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('count (optional)')).querySelector('input');
+      assert.notEqual(count.getAttribute('aria-describedby'), control.getAttribute('aria-describedby'));
+      assert.equal(root.querySelector('#' + count.getAttribute('aria-describedby')).textContent, 'Count of items');
+      for (const description of [42, 'x'.repeat(1025)])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { name: { type: 'string', description } } } }), /Unsupported/);
+      root.remove();
+    }
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema descriptions remain associated with repeated array controls', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = { type: 'object', properties: { tags: { type: 'array', items: { type: 'string', description: 'Enter a tag' } } } },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    let saved;
+    globalThis.fetch = async (path, request) =>
+      path.endsWith('items.get')
+        ? { ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { tags: ['first', 'second'] } } }) }
+        : {
+            ok: true,
+            json: async () => {
+              saved = JSON.parse(request.body).value;
+              return { result: { id: 'one', revision: 2, value: saved } };
+            }
+          };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    [...root.querySelectorAll('button')].find(x => x.textContent === 'Load').click();
+    await wait(() => root.querySelector('[role=status]').textContent === 'Record loaded.');
+    const controls = [...root.querySelectorAll('input[aria-describedby]')];
+    assert.equal(controls.length, 2);
+    assert.notEqual(controls[0].getAttribute('aria-describedby'), controls[1].getAttribute('aria-describedby'));
+    for (const [index, control] of controls.entries()) {
+      assert.equal(dom.window.document.getElementById(control.getAttribute('aria-describedby')).textContent, 'Enter a tag');
+      assert.equal(dom.window.document.getElementById(control.getAttribute('aria-labelledby')).textContent, 'tags item ' + (index + 1) + ' (required)');
+    }
+    [...root.querySelectorAll('button')].find(x => x.textContent === 'Save').click();
+    await wait(() => saved !== undefined);
+    assert.deepEqual(saved, { tags: ['first', 'second'] });
+    assert.equal(createRecordJsonSchemaValidator(jsonSchema)(saved), true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('opt-in multiple filters combine typed values, reset cursors and reject duplicate fields', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        multipleFilters: true,
+        filterFields: [
+          { field: 'state', label: 'State', type: 'string' },
+          { field: 'count', label: 'Count', type: 'number' },
+          { field: 'flag', label: 'Flag', type: 'boolean' }
+        ]
+      },
+      calls = [];
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [], nextCursor: 'cursor' } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const change = element => element.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    const first = root.querySelector('select'),
+      firstValue = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    first.value = 'state';
+    change(first);
+    firstValue.value = 'open';
+    change(firstValue);
+    button('Add filter').click();
+    button('Browse records').click();
+    assert.equal(calls.length, 0);
+    assert.match(root.textContent, /Choose a field for each additional filter/);
+    let row = root.querySelector('fieldset'),
+      second = row.querySelector('select'),
+      secondValue = row.querySelector('input:not([type=checkbox])');
+    second.value = 'count';
+    change(second);
+    secondValue.value = '2';
+    change(secondValue);
+    button('Browse records').click();
+    await wait(() => calls.length === 1 && !button('Browse records').disabled);
+    assert.deepEqual(calls[0].filters, [
+      { field: 'state', value: 'open' },
+      { field: 'count', value: 2 }
+    ]);
+    assert.equal(button('Next page').disabled, false);
+    second.value = 'state';
+    change(second);
+    assert.equal(button('Next page').disabled, true);
+    button('Browse records').click();
+    assert.equal(calls.length, 1);
+    assert.match(root.textContent, /each filter field and comparison only once/);
+    second.value = 'flag';
+    change(second);
+    row.querySelector('input[type=checkbox]').checked = true;
+    change(row.querySelector('input[type=checkbox]'));
+    button('Browse records').click();
+    await wait(() => calls.length === 2 && !button('Browse records').disabled);
+    assert.deepEqual(calls[1].filters, [
+      { field: 'state', value: 'open' },
+      { field: 'flag', value: null }
+    ]);
+    button('Remove filter').click();
+    assert.equal(button('Next page').disabled, true);
+    button('Browse records').click();
+    await wait(() => calls.length === 3 && !button('Browse records').disabled);
+    assert.deepEqual(calls[2].filter, { field: 'state', value: 'open' });
+    assert.equal(calls[2].filters, undefined);
+    for (let i = 0; i < 9; i++) button('Add filter').click();
+    assert.equal(root.querySelectorAll('fieldset').length, 9);
+    assert.equal(button('Add filter').disabled, true);
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, dom.window.document);
+    assert.equal([...preview.querySelectorAll('button')].find(element => element.textContent === 'Add filter').disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.throws(() => factory({ ...options, filterFields: undefined }), /filter/);
+      assert.throws(() => factory({ ...options, multipleFilters: 'yes' }), /filter/);
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('multi-filter editor browses authorized records through the capability server', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (const [id, value] of [
+      ['a', { owner: 'other', state: 'open', count: 2 }],
+      ['b', { owner: 'user', state: 'open', count: 2 }],
+      ['c', { owner: 'user', state: 'open', count: 3 }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state', 'count'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => actor.principalId === item.value.owner
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, options) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    dom = new JSDOM('<!doctype html>');
+    const root = s.runtime
+      .createRecordEditor({
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        multipleFilters: true,
+        filterFields: [
+          { field: 'state', label: 'State', type: 'string' },
+          { field: 'count', label: 'Count', type: 'number' }
+        ]
+      })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const change = element => element.dispatchEvent(new dom.window.Event('change', { bubbles: true })),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text),
+      first = root.querySelector('select'),
+      value = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input');
+    first.value = 'state';
+    change(first);
+    value.value = 'open';
+    change(value);
+    button('Add filter').click();
+    const row = root.querySelector('fieldset'),
+      second = row.querySelector('select'),
+      number = row.querySelector('input:not([type=checkbox])');
+    second.value = 'count';
+    change(second);
+    number.value = '2';
+    change(number);
+    button('Browse records').click();
+    await wait(() => root.querySelector('li button'));
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(item => item.textContent),
+      ['b']
+    );
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('record editor supports host-approved numeric ranges with bounded results', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (const [id, value] of [
+      ['a', { owner: 'user', count: 1 }],
+      ['b', { owner: 'user', count: 2 }],
+      ['c', { owner: 'user', count: 3 }],
+      ['d', { owner: 'other', count: 2 }],
+      ['e', { owner: 'user', count: '2' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['count', 'owner'],
+      rangeFilterFields: ['count'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => actor.principalId === item.value.owner
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const calls = [];
+    globalThis.fetch = (url, options) => {
+      const input = JSON.parse(options.body);
+      calls.push(input);
+      return originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    };
+    const options = {
+      getOperation: 'items.get',
+      putOperation: 'items.put',
+      listOperation: 'items.list',
+      multipleFilters: true,
+      filterFields: [
+        { field: 'count', label: 'Count', type: 'number' },
+        { field: 'owner', label: 'Owner', type: 'string' }
+      ],
+      rangeFilterFields: ['count']
+    };
+    dom = new JSDOM('<!doctype html>');
+    const editor = s.runtime.createRecordEditor(options);
+    options.rangeFilterFields.length = 0;
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const change = element => element.dispatchEvent(new dom.window.Event('change', { bubbles: true })),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text),
+      field = root.querySelector('select'),
+      operator = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select'),
+      number = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input'),
+      nullControl = [...root.querySelectorAll('label')].find(label => label.textContent === ' Match null').querySelector('input');
+    assert.equal(operator.disabled, true);
+    field.value = 'count';
+    change(field);
+    assert.equal(operator.disabled, false);
+    nullControl.checked = true;
+    change(nullControl);
+    operator.value = 'gte';
+    change(operator);
+    assert.equal(nullControl.checked, false);
+    assert.equal(nullControl.disabled, true);
+    number.value = '2';
+    change(number);
+    button('Add filter').click();
+    const row = root.querySelector('fieldset'),
+      rowField = row.querySelector('select'),
+      rowOperator = [...row.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select'),
+      rowValue = row.querySelector('input:not([type=checkbox])');
+    rowField.value = 'count';
+    change(rowField);
+    rowOperator.value = 'lt';
+    change(rowOperator);
+    rowValue.value = '3';
+    change(rowValue);
+    button('Browse records').click();
+    await wait(() => root.querySelector('li button'));
+    assert.deepEqual(calls[0].filters, [
+      { field: 'count', value: 2, operator: 'gte' },
+      { field: 'count', value: 3, operator: 'lt' }
+    ]);
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(item => item.textContent),
+      ['b']
+    );
+    rowOperator.value = 'gte';
+    change(rowOperator);
+    button('Browse records').click();
+    assert.equal(calls.length, 1);
+    assert.match(root.textContent, /field and comparison only once/);
+    field.value = 'owner';
+    change(field);
+    assert.equal(operator.value, 'eq');
+    assert.equal(operator.disabled, true);
+    assert.equal(nullControl.disabled, false);
+    const preview = s.preview.createRecordEditor({ ...options, rangeFilterFields: ['count'] }).render({}, null, null, dom.window.document);
+    assert.equal([...preview.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select').disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const rangeFilterFields of [['owner'], ['count', 'count'], ['unknown']]) assert.throws(() => factory({ ...options, rangeFilterFields }), /filter/);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('local references support per-use scalar descriptions in runtime and preview', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { shared: { type: 'string', description: 'Shared guidance', minLength: 2 } },
+        properties: { first: { $ref: '#/$defs/shared', title: 'First', description: 'First <b>guidance</b>' }, second: { $ref: '#/$defs/shared' }, third: { $ref: '#/$defs/shared', description: '' } }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    const validate = createRecordJsonSchemaValidator(jsonSchema);
+    assert.equal(validate({ first: 'x' }), false);
+    assert.equal(validate({ first: 'ok' }), true);
+    dom = new JSDOM('<!doctype html>');
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      const root = factory(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const getControl = prefix => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(prefix)).querySelector('input[type=text]'),
+        first = getControl('First (optional)'),
+        second = getControl('second (optional)'),
+        third = getControl('third (optional)');
+      assert.equal(dom.window.document.getElementById(first.getAttribute('aria-describedby')).textContent, 'First <b>guidance</b>');
+      assert.equal(root.querySelector('b'), null);
+      assert.equal(dom.window.document.getElementById(second.getAttribute('aria-describedby')).textContent, 'Shared guidance');
+      assert.equal(third.hasAttribute('aria-describedby'), false);
+      for (const description of [42, 'x'.repeat(1025)])
+        assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { first: { $ref: '#/$defs/shared', description } } } }), /Unsupported/);
+      assert.throws(() => factory({ ...options, jsonSchema: { ...jsonSchema, properties: { first: { $ref: '#/$defs/shared', description: 'help', minLength: 1 } } } }), /Unsupported/);
+      root.remove();
+    }
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('array descriptions are associated with fieldsets, including repeated nested arrays', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        $defs: { tags: { type: 'array', description: 'Default help', items: { type: 'string' } } },
+        properties: {
+          tags: { $ref: '#/$defs/tags', description: 'Use <b>plain text</b>' },
+          people: { type: 'array', description: 'People help', items: { type: 'object', properties: { aliases: { $ref: '#/$defs/tags', description: 'Alias help' } } } }
+        }
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    dom = new JSDOM('<!doctype html>');
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      const root = factory(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      const fields = [...root.querySelectorAll('fieldset[aria-describedby]')];
+      assert.deepEqual(
+        fields.map(x => dom.window.document.getElementById(x.getAttribute('aria-describedby')).textContent),
+        ['Use <b>plain text</b>', 'People help']
+      );
+      assert.equal(root.querySelector('b'), null);
+      assert.equal(new Set(fields.map(x => x.getAttribute('aria-describedby'))).size, 2);
+      root.remove();
+      for (const description of [123, 'x'.repeat(1025)])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { bad: { type: 'array', description, items: { type: 'string' } } } } }), /Unsupported/);
+    }
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { id: 'one', revision: 1, value: { people: [{ aliases: ['a'] }, { aliases: ['b'] }] } } }) });
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    [...root.querySelectorAll('button')].find(x => x.textContent === 'Load').click();
+    await wait(() => root.querySelector('[role=status]').textContent === 'Record loaded.');
+    const nested = [...root.querySelectorAll('fieldset[aria-describedby]')].filter(x => dom.window.document.getElementById(x.getAttribute('aria-describedby')).textContent === 'Alias help');
+    assert.equal(nested.length, 2);
+    assert.notEqual(nested[0].getAttribute('aria-describedby'), nested[1].getAttribute('aria-describedby'));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('object descriptions are accessible for root, referenced groups and repeated object items', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        description: 'Root <b>help</b>',
+        $defs: {
+          address: { type: 'object', description: 'Default address help', properties: { city: { type: 'string', description: 'City help' } } },
+          person: { type: 'object', description: 'Person item help', properties: { name: { type: 'string' }, address: { $ref: '#/$defs/address', description: 'Nested address help' } } }
+        },
+        properties: {
+          home: { $ref: '#/$defs/address', description: 'Home help' },
+          work: { $ref: '#/$defs/address', description: '' },
+          billing: { $ref: '#/$defs/address', description: 'Billing help' },
+          people: { type: 'array', items: { $ref: '#/$defs/person', description: 'Per-person help' } }
+        },
+        required: ['billing']
+      },
+      options = { getOperation: 'items.get', putOperation: 'items.put', jsonSchema };
+    dom = new JSDOM('<!doctype html>');
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      const root = factory(options).render({}, null, null, dom.window.document);
+      dom.window.document.body.append(root);
+      assert.equal(dom.window.document.getElementById(root.getAttribute('aria-describedby')).textContent, 'Root <b>help</b>');
+      const home = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include home')).querySelector('input');
+      assert.equal(dom.window.document.getElementById(home.getAttribute('aria-describedby')).textContent, 'Home help');
+      const city = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('home / city (optional)')).querySelector('input[type=text]');
+      assert.deepEqual(
+        city
+          .getAttribute('aria-describedby')
+          .split(' ')
+          .map(id => dom.window.document.getElementById(id).textContent),
+        ['City help', 'Home help']
+      );
+      const billing = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith('billing / city (optional)')).querySelector('input[type=text]');
+      assert.deepEqual(
+        billing
+          .getAttribute('aria-describedby')
+          .split(' ')
+          .map(id => dom.window.document.getElementById(id).textContent),
+        ['City help', 'Billing help']
+      );
+      const work = [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include work')).querySelector('input');
+      assert.equal(work.hasAttribute('aria-describedby'), false);
+      assert.equal(root.querySelector('b'), null);
+      for (const description of [42, 'x'.repeat(1025)])
+        for (const schema of [
+          { ...jsonSchema, description },
+          { ...jsonSchema, properties: { home: { $ref: '#/$defs/address', description } } },
+          { ...jsonSchema, properties: { people: { type: 'array', items: { $ref: '#/$defs/person', description } } } }
+        ])
+          assert.throws(() => factory({ ...options, jsonSchema: schema }), /Unsupported/);
+      root.remove();
+    }
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        result: {
+          id: 'one',
+          revision: 1,
+          value: {
+            people: [
+              { name: 'Ada', address: { city: 'A' } },
+              { name: 'Lin', address: { city: 'B' } }
+            ]
+          }
+        }
+      })
+    });
+    const root = s.runtime.createRecordEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const id = root.querySelector('input');
+    id.value = 'one';
+    id.dispatchEvent(new dom.window.Event('input'));
+    [...root.querySelectorAll('button')].find(x => x.textContent === 'Load').click();
+    await wait(() => root.querySelector('[role=status]').textContent === 'Record loaded.');
+    const boxes = [...root.querySelectorAll('fieldset[aria-describedby]')].filter(box => dom.window.document.getElementById(box.getAttribute('aria-describedby')).textContent === 'Per-person help');
+    assert.equal(boxes.length, 2);
+    assert.notEqual(boxes[0].getAttribute('aria-describedby'), boxes[1].getAttribute('aria-describedby'));
+    for (const box of boxes) {
+      const toggle = [...box.querySelectorAll('label')].find(x => x.textContent.startsWith(' Include address')).querySelector('input');
+      assert.equal(dom.window.document.getElementById(toggle.getAttribute('aria-describedby')).textContent, 'Nested address help');
+    }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('record editor supports host-approved text prefixes and switches comparisons by field', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (const [id, value] of [
+      ['a', { owner: 'user', name: 'Alpha', count: 2 }],
+      ['b', { owner: 'user', name: 'Alpine', count: 1 }],
+      ['c', { owner: 'other', name: 'Alpha', count: 2 }],
+      ['d', { owner: 'user', name: 'alpha', count: 2 }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['name', 'count'],
+      prefixFilterFields: ['name'],
+      containsFilterFields: ['name'],
+      rangeFilterFields: ['count'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => actor.principalId === item.value.owner
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const calls = [];
+    globalThis.fetch = (url, options) => {
+      const input = JSON.parse(options.body);
+      calls.push(input);
+      return originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    };
+    const options = {
+      getOperation: 'items.get',
+      putOperation: 'items.put',
+      listOperation: 'items.list',
+      multipleFilters: true,
+      filterFields: [
+        { field: 'name', label: 'Name', type: 'string' },
+        { field: 'count', label: 'Count', type: 'number' }
+      ],
+      prefixFilterFields: ['name'],
+      containsFilterFields: ['name'],
+      rangeFilterFields: ['count']
+    };
+    dom = new JSDOM('<!doctype html>');
+    const editor = s.runtime.createRecordEditor(options);
+    options.prefixFilterFields.length = 0;
+    options.containsFilterFields.length = 0;
+    const root = editor.render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const change = element => element.dispatchEvent(new dom.window.Event('change', { bubbles: true })),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text),
+      field = root.querySelector('select'),
+      operator = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select'),
+      value = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input');
+    field.value = 'name';
+    change(field);
+    assert.equal(operator.disabled, false);
+    assert.equal(operator.querySelector('[value=gt]').disabled, true);
+    operator.value = 'prefix';
+    change(operator);
+    value.value = 'Al';
+    change(value);
+    button('Browse records').click();
+    await wait(() => root.querySelector('li button'));
+    assert.deepEqual(calls[0].filter, { field: 'name', value: 'Al', operator: 'prefix' });
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(item => item.textContent),
+      ['a', 'b']
+    );
+    operator.value = 'contains';
+    change(operator);
+    value.value = 'ph';
+    change(value);
+    button('Browse records').click();
+    await wait(() => calls.length === 2 && root.querySelectorAll('li button').length === 2);
+    assert.deepEqual(calls[1].filter, { field: 'name', value: 'ph', operator: 'contains' });
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(item => item.textContent),
+      ['a', 'd']
+    );
+    field.value = 'count';
+    change(field);
+    assert.equal(operator.value, 'eq');
+    assert.equal(operator.querySelector('[value=prefix]').disabled, true);
+    assert.equal(operator.querySelector('[value=contains]').disabled, true);
+    assert.equal(operator.querySelector('[value=gt]').disabled, false);
+    const standalone = s.runtime.createRecordEditor({ ...options, rangeFilterFields: [], prefixFilterFields: [], containsFilterFields: ['name'] }).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(standalone);
+    const standaloneField = standalone.querySelector('select'),
+      standaloneOperator = [...standalone.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select');
+    standaloneField.value = 'name';
+    change(standaloneField);
+    assert.equal(standaloneOperator.disabled, false);
+    assert.equal(standaloneOperator.querySelector('[value=contains]').disabled, false);
+    assert.equal(standaloneOperator.querySelector('[value=prefix]').disabled, true);
+    const preview = s.preview.createRecordEditor({ ...options, prefixFilterFields: [], containsFilterFields: ['name'], rangeFilterFields: [] }).render({}, null, null, dom.window.document);
+    assert.equal([...preview.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select').disabled, true);
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor])
+      for (const bad of [['count'], ['name', 'name'], ['unknown']]) {
+        assert.throws(() => factory({ ...options, prefixFilterFields: bad }), /filter/);
+        assert.throws(() => factory({ ...options, containsFilterFields: bad }), /filter/);
+      }
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('record browser offers approved not-equal comparisons and null exclusions', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [
+          { field: 'state', label: 'State', type: 'string' },
+          { field: 'owner', label: 'Owner', type: 'string' }
+        ],
+        notEqualFilterFields: ['state'],
+        multipleFilters: true
+      };
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [] } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const change = control => control.dispatchEvent(new dom.window.Event('change', { bubbles: true })),
+      buttons = () => [...root.querySelectorAll('button')],
+      field = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Filter field')).querySelector('select'),
+      operator = [...root.querySelectorAll('label')].find(label => label.textContent.startsWith('Comparison')).querySelector('select'),
+      value = [...root.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input'),
+      nullInput = root.querySelector('input[type=checkbox]'),
+      browse = buttons().find(button => button.textContent === 'Browse records');
+    field.value = 'state';
+    change(field);
+    assert.equal([...operator.options].find(option => option.value === 'neq').disabled, false);
+    operator.value = 'neq';
+    change(operator);
+    assert.match(nullInput.parentElement.textContent, /Compare with null/);
+    value.value = 'closed';
+    browse.click();
+    await wait(() => calls.length === 1 && !browse.disabled);
+    assert.deepEqual(calls[0].filter, { field: 'state', operator: 'neq', value: 'closed' });
+    nullInput.checked = true;
+    change(nullInput);
+    assert.equal(nullInput.disabled, false);
+    browse.click();
+    await wait(() => calls.length === 2 && !browse.disabled);
+    assert.deepEqual(calls[1].filter, { field: 'state', operator: 'neq', value: null });
+    nullInput.checked = false;
+    change(nullInput);
+    value.value = 'closed';
+    buttons()
+      .find(button => button.textContent === 'Add filter')
+      .click();
+    const extra = [...root.querySelectorAll('fieldset')].find(node => node.querySelector('legend')?.textContent === 'Additional filter'),
+      extraField = extra.querySelectorAll('select')[0],
+      extraOperator = extra.querySelectorAll('select')[1],
+      extraValue = [...extra.querySelectorAll('label')].find(label => label.textContent === 'Filter value').querySelector('input');
+    extraField.value = 'state';
+    change(extraField);
+    extraOperator.value = 'neq';
+    change(extraOperator);
+    extraValue.value = 'pending';
+    browse.click();
+    await wait(() => calls.length === 3 && !browse.disabled);
+    assert.deepEqual(calls[2].filters, [
+      { field: 'state', operator: 'neq', value: 'closed' },
+      { field: 'state', operator: 'neq', value: 'pending' }
+    ]);
+    extraValue.value = 'closed';
+    browse.click();
+    assert.equal(calls.length, 3);
+    assert.match(root.textContent, /Choose each excluded value only once/);
+    field.value = 'owner';
+    change(field);
+    assert.equal([...operator.options].find(option => option.value === 'neq').disabled, true);
+    assert.equal(operator.value, 'eq');
+    const preview = s.preview.createRecordEditor(options).render({}, null, null, document);
+    assert.ok([...preview.querySelectorAll('input,select,button')].every(control => control.disabled));
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) assert.throws(() => factory({ ...options, notEqualFilterFields: ['unknown'] }), /Invalid record filter fields/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('record browser not-equal filtering uses the authorized capability service', async () => {
+  const { CapabilityRegistry, SqliteDataProvider, registerDataListCapability, createCapabilityServer } = await import('../../core/dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    s = await setup(),
+    originalFetch = globalThis.fetch,
+    provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' };
+    for (const [id, value] of [
+      ['open', { owner: 'user', state: 'open' }],
+      ['closed', { owner: 'user', state: 'closed' }],
+      ['null', { owner: 'user', state: null }],
+      ['missing', { owner: 'user' }],
+      ['secret', { owner: 'other', state: 'open' }]
+    ])
+      provider.put(scope, 'items', id, value, null);
+    registerDataListCapability(registry, provider, {
+      candidate: { operationId: 'items.list', method: 'GET', path: '/items' },
+      applicationId: 'app',
+      collection: 'items',
+      cursorKey: randomBytes(32),
+      filterFields: ['state'],
+      notEqualFilterFields: ['state'],
+      authorize: () => true,
+      authorizeItem: (actor, item) => item.value.owner === actor.principalId
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'user' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, request) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...request,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(request.body) })
+      });
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime
+        .createRecordEditor({
+          getOperation: 'items.get',
+          putOperation: 'items.put',
+          listOperation: 'items.list',
+          filterFields: [{ field: 'state', label: 'State', type: 'string' }],
+          notEqualFilterFields: ['state']
+        })
+        .render({}, null, null, document);
+    document.body.append(root);
+    const label = name => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(name)),
+      field = label('Filter field').querySelector('select'),
+      operator = label('Comparison').querySelector('select'),
+      value = label('Filter value').querySelector('input'),
+      nullInput = root.querySelector('input[type=checkbox]'),
+      browse = [...root.querySelectorAll('button')].find(x => x.textContent === 'Browse records'),
+      change = x => x.dispatchEvent(new dom.window.Event('change', { bubbles: true })),
+      ids = () => [...root.querySelectorAll('li button')].map(x => x.textContent);
+    field.value = 'state';
+    change(field);
+    operator.value = 'neq';
+    change(operator);
+    value.value = 'closed';
+    browse.click();
+    await wait(() => ids().length === 2 && !browse.disabled);
+    assert.deepEqual(ids(), ['null', 'open']);
+    nullInput.checked = true;
+    change(nullInput);
+    browse.click();
+    await wait(() => ids().length === 2 && !browse.disabled);
+    assert.deepEqual(ids(), ['closed', 'open']);
+    assert.doesNotMatch(root.textContent, /secret/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    provider.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('record browser combines not-equal filters with any-condition mode', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom;
+  try {
+    const calls = [],
+      options = {
+        getOperation: 'items.get',
+        putOperation: 'items.put',
+        listOperation: 'items.list',
+        filterFields: [{ field: 'state', label: 'State', type: 'string' }],
+        notEqualFilterFields: ['state'],
+        multipleFilters: true,
+        allowAnyFilters: true
+      };
+    globalThis.fetch = async (_path, request) => {
+      calls.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ result: { items: [] } }) };
+    };
+    dom = new JSDOM('<!doctype html>');
+    const document = dom.window.document,
+      root = s.runtime.createRecordEditor(options).render({}, null, null, document);
+    document.body.append(root);
+    const label = text => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(text)),
+      field = label('Filter field').querySelector('select'),
+      operator = label('Comparison').querySelector('select'),
+      value = label('Filter value').querySelector('input'),
+      mode = label('Match conditions').querySelector('select'),
+      buttons = () => [...root.querySelectorAll('button')],
+      browse = buttons().find(x => x.textContent === 'Browse records'),
+      change = x => x.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    field.value = 'state';
+    change(field);
+    operator.value = 'neq';
+    change(operator);
+    value.value = 'closed';
+    buttons()
+      .find(x => x.textContent === 'Add filter')
+      .click();
+    const extra = [...root.querySelectorAll('fieldset')].find(x => x.querySelector('legend')?.textContent === 'Additional filter'),
+      extraField = extra.querySelector('select'),
+      extraValue = [...extra.querySelectorAll('label')].find(x => x.textContent === 'Filter value').querySelector('input');
+    extraField.value = 'state';
+    change(extraField);
+    extraValue.value = 'pending';
+    mode.value = 'any';
+    change(mode);
+    browse.click();
+    await wait(() => calls.length === 1 && !browse.disabled);
+    assert.equal(calls[0].filterMode, 'any');
+    assert.deepEqual(calls[0].filters, [
+      { field: 'state', operator: 'neq', value: 'closed' },
+      { field: 'state', value: 'pending' }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
 });

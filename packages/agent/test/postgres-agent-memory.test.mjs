@@ -1,162 +1,1137 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import {PostgresAgentMemory,AgentSemanticMemory,AgentMemoryRetentionWorker,registerSemanticMemorySearch,evaluateAgentMemoryRetrieval} from '../dist/index.js';
-import {CapabilityRegistry} from '../../core/dist/index.js';
-const actor={tenantId:'tenant',principalId:'service'},scope={tenantId:'tenant',agentId:'agent',owner:{kind:'organization',id:'org'},kind:'semantic'},provenance={kind:'run',id:'run'};
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+import { PostgresAgentMemory, AgentSemanticMemory, AgentMemoryRetentionWorker, registerSemanticMemorySearch, evaluateAgentMemoryRetrieval } from '../dist/index.js';
+import { CapabilityRegistry } from '../../core/dist/index.js';
+const actor = { tenantId: 'tenant', principalId: 'service' },
+  scope = { tenantId: 'tenant', agentId: 'agent', owner: { kind: 'organization', id: 'org' }, kind: 'semantic' },
+  provenance = { kind: 'run', id: 'run' };
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
 
-test('PostgreSQL memory rejects invalid configuration and fails closed',async()=>{
- assert.throws(()=>new PostgresAgentMemory({}),/configuration/);const m=new PostgresAgentMemory({enabled:true,maxEntries:2,maxTtlMs:1000,authorize:()=>false,query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')}});await assert.rejects(m.get(actor,scope,'x'),/access denied/);await assert.rejects(m.put(actor,scope,'x',{}, {expectedRevision:null,expiresAt:500,provenance}),/access denied/);await assert.rejects(m.get({...actor,tenantId:'other'},scope,'x'),/scope/);
+test('PostgreSQL memory rejects invalid configuration and fails closed', async () => {
+  assert.throws(() => new PostgresAgentMemory({}), /configuration/);
+  const m = new PostgresAgentMemory({
+    enabled: true,
+    maxEntries: 2,
+    maxTtlMs: 1000,
+    authorize: () => false,
+    query: async () => {
+      throw Error('unexpected query');
+    },
+    transaction: async () => {
+      throw Error('unexpected transaction');
+    }
+  });
+  await assert.rejects(m.get(actor, scope, 'x'), /access denied/);
+  await assert.rejects(m.put(actor, scope, 'x', {}, { expectedRevision: null, expiresAt: 500, provenance }), /access denied/);
+  await assert.rejects(m.get({ ...actor, tenantId: 'other' }, scope, 'x'), /scope/);
 });
 
-test('PostgreSQL memory coordinates isolated scopes, revisions, quota, expiry and semantic search across workers',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_memory_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100,allowed=true;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const config=pool=>({enabled:true,maxEntries:2,maxTtlMs:1000,clock:()=>now,authorize:(who,_scope,action,id)=>allowed&&who.principalId==='service'&&!(action==='read'&&id==='private'),query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)}),first=new PostgresAgentMemory(config(a)),second=new PostgresAgentMemory(config(b));await first.initialize();const opts={expectedRevision:null,expiresAt:500,provenance};
-  const create=await Promise.allSettled([first.put(actor,scope,'same','a',opts),second.put(actor,scope,'same','b',opts)]);assert.equal(create.filter(x=>x.status==='fulfilled').length,1);assert.match(create.find(x=>x.status==='rejected').reason.message,/revision conflict/);
-  const quota=await Promise.allSettled([first.put(actor,scope,'second','x',opts),second.put(actor,scope,'third','y',opts)]);assert.equal(quota.filter(x=>x.status==='fulfilled').length,1);assert.match(quota.find(x=>x.status==='rejected').reason.message,/quota/);const winner=quota.find(x=>x.status==='fulfilled').value.id;
-  await first.delete(actor,scope,winner,1);assert.equal((await second.put(actor,scope,winner,'new',opts)).revision,3);await assert.rejects(first.delete(actor,scope,winner,1),/revision conflict/);assert.equal((await second.list(actor,scope,{limit:1})).nextAfter,'same');assert.equal((await first.list(actor,{...scope,agentId:'other'})).items.length,0);
-  const otherScope={...scope,owner:{kind:'user',id:'user'}},semantic=new AgentSemanticMemory(first,{modelId:'model',dimensions:2,embed:async text=>text.includes('apple')?[1,0]:[0,1]});await semantic.put(actor,otherScope,'note','apple',opts);assert.equal((await semantic.get(actor,otherScope,'note')).revision,1);assert.equal((await semantic.search(actor,otherScope,'apple'))[0].id,'note');await second.put(actor,otherScope,'private','private',opts);assert.deepEqual((await second.list(actor,otherScope)).items.map(x=>x.id),['note']);
-  allowed=false;await assert.rejects(semantic.get(actor,otherScope,'note'),/access denied/);allowed=true;now=500;assert.equal(await second.get(actor,otherScope,'note'),undefined);const errors=[],worker=memory=>new AgentMemoryRetentionWorker({memory,actor,scopes:[otherScope],authorize:()=>true,maxScopesPerPass:1,pollMs:100,onError:error=>errors.push(error)});const purges=await Promise.all([worker(first).runOnce(),worker(second).runOnce()]);assert.equal(purges.reduce((a,b)=>a+b,0),2);assert.deepEqual(errors,[]);now=501;assert.equal((await second.put(actor,otherScope,'note','again',{...opts,expiresAt:900})).revision,3);
- }finally{await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL memory coordinates isolated scopes, revisions, quota, expiry and semantic search across workers', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_memory_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    a = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    b = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100,
+    allowed = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = pool => ({
+        enabled: true,
+        maxEntries: 2,
+        maxTtlMs: 1000,
+        clock: () => now,
+        authorize: (who, _scope, action, id) => allowed && who.principalId === 'service' && !(action === 'read' && id === 'private'),
+        query: (sql, args) => pool.query(sql, args),
+        transaction: transaction(pool)
+      }),
+      first = new PostgresAgentMemory(config(a)),
+      second = new PostgresAgentMemory(config(b));
+    await first.initialize();
+    const opts = { expectedRevision: null, expiresAt: 500, provenance };
+    const create = await Promise.allSettled([first.put(actor, scope, 'same', 'a', opts), second.put(actor, scope, 'same', 'b', opts)]);
+    assert.equal(create.filter(x => x.status === 'fulfilled').length, 1);
+    assert.match(create.find(x => x.status === 'rejected').reason.message, /revision conflict/);
+    const quota = await Promise.allSettled([first.put(actor, scope, 'second', 'x', opts), second.put(actor, scope, 'third', 'y', opts)]);
+    assert.equal(quota.filter(x => x.status === 'fulfilled').length, 1);
+    assert.match(quota.find(x => x.status === 'rejected').reason.message, /quota/);
+    const winner = quota.find(x => x.status === 'fulfilled').value.id;
+    await first.delete(actor, scope, winner, 1);
+    assert.equal((await second.put(actor, scope, winner, 'new', opts)).revision, 3);
+    await assert.rejects(first.delete(actor, scope, winner, 1), /revision conflict/);
+    assert.equal((await second.list(actor, scope, { limit: 1 })).nextAfter, 'same');
+    assert.equal((await first.list(actor, { ...scope, agentId: 'other' })).items.length, 0);
+    const otherScope = { ...scope, owner: { kind: 'user', id: 'user' } },
+      semantic = new AgentSemanticMemory(first, { modelId: 'model', dimensions: 2, embed: async text => (text.includes('apple') ? [1, 0] : [0, 1]) });
+    await semantic.put(actor, otherScope, 'note', 'apple', opts);
+    assert.equal((await semantic.get(actor, otherScope, 'note')).revision, 1);
+    assert.equal((await semantic.search(actor, otherScope, 'apple'))[0].id, 'note');
+    await second.put(actor, otherScope, 'private', 'private', opts);
+    assert.deepEqual(
+      (await second.list(actor, otherScope)).items.map(x => x.id),
+      ['note']
+    );
+    allowed = false;
+    await assert.rejects(semantic.get(actor, otherScope, 'note'), /access denied/);
+    allowed = true;
+    now = 500;
+    assert.equal(await second.get(actor, otherScope, 'note'), undefined);
+    const errors = [],
+      worker = memory => new AgentMemoryRetentionWorker({ memory, actor, scopes: [otherScope], authorize: () => true, maxScopesPerPass: 1, pollMs: 100, onError: error => errors.push(error) });
+    const purges = await Promise.all([worker(first).runOnce(), worker(second).runOnce()]);
+    assert.equal(
+      purges.reduce((a, b) => a + b, 0),
+      2
+    );
+    assert.deepEqual(errors, []);
+    now = 501;
+    assert.equal((await second.put(actor, otherScope, 'note', 'again', { ...opts, expiresAt: 900 })).revision, 3);
+  } finally {
+    await Promise.allSettled([a.end(), b.end()]);
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('PostgreSQL mutation audit is atomic, scoped, filtered and immutable',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_audit_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const config={enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:(_actor,_scope,action,id)=>action!=='audit'||id!=='secret',query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)},first=new PostgresAgentMemory(config),second=new PostgresAgentMemory(config);await first.initialize();await second.initialize();const opts={expectedRevision:null,expiresAt:500,provenance};await first.put(actor,scope,'visible','private value',opts);await second.put(actor,scope,'secret','hidden value',opts);await second.delete(actor,scope,'visible',1);assert.deepEqual((await first.auditHistory(actor,scope,{limit:1})).items.map(x=>[x.action,x.memoryId,x.revision]),[['write','visible',1]]);const p1=await first.auditHistory(actor,scope,{limit:1}),p2=await first.auditHistory(actor,scope,{after:p1.nextAfter,limit:1});assert.deepEqual(p2.items,[]);assert.ok(p2.nextAfter);const p3=await first.auditHistory(actor,scope,{after:p2.nextAfter,limit:1});assert.deepEqual(p3.items.map(x=>[x.action,x.memoryId,x.revision]),[['delete','visible',2]]);assert.equal(JSON.stringify(p3).includes('private value'),false);assert.deepEqual((await first.auditHistory(actor,{...scope,agentId:'other'})).items,[]);
-  await assert.rejects(pool.query('UPDATE app_mixer_agent_memory_audit SET actor_id=\'forged\''),/immutable/);await assert.rejects(pool.query('DELETE FROM app_mixer_agent_memory_audit'),/immutable/);await assert.rejects(pool.query('TRUNCATE app_mixer_agent_memory_audit'),/immutable/);
-  await pool.query("CREATE FUNCTION reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");await pool.query('CREATE TRIGGER reject_audit BEFORE INSERT ON app_mixer_agent_memory_audit FOR EACH ROW EXECUTE FUNCTION reject_audit()');await assert.rejects(first.put(actor,scope,'rejected','x',opts),/audit unavailable/);assert.equal(await first.get(actor,scope,'rejected'),undefined);await assert.rejects(first.delete(actor,scope,'secret',1),/audit unavailable/);assert.equal((await first.get(actor,scope,'secret')).revision,1);now=500;await assert.rejects(first.purgeExpired(actor,scope),/audit unavailable/);await pool.query('DROP TRIGGER reject_audit ON app_mixer_agent_memory_audit');now=100;assert.equal((await first.get(actor,scope,'secret')).revision,1);now=500;assert.equal(await first.purgeExpired(actor,scope),1);const all=await first.auditHistory(actor,scope);assert.deepEqual(all.items.map(x=>x.action),['write','delete','purge']);assert.equal(all.items.at(-1).count,1);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL mutation audit is atomic, scoped, filtered and immutable', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_audit_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = {
+        enabled: true,
+        audit: true,
+        maxEntries: 10,
+        maxTtlMs: 1000,
+        clock: () => now,
+        authorize: (_actor, _scope, action, id) => action !== 'audit' || id !== 'secret',
+        query: (sql, args) => pool.query(sql, args),
+        transaction: transaction(pool)
+      },
+      first = new PostgresAgentMemory(config),
+      second = new PostgresAgentMemory(config);
+    await first.initialize();
+    await second.initialize();
+    const opts = { expectedRevision: null, expiresAt: 500, provenance };
+    await first.put(actor, scope, 'visible', 'private value', opts);
+    await second.put(actor, scope, 'secret', 'hidden value', opts);
+    await second.delete(actor, scope, 'visible', 1);
+    assert.deepEqual(
+      (await first.auditHistory(actor, scope, { limit: 1 })).items.map(x => [x.action, x.memoryId, x.revision]),
+      [['write', 'visible', 1]]
+    );
+    const p1 = await first.auditHistory(actor, scope, { limit: 1 }),
+      p2 = await first.auditHistory(actor, scope, { after: p1.nextAfter, limit: 1 });
+    assert.deepEqual(p2.items, []);
+    assert.ok(p2.nextAfter);
+    const p3 = await first.auditHistory(actor, scope, { after: p2.nextAfter, limit: 1 });
+    assert.deepEqual(
+      p3.items.map(x => [x.action, x.memoryId, x.revision]),
+      [['delete', 'visible', 2]]
+    );
+    assert.equal(JSON.stringify(p3).includes('private value'), false);
+    assert.deepEqual((await first.auditHistory(actor, { ...scope, agentId: 'other' })).items, []);
+    await assert.rejects(pool.query("UPDATE app_mixer_agent_memory_audit SET actor_id='forged'"), /immutable/);
+    await assert.rejects(pool.query('DELETE FROM app_mixer_agent_memory_audit'), /immutable/);
+    await assert.rejects(pool.query('TRUNCATE app_mixer_agent_memory_audit'), /immutable/);
+    await pool.query("CREATE FUNCTION reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");
+    await pool.query('CREATE TRIGGER reject_audit BEFORE INSERT ON app_mixer_agent_memory_audit FOR EACH ROW EXECUTE FUNCTION reject_audit()');
+    await assert.rejects(first.put(actor, scope, 'rejected', 'x', opts), /audit unavailable/);
+    assert.equal(await first.get(actor, scope, 'rejected'), undefined);
+    await assert.rejects(first.delete(actor, scope, 'secret', 1), /audit unavailable/);
+    assert.equal((await first.get(actor, scope, 'secret')).revision, 1);
+    now = 500;
+    await assert.rejects(first.purgeExpired(actor, scope), /audit unavailable/);
+    await pool.query('DROP TRIGGER reject_audit ON app_mixer_agent_memory_audit');
+    now = 100;
+    assert.equal((await first.get(actor, scope, 'secret')).revision, 1);
+    now = 500;
+    assert.equal(await first.purgeExpired(actor, scope), 1);
+    const all = await first.auditHistory(actor, scope);
+    assert.deepEqual(
+      all.items.map(x => x.action),
+      ['write', 'delete', 'purge']
+    );
+    assert.equal(all.items.at(-1).count, 1);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('PostgreSQL reads recheck policy after asynchronous database operations',async()=>{
- for(const method of ['get','list','audit']){let allowed=true,start,release;const ready=new Promise(r=>start=r),gate=new Promise(r=>release=r),memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:2,maxTtlMs:1000,clock:()=>100,authorize:()=>allowed,query:async()=>{start();await gate;return {rows:[]};},transaction:async()=>{throw Error('unexpected transaction')}}),pending=method==='get'?memory.get(actor,scope,'note'):method==='list'?memory.list(actor,scope):memory.auditHistory(actor,scope);await ready;allowed=false;release();await assert.rejects(pending,/access denied/);}
+test('PostgreSQL reads recheck policy after asynchronous database operations', async () => {
+  for (const method of ['get', 'list', 'audit']) {
+    let allowed = true,
+      start,
+      release;
+    const ready = new Promise(r => (start = r)),
+      gate = new Promise(r => (release = r)),
+      memory = new PostgresAgentMemory({
+        enabled: true,
+        audit: true,
+        maxEntries: 2,
+        maxTtlMs: 1000,
+        clock: () => 100,
+        authorize: () => allowed,
+        query: async () => {
+          start();
+          await gate;
+          return { rows: [] };
+        },
+        transaction: async () => {
+          throw Error('unexpected transaction');
+        }
+      }),
+      pending = method === 'get' ? memory.get(actor, scope, 'note') : method === 'list' ? memory.list(actor, scope) : memory.auditHistory(actor, scope);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /access denied/);
+  }
 });
 
-test('PostgreSQL read rejects a record changed while authorization was pending',async()=>{
- let revision=1,calls=0;const memory=new PostgresAgentMemory({enabled:true,maxEntries:2,maxTtlMs:1000,clock:()=>100,authorize:()=>{if(++calls===2)revision=2;return true;},query:async()=>({rows:[{memory_id:'note',revision,value:'"value"',provenance:'{"kind":"run","id":"run"}',expires_at:500,deleted:false}]}),transaction:async()=>{throw Error('unexpected transaction')}});await assert.rejects(memory.get(actor,scope,'note'),/changed during read/);
+test('PostgreSQL read rejects a record changed while authorization was pending', async () => {
+  let revision = 1,
+    calls = 0;
+  const memory = new PostgresAgentMemory({
+    enabled: true,
+    maxEntries: 2,
+    maxTtlMs: 1000,
+    clock: () => 100,
+    authorize: () => {
+      if (++calls === 2) revision = 2;
+      return true;
+    },
+    query: async () => ({ rows: [{ memory_id: 'note', revision, value: '"value"', provenance: '{"kind":"run","id":"run"}', expires_at: 500, deleted: false }] }),
+    transaction: async () => {
+      throw Error('unexpected transaction');
+    }
+  });
+  await assert.rejects(memory.get(actor, scope, 'note'), /changed during read/);
 });
 
-test('PostgreSQL indexed keyword search isolates models, scopes and permissions',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_text_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100,allowed=true,embeds=0;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,textIndex:true,maxEntries:20,maxTtlMs:1000,clock:()=>now,authorize:(who,_scope,action,id)=>allowed&&(who.principalId==='admin'||who.principalId==='service'&&!(action==='read'&&id==='private')),query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await store.initialize();const writer={tenantId:'tenant',principalId:'admin'},embed={modelId:'model',dimensions:2,embed:async()=>{embeds++;return [1,0];}},semantic=new AgentSemanticMemory(store,embed),other=new AgentSemanticMemory(store,{...embed,modelId:'other'}),opts={expectedRevision:null,expiresAt:500,provenance};await semantic.put(writer,scope,'note','Invoice ZX42 ready',opts);await semantic.put(writer,scope,'private','Invoice ZX42 secret',opts);await semantic.put(writer,scope,'partial','Invoice only',opts);await other.put(writer,scope,'other-model','Invoice ZX42 other',opts);await semantic.put(writer,{...scope,agentId:'another'},'other-scope','Invoice ZX42 tenant data',opts);const before=embeds,result=await semantic.searchLexical(actor,scope,'Invoice ZX42');assert.deepEqual(result.map(x=>x.id),['note']);assert.equal(result[0].text,'Invoice ZX42 ready');assert.ok(result[0].score>0);assert.equal(embeds,before);assert.deepEqual(await semantic.searchLexical(actor,scope,'no-match'),[]);await assert.rejects(semantic.searchLexical(actor,scope,'Invoice',1,0),/Invalid indexed/);
-  await pool.query(`INSERT INTO app_mixer_agent_memories SELECT 'tenant','bulk','organization','org','semantic','bulk-'||n,1,'{"format":"semantic-v1","modelId":"model","text":"unrelated filler"}', '{"kind":"run","id":"run"}', 500, FALSE FROM generate_series(1,3000) AS n`);await pool.query('ANALYZE app_mixer_agent_memories');const client=await pool.connect();try{await client.query('SET enable_seqscan=off');await client.query('SET enable_indexscan=off');const plan=await client.query("EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE memory_kind='semantic' AND NOT deleted AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$1)",['Invoice']);assert.match(plan.rows.map(row=>row['QUERY PLAN']).join('\\n'),/app_mixer_agent_memory_text_idx/);}finally{client.release();}
-  await semantic.put(writer,scope,'note','Replacement content',{...opts,expectedRevision:1});assert.deepEqual(await semantic.searchLexical(actor,scope,'Invoice ZX42'),[]);await semantic.delete(writer,scope,'note',2);assert.deepEqual(await semantic.searchLexical(actor,scope,'Replacement'),[]);allowed=false;await assert.rejects(semantic.searchLexical(actor,scope,'Invoice'),/access denied/);allowed=true;now=500;assert.deepEqual(await semantic.searchLexical(actor,scope,'Invoice'),[]);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL indexed keyword search isolates models, scopes and permissions', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_text_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100,
+    allowed = true,
+    embeds = 0;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const store = new PostgresAgentMemory({
+      enabled: true,
+      textIndex: true,
+      maxEntries: 20,
+      maxTtlMs: 1000,
+      clock: () => now,
+      authorize: (who, _scope, action, id) => allowed && (who.principalId === 'admin' || (who.principalId === 'service' && !(action === 'read' && id === 'private'))),
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool)
+    });
+    await store.initialize();
+    const writer = { tenantId: 'tenant', principalId: 'admin' },
+      embed = {
+        modelId: 'model',
+        dimensions: 2,
+        embed: async () => {
+          embeds++;
+          return [1, 0];
+        }
+      },
+      semantic = new AgentSemanticMemory(store, embed),
+      other = new AgentSemanticMemory(store, { ...embed, modelId: 'other' }),
+      opts = { expectedRevision: null, expiresAt: 500, provenance };
+    await semantic.put(writer, scope, 'note', 'Invoice ZX42 ready', opts);
+    await semantic.put(writer, scope, 'private', 'Invoice ZX42 secret', opts);
+    await semantic.put(writer, scope, 'partial', 'Invoice only', opts);
+    await other.put(writer, scope, 'other-model', 'Invoice ZX42 other', opts);
+    await semantic.put(writer, { ...scope, agentId: 'another' }, 'other-scope', 'Invoice ZX42 tenant data', opts);
+    const before = embeds,
+      result = await semantic.searchLexical(actor, scope, 'Invoice ZX42');
+    assert.deepEqual(
+      result.map(x => x.id),
+      ['note']
+    );
+    assert.equal(result[0].text, 'Invoice ZX42 ready');
+    assert.ok(result[0].score > 0);
+    assert.equal(embeds, before);
+    assert.deepEqual(await semantic.searchLexical(actor, scope, 'no-match'), []);
+    await assert.rejects(semantic.searchLexical(actor, scope, 'Invoice', 1, 0), /Invalid indexed/);
+    await pool.query(
+      `INSERT INTO app_mixer_agent_memories SELECT 'tenant','bulk','organization','org','semantic','bulk-'||n,1,'{"format":"semantic-v1","modelId":"model","text":"unrelated filler"}', '{"kind":"run","id":"run"}', 500, FALSE FROM generate_series(1,3000) AS n`
+    );
+    await pool.query('ANALYZE app_mixer_agent_memories');
+    const client = await pool.connect();
+    try {
+      await client.query('SET enable_seqscan=off');
+      await client.query('SET enable_indexscan=off');
+      const plan = await client.query(
+        "EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE memory_kind='semantic' AND NOT deleted AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$1)",
+        ['Invoice']
+      );
+      assert.match(plan.rows.map(row => row['QUERY PLAN']).join('\\n'), /app_mixer_agent_memory_text_idx/);
+    } finally {
+      client.release();
+    }
+    await semantic.put(writer, scope, 'note', 'Replacement content', { ...opts, expectedRevision: 1 });
+    assert.deepEqual(await semantic.searchLexical(actor, scope, 'Invoice ZX42'), []);
+    await semantic.delete(writer, scope, 'note', 2);
+    assert.deepEqual(await semantic.searchLexical(actor, scope, 'Replacement'), []);
+    allowed = false;
+    await assert.rejects(semantic.searchLexical(actor, scope, 'Invoice'), /access denied/);
+    allowed = true;
+    now = 500;
+    assert.deepEqual(await semantic.searchLexical(actor, scope, 'Invoice'), []);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('pgvector memory search uses an index and enforces scope, model, expiry and access',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_vector_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100,allowed=true,embeds=0;
- try{await admin.query('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public');await admin.query(`CREATE SCHEMA "${schema}"`);const config={enabled:true,textIndex:true,vectorIndex:{modelId:'model-v1',dimensions:2},maxEntries:20,maxTtlMs:1000,clock:()=>now,authorize:(who,_scope,action,id)=>allowed&&(who.principalId==='admin'||who.principalId==='service'&&!(action==='read'&&id==='private')),query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)},store=new PostgresAgentMemory(config);await store.initialize();config.vectorIndex.modelId='forged';const writer={tenantId:'tenant',principalId:'admin'},embedding={modelId:'model-v1',dimensions:2,embed:async text=>{embeds++;return text.includes('banana')?[0,1]:[1,0];}},semantic=new AgentSemanticMemory(store,embedding),other=new AgentSemanticMemory(store,{...embedding,modelId:'model-v2'}),opts={expectedRevision:null,expiresAt:500,provenance};await semantic.put(writer,scope,'apple','apple',opts);await semantic.put(writer,scope,'banana','banana',opts);await semantic.put(writer,scope,'private','apple secret',opts);await other.put(writer,scope,'model-other','apple other',opts);await semantic.put(writer,{...scope,agentId:'other'},'other-scope','apple other scope',opts);const hits=await semantic.searchIndexed(actor,scope,'apple');assert.deepEqual(hits.map(x=>x.id),['apple','banana']);assert.ok(hits[0].score>0.99);assert.ok(Math.abs(hits[1].score)<0.001);assert.deepEqual((await semantic.searchIndexed(actor,scope,'apple',2,10,{minSimilarity:0.5})).map(x=>x.id),['apple']);assert.deepEqual((await semantic.searchIndexed(actor,scope,'apple',2,10,{minSimilarity:1})).map(x=>x.id),['apple']);for(const threshold of [NaN,Infinity,-1.1,1.1,'0'])await assert.rejects(semantic.searchIndexed(actor,scope,'apple',2,10,{minSimilarity:threshold}),/Invalid indexed/);const compared=await semantic.compareIndexed(actor,scope,'apple',2,10,{minSimilarity:0.5});assert.deepEqual(compared.indexed.map(x=>x.id),['apple']);assert.deepEqual(compared.exact.map(x=>x.id),['apple']);const registry=new CapabilityRegistry(()=>{}),cap={memory:semantic,scope:structuredClone(scope),operationId:'indexed',path:'/indexed',mode:'indexed',maxCandidates:10,limit:2,authorize:a=>a.principalId==='service'};registerSemanticMemorySearch(registry,cap);cap.scope.agentId='forged';cap.maxCandidates=1;const context={...actor,origin:'agent'};assert.deepEqual((await registry.invoke('indexed',{query:{text:'apple'}},context)).map(x=>x.id),['apple','banana']);const thresholdConfig={...cap,scope,operationId:'indexed_threshold',maxCandidates:10,minSimilarity:0.5};registerSemanticMemorySearch(registry,thresholdConfig);thresholdConfig.minSimilarity=-1;assert.deepEqual((await registry.invoke('indexed_threshold',{query:{text:'apple'}},context)).map(x=>x.id),['apple']);await assert.rejects(registry.invoke('indexed_threshold',{query:{text:'apple',minSimilarity:-1}},context),/invalid/i);await assert.rejects(registry.invoke('indexed',{query:{text:'apple',maxCandidates:100}},context),/invalid/i);await assert.rejects(registry.invoke('indexed',{query:{text:'apple'}},{...context,tenantId:'other'}),/forbidden/i);registerSemanticMemorySearch(registry,{...cap,scope,operationId:'lexical',mode:'lexical',maxCandidates:10});assert.deepEqual((await registry.invoke('lexical',{query:{text:'apple'}},context)).map(x=>x.id),['apple']);assert.throws(()=>registerSemanticMemorySearch(registry,{...cap,scope,operationId:'invalid',mode:'lexical',minSimilarity:0.5}),/Invalid memory capability/);const evaluation=await evaluateAgentMemoryRetrieval({memory:semantic,actor,scope,mode:'indexed',limit:2,maxCandidates:10,compareExact:true,cases:[{id:'apple-case',query:'apple',relevantIds:['apple']}]});assert.deepEqual(evaluation.cases[0].exactIds,['apple','banana']);assert.equal(evaluation.cases[0].exactRecall,1);assert.equal(evaluation.meanExactRecall,1);assert.equal(evaluation.meanRecall,1);const filtered=await evaluateAgentMemoryRetrieval({memory:semantic,actor,scope,mode:'indexed',limit:2,maxCandidates:10,minSimilarity:0.5,compareExact:true,cases:[{id:'threshold',query:'apple',relevantIds:['apple']}]});assert.equal(filtered.minSimilarity,0.5);assert.deepEqual(filtered.cases[0].retrievedIds,['apple']);assert.deepEqual(filtered.cases[0].exactIds,['apple']);assert.equal(filtered.cases[0].exactRecall,1);let calls=0;const changing=new AgentSemanticMemory(store,{modelId:'model-v1',dimensions:2,embed:async()=>++calls===1?[1,0]:[0,1]}),consistent=await evaluateAgentMemoryRetrieval({memory:changing,actor,scope,mode:'indexed',limit:1,compareExact:true,cases:[{id:'same-vector',query:'apple',relevantIds:['apple']}]});assert.equal(calls,1);assert.deepEqual(consistent.cases[0].retrievedIds,['apple']);assert.deepEqual(consistent.cases[0].exactIds,['apple']);assert.equal(consistent.cases[0].exactRecall,1);const empty=await evaluateAgentMemoryRetrieval({memory:semantic,actor,scope:{...scope,agentId:'empty'},mode:'indexed',limit:2,compareExact:true,cases:[{id:'empty',query:'apple',relevantIds:['missing']}]});assert.equal(empty.cases[0].exactRecall,null);assert.equal(empty.meanExactRecall,null);const lexicalEvaluation=await evaluateAgentMemoryRetrieval({memory:semantic,actor,scope,mode:'lexical',limit:2,maxCandidates:10,cases:[{id:'lexical-case',query:'apple',relevantIds:['apple']}]});assert.deepEqual(lexicalEvaluation.cases[0].retrievedIds,['apple']);await assert.rejects(evaluateAgentMemoryRetrieval({memory:semantic,actor,scope,mode:'lexical',limit:2,minSimilarity:0,cases:[{id:'a',query:'apple',relevantIds:['apple']}]}),/Invalid memory evaluation/);let resumeFilter,filterStarted;const filterReady=new Promise(r=>filterStarted=r),filterGate=new Promise(r=>resumeFilter=r),slowFilter=new AgentSemanticMemory(store,{modelId:'model-v1',dimensions:2,embed:async()=>{filterStarted();await filterGate;return [1,0];}}),filter={minSimilarity:0.5},filterPending=slowFilter.searchIndexed(actor,scope,'apple',2,10,filter);await filterReady;filter.minSimilarity=-1;resumeFilter();assert.deepEqual((await filterPending).map(x=>x.id),['apple']);let reads=0;await assert.rejects(semantic.searchIndexed(actor,scope,'apple',2,10,{get minSimilarity(){reads++;return 2;}}),/Invalid indexed/);assert.equal(reads,1);const before=embeds;await assert.rejects(other.searchIndexed(actor,scope,'apple'),/Invalid indexed/);assert.equal(embeds,before);allowed=false;await assert.rejects(semantic.searchIndexed(actor,scope,'apple'),/access denied/);assert.equal(embeds,before);allowed=true;let started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),delayed=new AgentSemanticMemory(store,{modelId:'model-v1',dimensions:2,embed:async()=>{started();await gate;return [1,0];}}),pending=delayed.searchIndexed(actor,scope,'apple');await ready;allowed=false;release();await assert.rejects(pending,/access denied/);allowed=true;
-  const client=await pool.connect();try{await client.query('SET enable_seqscan=off');const plan=await client.query("EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'='model-v1' ORDER BY ((value::jsonb->'vector')::text::public.vector(2)) OPERATOR(public.<=>) '[1,0]'::public.vector(2) LIMIT 5");assert.match(plan.rows.map(row=>row['QUERY PLAN']).join('\\n'),/app_mixer_memory_vec_/);}finally{client.release();}
-  await semantic.put(writer,scope,'apple','banana update',{...opts,expectedRevision:1});assert.ok((await semantic.searchIndexed(actor,scope,'apple')).every(x=>Math.abs(x.score)<0.001));await semantic.delete(writer,scope,'apple',2);assert.deepEqual((await semantic.searchIndexed(actor,scope,'banana')).map(x=>x.id),['banana']);now=500;assert.deepEqual(await semantic.searchIndexed(actor,scope,'banana'),[]);
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('pgvector memory search uses an index and enforces scope, model, expiry and access', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_vector_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100,
+    allowed = true,
+    embeds = 0;
+  try {
+    await admin.query('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public');
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = {
+        enabled: true,
+        textIndex: true,
+        vectorIndex: { modelId: 'model-v1', dimensions: 2 },
+        maxEntries: 20,
+        maxTtlMs: 1000,
+        clock: () => now,
+        authorize: (who, _scope, action, id) => allowed && (who.principalId === 'admin' || (who.principalId === 'service' && !(action === 'read' && id === 'private'))),
+        query: (sql, args) => pool.query(sql, args),
+        transaction: transaction(pool)
+      },
+      store = new PostgresAgentMemory(config);
+    await store.initialize();
+    config.vectorIndex.modelId = 'forged';
+    const writer = { tenantId: 'tenant', principalId: 'admin' },
+      embedding = {
+        modelId: 'model-v1',
+        dimensions: 2,
+        embed: async text => {
+          embeds++;
+          return text.includes('banana') ? [0, 1] : [1, 0];
+        }
+      },
+      semantic = new AgentSemanticMemory(store, embedding),
+      other = new AgentSemanticMemory(store, { ...embedding, modelId: 'model-v2' }),
+      opts = { expectedRevision: null, expiresAt: 500, provenance };
+    await semantic.put(writer, scope, 'apple', 'apple', opts);
+    await semantic.put(writer, scope, 'banana', 'banana', opts);
+    await semantic.put(writer, scope, 'private', 'apple secret', opts);
+    await other.put(writer, scope, 'model-other', 'apple other', opts);
+    await semantic.put(writer, { ...scope, agentId: 'other' }, 'other-scope', 'apple other scope', opts);
+    const hits = await semantic.searchIndexed(actor, scope, 'apple');
+    assert.deepEqual(
+      hits.map(x => x.id),
+      ['apple', 'banana']
+    );
+    assert.ok(hits[0].score > 0.99);
+    assert.ok(Math.abs(hits[1].score) < 0.001);
+    assert.deepEqual(
+      (await semantic.searchIndexed(actor, scope, 'apple', 2, 10, { minSimilarity: 0.5 })).map(x => x.id),
+      ['apple']
+    );
+    assert.deepEqual(
+      (await semantic.searchIndexed(actor, scope, 'apple', 2, 10, { minSimilarity: 1 })).map(x => x.id),
+      ['apple']
+    );
+    for (const threshold of [NaN, Infinity, -1.1, 1.1, '0']) await assert.rejects(semantic.searchIndexed(actor, scope, 'apple', 2, 10, { minSimilarity: threshold }), /Invalid indexed/);
+    const compared = await semantic.compareIndexed(actor, scope, 'apple', 2, 10, { minSimilarity: 0.5 });
+    assert.deepEqual(
+      compared.indexed.map(x => x.id),
+      ['apple']
+    );
+    assert.deepEqual(
+      compared.exact.map(x => x.id),
+      ['apple']
+    );
+    const registry = new CapabilityRegistry(() => {}),
+      cap = { memory: semantic, scope: structuredClone(scope), operationId: 'indexed', path: '/indexed', mode: 'indexed', maxCandidates: 10, limit: 2, authorize: a => a.principalId === 'service' };
+    registerSemanticMemorySearch(registry, cap);
+    cap.scope.agentId = 'forged';
+    cap.maxCandidates = 1;
+    const context = { ...actor, origin: 'agent' };
+    assert.deepEqual(
+      (await registry.invoke('indexed', { query: { text: 'apple' } }, context)).map(x => x.id),
+      ['apple', 'banana']
+    );
+    const thresholdConfig = { ...cap, scope, operationId: 'indexed_threshold', maxCandidates: 10, minSimilarity: 0.5 };
+    registerSemanticMemorySearch(registry, thresholdConfig);
+    thresholdConfig.minSimilarity = -1;
+    assert.deepEqual(
+      (await registry.invoke('indexed_threshold', { query: { text: 'apple' } }, context)).map(x => x.id),
+      ['apple']
+    );
+    await assert.rejects(registry.invoke('indexed_threshold', { query: { text: 'apple', minSimilarity: -1 } }, context), /invalid/i);
+    await assert.rejects(registry.invoke('indexed', { query: { text: 'apple', maxCandidates: 100 } }, context), /invalid/i);
+    await assert.rejects(registry.invoke('indexed', { query: { text: 'apple' } }, { ...context, tenantId: 'other' }), /forbidden/i);
+    registerSemanticMemorySearch(registry, { ...cap, scope, operationId: 'lexical', mode: 'lexical', maxCandidates: 10 });
+    assert.deepEqual(
+      (await registry.invoke('lexical', { query: { text: 'apple' } }, context)).map(x => x.id),
+      ['apple']
+    );
+    assert.throws(() => registerSemanticMemorySearch(registry, { ...cap, scope, operationId: 'invalid', mode: 'lexical', minSimilarity: 0.5 }), /Invalid memory capability/);
+    const evaluation = await evaluateAgentMemoryRetrieval({
+      memory: semantic,
+      actor,
+      scope,
+      mode: 'indexed',
+      limit: 2,
+      maxCandidates: 10,
+      compareExact: true,
+      cases: [{ id: 'apple-case', query: 'apple', relevantIds: ['apple'] }]
+    });
+    assert.deepEqual(evaluation.cases[0].exactIds, ['apple', 'banana']);
+    assert.equal(evaluation.cases[0].exactRecall, 1);
+    assert.equal(evaluation.meanExactRecall, 1);
+    assert.equal(evaluation.meanRecall, 1);
+    const filtered = await evaluateAgentMemoryRetrieval({
+      memory: semantic,
+      actor,
+      scope,
+      mode: 'indexed',
+      limit: 2,
+      maxCandidates: 10,
+      minSimilarity: 0.5,
+      compareExact: true,
+      cases: [{ id: 'threshold', query: 'apple', relevantIds: ['apple'] }]
+    });
+    assert.equal(filtered.minSimilarity, 0.5);
+    assert.deepEqual(filtered.cases[0].retrievedIds, ['apple']);
+    assert.deepEqual(filtered.cases[0].exactIds, ['apple']);
+    assert.equal(filtered.cases[0].exactRecall, 1);
+    let calls = 0;
+    const changing = new AgentSemanticMemory(store, { modelId: 'model-v1', dimensions: 2, embed: async () => (++calls === 1 ? [1, 0] : [0, 1]) }),
+      consistent = await evaluateAgentMemoryRetrieval({
+        memory: changing,
+        actor,
+        scope,
+        mode: 'indexed',
+        limit: 1,
+        compareExact: true,
+        cases: [{ id: 'same-vector', query: 'apple', relevantIds: ['apple'] }]
+      });
+    assert.equal(calls, 1);
+    assert.deepEqual(consistent.cases[0].retrievedIds, ['apple']);
+    assert.deepEqual(consistent.cases[0].exactIds, ['apple']);
+    assert.equal(consistent.cases[0].exactRecall, 1);
+    const empty = await evaluateAgentMemoryRetrieval({
+      memory: semantic,
+      actor,
+      scope: { ...scope, agentId: 'empty' },
+      mode: 'indexed',
+      limit: 2,
+      compareExact: true,
+      cases: [{ id: 'empty', query: 'apple', relevantIds: ['missing'] }]
+    });
+    assert.equal(empty.cases[0].exactRecall, null);
+    assert.equal(empty.meanExactRecall, null);
+    const lexicalEvaluation = await evaluateAgentMemoryRetrieval({
+      memory: semantic,
+      actor,
+      scope,
+      mode: 'lexical',
+      limit: 2,
+      maxCandidates: 10,
+      cases: [{ id: 'lexical-case', query: 'apple', relevantIds: ['apple'] }]
+    });
+    assert.deepEqual(lexicalEvaluation.cases[0].retrievedIds, ['apple']);
+    await assert.rejects(
+      evaluateAgentMemoryRetrieval({ memory: semantic, actor, scope, mode: 'lexical', limit: 2, minSimilarity: 0, cases: [{ id: 'a', query: 'apple', relevantIds: ['apple'] }] }),
+      /Invalid memory evaluation/
+    );
+    let resumeFilter, filterStarted;
+    const filterReady = new Promise(r => (filterStarted = r)),
+      filterGate = new Promise(r => (resumeFilter = r)),
+      slowFilter = new AgentSemanticMemory(store, {
+        modelId: 'model-v1',
+        dimensions: 2,
+        embed: async () => {
+          filterStarted();
+          await filterGate;
+          return [1, 0];
+        }
+      }),
+      filter = { minSimilarity: 0.5 },
+      filterPending = slowFilter.searchIndexed(actor, scope, 'apple', 2, 10, filter);
+    await filterReady;
+    filter.minSimilarity = -1;
+    resumeFilter();
+    assert.deepEqual(
+      (await filterPending).map(x => x.id),
+      ['apple']
+    );
+    let reads = 0;
+    await assert.rejects(
+      semantic.searchIndexed(actor, scope, 'apple', 2, 10, {
+        get minSimilarity() {
+          reads++;
+          return 2;
+        }
+      }),
+      /Invalid indexed/
+    );
+    assert.equal(reads, 1);
+    const before = embeds;
+    await assert.rejects(other.searchIndexed(actor, scope, 'apple'), /Invalid indexed/);
+    assert.equal(embeds, before);
+    allowed = false;
+    await assert.rejects(semantic.searchIndexed(actor, scope, 'apple'), /access denied/);
+    assert.equal(embeds, before);
+    allowed = true;
+    let started, release;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r)),
+      delayed = new AgentSemanticMemory(store, {
+        modelId: 'model-v1',
+        dimensions: 2,
+        embed: async () => {
+          started();
+          await gate;
+          return [1, 0];
+        }
+      }),
+      pending = delayed.searchIndexed(actor, scope, 'apple');
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /access denied/);
+    allowed = true;
+    const client = await pool.connect();
+    try {
+      await client.query('SET enable_seqscan=off');
+      const plan = await client.query(
+        "EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'='model-v1' ORDER BY ((value::jsonb->'vector')::text::public.vector(2)) OPERATOR(public.<=>) '[1,0]'::public.vector(2) LIMIT 5"
+      );
+      assert.match(plan.rows.map(row => row['QUERY PLAN']).join('\\n'), /app_mixer_memory_vec_/);
+    } finally {
+      client.release();
+    }
+    await semantic.put(writer, scope, 'apple', 'banana update', { ...opts, expectedRevision: 1 });
+    assert.ok((await semantic.searchIndexed(actor, scope, 'apple')).every(x => Math.abs(x.score) < 0.001));
+    await semantic.delete(writer, scope, 'apple', 2);
+    assert.deepEqual(
+      (await semantic.searchIndexed(actor, scope, 'banana')).map(x => x.id),
+      ['banana']
+    );
+    now = 500;
+    assert.deepEqual(await semantic.searchIndexed(actor, scope, 'banana'), []);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('scope-specific pgvector index isolates candidate graphs and rejects other scopes before embedding',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_vec_scope_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let embeds=0;
- try{await admin.query('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public');await admin.query(`CREATE SCHEMA "${schema}"`);const fixed=structuredClone(scope),base={enabled:true,maxEntries:20,maxTtlMs:1000,clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)},global=new PostgresAgentMemory({...base,vectorIndex:{modelId:'model-v1',dimensions:2}}),config={...base,vectorIndex:{modelId:'model-v1',dimensions:2,scope:fixed}},isolated=new PostgresAgentMemory(config);await global.initialize();await isolated.initialize();fixed.owner.id='forged';const embed={modelId:'model-v1',dimensions:2,embed:async text=>{embeds++;return text==='banana'?[0,1]:[1,0];}},semantic=new AgentSemanticMemory(isolated,embed),other=new AgentSemanticMemory(global,embed),opts={expectedRevision:null,expiresAt:500,provenance};await semantic.put(actor,scope,'note','apple',opts);await other.put(actor,{...scope,agentId:'other'},'foreign','apple',opts);assert.deepEqual((await semantic.searchIndexed(actor,scope,'apple')).map(x=>x.id),['note']);const before=embeds;await assert.rejects(semantic.searchIndexed(actor,{...scope,agentId:'other'},'apple'),/Invalid indexed/);assert.equal(embeds,before);await assert.rejects(isolated.searchSemanticVector(actor,{...scope,tenantId:'other'},[1,0],'model-v1'),/scope/);
-  const client=await pool.connect();try{await client.query('SET enable_seqscan=off');const result=await client.query("EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE tenant_id='tenant' AND agent_id='agent' AND owner_kind='organization' AND owner_id='org' AND memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'='model-v1' ORDER BY ((CASE WHEN tenant_id='tenant' AND agent_id='agent' AND owner_kind='organization' AND owner_id='org' THEN ((value::jsonb->'vector')::text::public.vector(2)) ELSE NULL END)::public.vector(2)) OPERATOR(public.<=>) '[1,0]'::public.vector(2) LIMIT 5");const indexes=await client.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='app_mixer_agent_memories' AND indexname LIKE 'app_mixer_memory_vec_%'");assert.equal(indexes.rows.length,2);const isolatedIndex=indexes.rows.find(row=>row.indexdef.includes('CASE'));assert.ok(isolatedIndex);assert.match(result.rows.map(row=>row['QUERY PLAN']).join('\\n'),new RegExp(isolatedIndex.indexname));}finally{client.release();}
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('scope-specific pgvector index isolates candidate graphs and rejects other scopes before embedding', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_vec_scope_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let embeds = 0;
+  try {
+    await admin.query('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public');
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const fixed = structuredClone(scope),
+      base = { enabled: true, maxEntries: 20, maxTtlMs: 1000, clock: () => 100, authorize: () => true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool) },
+      global = new PostgresAgentMemory({ ...base, vectorIndex: { modelId: 'model-v1', dimensions: 2 } }),
+      config = { ...base, vectorIndex: { modelId: 'model-v1', dimensions: 2, scope: fixed } },
+      isolated = new PostgresAgentMemory(config);
+    await global.initialize();
+    await isolated.initialize();
+    fixed.owner.id = 'forged';
+    const embed = {
+        modelId: 'model-v1',
+        dimensions: 2,
+        embed: async text => {
+          embeds++;
+          return text === 'banana' ? [0, 1] : [1, 0];
+        }
+      },
+      semantic = new AgentSemanticMemory(isolated, embed),
+      other = new AgentSemanticMemory(global, embed),
+      opts = { expectedRevision: null, expiresAt: 500, provenance };
+    await semantic.put(actor, scope, 'note', 'apple', opts);
+    await other.put(actor, { ...scope, agentId: 'other' }, 'foreign', 'apple', opts);
+    assert.deepEqual(
+      (await semantic.searchIndexed(actor, scope, 'apple')).map(x => x.id),
+      ['note']
+    );
+    const before = embeds;
+    await assert.rejects(semantic.searchIndexed(actor, { ...scope, agentId: 'other' }, 'apple'), /Invalid indexed/);
+    assert.equal(embeds, before);
+    await assert.rejects(isolated.searchSemanticVector(actor, { ...scope, tenantId: 'other' }, [1, 0], 'model-v1'), /scope/);
+    const client = await pool.connect();
+    try {
+      await client.query('SET enable_seqscan=off');
+      const result = await client.query(
+        "EXPLAIN SELECT memory_id FROM app_mixer_agent_memories WHERE tenant_id='tenant' AND agent_id='agent' AND owner_kind='organization' AND owner_id='org' AND memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'='model-v1' ORDER BY ((CASE WHEN tenant_id='tenant' AND agent_id='agent' AND owner_kind='organization' AND owner_id='org' THEN ((value::jsonb->'vector')::text::public.vector(2)) ELSE NULL END)::public.vector(2)) OPERATOR(public.<=>) '[1,0]'::public.vector(2) LIMIT 5"
+      );
+      const indexes = await client.query(
+        "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='app_mixer_agent_memories' AND indexname LIKE 'app_mixer_memory_vec_%'"
+      );
+      assert.equal(indexes.rows.length, 2);
+      const isolatedIndex = indexes.rows.find(row => row.indexdef.includes('CASE'));
+      assert.ok(isolatedIndex);
+      assert.match(result.rows.map(row => row['QUERY PLAN']).join('\\n'), new RegExp(isolatedIndex.indexname));
+    } finally {
+      client.release();
+    }
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('PostgreSQL scope erasure is separately authorized, scoped, audited and survives revision reuse',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_erase_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);
-  const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:(who,_scope,action)=>who.principalId==='service'||(who.principalId==='cleaner'&&action==='purge'),query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await memory.initialize();
-  const user={...scope,kind:'episodic',owner:{kind:'user',id:'u1'}},other={...user,owner:{kind:'user',id:'u2'}},opts=expiresAt=>({expectedRevision:null,expiresAt,provenance});
-  await memory.put(actor,user,'a',{secret:'x'},opts(500));await memory.put(actor,user,'b','y',opts(150));await memory.put(actor,other,'a','keep',opts(500));
-  await assert.rejects(memory.eraseScope({...actor,principalId:'cleaner'},user),/access denied/);assert.equal((await memory.get(actor,user,'a')).value.secret,'x');
-  now=200;assert.equal(await memory.eraseScope(actor,user),2);assert.equal(await memory.eraseScope(actor,user),0);
-  assert.equal(await memory.get(actor,user,'a'),undefined);assert.deepEqual((await memory.list(actor,user)).items,[]);assert.equal((await memory.get(actor,other,'a')).value,'keep');
-  const history=(await memory.auditHistory(actor,user)).items;assert.deepEqual(history.map(x=>x.action),['write','write','erase']);assert.equal(history[2].count,2);assert.equal(history[2].memoryId,null);assert.equal(JSON.stringify(history).includes('secret'),false);
-  assert.equal((await memory.put(actor,user,'a','new',opts(500))).revision,3);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL scope erasure is separately authorized, scoped, audited and survives revision reuse', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_erase_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const memory = new PostgresAgentMemory({
+      enabled: true,
+      audit: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => now,
+      authorize: (who, _scope, action) => who.principalId === 'service' || (who.principalId === 'cleaner' && action === 'purge'),
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool)
+    });
+    await memory.initialize();
+    const user = { ...scope, kind: 'episodic', owner: { kind: 'user', id: 'u1' } },
+      other = { ...user, owner: { kind: 'user', id: 'u2' } },
+      opts = expiresAt => ({ expectedRevision: null, expiresAt, provenance });
+    await memory.put(actor, user, 'a', { secret: 'x' }, opts(500));
+    await memory.put(actor, user, 'b', 'y', opts(150));
+    await memory.put(actor, other, 'a', 'keep', opts(500));
+    await assert.rejects(memory.eraseScope({ ...actor, principalId: 'cleaner' }, user), /access denied/);
+    assert.equal((await memory.get(actor, user, 'a')).value.secret, 'x');
+    now = 200;
+    assert.equal(await memory.eraseScope(actor, user), 2);
+    assert.equal(await memory.eraseScope(actor, user), 0);
+    assert.equal(await memory.get(actor, user, 'a'), undefined);
+    assert.deepEqual((await memory.list(actor, user)).items, []);
+    assert.equal((await memory.get(actor, other, 'a')).value, 'keep');
+    const history = (await memory.auditHistory(actor, user)).items;
+    assert.deepEqual(
+      history.map(x => x.action),
+      ['write', 'write', 'erase']
+    );
+    assert.equal(history[2].count, 2);
+    assert.equal(history[2].memoryId, null);
+    assert.equal(JSON.stringify(history).includes('secret'), false);
+    assert.equal((await memory.put(actor, user, 'a', 'new', opts(500))).revision, 3);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('PostgreSQL erasure and expiry clear maximum-revision records',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_maxrev_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await memory.initialize();
-  const opts=expiresAt=>({expectedRevision:null,expiresAt,provenance});await memory.put(actor,scope,'erase','secret',opts(500));await memory.put(actor,scope,'expire','secret',opts(150));await pool.query('UPDATE app_mixer_agent_memories SET revision=$1',[Number.MAX_SAFE_INTEGER]);
-  now=200;assert.equal(await memory.purgeExpired(actor,scope),1);assert.equal(await memory.eraseScope(actor,scope),1);const rows=(await pool.query('SELECT revision,value,provenance,deleted FROM app_mixer_agent_memories')).rows;for(const row of rows){assert.equal(Number(row.revision),Number.MAX_SAFE_INTEGER);assert.equal(row.value,null);assert.equal(row.provenance,null);assert.equal(row.deleted,true);}
-  assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(x=>x.action),['write','write','purge','erase']);await assert.rejects(memory.put(actor,scope,'erase','replacement',opts(500)),/Invalid memory revision/);await assert.rejects(memory.put(actor,scope,'expire','replacement',opts(500)),/Invalid memory revision/);
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL erasure and expiry clear maximum-revision records', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_maxrev_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const memory = new PostgresAgentMemory({
+      enabled: true,
+      audit: true,
+      maxEntries: 5,
+      maxTtlMs: 1000,
+      clock: () => now,
+      authorize: () => true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool)
+    });
+    await memory.initialize();
+    const opts = expiresAt => ({ expectedRevision: null, expiresAt, provenance });
+    await memory.put(actor, scope, 'erase', 'secret', opts(500));
+    await memory.put(actor, scope, 'expire', 'secret', opts(150));
+    await pool.query('UPDATE app_mixer_agent_memories SET revision=$1', [Number.MAX_SAFE_INTEGER]);
+    now = 200;
+    assert.equal(await memory.purgeExpired(actor, scope), 1);
+    assert.equal(await memory.eraseScope(actor, scope), 1);
+    const rows = (await pool.query('SELECT revision,value,provenance,deleted FROM app_mixer_agent_memories')).rows;
+    for (const row of rows) {
+      assert.equal(Number(row.revision), Number.MAX_SAFE_INTEGER);
+      assert.equal(row.value, null);
+      assert.equal(row.provenance, null);
+      assert.equal(row.deleted, true);
+    }
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope)).items.map(x => x.action),
+      ['write', 'write', 'purge', 'erase']
+    );
+    await assert.rejects(memory.put(actor, scope, 'erase', 'replacement', opts(500)), /Invalid memory revision/);
+    await assert.rejects(memory.put(actor, scope, 'expire', 'replacement', opts(500)), /Invalid memory revision/);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-
-test('indexed comparison rechecks candidates after the exact search',async()=>{
- let current=true,scopeAllowed=true;const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,vectorIndex:{modelId:'model',dimensions:2},authorize:(_actor,_scope,action,id)=>action==='list'?scopeAllowed:id!=='indexed'||current,clock:()=>100,query:async(sql,args)=>{if(sql.startsWith('SELECT memory_id,revision,expires_at,deleted'))return {rows:args[5].map(id=>({memory_id:id,revision:1,expires_at:500,deleted:false}))};throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')}});
- const record=id=>({id,revision:1,value:{format:'semantic-v1',modelId:'model',text:id,vector:[1,0]},provenance,expiresAt:500});
- store.searchSemanticVector=async()=>[{record:record('indexed'),score:1}];store.list=async()=>{current=false;return {items:[record('exact')]};};store.get=async(who,selected,id)=>{await store.assertAccess(who,selected,'read',id);return record(id);};
- const semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]}),result=await semantic.compareIndexed(actor,scope,'query');assert.deepEqual(result.indexed,[]);assert.deepEqual(result.exact.map(hit=>hit.id),['exact']);
- for(const changed of [undefined,{...record('indexed'),revision:2}]){current=true;store.list=async()=>({items:[]});store.get=async(who,selected,id)=>{await store.assertAccess(who,selected,'read',id);return id==='indexed'?changed:record(id);};assert.deepEqual((await semantic.compareIndexed(actor,scope,'query')).indexed,[]);}
- store.list=async()=>{scopeAllowed=false;return {items:[]};};await assert.rejects(semantic.compareIndexed(actor,scope,'query'),/access denied/);
+test('indexed comparison rechecks candidates after the exact search', async () => {
+  let current = true,
+    scopeAllowed = true;
+  const store = new PostgresAgentMemory({
+    enabled: true,
+    maxEntries: 10,
+    maxTtlMs: 1000,
+    vectorIndex: { modelId: 'model', dimensions: 2 },
+    authorize: (_actor, _scope, action, id) => (action === 'list' ? scopeAllowed : id !== 'indexed' || current),
+    clock: () => 100,
+    query: async (sql, args) => {
+      if (sql.startsWith('SELECT memory_id,revision,expires_at,deleted')) return { rows: args[5].map(id => ({ memory_id: id, revision: 1, expires_at: 500, deleted: false })) };
+      throw Error('unexpected query');
+    },
+    transaction: async () => {
+      throw Error('unexpected transaction');
+    }
+  });
+  const record = id => ({ id, revision: 1, value: { format: 'semantic-v1', modelId: 'model', text: id, vector: [1, 0] }, provenance, expiresAt: 500 });
+  store.searchSemanticVector = async () => [{ record: record('indexed'), score: 1 }];
+  store.list = async () => {
+    current = false;
+    return { items: [record('exact')] };
+  };
+  store.get = async (who, selected, id) => {
+    await store.assertAccess(who, selected, 'read', id);
+    return record(id);
+  };
+  const semantic = new AgentSemanticMemory(store, { modelId: 'model', dimensions: 2, embed: async () => [1, 0] }),
+    result = await semantic.compareIndexed(actor, scope, 'query');
+  assert.deepEqual(result.indexed, []);
+  assert.deepEqual(
+    result.exact.map(hit => hit.id),
+    ['exact']
+  );
+  for (const changed of [undefined, { ...record('indexed'), revision: 2 }]) {
+    current = true;
+    store.list = async () => ({ items: [] });
+    store.get = async (who, selected, id) => {
+      await store.assertAccess(who, selected, 'read', id);
+      return id === 'indexed' ? changed : record(id);
+    };
+    assert.deepEqual((await semantic.compareIndexed(actor, scope, 'query')).indexed, []);
+  }
+  store.list = async () => {
+    scopeAllowed = false;
+    return { items: [] };
+  };
+  await assert.rejects(semantic.compareIndexed(actor, scope, 'query'), /access denied/);
 });
 
-test('PostgreSQL retention stop rolls back a purge during authorization or an in-flight update',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- for(const phase of ['authorization','update']){
-  const schema='app_mixer_stop_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100,release,entered,block=false,purgeChecks=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
-  try{await admin.query(`CREATE SCHEMA "${schema}"`);const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:async(_actor,_scope,action)=>{if(block&&phase==='authorization'&&action==='purge'&&++purgeChecks===2){entered();await gate;}return true;},query:(sql,args)=>pool.query(sql,args),transaction:async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation(async(sql,args)=>{const value=await client.query(sql,args);if(block&&phase==='update'&&sql.startsWith('UPDATE app_mixer_agent_memories')){entered();await gate;}return value;});await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}});await memory.initialize();await memory.put(actor,scope,'note','private',{expectedRevision:null,expiresAt:200,provenance});now=200;block=true;const worker=new AgentMemoryRetentionWorker({memory,actor,scopes:[scope],authorize:()=>true,maxScopesPerPass:1,pollMs:100,onError:()=>{}}),pass=worker.runOnce();await ready;const stopping=worker.stop();block=false;release();assert.equal(await pass,0);await stopping;const row=(await pool.query('SELECT deleted,value FROM app_mixer_agent_memories WHERE memory_id=$1',['note'])).rows[0];assert.equal(row.deleted,false);assert.equal(row.value,'"private"');assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(event=>event.action),['write']);assert.equal(await worker.runOnce(),1);assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(event=>event.action),['write','purge']);await assert.rejects(memory.purgeExpired(actor,scope,AbortSignal.abort()),/cancelled/);await worker.stop();
-  }finally{release();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
- }
+test('PostgreSQL retention stop rolls back a purge during authorization or an in-flight update', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  for (const phase of ['authorization', 'update']) {
+    const schema = 'app_mixer_stop_' + randomUUID().replaceAll('-', ''),
+      url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+      admin = new pg.Pool({ connectionString: url }),
+      pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+    let now = 100,
+      release,
+      entered,
+      block = false,
+      purgeChecks = 0;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve));
+    try {
+      await admin.query(`CREATE SCHEMA "${schema}"`);
+      const memory = new PostgresAgentMemory({
+        enabled: true,
+        audit: true,
+        maxEntries: 10,
+        maxTtlMs: 1000,
+        clock: () => now,
+        authorize: async (_actor, _scope, action) => {
+          if (block && phase === 'authorization' && action === 'purge' && ++purgeChecks === 2) {
+            entered();
+            await gate;
+          }
+          return true;
+        },
+        query: (sql, args) => pool.query(sql, args),
+        transaction: async operation => {
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            const result = await operation(async (sql, args) => {
+              const value = await client.query(sql, args);
+              if (block && phase === 'update' && sql.startsWith('UPDATE app_mixer_agent_memories')) {
+                entered();
+                await gate;
+              }
+              return value;
+            });
+            await client.query('COMMIT');
+            return result;
+          } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+          } finally {
+            client.release();
+          }
+        }
+      });
+      await memory.initialize();
+      await memory.put(actor, scope, 'note', 'private', { expectedRevision: null, expiresAt: 200, provenance });
+      now = 200;
+      block = true;
+      const worker = new AgentMemoryRetentionWorker({ memory, actor, scopes: [scope], authorize: () => true, maxScopesPerPass: 1, pollMs: 100, onError: () => {} }),
+        pass = worker.runOnce();
+      await ready;
+      const stopping = worker.stop();
+      block = false;
+      release();
+      assert.equal(await pass, 0);
+      await stopping;
+      const row = (await pool.query('SELECT deleted,value FROM app_mixer_agent_memories WHERE memory_id=$1', ['note'])).rows[0];
+      assert.equal(row.deleted, false);
+      assert.equal(row.value, '"private"');
+      assert.deepEqual(
+        (await memory.auditHistory(actor, scope)).items.map(event => event.action),
+        ['write']
+      );
+      assert.equal(await worker.runOnce(), 1);
+      assert.deepEqual(
+        (await memory.auditHistory(actor, scope)).items.map(event => event.action),
+        ['write', 'purge']
+      );
+      await assert.rejects(memory.purgeExpired(actor, scope, AbortSignal.abort()), /cancelled/);
+      await worker.stop();
+    } finally {
+      release();
+      await pool.end();
+      await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+      await admin.end();
+    }
+  }
 });
 
-
-test('PostgreSQL pages and indexed searches recheck earlier record permissions before returning',async()=>{
- for(const mode of ['list','text','vector','audit']){
-  let revoked=false;const rows=['a','b'].map(id=>({memory_id:id,revision:1,score:1,distance:0}));const query=async(sql,args)=>{
-   if(sql.startsWith('SET LOCAL'))return {rows:[]};
-   if(sql.startsWith('SELECT memory_id,revision,expires_at,deleted'))return {rows:args[5].map(id=>({memory_id:id,revision:1,expires_at:500,deleted:false}))};
-   if(sql.startsWith('SELECT * FROM app_mixer_agent_memories')){const id=args[5];return {rows:[{memory_id:id,revision:1,value:JSON.stringify({format:'semantic-v1',modelId:'model',text:id,vector:[1,0]}),provenance:JSON.stringify(provenance),expires_at:500,deleted:false}]};}
-   if(sql.startsWith('SELECT id,actor_id'))return {rows:rows.map((row,index)=>({id:index+1,actor_id:'service',action:'write',memory_id:row.memory_id,revision:1,count:1,observed_at:100}))};
-   return {rows};
-  };const store=new PostgresAgentMemory({enabled:true,audit:true,textIndex:true,vectorIndex:{modelId:'model',dimensions:2},maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:(_actor,_scope,action,id)=>{if((action==='read'||action==='audit')&&id==='b')revoked=true;return !((action==='read'||action==='audit')&&id==='a'&&revoked);},query,transaction:async operation=>operation(query)});
-  const pending=mode==='list'?store.list(actor,scope):mode==='text'?store.searchSemanticText(actor,scope,'query','model'):mode==='vector'?store.searchSemanticVector(actor,scope,[1,0],'model'):store.auditHistory(actor,scope);await assert.rejects(pending,/access denied/,mode);
- }
+test('PostgreSQL pages and indexed searches recheck earlier record permissions before returning', async () => {
+  for (const mode of ['list', 'text', 'vector', 'audit']) {
+    let revoked = false;
+    const rows = ['a', 'b'].map(id => ({ memory_id: id, revision: 1, score: 1, distance: 0 }));
+    const query = async (sql, args) => {
+      if (sql.startsWith('SET LOCAL')) return { rows: [] };
+      if (sql.startsWith('SELECT memory_id,revision,expires_at,deleted')) return { rows: args[5].map(id => ({ memory_id: id, revision: 1, expires_at: 500, deleted: false })) };
+      if (sql.startsWith('SELECT * FROM app_mixer_agent_memories')) {
+        const id = args[5];
+        return {
+          rows: [
+            {
+              memory_id: id,
+              revision: 1,
+              value: JSON.stringify({ format: 'semantic-v1', modelId: 'model', text: id, vector: [1, 0] }),
+              provenance: JSON.stringify(provenance),
+              expires_at: 500,
+              deleted: false
+            }
+          ]
+        };
+      }
+      if (sql.startsWith('SELECT id,actor_id'))
+        return { rows: rows.map((row, index) => ({ id: index + 1, actor_id: 'service', action: 'write', memory_id: row.memory_id, revision: 1, count: 1, observed_at: 100 })) };
+      return { rows };
+    };
+    const store = new PostgresAgentMemory({
+      enabled: true,
+      audit: true,
+      textIndex: true,
+      vectorIndex: { modelId: 'model', dimensions: 2 },
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => 100,
+      authorize: (_actor, _scope, action, id) => {
+        if ((action === 'read' || action === 'audit') && id === 'b') revoked = true;
+        return !((action === 'read' || action === 'audit') && id === 'a' && revoked);
+      },
+      query,
+      transaction: async operation => operation(query)
+    });
+    const pending =
+      mode === 'list'
+        ? store.list(actor, scope)
+        : mode === 'text'
+          ? store.searchSemanticText(actor, scope, 'query', 'model')
+          : mode === 'vector'
+            ? store.searchSemanticVector(actor, scope, [1, 0], 'model')
+            : store.auditHistory(actor, scope);
+    await assert.rejects(pending, /access denied/, mode);
+  }
 });
 
-
-test('PostgreSQL rejects a page when an earlier record permission is revoked mid-read',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_policy_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let active=false,revoked=false;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,audit:true,textIndex:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:(_actor,_scope,action,id)=>{if(active&&(action==='read'||action==='audit')&&id==='b')revoked=true;return !(active&&revoked&&(action==='read'||action==='audit')&&id==='a');},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await store.initialize();for(const id of ['a','b'])await store.put(actor,scope,id,{format:'semantic-v1',modelId:'model',text:'shared term',vector:[1,0]},{expectedRevision:null,expiresAt:500,provenance});
-  for(const mode of ['list','text','audit']){revoked=false;active=true;const result=mode==='list'?store.list(actor,scope):mode==='text'?store.searchSemanticText(actor,scope,'shared','model'):store.auditHistory(actor,scope);await assert.rejects(result,/access denied/,mode);active=false;}
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL rejects a page when an earlier record permission is revoked mid-read', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_policy_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let active = false,
+    revoked = false;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const store = new PostgresAgentMemory({
+      enabled: true,
+      audit: true,
+      textIndex: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => 100,
+      authorize: (_actor, _scope, action, id) => {
+        if (active && (action === 'read' || action === 'audit') && id === 'b') revoked = true;
+        return !(active && revoked && (action === 'read' || action === 'audit') && id === 'a');
+      },
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool)
+    });
+    await store.initialize();
+    for (const id of ['a', 'b'])
+      await store.put(actor, scope, id, { format: 'semantic-v1', modelId: 'model', text: 'shared term', vector: [1, 0] }, { expectedRevision: null, expiresAt: 500, provenance });
+    for (const mode of ['list', 'text', 'audit']) {
+      revoked = false;
+      active = true;
+      const result = mode === 'list' ? store.list(actor, scope) : mode === 'text' ? store.searchSemanticText(actor, scope, 'shared', 'model') : store.auditHistory(actor, scope);
+      await assert.rejects(result, /access denied/, mode);
+      active = false;
+    }
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-
-test('indexed comparison rechecks exact hits after later indexed reads',async()=>{
- let revoke=false;const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,vectorIndex:{modelId:'model',dimensions:2},authorize:(_actor,_scope,action,id)=>!(action==='read'&&id==='exact'&&revoke),clock:()=>100,query:async(sql,args)=>{if(sql.startsWith('SELECT memory_id,revision,expires_at,deleted'))return {rows:args[5].map(id=>({memory_id:id,revision:1,expires_at:500,deleted:false}))};throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')}}),record=id=>({id,revision:1,value:{format:'semantic-v1',modelId:'model',text:id,vector:[1,0]},provenance,expiresAt:500});
- store.searchSemanticVector=async()=>[{record:record('indexed'),score:1}];store.list=async()=>({items:[record('exact')]});store.get=async(_actor,_scope,id)=>{if(id==='indexed')revoke=true;return record(id);};const semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]});await assert.rejects(semantic.compareIndexed(actor,scope,'query'),/access denied/);
+test('indexed comparison rechecks exact hits after later indexed reads', async () => {
+  let revoke = false;
+  const store = new PostgresAgentMemory({
+      enabled: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      vectorIndex: { modelId: 'model', dimensions: 2 },
+      authorize: (_actor, _scope, action, id) => !(action === 'read' && id === 'exact' && revoke),
+      clock: () => 100,
+      query: async (sql, args) => {
+        if (sql.startsWith('SELECT memory_id,revision,expires_at,deleted')) return { rows: args[5].map(id => ({ memory_id: id, revision: 1, expires_at: 500, deleted: false })) };
+        throw Error('unexpected query');
+      },
+      transaction: async () => {
+        throw Error('unexpected transaction');
+      }
+    }),
+    record = id => ({ id, revision: 1, value: { format: 'semantic-v1', modelId: 'model', text: id, vector: [1, 0] }, provenance, expiresAt: 500 });
+  store.searchSemanticVector = async () => [{ record: record('indexed'), score: 1 }];
+  store.list = async () => ({ items: [record('exact')] });
+  store.get = async (_actor, _scope, id) => {
+    if (id === 'indexed') revoke = true;
+    return record(id);
+  };
+  const semantic = new AgentSemanticMemory(store, { modelId: 'model', dimensions: 2, embed: async () => [1, 0] });
+  await assert.rejects(semantic.compareIndexed(actor, scope, 'query'), /access denied/);
 });
 
-
-test('PostgreSQL rejects records changed during final authorization',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- for(const mode of ['get','list','text'])for(const change of ['update','delete','expire']){
-  const schema='app_mixer_stale_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let active=false,modified=false,checks=0,now=100;
-  try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,textIndex:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:async(_actor,_scope,action,id)=>{if(active&&!modified&&action==='read'&&id==='a'&&++checks===(mode==='get'?3:4)){modified=true;if(change==='expire')now=500;else if(change==='delete')await pool.query("UPDATE app_mixer_agent_memories SET deleted=TRUE,revision=revision+1 WHERE memory_id='a'");else await pool.query("UPDATE app_mixer_agent_memories SET revision=revision+1 WHERE memory_id='a'");}return true;},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await store.initialize();await store.put(actor,scope,'a',{format:'semantic-v1',modelId:'model',text:'shared term',vector:[1,0]},{expectedRevision:null,expiresAt:500,provenance});active=true;const result=mode==='get'?store.get(actor,scope,'a'):mode==='list'?store.list(actor,scope):store.searchSemanticText(actor,scope,'shared','model');await assert.rejects(result,/Memory changed during read/,`${mode} ${change}`);assert.equal(modified,true);
-  }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
- }
+test('PostgreSQL rejects records changed during final authorization', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  for (const mode of ['get', 'list', 'text'])
+    for (const change of ['update', 'delete', 'expire']) {
+      const schema = 'app_mixer_stale_' + randomUUID().replaceAll('-', ''),
+        url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+        admin = new pg.Pool({ connectionString: url }),
+        pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+      let active = false,
+        modified = false,
+        checks = 0,
+        now = 100;
+      try {
+        await admin.query(`CREATE SCHEMA "${schema}"`);
+        const store = new PostgresAgentMemory({
+          enabled: true,
+          textIndex: true,
+          maxEntries: 10,
+          maxTtlMs: 1000,
+          clock: () => now,
+          authorize: async (_actor, _scope, action, id) => {
+            if (active && !modified && action === 'read' && id === 'a' && ++checks === (mode === 'get' ? 3 : 4)) {
+              modified = true;
+              if (change === 'expire') now = 500;
+              else if (change === 'delete') await pool.query("UPDATE app_mixer_agent_memories SET deleted=TRUE,revision=revision+1 WHERE memory_id='a'");
+              else await pool.query("UPDATE app_mixer_agent_memories SET revision=revision+1 WHERE memory_id='a'");
+            }
+            return true;
+          },
+          query: (sql, args) => pool.query(sql, args),
+          transaction: transaction(pool)
+        });
+        await store.initialize();
+        await store.put(actor, scope, 'a', { format: 'semantic-v1', modelId: 'model', text: 'shared term', vector: [1, 0] }, { expectedRevision: null, expiresAt: 500, provenance });
+        active = true;
+        const result = mode === 'get' ? store.get(actor, scope, 'a') : mode === 'list' ? store.list(actor, scope) : store.searchSemanticText(actor, scope, 'shared', 'model');
+        await assert.rejects(result, /Memory changed during read/, `${mode} ${change}`);
+        assert.equal(modified, true);
+      } finally {
+        await pool.end();
+        await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+        await admin.end();
+      }
+    }
 });
 
-
-test('PostgreSQL semantic results detect an earlier hit changed during final checks',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_semantic_stale_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let active=false,changed=false,bReads=0;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresAgentMemory({enabled:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:async(_actor,_scope,action,id)=>{if(active&&!changed&&action==='read'&&id==='b'&&++bReads===8){changed=true;await pool.query("UPDATE app_mixer_agent_memories SET revision=revision+1 WHERE memory_id='a'");}return true;},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)}),semantic=new AgentSemanticMemory(store,{modelId:'model',dimensions:2,embed:async()=>[1,0]});await store.initialize();for(const id of ['a','b'])await semantic.put(actor,scope,id,`shared ${id}`,{expectedRevision:null,expiresAt:500,provenance});active=true;await assert.rejects(semantic.search(actor,scope,'shared',2),/Memory changed during read/);assert.equal(changed,true);
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL semantic results detect an earlier hit changed during final checks', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_semantic_stale_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let active = false,
+    changed = false,
+    bReads = 0;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const store = new PostgresAgentMemory({
+        enabled: true,
+        maxEntries: 10,
+        maxTtlMs: 1000,
+        clock: () => 100,
+        authorize: async (_actor, _scope, action, id) => {
+          if (active && !changed && action === 'read' && id === 'b' && ++bReads === 8) {
+            changed = true;
+            await pool.query("UPDATE app_mixer_agent_memories SET revision=revision+1 WHERE memory_id='a'");
+          }
+          return true;
+        },
+        query: (sql, args) => pool.query(sql, args),
+        transaction: transaction(pool)
+      }),
+      semantic = new AgentSemanticMemory(store, { modelId: 'model', dimensions: 2, embed: async () => [1, 0] });
+    await store.initialize();
+    for (const id of ['a', 'b']) await semantic.put(actor, scope, id, `shared ${id}`, { expectedRevision: null, expiresAt: 500, provenance });
+    active = true;
+    await assert.rejects(semantic.search(actor, scope, 'shared', 2), /Memory changed during read/);
+    assert.equal(changed, true);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-
-test('PostgreSQL scope erasure rolls back on cancellation before commit',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- for(const phase of ['authorization','locked-authorization','update','audit']){
-  const schema='app_mixer_erase_cancel_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release,entered,block=false,checks=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),controller=new AbortController();
-  try{
-   await admin.query(`CREATE SCHEMA "${schema}"`);
-   const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:async(_actor,_scope,action)=>{if(block&&action==='erase'&&++checks===(phase==='authorization'?1:phase==='locked-authorization'?2:0)){entered();await gate;}return true;},query:(sql,args)=>pool.query(sql,args),transaction:async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation(async(sql,args)=>{const result=await client.query(sql,args);if(block&&((phase==='update'&&sql.startsWith('UPDATE app_mixer_agent_memories'))||(phase==='audit'&&sql.startsWith('INSERT INTO app_mixer_agent_memory_audit')))){entered();await gate;}return result;});await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}});
-   await memory.initialize();const other={...scope,owner:{kind:'user',id:'other'}};await memory.put(actor,scope,'note','private',{expectedRevision:null,expiresAt:500,provenance});await memory.put(actor,other,'note','keep',{expectedRevision:null,expiresAt:500,provenance});
-   await assert.rejects(memory.eraseScope(actor,scope,AbortSignal.abort()),/cancelled/);block=true;const pending=memory.eraseScope(actor,scope,controller.signal);await ready;controller.abort();block=false;release();await assert.rejects(pending,/cancelled/);
-   assert.equal((await memory.get(actor,scope,'note')).value,'private');assert.equal((await memory.get(actor,other,'note')).value,'keep');assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(event=>event.action),['write']);
-   assert.equal(await memory.eraseScope(actor,scope),1);assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(event=>event.action),['write','erase']);assert.equal((await memory.get(actor,other,'note')).value,'keep');
-  }finally{release();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
- }
+test('PostgreSQL scope erasure rolls back on cancellation before commit', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  for (const phase of ['authorization', 'locked-authorization', 'update', 'audit']) {
+    const schema = 'app_mixer_erase_cancel_' + randomUUID().replaceAll('-', ''),
+      url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+      admin = new pg.Pool({ connectionString: url }),
+      pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+    let release,
+      entered,
+      block = false,
+      checks = 0;
+    const gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve)),
+      controller = new AbortController();
+    try {
+      await admin.query(`CREATE SCHEMA "${schema}"`);
+      const memory = new PostgresAgentMemory({
+        enabled: true,
+        audit: true,
+        maxEntries: 10,
+        maxTtlMs: 1000,
+        clock: () => 100,
+        authorize: async (_actor, _scope, action) => {
+          if (block && action === 'erase' && ++checks === (phase === 'authorization' ? 1 : phase === 'locked-authorization' ? 2 : 0)) {
+            entered();
+            await gate;
+          }
+          return true;
+        },
+        query: (sql, args) => pool.query(sql, args),
+        transaction: async operation => {
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            const value = await operation(async (sql, args) => {
+              const result = await client.query(sql, args);
+              if (block && ((phase === 'update' && sql.startsWith('UPDATE app_mixer_agent_memories')) || (phase === 'audit' && sql.startsWith('INSERT INTO app_mixer_agent_memory_audit')))) {
+                entered();
+                await gate;
+              }
+              return result;
+            });
+            await client.query('COMMIT');
+            return value;
+          } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+          } finally {
+            client.release();
+          }
+        }
+      });
+      await memory.initialize();
+      const other = { ...scope, owner: { kind: 'user', id: 'other' } };
+      await memory.put(actor, scope, 'note', 'private', { expectedRevision: null, expiresAt: 500, provenance });
+      await memory.put(actor, other, 'note', 'keep', { expectedRevision: null, expiresAt: 500, provenance });
+      await assert.rejects(memory.eraseScope(actor, scope, AbortSignal.abort()), /cancelled/);
+      block = true;
+      const pending = memory.eraseScope(actor, scope, controller.signal);
+      await ready;
+      controller.abort();
+      block = false;
+      release();
+      await assert.rejects(pending, /cancelled/);
+      assert.equal((await memory.get(actor, scope, 'note')).value, 'private');
+      assert.equal((await memory.get(actor, other, 'note')).value, 'keep');
+      assert.deepEqual(
+        (await memory.auditHistory(actor, scope)).items.map(event => event.action),
+        ['write']
+      );
+      assert.equal(await memory.eraseScope(actor, scope), 1);
+      assert.deepEqual(
+        (await memory.auditHistory(actor, scope)).items.map(event => event.action),
+        ['write', 'erase']
+      );
+      assert.equal((await memory.get(actor, other, 'note')).value, 'keep');
+    } finally {
+      release();
+      await pool.end();
+      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await admin.end();
+    }
+  }
 });

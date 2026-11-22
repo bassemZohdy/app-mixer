@@ -17,8 +17,8 @@ spec:
   commonName: app-mixer-ca
   secretName: app-mixer-ca
   duration: 87600h
-  privateKey: {algorithm: ECDSA, size: 256}
-  issuerRef: {name: app-mixer-selfsigned, kind: Issuer}
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: app-mixer-selfsigned, kind: Issuer }
 ---
 apiVersion: cert-manager.io/v1
 kind: Issuer
@@ -43,5 +43,5 @@ spec:
     - app-mixer-data-plane.app-mixer-test.svc
     - app-mixer-data-plane.app-mixer-test.svc.cluster.local
   # A new key with every issuance, so a renewal never reuses a key that may have leaked.
-  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
-  issuerRef: {name: app-mixer-ca, kind: Issuer}
+  privateKey: { algorithm: ECDSA, size: 256, rotationPolicy: Always }
+  issuerRef: { name: app-mixer-ca, kind: Issuer }

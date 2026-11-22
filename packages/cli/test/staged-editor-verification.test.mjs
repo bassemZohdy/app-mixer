@@ -1,82 +1,878 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {spawnSync} from 'node:child_process';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
-import {JSDOM} from 'jsdom';
-import {createProject} from '../dist/index.js';
-import {CapabilityRegistry,SqliteStagedOperations,registerStagedCapability,registerStagedVerificationCapability,registerStagedRecoveryCapability,registerStagedRecoveryEvidenceCapability,registerStagedEvidenceCapability,registerStagedListCapability,registerStagedSummaryCapability,createCapabilityServer} from '../../core/dist/index.js';
-import {STAGED_EDITOR_PREVIEW} from '../../core/dist/staged-editor-preview.js';
-const wait=async predicate=>{for(let n=0;n<200&&!predicate();n++)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate());};
+import { mkdtemp, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { createProject } from '../dist/index.js';
+import {
+  CapabilityRegistry,
+  SqliteStagedOperations,
+  registerStagedCapability,
+  registerStagedVerificationCapability,
+  registerStagedRecoveryCapability,
+  registerStagedRecoveryEvidenceCapability,
+  registerStagedEvidenceCapability,
+  registerStagedListCapability,
+  registerStagedSummaryCapability,
+  createCapabilityServer
+} from '../../core/dist/index.js';
+import { STAGED_EDITOR_PREVIEW } from '../../core/dist/staged-editor-preview.js';
+const wait = async predicate => {
+  for (let n = 0; n < 200 && !predicate(); n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(predicate());
+};
 
-test('staged editor verifies uncertainty through an authenticated host capability',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-verify-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),store=new SqliteStagedOperations(':memory:'),outer=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let dom,server,submissions=0,outcome='unknown';
- try{external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{submissions++;throw Error('lost');}});for(const operation of ['stage','get','submit'])registerStagedCapability(outer,external,store,{candidate:{operationId:'pay.'+operation,method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',operation,authorize:()=>true,validate:()=>true});registerStagedVerificationCapability(outer,store,{candidate:{operationId:'pay.verify',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:(_actor,_operation,reference)=>reference==='case-1',verify:()=>outcome});server=createCapabilityServer(outer,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const calls=[];globalThis.fetch=(url,options)=>{const input=JSON.parse(options.body);calls.push([url,input]);return originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input})});};
-  const options={stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',verifyOperation:'pay.verify'};for(const factory of [runtime.createStagedEditor,preview.createStagedEditor])assert.throws(()=>factory({...options,verifyOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const find=text=>[...root.querySelectorAll('button')].find(item=>item.textContent===text),status=root.querySelector('[role=status]'),reference=[...root.querySelectorAll('label')].find(item=>item.textContent==='Evidence reference').querySelector('input'),stage=find('Stage'),submit=find('Submit'),check=find('Check status'),verify=find('Verify outcome');assert.equal(reference.disabled,true);assert.equal(verify.disabled,true);stage.click();await wait(()=>status.textContent==='Operation staged.'&&!stage.disabled);const id=root.querySelector('label input').value;submit.click();await wait(()=>status.textContent.includes('outcome may be uncertain')&&!check.disabled);check.click();await wait(()=>status.textContent==='Operation uncertain.'&&!check.disabled);assert.equal(reference.disabled,false);reference.value='case-1';reference.dispatchEvent(new dom.window.Event('input'));verify.click();await wait(()=>status.textContent==='Outcome remains uncertain.'&&!verify.disabled);assert.deepEqual(calls.at(-1)[1],{id,reference:'case-1'});assert.equal(submit.disabled,true);assert.equal(store.listReconciliationEvidence({tenantId:'tenant',applicationId:'app'},id).length,0);
-  outcome='not_applied';verify.click();await wait(()=>status.textContent.includes('not applied')&&!submit.disabled);assert.equal(submissions,1);submit.click();await wait(()=>status.textContent.includes('outcome may be uncertain')&&!check.disabled);check.click();await wait(()=>status.textContent==='Operation uncertain.'&&!check.disabled);outcome='applied';verify.click();await wait(()=>status.textContent==='Operation verified as succeeded.'&&!check.disabled);assert.equal(submit.disabled,true);assert.equal(submissions,2);assert.deepEqual(store.listReconciliationEvidence({tenantId:'tenant',applicationId:'app'},id).map(x=>[x.principalId,x.outcome]),[['operator','not_applied'],['operator','applied']]);
-  const inert=preview.createStagedEditor(options).render({},null,null,dom.window.document);assert.ok([...inert.querySelectorAll('button,input,textarea')].every(item=>item.disabled));assert.ok([...inert.querySelectorAll('button')].some(item=>item.textContent==='Verify outcome'));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));store.close();await rm(dir,{recursive:true,force:true});}
+test('staged editor verifies uncertainty through an authenticated host capability', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-verify-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),
+    store = new SqliteStagedOperations(':memory:'),
+    outer = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let dom,
+    server,
+    submissions = 0,
+    outcome = 'unknown';
+  try {
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/pay' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: () => {
+          submissions++;
+          throw Error('lost');
+        }
+      }
+    );
+    for (const operation of ['stage', 'get', 'submit'])
+      registerStagedCapability(outer, external, store, {
+        candidate: { operationId: 'pay.' + operation, method: 'POST', path: '/' },
+        applicationId: 'app',
+        externalOperationId: 'pay',
+        operation,
+        authorize: () => true,
+        validate: () => true
+      });
+    registerStagedVerificationCapability(outer, store, {
+      candidate: { operationId: 'pay.verify', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: (_actor, _operation, reference) => reference === 'case-1',
+      verify: () => outcome
+    });
+    server = createCapabilityServer(
+      outer,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const calls = [];
+    globalThis.fetch = (url, options) => {
+      const input = JSON.parse(options.body);
+      calls.push([url, input]);
+      return originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    };
+    const options = { stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', verifyOperation: 'pay.verify' };
+    for (const factory of [runtime.createStagedEditor, preview.createStagedEditor]) assert.throws(() => factory({ ...options, verifyOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime.createStagedEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const find = text => [...root.querySelectorAll('button')].find(item => item.textContent === text),
+      status = root.querySelector('[role=status]'),
+      reference = [...root.querySelectorAll('label')].find(item => item.textContent === 'Evidence reference').querySelector('input'),
+      stage = find('Stage'),
+      submit = find('Submit'),
+      check = find('Check status'),
+      verify = find('Verify outcome');
+    assert.equal(reference.disabled, true);
+    assert.equal(verify.disabled, true);
+    stage.click();
+    await wait(() => status.textContent === 'Operation staged.' && !stage.disabled);
+    const id = root.querySelector('label input').value;
+    submit.click();
+    await wait(() => status.textContent.includes('outcome may be uncertain') && !check.disabled);
+    check.click();
+    await wait(() => status.textContent === 'Operation uncertain.' && !check.disabled);
+    assert.equal(reference.disabled, false);
+    reference.value = 'case-1';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    verify.click();
+    await wait(() => status.textContent === 'Outcome remains uncertain.' && !verify.disabled);
+    assert.deepEqual(calls.at(-1)[1], { id, reference: 'case-1' });
+    assert.equal(submit.disabled, true);
+    assert.equal(store.listReconciliationEvidence({ tenantId: 'tenant', applicationId: 'app' }, id).length, 0);
+    outcome = 'not_applied';
+    verify.click();
+    await wait(() => status.textContent.includes('not applied') && !submit.disabled);
+    assert.equal(submissions, 1);
+    submit.click();
+    await wait(() => status.textContent.includes('outcome may be uncertain') && !check.disabled);
+    check.click();
+    await wait(() => status.textContent === 'Operation uncertain.' && !check.disabled);
+    outcome = 'applied';
+    verify.click();
+    await wait(() => status.textContent === 'Operation verified as succeeded.' && !check.disabled);
+    assert.equal(submit.disabled, true);
+    assert.equal(submissions, 2);
+    assert.deepEqual(
+      store.listReconciliationEvidence({ tenantId: 'tenant', applicationId: 'app' }, id).map(x => [x.principalId, x.outcome]),
+      [
+        ['operator', 'not_applied'],
+        ['operator', 'applied']
+      ]
+    );
+    const inert = preview.createStagedEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...inert.querySelectorAll('button,input,textarea')].every(item => item.disabled));
+    assert.ok([...inert.querySelectorAll('button')].some(item => item.textContent === 'Verify outcome'));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('a lost verification response requires a status check before further action',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-error-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),originalFetch=globalThis.fetch;let dom,checks=0,verifications=0;
- try{globalThis.fetch=async(url)=>{if(String(url).endsWith('pay.get')){checks++;return {ok:true,json:async()=>({result:{id:'op',status:checks===1?'uncertain':'succeeded'}})};}if(String(url).endsWith('pay.verify')){verifications++;throw Error('response lost');}throw Error('unexpected request');};dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor({stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',verifyOperation:'pay.verify'}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const label=text=>[...root.querySelectorAll('label')].find(item=>item.textContent===text).querySelector('input'),button=text=>[...root.querySelectorAll('button')].find(item=>item.textContent===text),id=label('Staged operation ID'),reference=label('Evidence reference'),status=root.querySelector('[role=status]');id.value='op';id.dispatchEvent(new dom.window.Event('input'));button('Check status').click();await wait(()=>status.textContent==='Operation uncertain.'&&!reference.disabled);reference.value='case';reference.dispatchEvent(new dom.window.Event('input'));button('Verify outcome').click();await wait(()=>status.textContent.includes('Verification could not be completed'));assert.equal(button('Verify outcome').disabled,true);assert.equal(button('Submit').disabled,true);assert.equal(verifications,1);button('Check status').click();await wait(()=>status.textContent==='Operation succeeded.');assert.equal(button('Submit').disabled,true);assert.equal(button('Verify outcome').disabled,true);assert.equal(verifications,1);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('a lost verification response requires a status check before further action', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-error-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    originalFetch = globalThis.fetch;
+  let dom,
+    checks = 0,
+    verifications = 0;
+  try {
+    globalThis.fetch = async url => {
+      if (String(url).endsWith('pay.get')) {
+        checks++;
+        return { ok: true, json: async () => ({ result: { id: 'op', status: checks === 1 ? 'uncertain' : 'succeeded' } }) };
+      }
+      if (String(url).endsWith('pay.verify')) {
+        verifications++;
+        throw Error('response lost');
+      }
+      throw Error('unexpected request');
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime
+      .createStagedEditor({ stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', verifyOperation: 'pay.verify' })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const label = text => [...root.querySelectorAll('label')].find(item => item.textContent === text).querySelector('input'),
+      button = text => [...root.querySelectorAll('button')].find(item => item.textContent === text),
+      id = label('Staged operation ID'),
+      reference = label('Evidence reference'),
+      status = root.querySelector('[role=status]');
+    id.value = 'op';
+    id.dispatchEvent(new dom.window.Event('input'));
+    button('Check status').click();
+    await wait(() => status.textContent === 'Operation uncertain.' && !reference.disabled);
+    reference.value = 'case';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Verify outcome').click();
+    await wait(() => status.textContent.includes('Verification could not be completed'));
+    assert.equal(button('Verify outcome').disabled, true);
+    assert.equal(button('Submit').disabled, true);
+    assert.equal(verifications, 1);
+    button('Check status').click();
+    await wait(() => status.textContent === 'Operation succeeded.');
+    assert.equal(button('Submit').disabled, true);
+    assert.equal(button('Verify outcome').disabled, true);
+    assert.equal(verifications, 1);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('staged editor pages authorized evidence and renders references as text',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-evidence-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),store=new SqliteStagedOperations(':memory:'),outer=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let dom,server;
- try{const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'operator',origin:'ui'};external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{throw Error('lost')}});const op=store.stage(scope,'pay',{secret:'private'});for(let i=0;i<21;i++){await assert.rejects(store.submit(scope,op.id,external,actor),/lost/);store.reconcileWithEvidence(scope,op.id,i===20?'applied':'not_applied',{principalId:'operator',reference:i===0?'<img src=x>':'case-'+i});}registerStagedCapability(outer,external,store,{candidate:{operationId:'pay.get',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',operation:'get',authorize:()=>true,validate:()=>true});registerStagedEvidenceCapability(outer,store,{candidate:{operationId:'pay.evidence',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true});server=createCapabilityServer(outer,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,options)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});
-  const options={stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',evidenceOperation:'pay.evidence'};for(const factory of [runtime.createStagedEditor,preview.createStagedEditor])assert.throws(()=>factory({...options,evidenceOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=text=>[...root.querySelectorAll('button')].find(item=>item.textContent===text),id=root.querySelector('label input'),statuses=root.querySelectorAll('[role=status]');assert.equal(button('View evidence').disabled,true);id.value=op.id;id.dispatchEvent(new dom.window.Event('input'));button('Check status').click();await wait(()=>statuses[0].textContent==='Operation succeeded.'&&!button('View evidence').disabled);button('View evidence').click();await wait(()=>root.querySelectorAll('li').length===20&&!button('Next evidence page').disabled);assert.match(root.querySelector('li').textContent,/<img src=x>/);assert.equal(root.querySelector('img'),null);assert.equal(root.textContent.includes('private'),false);button('Next evidence page').click();await wait(()=>root.querySelectorAll('li').length===1&&root.querySelector('li').textContent.includes('case-20'));assert.equal(button('Next evidence page').disabled,true);id.value='another';id.dispatchEvent(new dom.window.Event('input'));assert.equal(root.querySelectorAll('li').length,0);assert.equal(button('View evidence').disabled,true);const inert=preview.createStagedEditor(options).render({},null,null,dom.window.document);assert.ok([...inert.querySelectorAll('button,input,textarea')].every(item=>item.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));store.close();await rm(dir,{recursive:true,force:true});}
+test('staged editor pages authorized evidence and renders references as text', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-evidence-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),
+    store = new SqliteStagedOperations(':memory:'),
+    outer = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let dom, server;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' },
+      actor = { tenantId: 'tenant', principalId: 'operator', origin: 'ui' };
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/pay' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: () => {
+          throw Error('lost');
+        }
+      }
+    );
+    const op = store.stage(scope, 'pay', { secret: 'private' });
+    for (let i = 0; i < 21; i++) {
+      await assert.rejects(store.submit(scope, op.id, external, actor), /lost/);
+      store.reconcileWithEvidence(scope, op.id, i === 20 ? 'applied' : 'not_applied', { principalId: 'operator', reference: i === 0 ? '<img src=x>' : 'case-' + i });
+    }
+    registerStagedCapability(outer, external, store, {
+      candidate: { operationId: 'pay.get', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      operation: 'get',
+      authorize: () => true,
+      validate: () => true
+    });
+    registerStagedEvidenceCapability(outer, store, {
+      candidate: { operationId: 'pay.evidence', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: () => true
+    });
+    server = createCapabilityServer(
+      outer,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, options) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    const options = { stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', evidenceOperation: 'pay.evidence' };
+    for (const factory of [runtime.createStagedEditor, preview.createStagedEditor]) assert.throws(() => factory({ ...options, evidenceOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime.createStagedEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = text => [...root.querySelectorAll('button')].find(item => item.textContent === text),
+      id = root.querySelector('label input'),
+      statuses = root.querySelectorAll('[role=status]');
+    assert.equal(button('View evidence').disabled, true);
+    id.value = op.id;
+    id.dispatchEvent(new dom.window.Event('input'));
+    button('Check status').click();
+    await wait(() => statuses[0].textContent === 'Operation succeeded.' && !button('View evidence').disabled);
+    button('View evidence').click();
+    await wait(() => root.querySelectorAll('li').length === 20 && !button('Next evidence page').disabled);
+    assert.match(root.querySelector('li').textContent, /<img src=x>/);
+    assert.equal(root.querySelector('img'), null);
+    assert.equal(root.textContent.includes('private'), false);
+    button('Next evidence page').click();
+    await wait(() => root.querySelectorAll('li').length === 1 && root.querySelector('li').textContent.includes('case-20'));
+    assert.equal(button('Next evidence page').disabled, true);
+    id.value = 'another';
+    id.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(root.querySelectorAll('li').length, 0);
+    assert.equal(button('View evidence').disabled, true);
+    const inert = preview.createStagedEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...inert.querySelectorAll('button,input,textarea')].every(item => item.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('evidence viewer rejects malformed pages and discards a response for an old operation',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-evidence-stale-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),originalFetch=globalThis.fetch;let dom,resolvePending,evidenceCalls=0;
- try{globalThis.fetch=async(url)=>{if(String(url).endsWith('pay.get'))return {ok:true,json:async()=>({result:{id:'op',status:'uncertain'}})};if(String(url).endsWith('pay.evidence')){evidenceCalls++;if(evidenceCalls===1)return {ok:true,json:async()=>({result:{items:[{revision:1,principalId:'operator',reference:'bad',outcome:'fake',recordedAt:0}]}})};return new Promise(resolve=>resolvePending=()=>resolve({ok:true,json:async()=>({result:{items:[{revision:1,principalId:'operator',reference:'old-operation',outcome:'applied',recordedAt:0}]}})}));}throw Error('unexpected request');};dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor({stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',evidenceOperation:'pay.evidence'}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=text=>[...root.querySelectorAll('button')].find(item=>item.textContent===text),id=root.querySelector('label input'),status=root.querySelectorAll('[role=status]');id.value='op';id.dispatchEvent(new dom.window.Event('input'));button('Check status').click();await wait(()=>status[0].textContent==='Operation uncertain.'&&!button('View evidence').disabled);button('View evidence').click();await wait(()=>status[1].textContent==='Could not load evidence.');assert.equal(root.querySelectorAll('li').length,0);button('View evidence').click();await wait(()=>typeof resolvePending==='function');id.value='different';id.dispatchEvent(new dom.window.Event('input'));resolvePending();await wait(()=>!button('Check status').disabled);assert.equal(root.querySelectorAll('li').length,0);assert.equal(root.textContent.includes('old-operation'),false);assert.equal(button('View evidence').disabled,true);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('evidence viewer rejects malformed pages and discards a response for an old operation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-evidence-stale-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    originalFetch = globalThis.fetch;
+  let dom,
+    resolvePending,
+    evidenceCalls = 0;
+  try {
+    globalThis.fetch = async url => {
+      if (String(url).endsWith('pay.get')) return { ok: true, json: async () => ({ result: { id: 'op', status: 'uncertain' } }) };
+      if (String(url).endsWith('pay.evidence')) {
+        evidenceCalls++;
+        if (evidenceCalls === 1) return { ok: true, json: async () => ({ result: { items: [{ revision: 1, principalId: 'operator', reference: 'bad', outcome: 'fake', recordedAt: 0 }] } }) };
+        return new Promise(
+          resolve =>
+            (resolvePending = () =>
+              resolve({ ok: true, json: async () => ({ result: { items: [{ revision: 1, principalId: 'operator', reference: 'old-operation', outcome: 'applied', recordedAt: 0 }] } }) }))
+        );
+      }
+      throw Error('unexpected request');
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime
+      .createStagedEditor({ stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', evidenceOperation: 'pay.evidence' })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = text => [...root.querySelectorAll('button')].find(item => item.textContent === text),
+      id = root.querySelector('label input'),
+      status = root.querySelectorAll('[role=status]');
+    id.value = 'op';
+    id.dispatchEvent(new dom.window.Event('input'));
+    button('Check status').click();
+    await wait(() => status[0].textContent === 'Operation uncertain.' && !button('View evidence').disabled);
+    button('View evidence').click();
+    await wait(() => status[1].textContent === 'Could not load evidence.');
+    assert.equal(root.querySelectorAll('li').length, 0);
+    button('View evidence').click();
+    await wait(() => typeof resolvePending === 'function');
+    id.value = 'different';
+    id.dispatchEvent(new dom.window.Event('input'));
+    resolvePending();
+    await wait(() => !button('Check status').disabled);
+    assert.equal(root.querySelectorAll('li').length, 0);
+    assert.equal(root.textContent.includes('old-operation'), false);
+    assert.equal(button('View evidence').disabled, true);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('staged editor browses authorized operations and checks a selected ID without submitting',async()=>{
- const {randomBytes}=await import('node:crypto'),dir=await mkdtemp(join(tmpdir(),'staged-editor-list-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),store=new SqliteStagedOperations(':memory:'),outer=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let dom,server,submissions=0;
- try{const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'operator',origin:'ui'},operations=[];external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:()=>{submissions++;throw Error('lost')}});for(let i=0;i<22;i++){const op=store.stage(scope,'pay',{secret:'private'});await assert.rejects(store.submit(scope,op.id,external,actor),/lost/);operations.push(op);}operations.sort((a,b)=>a.id.localeCompare(b.id));const hidden=new Set(operations.slice(0,20).map(item=>item.id));registerStagedCapability(outer,external,store,{candidate:{operationId:'pay.get',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',operation:'get',authorize:()=>true,validate:()=>true,authorizeInput:(_actor,input)=>!hidden.has(input.id)});registerStagedListCapability(outer,store,{candidate:{operationId:'pay.list',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',cursorKey:randomBytes(32),authorize:()=>true,authorizeOperation:(_actor,op)=>!hidden.has(op.id)});server=createCapabilityServer(outer,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,options)=>originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});
-  const options={stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',listOperation:'pay.list'};for(const factory of [runtime.createStagedEditor,preview.createStagedEditor])assert.throws(()=>factory({...options,listOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=text=>[...root.querySelectorAll('button')].find(item=>item.textContent===text),status=root.querySelectorAll('[role=status]'),id=root.querySelector('label input');button('Browse operations').click();await wait(()=>status[1].textContent.includes('No visible operations')&&!button('Next operations page').disabled);assert.equal(root.querySelectorAll('li').length,0);button('Next operations page').click();await wait(()=>root.querySelectorAll('li button').length===2);assert.deepEqual([...root.querySelectorAll('li button')].map(item=>item.textContent),operations.slice(20).map(item=>item.id));root.querySelector('li button').click();await wait(()=>status[0].textContent==='Operation uncertain.');assert.equal(id.value,operations[20].id);assert.equal(button('Submit').disabled,true);assert.equal(submissions,22);const select=root.querySelector('select');select.value='staged';select.dispatchEvent(new dom.window.Event('change'));assert.equal(root.querySelectorAll('li').length,0);assert.equal(button('Next operations page').disabled,true);const inert=preview.createStagedEditor(options).render({},null,null,dom.window.document);assert.ok([...inert.querySelectorAll('button,input,textarea,select')].every(item=>item.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));store.close();await rm(dir,{recursive:true,force:true});}
+test('staged editor browses authorized operations and checks a selected ID without submitting', async () => {
+  const { randomBytes } = await import('node:crypto'),
+    dir = await mkdtemp(join(tmpdir(), 'staged-editor-list-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),
+    store = new SqliteStagedOperations(':memory:'),
+    outer = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let dom,
+    server,
+    submissions = 0;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' },
+      actor = { tenantId: 'tenant', principalId: 'operator', origin: 'ui' },
+      operations = [];
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/pay' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: () => {
+          submissions++;
+          throw Error('lost');
+        }
+      }
+    );
+    for (let i = 0; i < 22; i++) {
+      const op = store.stage(scope, 'pay', { secret: 'private' });
+      await assert.rejects(store.submit(scope, op.id, external, actor), /lost/);
+      operations.push(op);
+    }
+    operations.sort((a, b) => a.id.localeCompare(b.id));
+    const hidden = new Set(operations.slice(0, 20).map(item => item.id));
+    registerStagedCapability(outer, external, store, {
+      candidate: { operationId: 'pay.get', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      operation: 'get',
+      authorize: () => true,
+      validate: () => true,
+      authorizeInput: (_actor, input) => !hidden.has(input.id)
+    });
+    registerStagedListCapability(outer, store, {
+      candidate: { operationId: 'pay.list', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeOperation: (_actor, op) => !hidden.has(op.id)
+    });
+    server = createCapabilityServer(
+      outer,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, options) =>
+      originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    const options = { stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', listOperation: 'pay.list' };
+    for (const factory of [runtime.createStagedEditor, preview.createStagedEditor]) assert.throws(() => factory({ ...options, listOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime.createStagedEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = text => [...root.querySelectorAll('button')].find(item => item.textContent === text),
+      status = root.querySelectorAll('[role=status]'),
+      id = root.querySelector('label input');
+    button('Browse operations').click();
+    await wait(() => status[1].textContent.includes('No visible operations') && !button('Next operations page').disabled);
+    assert.equal(root.querySelectorAll('li').length, 0);
+    button('Next operations page').click();
+    await wait(() => root.querySelectorAll('li button').length === 2);
+    assert.deepEqual(
+      [...root.querySelectorAll('li button')].map(item => item.textContent),
+      operations.slice(20).map(item => item.id)
+    );
+    root.querySelector('li button').click();
+    await wait(() => status[0].textContent === 'Operation uncertain.');
+    assert.equal(id.value, operations[20].id);
+    assert.equal(button('Submit').disabled, true);
+    assert.equal(submissions, 22);
+    const select = root.querySelector('select');
+    select.value = 'staged';
+    select.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(root.querySelectorAll('li').length, 0);
+    assert.equal(button('Next operations page').disabled, true);
+    const inert = preview.createStagedEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...inert.querySelectorAll('button,input,textarea,select')].every(item => item.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('operation browser rejects malformed and stale pages and preserves selected IDs as text',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-browse-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),originalFetch=globalThis.fetch;let dom,release,listCalls=0,selected;
- try{globalThis.fetch=async(url,options)=>{if(String(url).endsWith('pay.list')){listCalls++;if(listCalls===1)return {ok:true,json:async()=>({result:{items:[{id:'x',status:'succeeded'}]}})};if(listCalls===2)return new Promise(resolve=>release=()=>resolve({ok:true,json:async()=>({result:{items:[{id:'stale',status:'uncertain'}]}})}));return {ok:true,json:async()=>({result:{items:[{id:' <img src=x> ',status:'staged'}]}})};}if(String(url).endsWith('pay.get')){selected=JSON.parse(options.body).id;return {ok:true,json:async()=>({result:{id:selected,status:'staged'}})};}throw Error('unexpected request');};dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor({stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',listOperation:'pay.list'}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=text=>[...root.querySelectorAll('button')].find(item=>item.textContent===text),state=root.querySelector('select'),statuses=root.querySelectorAll('[role=status]');button('Browse operations').click();await wait(()=>statuses[1].textContent==='Could not browse operations.');assert.equal(root.querySelectorAll('li').length,0);button('Browse operations').click();await wait(()=>typeof release==='function');state.value='staged';state.dispatchEvent(new dom.window.Event('change'));release();await wait(()=>!button('Browse operations').disabled);assert.equal(root.textContent.includes('stale'),false);button('Browse operations').click();await wait(()=>root.querySelector('li button'));assert.equal(root.querySelector('img'),null);assert.equal(root.querySelector('li button').textContent,' <img src=x> ');root.querySelector('li button').click();await wait(()=>statuses[0].textContent==='Operation staged.');assert.equal(selected,' <img src=x> ');assert.equal(button('Submit').disabled,false);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('operation browser rejects malformed and stale pages and preserves selected IDs as text', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-browse-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    originalFetch = globalThis.fetch;
+  let dom,
+    release,
+    listCalls = 0,
+    selected;
+  try {
+    globalThis.fetch = async (url, options) => {
+      if (String(url).endsWith('pay.list')) {
+        listCalls++;
+        if (listCalls === 1) return { ok: true, json: async () => ({ result: { items: [{ id: 'x', status: 'succeeded' }] } }) };
+        if (listCalls === 2) return new Promise(resolve => (release = () => resolve({ ok: true, json: async () => ({ result: { items: [{ id: 'stale', status: 'uncertain' }] } }) })));
+        return { ok: true, json: async () => ({ result: { items: [{ id: ' <img src=x> ', status: 'staged' }] } }) };
+      }
+      if (String(url).endsWith('pay.get')) {
+        selected = JSON.parse(options.body).id;
+        return { ok: true, json: async () => ({ result: { id: selected, status: 'staged' } }) };
+      }
+      throw Error('unexpected request');
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime
+      .createStagedEditor({ stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', listOperation: 'pay.list' })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = text => [...root.querySelectorAll('button')].find(item => item.textContent === text),
+      state = root.querySelector('select'),
+      statuses = root.querySelectorAll('[role=status]');
+    button('Browse operations').click();
+    await wait(() => statuses[1].textContent === 'Could not browse operations.');
+    assert.equal(root.querySelectorAll('li').length, 0);
+    button('Browse operations').click();
+    await wait(() => typeof release === 'function');
+    state.value = 'staged';
+    state.dispatchEvent(new dom.window.Event('change'));
+    release();
+    await wait(() => !button('Browse operations').disabled);
+    assert.equal(root.textContent.includes('stale'), false);
+    button('Browse operations').click();
+    await wait(() => root.querySelector('li button'));
+    assert.equal(root.querySelector('img'), null);
+    assert.equal(root.querySelector('li button').textContent, ' <img src=x> ');
+    root.querySelector('li button').click();
+    await wait(() => statuses[0].textContent === 'Operation staged.');
+    assert.equal(selected, ' <img src=x> ');
+    assert.equal(button('Submit').disabled, false);
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('staged editor displays explicitly authorized scope-wide operation counts',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-summary-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),store=new SqliteStagedOperations(':memory:'),registry=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let dom,server,requests=0;
- try{const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'operator',origin:'ui'};external.register({operationId:'pay',method:'POST',path:'/pay'},{authorize:()=>true,validate:()=>true,execute:input=>{if(input.payload.mode==='lost')throw Error('lost');return 'ok';}});store.stage(scope,'pay',{secret:'private'});const uncertain=store.stage(scope,'pay',{mode:'lost'});await assert.rejects(store.submit(scope,uncertain.id,external,actor),/lost/);const success=store.stage(scope,'pay',{mode:'ok'});await store.submit(scope,success.id,external,actor);store.stage({...scope,tenantId:'other'},'pay',{});registerStagedSummaryCapability(registry,store,{candidate:{operationId:'pay.summary',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeAggregate:()=>true});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));globalThis.fetch=(url,options)=>{requests++;return originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});};
-  const options={stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',summaryOperation:'pay.summary'};for(const factory of [runtime.createStagedEditor,preview.createStagedEditor])assert.throws(()=>factory({...options,summaryOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=[...root.querySelectorAll('button')].find(item=>item.textContent==='View operation counts'),status=root.querySelectorAll('[role=status]');assert.match(root.textContent,/all operations in the authorized scope/);assert.equal(requests,0);button.click();await wait(()=>status[1].textContent==='Operation counts loaded.');assert.deepEqual([...root.querySelectorAll('li')].map(item=>item.textContent),['staged: 1','submitting: 0','uncertain: 1','succeeded: 1']);assert.equal(root.textContent.includes('private'),false);assert.equal(root.textContent.includes(uncertain.id),false);assert.equal(requests,1);const inert=preview.createStagedEditor(options).render({},null,null,dom.window.document);assert.ok([...inert.querySelectorAll('button,input,textarea,select')].every(item=>item.disabled));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));store.close();await rm(dir,{recursive:true,force:true});}
+test('staged editor displays explicitly authorized scope-wide operation counts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-summary-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),
+    store = new SqliteStagedOperations(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let dom,
+    server,
+    requests = 0;
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'app' },
+      actor = { tenantId: 'tenant', principalId: 'operator', origin: 'ui' };
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/pay' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: input => {
+          if (input.payload.mode === 'lost') throw Error('lost');
+          return 'ok';
+        }
+      }
+    );
+    store.stage(scope, 'pay', { secret: 'private' });
+    const uncertain = store.stage(scope, 'pay', { mode: 'lost' });
+    await assert.rejects(store.submit(scope, uncertain.id, external, actor), /lost/);
+    const success = store.stage(scope, 'pay', { mode: 'ok' });
+    await store.submit(scope, success.id, external, actor);
+    store.stage({ ...scope, tenantId: 'other' }, 'pay', {});
+    registerStagedSummaryCapability(registry, store, {
+      candidate: { operationId: 'pay.summary', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeAggregate: () => true
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, options) => {
+      requests++;
+      return originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    };
+    const options = { stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', summaryOperation: 'pay.summary' };
+    for (const factory of [runtime.createStagedEditor, preview.createStagedEditor]) assert.throws(() => factory({ ...options, summaryOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime.createStagedEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = [...root.querySelectorAll('button')].find(item => item.textContent === 'View operation counts'),
+      status = root.querySelectorAll('[role=status]');
+    assert.match(root.textContent, /all operations in the authorized scope/);
+    assert.equal(requests, 0);
+    button.click();
+    await wait(() => status[1].textContent === 'Operation counts loaded.');
+    assert.deepEqual(
+      [...root.querySelectorAll('li')].map(item => item.textContent),
+      ['staged: 1', 'submitting: 0', 'uncertain: 1', 'succeeded: 1']
+    );
+    assert.equal(root.textContent.includes('private'), false);
+    assert.equal(root.textContent.includes(uncertain.id), false);
+    assert.equal(requests, 1);
+    const inert = preview.createStagedEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...inert.querySelectorAll('button,input,textarea,select')].every(item => item.disabled));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('operation counts reject invalid data and discard stale responses',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-summary-stale-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),originalFetch=globalThis.fetch;let dom,release,calls=0;try{globalThis.fetch=async()=>{calls++;if(calls===1)return {ok:true,json:async()=>({result:{counts:{staged:-1,submitting:0,uncertain:0,succeeded:0}}})};return new Promise(resolve=>release=()=>resolve({ok:true,json:async()=>({result:{counts:{staged:1,submitting:0,uncertain:2,succeeded:0}}})}));};dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor({stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',summaryOperation:'pay.summary'}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=[...root.querySelectorAll('button')].find(item=>item.textContent==='View operation counts'),statuses=root.querySelectorAll('[role=status]'),id=root.querySelector('label input');button.click();await wait(()=>statuses[1].textContent==='Could not load operation counts.');assert.equal(root.querySelectorAll('li').length,0);button.click();await wait(()=>typeof release==='function');id.value='another';id.dispatchEvent(new dom.window.Event('input'));release();await wait(()=>!button.disabled);assert.equal(root.querySelectorAll('li').length,0);assert.equal(statuses[1].textContent,'');
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('operation counts reject invalid data and discard stale responses', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-summary-stale-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    originalFetch = globalThis.fetch;
+  let dom,
+    release,
+    calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls === 1) return { ok: true, json: async () => ({ result: { counts: { staged: -1, submitting: 0, uncertain: 0, succeeded: 0 } } }) };
+      return new Promise(resolve => (release = () => resolve({ ok: true, json: async () => ({ result: { counts: { staged: 1, submitting: 0, uncertain: 2, succeeded: 0 } } }) })));
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime
+      .createStagedEditor({ stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', summaryOperation: 'pay.summary' })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = [...root.querySelectorAll('button')].find(item => item.textContent === 'View operation counts'),
+      statuses = root.querySelectorAll('[role=status]'),
+      id = root.querySelector('label input');
+    button.click();
+    await wait(() => statuses[1].textContent === 'Could not load operation counts.');
+    assert.equal(root.querySelectorAll('li').length, 0);
+    button.click();
+    await wait(() => typeof release === 'function');
+    id.value = 'another';
+    id.dispatchEvent(new dom.window.Event('input'));
+    release();
+    await wait(() => !button.disabled);
+    assert.equal(root.querySelectorAll('li').length, 0);
+    assert.equal(statuses[1].textContent, '');
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('staged editor requires host confirmation before recovering and checking the external outcome',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-recover-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),originalFetch=globalThis.fetch;let dom,mode='false',calls=[];
- try{globalThis.fetch=async(url,options)=>{const operation=String(url).split('/').at(-1),input=JSON.parse(options.body);calls.push([operation,input]);if(operation==='pay.get')return {ok:true,json:async()=>({result:{id:'op',status:mode==='checked'?'uncertain':'submitting'}})};if(operation==='pay.recover'){if(mode==='lost')throw Error('lost response');return {ok:true,json:async()=>({result:{recovered:mode==='true'}})};}throw Error('unexpected request');};const options={stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',recoverOperation:'pay.recover',verifyOperation:'pay.verify'};for(const factory of [runtime.createStagedEditor,preview.createStagedEditor])assert.throws(()=>factory({...options,recoverOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=text=>[...root.querySelectorAll('button')].find(x=>x.textContent===text),label=text=>[...root.querySelectorAll('label')].find(x=>x.textContent===text).querySelector('input'),status=root.querySelector('[role=status]'),id=label('Staged operation ID'),reference=label('Evidence reference'),recover=button('Recover interrupted submission');id.value='op';id.dispatchEvent(new dom.window.Event('input'));assert.equal(recover.disabled,true);button('Check status').click();await wait(()=>status.textContent==='Operation submitting.');reference.value='case';reference.dispatchEvent(new dom.window.Event('input'));recover.click();await wait(()=>status.textContent.includes('not been confirmed stopped'));assert.deepEqual(calls.at(-1),['pay.recover',{id:'op',reference:'case'}]);assert.equal(button('Submit').disabled,true);assert.equal(button('Verify outcome').disabled,true);mode='lost';recover.click();await wait(()=>status.textContent.includes('Recovery could not be completed'));assert.equal(recover.disabled,true);assert.equal(button('Submit').disabled,true);mode='true';button('Check status').click();await wait(()=>status.textContent==='Operation submitting.'&&!recover.disabled);recover.click();await wait(()=>status.textContent.startsWith('Submission recovered.'));assert.equal(recover.disabled,true);assert.equal(button('Submit').disabled,true);assert.equal(button('Verify outcome').disabled,false);assert.equal(calls.filter(([name])=>name==='pay.recover').length,3);const inert=preview.createStagedEditor(options).render({},null,null,dom.window.document);assert.ok([...inert.querySelectorAll('button,input,textarea')].every(x=>x.disabled));assert.ok([...inert.querySelectorAll('button')].some(x=>x.textContent==='Recover interrupted submission'));
- }finally{dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('staged editor requires host confirmation before recovering and checking the external outcome', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-recover-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),
+    originalFetch = globalThis.fetch;
+  let dom,
+    mode = 'false',
+    calls = [];
+  try {
+    globalThis.fetch = async (url, options) => {
+      const operation = String(url).split('/').at(-1),
+        input = JSON.parse(options.body);
+      calls.push([operation, input]);
+      if (operation === 'pay.get') return { ok: true, json: async () => ({ result: { id: 'op', status: mode === 'checked' ? 'uncertain' : 'submitting' } }) };
+      if (operation === 'pay.recover') {
+        if (mode === 'lost') throw Error('lost response');
+        return { ok: true, json: async () => ({ result: { recovered: mode === 'true' } }) };
+      }
+      throw Error('unexpected request');
+    };
+    const options = { stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', recoverOperation: 'pay.recover', verifyOperation: 'pay.verify' };
+    for (const factory of [runtime.createStagedEditor, preview.createStagedEditor]) assert.throws(() => factory({ ...options, recoverOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime.createStagedEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = text => [...root.querySelectorAll('button')].find(x => x.textContent === text),
+      label = text => [...root.querySelectorAll('label')].find(x => x.textContent === text).querySelector('input'),
+      status = root.querySelector('[role=status]'),
+      id = label('Staged operation ID'),
+      reference = label('Evidence reference'),
+      recover = button('Recover interrupted submission');
+    id.value = 'op';
+    id.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(recover.disabled, true);
+    button('Check status').click();
+    await wait(() => status.textContent === 'Operation submitting.');
+    reference.value = 'case';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    recover.click();
+    await wait(() => status.textContent.includes('not been confirmed stopped'));
+    assert.deepEqual(calls.at(-1), ['pay.recover', { id: 'op', reference: 'case' }]);
+    assert.equal(button('Submit').disabled, true);
+    assert.equal(button('Verify outcome').disabled, true);
+    mode = 'lost';
+    recover.click();
+    await wait(() => status.textContent.includes('Recovery could not be completed'));
+    assert.equal(recover.disabled, true);
+    assert.equal(button('Submit').disabled, true);
+    mode = 'true';
+    button('Check status').click();
+    await wait(() => status.textContent === 'Operation submitting.' && !recover.disabled);
+    recover.click();
+    await wait(() => status.textContent.startsWith('Submission recovered.'));
+    assert.equal(recover.disabled, true);
+    assert.equal(button('Submit').disabled, true);
+    assert.equal(button('Verify outcome').disabled, false);
+    assert.equal(calls.filter(([name]) => name === 'pay.recover').length, 3);
+    const inert = preview.createStagedEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...inert.querySelectorAll('button,input,textarea')].every(x => x.disabled));
+    assert.ok([...inert.querySelectorAll('button')].some(x => x.textContent === 'Recover interrupted submission'));
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('staged editor displays scoped recovery evidence pages safely and clears stale results',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-recovery-evidence-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),preview=await import('data:text/javascript;base64,'+Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),originalFetch=globalThis.fetch;let dom,mode='normal',release,entered;const pending=new Promise(r=>release=r),ready=new Promise(r=>entered=r);try{globalThis.fetch=async(url,options)=>{const operation=String(url).split('/').at(-1),input=JSON.parse(options.body);if(operation==='pay.get')return {ok:true,json:async()=>({result:{id:input.id,status:'uncertain'}})};if(operation==='pay.recovery-evidence'){if(mode==='stale'){entered();await pending;}const item={revision:input.after?2:1,principalId:'operator',reference:input.after?'case-2':'<img src=x>',recordedAt:1};return {ok:true,json:async()=>({result:{items:[item],...(input.after?{}:{nextAfter:1})}})};}throw Error('unexpected request');};const options={stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',recoveryEvidenceOperation:'pay.recovery-evidence'};for(const factory of [runtime.createStagedEditor,preview.createStagedEditor])assert.throws(()=>factory({...options,recoveryEvidenceOperation:'../bad'}),/Invalid/);dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor(options).render({},null,null,dom.window.document);dom.window.document.body.append(root);const button=text=>[...root.querySelectorAll('button')].find(x=>x.textContent===text),id=[...root.querySelectorAll('label')].find(x=>x.textContent==='Staged operation ID').querySelector('input'),status=root.querySelector('[role=status]');id.value='op';id.dispatchEvent(new dom.window.Event('input'));button('Check status').click();await wait(()=>status.textContent==='Operation uncertain.');button('View recovery evidence').click();await wait(()=>root.textContent.includes('<img src=x>'));assert.equal(root.querySelector('img'),null);assert.equal(root.textContent.includes('undefined'),false);button('Next recovery evidence page').click();await wait(()=>root.textContent.includes('case-2'));assert.equal(button('Next recovery evidence page').disabled,true);mode='stale';button('View recovery evidence').click();await ready;id.value='other';id.dispatchEvent(new dom.window.Event('input'));release();await wait(()=>!button('Check status').disabled);assert.equal(root.textContent.includes('<img src=x>'),false);assert.equal(root.textContent.includes('case-2'),false);assert.equal(button('View recovery evidence').disabled,true);const inert=preview.createStagedEditor(options).render({},null,null,dom.window.document);assert.ok([...inert.querySelectorAll('button,input,textarea')].every(x=>x.disabled));assert.ok([...inert.querySelectorAll('button')].some(x=>x.textContent==='View recovery evidence'));
- }finally{release?.();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('staged editor displays scoped recovery evidence pages safely and clears stale results', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-recovery-evidence-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    preview = await import('data:text/javascript;base64,' + Buffer.from(STAGED_EDITOR_PREVIEW).toString('base64')),
+    originalFetch = globalThis.fetch;
+  let dom,
+    mode = 'normal',
+    release,
+    entered;
+  const pending = new Promise(r => (release = r)),
+    ready = new Promise(r => (entered = r));
+  try {
+    globalThis.fetch = async (url, options) => {
+      const operation = String(url).split('/').at(-1),
+        input = JSON.parse(options.body);
+      if (operation === 'pay.get') return { ok: true, json: async () => ({ result: { id: input.id, status: 'uncertain' } }) };
+      if (operation === 'pay.recovery-evidence') {
+        if (mode === 'stale') {
+          entered();
+          await pending;
+        }
+        const item = { revision: input.after ? 2 : 1, principalId: 'operator', reference: input.after ? 'case-2' : '<img src=x>', recordedAt: 1 };
+        return { ok: true, json: async () => ({ result: { items: [item], ...(input.after ? {} : { nextAfter: 1 }) } }) };
+      }
+      throw Error('unexpected request');
+    };
+    const options = { stageOperation: 'pay.stage', getOperation: 'pay.get', submitOperation: 'pay.submit', recoveryEvidenceOperation: 'pay.recovery-evidence' };
+    for (const factory of [runtime.createStagedEditor, preview.createStagedEditor]) assert.throws(() => factory({ ...options, recoveryEvidenceOperation: '../bad' }), /Invalid/);
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime.createStagedEditor(options).render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const button = text => [...root.querySelectorAll('button')].find(x => x.textContent === text),
+      id = [...root.querySelectorAll('label')].find(x => x.textContent === 'Staged operation ID').querySelector('input'),
+      status = root.querySelector('[role=status]');
+    id.value = 'op';
+    id.dispatchEvent(new dom.window.Event('input'));
+    button('Check status').click();
+    await wait(() => status.textContent === 'Operation uncertain.');
+    button('View recovery evidence').click();
+    await wait(() => root.textContent.includes('<img src=x>'));
+    assert.equal(root.querySelector('img'), null);
+    assert.equal(root.textContent.includes('undefined'), false);
+    button('Next recovery evidence page').click();
+    await wait(() => root.textContent.includes('case-2'));
+    assert.equal(button('Next recovery evidence page').disabled, true);
+    mode = 'stale';
+    button('View recovery evidence').click();
+    await ready;
+    id.value = 'other';
+    id.dispatchEvent(new dom.window.Event('input'));
+    release();
+    await wait(() => !button('Check status').disabled);
+    assert.equal(root.textContent.includes('<img src=x>'), false);
+    assert.equal(root.textContent.includes('case-2'), false);
+    assert.equal(button('View recovery evidence').disabled, true);
+    const inert = preview.createStagedEditor(options).render({}, null, null, dom.window.document);
+    assert.ok([...inert.querySelectorAll('button,input,textarea')].every(x => x.disabled));
+    assert.ok([...inert.querySelectorAll('button')].some(x => x.textContent === 'View recovery evidence'));
+  } finally {
+    release?.();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('editor recovers a terminated submitter and reviews its evidence through authenticated capabilities',{timeout:30000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'staged-editor-crash-')),target=await createProject('sample-app',dir),runtime=await import(pathToFileURL(join(target,'staged-editor.mjs')).href),path=join(dir,'staged.sqlite'),scope={tenantId:'tenant',applicationId:'app'},outer=new CapabilityRegistry(()=>{}),external=new CapabilityRegistry(()=>{}),originalFetch=globalThis.fetch;let store=new SqliteStagedOperations(path),server,dom;
- try{const op=store.stage(scope,'pay',{secret:'private'});store.close();store=undefined;const moduleUrl=new URL('../../core/dist/index.js',import.meta.url).href,script=`import {CapabilityRegistry,SqliteStagedOperations} from ${JSON.stringify(moduleUrl)};const store=new SqliteStagedOperations(process.env.RECOVERY_DB),registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:()=>process.exit(0)});await store.submit({tenantId:'tenant',applicationId:'app'},process.env.RECOVERY_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});`;const child=spawnSync(process.execPath,['--input-type=module','-e',script],{env:{...process.env,RECOVERY_DB:path,RECOVERY_ID:op.id},encoding:'utf8'});assert.equal(child.status,0,child.stderr);store=new SqliteStagedOperations(path);registerStagedCapability(outer,external,store,{candidate:{operationId:'pay.get',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',operation:'get',authorize:()=>true,validate:()=>true});let stopped=false;registerStagedRecoveryCapability(outer,store,{candidate:{operationId:'pay.recover',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:(_actor,_op,ref)=>ref==='case',verifyStopped:()=>stopped});registerStagedRecoveryEvidenceCapability(outer,store,{candidate:{operationId:'pay.recovery-evidence',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true});registerStagedVerificationCapability(outer,store,{candidate:{operationId:'pay.verify',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:()=>true,verify:()=> 'not_applied'});server=createCapabilityServer(outer,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const requests=[];globalThis.fetch=(url,options)=>{requests.push(String(url).split('/').at(-1));return originalFetch(new URL(String(url).replace('/api/capabilities/','/capabilities/')+'/invoke',`http://127.0.0.1:${server.address().port}`),{...options,headers:{...options.headers,authorization:'Bearer valid'},body:JSON.stringify({origin:'ui',input:JSON.parse(options.body)})});};dom=new JSDOM('<!doctype html>');const root=runtime.createStagedEditor({stageOperation:'pay.stage',getOperation:'pay.get',submitOperation:'pay.submit',recoverOperation:'pay.recover',verifyOperation:'pay.verify',recoveryEvidenceOperation:'pay.recovery-evidence'}).render({},null,null,dom.window.document);dom.window.document.body.append(root);const label=text=>[...root.querySelectorAll('label')].find(x=>x.textContent===text).querySelector('input'),button=text=>[...root.querySelectorAll('button')].find(x=>x.textContent===text),status=root.querySelector('[role=status]'),id=label('Staged operation ID'),reference=label('Evidence reference');id.value=op.id;id.dispatchEvent(new dom.window.Event('input'));button('Check status').click();await wait(()=>status.textContent==='Operation submitting.');reference.value='case';reference.dispatchEvent(new dom.window.Event('input'));button('Recover interrupted submission').click();await wait(()=>status.textContent.includes('not been confirmed stopped'));assert.equal(store.get(scope,op.id).status,'submitting');assert.deepEqual(store.listRecoveryEvidence(scope,op.id),[]);stopped=true;button('Recover interrupted submission').click();await wait(()=>status.textContent.startsWith('Submission recovered.'));assert.equal(store.get(scope,op.id).status,'uncertain');assert.equal(button('Submit').disabled,true);button('View recovery evidence').click();await wait(()=>root.textContent.includes('operator | case'));assert.equal(root.textContent.includes('private'),false);button('Verify outcome').click();await wait(()=>status.textContent.includes('not applied'));assert.equal(store.get(scope,op.id).status,'staged');assert.equal(button('Submit').disabled,false);assert.equal(requests.includes('pay.submit'),false);assert.deepEqual(store.listRecoveryEvidence(scope,op.id).map(x=>[x.principalId,x.reference]),[['operator','case']]);assert.deepEqual(store.listReconciliationEvidence(scope,op.id).map(x=>x.outcome),['not_applied']);
- }finally{dom?.window.close();globalThis.fetch=originalFetch;if(server)await new Promise(resolve=>server.close(resolve));store?.close();await rm(dir,{recursive:true,force:true});}
+test('editor recovers a terminated submitter and reviews its evidence through authenticated capabilities', { timeout: 30000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'staged-editor-crash-')),
+    target = await createProject('sample-app', dir),
+    runtime = await import(pathToFileURL(join(target, 'staged-editor.mjs')).href),
+    path = join(dir, 'staged.sqlite'),
+    scope = { tenantId: 'tenant', applicationId: 'app' },
+    outer = new CapabilityRegistry(() => {}),
+    external = new CapabilityRegistry(() => {}),
+    originalFetch = globalThis.fetch;
+  let store = new SqliteStagedOperations(path),
+    server,
+    dom;
+  try {
+    const op = store.stage(scope, 'pay', { secret: 'private' });
+    store.close();
+    store = undefined;
+    const moduleUrl = new URL('../../core/dist/index.js', import.meta.url).href,
+      script = `import {CapabilityRegistry,SqliteStagedOperations} from ${JSON.stringify(moduleUrl)};const store=new SqliteStagedOperations(process.env.RECOVERY_DB),registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:()=>process.exit(0)});await store.submit({tenantId:'tenant',applicationId:'app'},process.env.RECOVERY_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, RECOVERY_DB: path, RECOVERY_ID: op.id }, encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    store = new SqliteStagedOperations(path);
+    registerStagedCapability(outer, external, store, {
+      candidate: { operationId: 'pay.get', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      operation: 'get',
+      authorize: () => true,
+      validate: () => true
+    });
+    let stopped = false;
+    registerStagedRecoveryCapability(outer, store, {
+      candidate: { operationId: 'pay.recover', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: (_actor, _op, ref) => ref === 'case',
+      verifyStopped: () => stopped
+    });
+    registerStagedRecoveryEvidenceCapability(outer, store, {
+      candidate: { operationId: 'pay.recovery-evidence', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: () => true
+    });
+    registerStagedVerificationCapability(outer, store, {
+      candidate: { operationId: 'pay.verify', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: () => true,
+      verify: () => 'not_applied'
+    });
+    server = createCapabilityServer(
+      outer,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const requests = [];
+    globalThis.fetch = (url, options) => {
+      requests.push(String(url).split('/').at(-1));
+      return originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
+        ...options,
+        headers: { ...options.headers, authorization: 'Bearer valid' },
+        body: JSON.stringify({ origin: 'ui', input: JSON.parse(options.body) })
+      });
+    };
+    dom = new JSDOM('<!doctype html>');
+    const root = runtime
+      .createStagedEditor({
+        stageOperation: 'pay.stage',
+        getOperation: 'pay.get',
+        submitOperation: 'pay.submit',
+        recoverOperation: 'pay.recover',
+        verifyOperation: 'pay.verify',
+        recoveryEvidenceOperation: 'pay.recovery-evidence'
+      })
+      .render({}, null, null, dom.window.document);
+    dom.window.document.body.append(root);
+    const label = text => [...root.querySelectorAll('label')].find(x => x.textContent === text).querySelector('input'),
+      button = text => [...root.querySelectorAll('button')].find(x => x.textContent === text),
+      status = root.querySelector('[role=status]'),
+      id = label('Staged operation ID'),
+      reference = label('Evidence reference');
+    id.value = op.id;
+    id.dispatchEvent(new dom.window.Event('input'));
+    button('Check status').click();
+    await wait(() => status.textContent === 'Operation submitting.');
+    reference.value = 'case';
+    reference.dispatchEvent(new dom.window.Event('input'));
+    button('Recover interrupted submission').click();
+    await wait(() => status.textContent.includes('not been confirmed stopped'));
+    assert.equal(store.get(scope, op.id).status, 'submitting');
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), []);
+    stopped = true;
+    button('Recover interrupted submission').click();
+    await wait(() => status.textContent.startsWith('Submission recovered.'));
+    assert.equal(store.get(scope, op.id).status, 'uncertain');
+    assert.equal(button('Submit').disabled, true);
+    button('View recovery evidence').click();
+    await wait(() => root.textContent.includes('operator | case'));
+    assert.equal(root.textContent.includes('private'), false);
+    button('Verify outcome').click();
+    await wait(() => status.textContent.includes('not applied'));
+    assert.equal(store.get(scope, op.id).status, 'staged');
+    assert.equal(button('Submit').disabled, false);
+    assert.equal(requests.includes('pay.submit'), false);
+    assert.deepEqual(
+      store.listRecoveryEvidence(scope, op.id).map(x => [x.principalId, x.reference]),
+      [['operator', 'case']]
+    );
+    assert.deepEqual(
+      store.listReconciliationEvidence(scope, op.id).map(x => x.outcome),
+      ['not_applied']
+    );
+  } finally {
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise(resolve => server.close(resolve));
+    store?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -3,173 +3,464 @@
 // scrapes the real metrics servers and must fire and resolve alerts in a failure drill.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFile} from 'node:child_process';
-import {createServer} from 'node:http';
-import {once} from 'node:events';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {mkdir,readFile,rm,writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {promisify} from 'node:util';
-import {DatabaseSync} from 'node:sqlite';
-import {DataPlaneRequestMetrics,createMetricsServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,SqliteAgentActionJournal,SqliteAgentRunMetrics,SqliteAgentScheduleMetrics,createAgentMetricsServer} from '../../agent/dist/index.js';
+import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
+import { DataPlaneRequestMetrics, createMetricsServer } from '../../core/dist/index.js';
+import {
+  SqliteAgentRuns,
+  SqliteAgentTriggers,
+  SqliteAgentSchedules,
+  SqliteAgentActionJournal,
+  SqliteAgentRunMetrics,
+  SqliteAgentScheduleMetrics,
+  createAgentMetricsServer
+} from '../../agent/dist/index.js';
 
-const run=promisify(execFile);
-const ALERTMANAGER_IMAGE='prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a';
-const routingPath=new URL('../../../deploy/observability/alertmanager-example.yml',import.meta.url);
-const GRAFANA_IMAGE='grafana/grafana-oss:11.6.1@sha256:52c3e20686b860c6dc1f623811565773cf51eefa378817a4896dfc863c3c82c8';
-const dashboardPath=new URL('../../../deploy/observability/grafana-dashboard.json',import.meta.url);
-const PROMETHEUS_IMAGE='prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2';
-const rulesPath=new URL('../../../deploy/observability/prometheus-alerts.yml',import.meta.url),runbooksPath=new URL('../../../docs/runbooks.md',import.meta.url);
-const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'scraper'};
+const run = promisify(execFile);
+const ALERTMANAGER_IMAGE = 'prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a';
+const routingPath = new URL('../../../deploy/observability/alertmanager-example.yml', import.meta.url);
+const GRAFANA_IMAGE = 'grafana/grafana-oss:11.6.1@sha256:52c3e20686b860c6dc1f623811565773cf51eefa378817a4896dfc863c3c82c8';
+const dashboardPath = new URL('../../../deploy/observability/grafana-dashboard.json', import.meta.url);
+const PROMETHEUS_IMAGE = 'prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2';
+const rulesPath = new URL('../../../deploy/observability/prometheus-alerts.yml', import.meta.url),
+  runbooksPath = new URL('../../../docs/runbooks.md', import.meta.url);
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  actor = { tenantId: 'tenant', principalId: 'scraper' };
 
 // The rules file is plain YAML in a fixed shape; read the fields the checks need without a YAML dependency.
-function parseRules(text){const alerts=[];let current;for(const line of text.split('\n')){let match;
- if((match=/^ {6}- alert: (\S+)\s*$/.exec(line)))alerts.push(current={name:match[1]});
- else if(current&&(match=/^ {8}(expr|for): (.+?)\s*$/.exec(line)))current[match[1]]=match[2];
- else if(current&&(match=/^ {10}(severity|summary|runbook): (.+?)\s*$/.exec(line)))current[match[1]]=match[2];}
- return alerts;}
+function parseRules(text) {
+  const alerts = [];
+  let current;
+  for (const line of text.split('\n')) {
+    let match;
+    if ((match = /^ {6}- alert: (\S+)\s*$/.exec(line))) alerts.push((current = { name: match[1] }));
+    else if (current && (match = /^ {8}(expr|for): (.+?)\s*$/.exec(line))) current[match[1]] = match[2];
+    else if (current && (match = /^ {10}(severity|summary|runbook): (.+?)\s*$/.exec(line))) current[match[1]] = match[2];
+  }
+  return alerts;
+}
 // Every series the product can emit, with the label values each one takes.
-function exposition(...texts){const series=new Map();for(const text of texts)for(const line of text.split('\n')){if(!line||line.startsWith('#'))continue;const match=/^([a-z_]+)(?:\{([^}]*)\})? /.exec(line);assert.ok(match,line);const labels=series.get(match[1])??new Map();series.set(match[1],labels);for(const pair of (match[2]??'').split(',').filter(Boolean)){const [key,value]=pair.split('=');if(!labels.has(key))labels.set(key,new Set());labels.get(key).add(JSON.parse(value));}}return series;}
+function exposition(...texts) {
+  const series = new Map();
+  for (const text of texts)
+    for (const line of text.split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      const match = /^([a-z_]+)(?:\{([^}]*)\})? /.exec(line);
+      assert.ok(match, line);
+      const labels = series.get(match[1]) ?? new Map();
+      series.set(match[1], labels);
+      for (const pair of (match[2] ?? '').split(',').filter(Boolean)) {
+        const [key, value] = pair.split('=');
+        if (!labels.has(key)) labels.set(key, new Set());
+        labels.get(key).add(JSON.parse(value));
+      }
+    }
+  return series;
+}
 
 // Run metrics and schedule metrics are two readers; the drill scrapes them as one endpoint.
-function combinedMetrics(path,clock){
- const options={scope,authorize:()=>true,clock};
- const runs=new SqliteAgentRunMetrics(path,{...options,includeOperational:true,includeActionBacklog:true}),schedules=new SqliteAgentScheduleMetrics(path,options);
- return {render:async actor=>(await runs.render(actor))+(await schedules.render(actor)),renderWithSignal:async(actor,signal)=>(await runs.renderWithSignal(actor,signal))+(await schedules.renderWithSignal(actor,signal)),close(){schedules.close();runs.close();}};
+function combinedMetrics(path, clock) {
+  const options = { scope, authorize: () => true, clock };
+  const runs = new SqliteAgentRunMetrics(path, { ...options, includeOperational: true, includeActionBacklog: true }),
+    schedules = new SqliteAgentScheduleMetrics(path, options);
+  return {
+    render: async actor => (await runs.render(actor)) + (await schedules.render(actor)),
+    renderWithSignal: async (actor, signal) => (await runs.renderWithSignal(actor, signal)) + (await schedules.renderWithSignal(actor, signal)),
+    close() {
+      schedules.close();
+      runs.close();
+    }
+  };
 }
-function seed(path){
- const runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),schedules=new SqliteAgentSchedules(path);
- runs.create(scope,'run',{definitionVersion:1,maxAttempts:2,deadline:100000},0);const claimed=runs.claim(scope,'run',runs.get(scope,'run').revision,'worker',60000,0);
- new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:claimed.leaseToken,clock:()=>0}).close();
- schedules.save(scope,'nightly',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:60000},misfire:'coalesce'},0,0);
- return {runs,schedules,close(){schedules.close();triggers.close();runs.close();}};
+function seed(path) {
+  const runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    schedules = new SqliteAgentSchedules(path);
+  runs.create(scope, 'run', { definitionVersion: 1, maxAttempts: 2, deadline: 100000 }, 0);
+  const claimed = runs.claim(scope, 'run', runs.get(scope, 'run').revision, 'worker', 60000, 0);
+  new SqliteAgentActionJournal(path, { scope, runId: 'run', leaseToken: claimed.leaseToken, clock: () => 0 }).close();
+  schedules.save(scope, 'nightly', { enabled: true, principalId: 'scheduler', rule: { kind: 'interval', intervalMs: 60000 }, misfire: 'coalesce' }, 0, 0);
+  return {
+    runs,
+    schedules,
+    close() {
+      schedules.close();
+      triggers.close();
+      runs.close();
+    }
+  };
 }
-const insertAction=(path,actionId,status)=>{const db=new DatabaseSync(path);try{db.prepare('INSERT INTO agent_action_journal (tenant_id,agent_id,run_id,action_id,operation_id,input_json,input_hash,idempotency_key,status,attempts,max_attempts,result_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)').run(scope.tenantId,scope.agentId,'run',actionId,'operation','{}','hash','key:'+actionId,status,1,2);}finally{db.close();}};
-const routes=['application','version','live','ready','other'],statuses=['2xx','3xx','4xx','5xx','other'];
-
-test('alert rules use only emitted metrics and label values and each has a runbook',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'alert-rules-')),path=join(dir,'runs.sqlite');let metrics,store;
- try{
-  const plane=new DataPlaneRequestMetrics(()=>0);plane.setPublicationVersion(1);for(const route of routes){for(const statusClass of statuses)plane.observe({route,outcome:'completed',statusClass,durationMs:1});plane.observe({route,outcome:'aborted',statusClass:'none',durationMs:1});}
-  store=seed(path);metrics=combinedMetrics(path,()=>0);
-  const series=exposition(plane.render(),await metrics.render(actor)),alerts=parseRules(await readFile(rulesPath,'utf8'));
-  assert.ok(alerts.length>=10);assert.equal(new Set(alerts.map(a=>a.name)).size,alerts.length);
-  const headings=[...(await readFile(runbooksPath,'utf8')).matchAll(/^## (\S+)\s*$/gm)].map(m=>m[1]);assert.deepEqual([...headings].sort(),alerts.map(a=>a.name).sort(),'one runbook section per alert');
-  for(const alert of alerts){
-   assert.ok(alert.expr&&alert.for&&alert.summary,alert.name);assert.match(alert.severity,/^(page|ticket)$/,alert.name);assert.equal(alert.runbook,'docs/runbooks.md#'+alert.name.toLowerCase(),alert.name);
-   for(const [,name,matchers] of alert.expr.matchAll(/\b(app_mixer_[a-z_]+)(?:\{([^}]*)\})?/g)){
-    assert.ok(series.has(name),alert.name+' uses '+name+' which is never emitted');
-    for(const [,key,op,value] of (matchers??'').matchAll(/([a-z_]+)(=~|!=|=)"([^"]*)"/g)){assert.equal(op,'=',alert.name+': only exact matchers are checked');assert.ok(series.get(name).get(key)?.has(value),`${alert.name}: ${name}{${key}="${value}"} is never emitted`);}
-   }
+const insertAction = (path, actionId, status) => {
+  const db = new DatabaseSync(path);
+  try {
+    db.prepare(
+      'INSERT INTO agent_action_journal (tenant_id,agent_id,run_id,action_id,operation_id,input_json,input_hash,idempotency_key,status,attempts,max_attempts,result_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)'
+    ).run(scope.tenantId, scope.agentId, 'run', actionId, 'operation', '{}', 'hash', 'key:' + actionId, status, 1, 2);
+  } finally {
+    db.close();
   }
- }finally{metrics?.close();store?.close();try{rmSync(dir,{recursive:true,force:true});}catch{}}
+};
+const routes = ['application', 'version', 'live', 'ready', 'other'],
+  statuses = ['2xx', '3xx', '4xx', '5xx', 'other'];
+
+test('alert rules use only emitted metrics and label values and each has a runbook', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'alert-rules-')),
+    path = join(dir, 'runs.sqlite');
+  let metrics, store;
+  try {
+    const plane = new DataPlaneRequestMetrics(() => 0);
+    plane.setPublicationVersion(1);
+    for (const route of routes) {
+      for (const statusClass of statuses) plane.observe({ route, outcome: 'completed', statusClass, durationMs: 1 });
+      plane.observe({ route, outcome: 'aborted', statusClass: 'none', durationMs: 1 });
+    }
+    store = seed(path);
+    metrics = combinedMetrics(path, () => 0);
+    const series = exposition(plane.render(), await metrics.render(actor)),
+      alerts = parseRules(await readFile(rulesPath, 'utf8'));
+    assert.ok(alerts.length >= 10);
+    assert.equal(new Set(alerts.map(a => a.name)).size, alerts.length);
+    const headings = [...(await readFile(runbooksPath, 'utf8')).matchAll(/^## (\S+)\s*$/gm)].map(m => m[1]);
+    assert.deepEqual([...headings].sort(), alerts.map(a => a.name).sort(), 'one runbook section per alert');
+    for (const alert of alerts) {
+      assert.ok(alert.expr && alert.for && alert.summary, alert.name);
+      assert.match(alert.severity, /^(page|ticket)$/, alert.name);
+      assert.equal(alert.runbook, 'docs/runbooks.md#' + alert.name.toLowerCase(), alert.name);
+      for (const [, name, matchers] of alert.expr.matchAll(/\b(app_mixer_[a-z_]+)(?:\{([^}]*)\})?/g)) {
+        assert.ok(series.has(name), alert.name + ' uses ' + name + ' which is never emitted');
+        for (const [, key, op, value] of (matchers ?? '').matchAll(/([a-z_]+)(=~|!=|=)"([^"]*)"/g)) {
+          assert.equal(op, '=', alert.name + ': only exact matchers are checked');
+          assert.ok(series.get(name).get(key)?.has(value), `${alert.name}: ${name}{${key}="${value}"} is never emitted`);
+        }
+      }
+    }
+  } finally {
+    metrics?.close();
+    store?.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
+  }
 });
 
-const enabled=process.env.APP_MIXER_TEST_PROMETHEUS==='docker';
-const freePort=async()=>{const {createServer}=await import('node:net'),probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const {port}=probe.address();await new Promise(resolve=>probe.close(resolve));return port;};
-const wait=async(predicate,label,limit=60000)=>{const end=Date.now()+limit;let last;while(Date.now()<end){try{if((last=await predicate())===true)return;}catch(error){last=error;}await new Promise(resolve=>setTimeout(resolve,500));}throw Error('Timed out waiting for '+label+(last&&last!==false?': '+(last.message??last):''));};
+const enabled = process.env.APP_MIXER_TEST_PROMETHEUS === 'docker';
+const freePort = async () => {
+  const { createServer } = await import('node:net'),
+    probe = createServer();
+  probe.listen(0, '127.0.0.1');
+  await once(probe, 'listening');
+  const { port } = probe.address();
+  await new Promise(resolve => probe.close(resolve));
+  return port;
+};
+const wait = async (predicate, label, limit = 60000) => {
+  const end = Date.now() + limit;
+  let last;
+  while (Date.now() < end) {
+    try {
+      if ((last = await predicate()) === true) return;
+    } catch (error) {
+      last = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw Error('Timed out waiting for ' + label + (last && last !== false ? ': ' + (last.message ?? last) : ''));
+};
 
-test('a failure drill fires, routes and resolves alerts through real Prometheus and Alertmanager',{skip:enabled?false:'set APP_MIXER_TEST_PROMETHEUS=docker to run against a Prometheus container',timeout:420000},async()=>{
- const dir=mkdtempSync(join(tmpdir(),'alert-drill-')),config=join(dir,'config'),path=join(dir,'runs.sqlite'),name='app-mixer-prom-'+process.pid+'-'+Date.now(),amName=name.replace('-prom-','-am-'),token='scrape-token-local-test-only';
- await mkdir(config);const linux=process.platform==='linux';const containers=[],servers=[],delivered=[];let metrics,store;
- try{
-  // The drill shortens every for: so it runs in seconds; thresholds and expressions are the shipped ones.
-  const rules=(await readFile(rulesPath,'utf8')).replace(/^( {8}for: ).+$/gm,'$10s');await writeFile(join(config,'alerts.yml'),rules);
-  await run('docker',['run','--rm','-v',config+':/rules:ro','--entrypoint','promtool',PROMETHEUS_IMAGE,'check','rules','/rules/alerts.yml']);
+test(
+  'a failure drill fires, routes and resolves alerts through real Prometheus and Alertmanager',
+  { skip: enabled ? false : 'set APP_MIXER_TEST_PROMETHEUS=docker to run against a Prometheus container', timeout: 420000 },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alert-drill-')),
+      config = join(dir, 'config'),
+      path = join(dir, 'runs.sqlite'),
+      name = 'app-mixer-prom-' + process.pid + '-' + Date.now(),
+      amName = name.replace('-prom-', '-am-'),
+      token = 'scrape-token-local-test-only';
+    await mkdir(config);
+    const linux = process.platform === 'linux';
+    const containers = [],
+      servers = [],
+      delivered = [];
+    let metrics, store;
+    try {
+      // The drill shortens every for: so it runs in seconds; thresholds and expressions are the shipped ones.
+      const rules = (await readFile(rulesPath, 'utf8')).replace(/^( {8}for: ).+$/gm, '$10s');
+      await writeFile(join(config, 'alerts.yml'), rules);
+      await run('docker', ['run', '--rm', '-v', config + ':/rules:ro', '--entrypoint', 'promtool', PROMETHEUS_IMAGE, 'check', 'rules', '/rules/alerts.yml']);
 
-  // Stand-ins for the paging and ticketing integrations: they record every Alertmanager webhook delivery.
-  const receiver=createServer((req,res)=>{let body='';req.on('data',part=>body+=part);req.on('end',()=>{try{delivered.push({path:req.url,...JSON.parse(body)});}catch{}res.end();});});
-  receiver.listen(0,'127.0.0.1');await once(receiver,'listening');servers.push(receiver);
-  const host=linux?'127.0.0.1':'host.docker.internal',hook=route=>`http://${host}:${receiver.address().port}/${route}`;
-  // The shipped routing tree with its receivers pointed here and its timings shortened for the drill.
-  const routing=(await readFile(routingPath,'utf8')).replace('https://paging.example.invalid/app-mixer',hook('page')).replace('https://tickets.example.invalid/app-mixer',hook('ticket')).replace(/^( +group_wait: ).+$/m,'$11s').replace(/^( +group_interval: ).+$/m,'$11s');
-  assert.ok(routing.includes(hook('page'))&&routing.includes(hook('ticket')));await writeFile(join(config,'alertmanager.yml'),routing);
-  await run('docker',['run','--rm','-v',config+':/rules:ro','--entrypoint','amtool',ALERTMANAGER_IMAGE,'check-config','/rules/alertmanager.yml']);
-  const user=typeof process.getuid==='function'?['--user',process.getuid()+':'+process.getgid()]:[],amPort=linux?await freePort():9093;
-  await run('docker',['run','-d','--rm','--name',amName,...user,...(linux?['--network','host']:['-p','127.0.0.1::9093']),'-v',config+':/rules:ro',ALERTMANAGER_IMAGE,'--config.file=/rules/alertmanager.yml','--storage.path=/tmp/alertmanager','--cluster.listen-address=','--web.listen-address=:'+amPort]);containers.push(amName);
-  const amHostPort=linux?amPort:(await run('docker',['port',amName,'9093/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
-  const deliveries=(route,alertname,status)=>delivered.filter(d=>d.path==='/'+route&&d.alerts.some(a=>a.labels.alertname===alertname&&a.status===status));
+      // Stand-ins for the paging and ticketing integrations: they record every Alertmanager webhook delivery.
+      const receiver = createServer((req, res) => {
+        let body = '';
+        req.on('data', part => (body += part));
+        req.on('end', () => {
+          try {
+            delivered.push({ path: req.url, ...JSON.parse(body) });
+          } catch {}
+          res.end();
+        });
+      });
+      receiver.listen(0, '127.0.0.1');
+      await once(receiver, 'listening');
+      servers.push(receiver);
+      const host = linux ? '127.0.0.1' : 'host.docker.internal',
+        hook = route => `http://${host}:${receiver.address().port}/${route}`;
+      // The shipped routing tree with its receivers pointed here and its timings shortened for the drill.
+      const routing = (await readFile(routingPath, 'utf8'))
+        .replace('https://paging.example.invalid/app-mixer', hook('page'))
+        .replace('https://tickets.example.invalid/app-mixer', hook('ticket'))
+        .replace(/^( +group_wait: ).+$/m, '$11s')
+        .replace(/^( +group_interval: ).+$/m, '$11s');
+      assert.ok(routing.includes(hook('page')) && routing.includes(hook('ticket')));
+      await writeFile(join(config, 'alertmanager.yml'), routing);
+      await run('docker', ['run', '--rm', '-v', config + ':/rules:ro', '--entrypoint', 'amtool', ALERTMANAGER_IMAGE, 'check-config', '/rules/alertmanager.yml']);
+      const user = typeof process.getuid === 'function' ? ['--user', process.getuid() + ':' + process.getgid()] : [],
+        amPort = linux ? await freePort() : 9093;
+      await run('docker', [
+        'run',
+        '-d',
+        '--rm',
+        '--name',
+        amName,
+        ...user,
+        ...(linux ? ['--network', 'host'] : ['-p', '127.0.0.1::9093']),
+        '-v',
+        config + ':/rules:ro',
+        ALERTMANAGER_IMAGE,
+        '--config.file=/rules/alertmanager.yml',
+        '--storage.path=/tmp/alertmanager',
+        '--cluster.listen-address=',
+        '--web.listen-address=:' + amPort
+      ]);
+      containers.push(amName);
+      const amHostPort = linux ? amPort : (await run('docker', ['port', amName, '9093/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
+      const deliveries = (route, alertname, status) => delivered.filter(d => d.path === '/' + route && d.alerts.some(a => a.labels.alertname === alertname && a.status === status));
 
-  let now=30000;const plane=new DataPlaneRequestMetrics(()=>0);plane.setPublicationVersion(4);plane.observe({route:'application',outcome:'completed',statusClass:'2xx',durationMs:3});
-  store=seed(path);metrics=combinedMetrics(path,()=>now);
-  const bearer=req=>req.headers.authorization===`Bearer ${token}`;
-  const planeServer=createMetricsServer({metrics:plane,authorize:bearer,timeoutMs:2000,maxPending:10}),agentServer=createAgentMetricsServer({metrics,authenticate:req=>bearer(req)?actor:undefined,timeoutMs:2000,maxPending:10});
-  for(const server of [planeServer,agentServer]){server.listen(0,'127.0.0.1');await once(server,'listening');servers.push(server);}
-  // Linux shares the host network so Prometheus reaches loopback; Docker Desktop forwards host.docker.internal to it.
-  const target=server=>`'${host}:${server.address().port}'`;
-  const job=(jobName,server)=>`  - job_name: ${jobName}\n    scrape_interval: 1s\n    authorization:\n      credentials: ${token}\n    static_configs:\n      - targets: [${target(server)}]\n`;
-  await writeFile(join(config,'prometheus.yml'),`global:\n  scrape_interval: 1s\n  evaluation_interval: 1s\nalerting:\n  alertmanagers:\n    - static_configs:\n        - targets: ['${host}:${amHostPort}']\nrule_files:\n  - /rules/alerts.yml\nscrape_configs:\n${job('app-mixer-data-plane',planeServer)}${job('app-mixer-agent',agentServer)}`);
-  const promPort=linux?await freePort():9090;
-  await run('docker',['run','-d','--rm','--name',name,...user,...(linux?['--network','host']:['-p','127.0.0.1::9090']),'-v',config+':/rules:ro',PROMETHEUS_IMAGE,'--config.file=/rules/prometheus.yml','--storage.tsdb.path=/tmp/prometheus','--web.listen-address=:'+promPort]);containers.push(name);
-  const api=linux?'http://127.0.0.1:'+promPort:'http://127.0.0.1:'+(await run('docker',['port',name,'9090/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
-  const get=async route=>{const response=await fetch(api+route);assert.equal(response.status,200);return (await response.json()).data;};
-  const firing=async()=>new Set((await get('/api/v1/alerts')).alerts.filter(a=>a.state==='firing').map(a=>a.labels.alertname));
-  const up=async jobName=>(await get('/api/v1/query?query='+encodeURIComponent(`up{job="${jobName}"}`))).result[0]?.value[1];
+      let now = 30000;
+      const plane = new DataPlaneRequestMetrics(() => 0);
+      plane.setPublicationVersion(4);
+      plane.observe({ route: 'application', outcome: 'completed', statusClass: '2xx', durationMs: 3 });
+      store = seed(path);
+      metrics = combinedMetrics(path, () => now);
+      const bearer = req => req.headers.authorization === `Bearer ${token}`;
+      const planeServer = createMetricsServer({ metrics: plane, authorize: bearer, timeoutMs: 2000, maxPending: 10 }),
+        agentServer = createAgentMetricsServer({ metrics, authenticate: req => (bearer(req) ? actor : undefined), timeoutMs: 2000, maxPending: 10 });
+      for (const server of [planeServer, agentServer]) {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        servers.push(server);
+      }
+      // Linux shares the host network so Prometheus reaches loopback; Docker Desktop forwards host.docker.internal to it.
+      const target = server => `'${host}:${server.address().port}'`;
+      const job = (jobName, server) =>
+        `  - job_name: ${jobName}\n    scrape_interval: 1s\n    authorization:\n      credentials: ${token}\n    static_configs:\n      - targets: [${target(server)}]\n`;
+      await writeFile(
+        join(config, 'prometheus.yml'),
+        `global:\n  scrape_interval: 1s\n  evaluation_interval: 1s\nalerting:\n  alertmanagers:\n    - static_configs:\n        - targets: ['${host}:${amHostPort}']\nrule_files:\n  - /rules/alerts.yml\nscrape_configs:\n${job('app-mixer-data-plane', planeServer)}${job('app-mixer-agent', agentServer)}`
+      );
+      const promPort = linux ? await freePort() : 9090;
+      await run('docker', [
+        'run',
+        '-d',
+        '--rm',
+        '--name',
+        name,
+        ...user,
+        ...(linux ? ['--network', 'host'] : ['-p', '127.0.0.1::9090']),
+        '-v',
+        config + ':/rules:ro',
+        PROMETHEUS_IMAGE,
+        '--config.file=/rules/prometheus.yml',
+        '--storage.tsdb.path=/tmp/prometheus',
+        '--web.listen-address=:' + promPort
+      ]);
+      containers.push(name);
+      const api = linux ? 'http://127.0.0.1:' + promPort : 'http://127.0.0.1:' + (await run('docker', ['port', name, '9090/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
+      const get = async route => {
+        const response = await fetch(api + route);
+        assert.equal(response.status, 200);
+        return (await response.json()).data;
+      };
+      const firing = async () => new Set((await get('/api/v1/alerts')).alerts.filter(a => a.state === 'firing').map(a => a.labels.alertname));
+      const up = async jobName => (await get('/api/v1/query?query=' + encodeURIComponent(`up{job="${jobName}"}`))).result[0]?.value[1];
 
-  // Healthy: both targets scrape and nothing fires.
-  await wait(async()=>(await up('app-mixer-data-plane'))==='1'&&(await up('app-mixer-agent'))==='1','both targets to be scraped');
-  await new Promise(resolve=>setTimeout(resolve,4000));assert.deepEqual([...await firing()],[],'nothing fires while healthy');
+      // Healthy: both targets scrape and nothing fires.
+      await wait(async () => (await up('app-mixer-data-plane')) === '1' && (await up('app-mixer-agent')) === '1', 'both targets to be scraped');
+      await new Promise(resolve => setTimeout(resolve, 4000));
+      assert.deepEqual([...(await firing())], [], 'nothing fires while healthy');
 
-  // The shipped dashboard imports into a real Grafana, and every panel's query runs against this Prometheus.
-  const grafanaName=name.replace('-prom-','-grafana-'),grafanaPassword='grafana-local-test-only',grafanaPort=linux?await freePort():3000;
-  const promHostPort=api.split(':').pop(),promUrl=linux?api:`http://host.docker.internal:${promHostPort}`;
-  await mkdir(join(config,'grafana-datasources'));
-  await writeFile(join(config,'grafana-datasources','prometheus.yml'),`apiVersion: 1\ndatasources:\n  - name: Prometheus\n    uid: drill-prometheus\n    type: prometheus\n    access: proxy\n    url: ${promUrl}\n    isDefault: true\n`);
-  await run('docker',['run','-d','--rm','--name',grafanaName,...user,...(linux?['--network','host']:['-p','127.0.0.1::3000']),'-e','GF_SECURITY_ADMIN_PASSWORD='+grafanaPassword,'-e','GF_SERVER_HTTP_PORT='+grafanaPort,'-e','GF_ANALYTICS_REPORTING_ENABLED=false','-e','GF_ANALYTICS_CHECK_FOR_UPDATES=false','-e','GF_PATHS_DATA=/tmp','-e','GF_PATHS_LOGS=/tmp','-e','GF_PATHS_PLUGINS=/tmp/plugins','-e','GF_PLUGINS_PREINSTALL_DISABLED=true','-v',join(config,'grafana-datasources')+':/etc/grafana/provisioning/datasources:ro',GRAFANA_IMAGE]);containers.push(grafanaName);
-  const grafana=linux?'http://127.0.0.1:'+grafanaPort:'http://127.0.0.1:'+(await run('docker',['port',grafanaName,'3000/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
-  const auth='Basic '+Buffer.from('admin:'+grafanaPassword).toString('base64');
-  const call=async(route,body)=>{const response=await fetch(grafana+route,{method:body===undefined?'GET':'POST',headers:{authorization:auth,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});const text=await response.text();let json;try{json=JSON.parse(text);}catch{}return {status:response.status,json,text};};
-  await wait(async()=>(await fetch(grafana+'/api/health')).status===200,'Grafana to start',120000);
-  await wait(async()=>(await call('/api/datasources/uid/drill-prometheus')).status===200,'the Prometheus data source to be provisioned');
-  const dashboard=JSON.parse(await readFile(dashboardPath,'utf8'));
-  const imported=await call('/api/dashboards/import',{dashboard,overwrite:true,folderUid:'',inputs:[{name:'DS_PROMETHEUS',type:'datasource',pluginId:'prometheus',value:'drill-prometheus'}]});
-  assert.equal(imported.status,200,imported.text);
-  const stored=(await call('/api/dashboards/uid/'+dashboard.uid)).json.dashboard;
-  assert.equal(stored.title,dashboard.title);assert.ok(!JSON.stringify(stored).includes('DS_PROMETHEUS'),'the data source input was resolved on import');
-  // The job variable lists both scraped jobs.
-  const jobs=(await call('/api/datasources/uid/drill-prometheus/resources/api/v1/label/job/values')).json.data;
-  assert.ok(jobs.includes('app-mixer-data-plane')&&jobs.includes('app-mixer-agent'),'the job variable offers the scraped jobs: '+jobs);
-  // Every panel query, with the job variable set to all, runs through Grafana without error.
-  const panels=stored.panels.filter(panel=>panel.type!=='row'),answered={};
-  assert.ok(panels.length>=10,'the dashboard has its panels');
-  for(const panel of panels){
-    for(const [index,target] of panel.targets.entries()){
-      const expr=target.expr.replaceAll('$job','.*').replaceAll('$__rate_interval','1m');
-      const result=await call('/api/ds/query',{from:'now-5m',to:'now',queries:[{refId:'A',datasource:{type:'prometheus',uid:'drill-prometheus'},expr,range:true,instant:false,intervalMs:1000,maxDataPoints:50}]});
-      assert.equal(result.status,200,`${panel.title}: ${result.text.slice(0,300)}`);
-      const outcome=result.json.results.A;assert.ok(!outcome.error,`${panel.title}: ${outcome.error}`);
-      answered[`${panel.title}#${index}`]=outcome.frames.length;
+      // The shipped dashboard imports into a real Grafana, and every panel's query runs against this Prometheus.
+      const grafanaName = name.replace('-prom-', '-grafana-'),
+        grafanaPassword = 'grafana-local-test-only',
+        grafanaPort = linux ? await freePort() : 3000;
+      const promHostPort = api.split(':').pop(),
+        promUrl = linux ? api : `http://host.docker.internal:${promHostPort}`;
+      await mkdir(join(config, 'grafana-datasources'));
+      await writeFile(
+        join(config, 'grafana-datasources', 'prometheus.yml'),
+        `apiVersion: 1\ndatasources:\n  - name: Prometheus\n    uid: drill-prometheus\n    type: prometheus\n    access: proxy\n    url: ${promUrl}\n    isDefault: true\n`
+      );
+      await run('docker', [
+        'run',
+        '-d',
+        '--rm',
+        '--name',
+        grafanaName,
+        ...user,
+        ...(linux ? ['--network', 'host'] : ['-p', '127.0.0.1::3000']),
+        '-e',
+        'GF_SECURITY_ADMIN_PASSWORD=' + grafanaPassword,
+        '-e',
+        'GF_SERVER_HTTP_PORT=' + grafanaPort,
+        '-e',
+        'GF_ANALYTICS_REPORTING_ENABLED=false',
+        '-e',
+        'GF_ANALYTICS_CHECK_FOR_UPDATES=false',
+        '-e',
+        'GF_PATHS_DATA=/tmp',
+        '-e',
+        'GF_PATHS_LOGS=/tmp',
+        '-e',
+        'GF_PATHS_PLUGINS=/tmp/plugins',
+        '-e',
+        'GF_PLUGINS_PREINSTALL_DISABLED=true',
+        '-v',
+        join(config, 'grafana-datasources') + ':/etc/grafana/provisioning/datasources:ro',
+        GRAFANA_IMAGE
+      ]);
+      containers.push(grafanaName);
+      const grafana = linux ? 'http://127.0.0.1:' + grafanaPort : 'http://127.0.0.1:' + (await run('docker', ['port', grafanaName, '3000/tcp'])).stdout.trim().split('\n')[0].split(':').pop();
+      const auth = 'Basic ' + Buffer.from('admin:' + grafanaPassword).toString('base64');
+      const call = async (route, body) => {
+        const response = await fetch(grafana + route, {
+          method: body === undefined ? 'GET' : 'POST',
+          headers: { authorization: auth, 'content-type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) })
+        });
+        const text = await response.text();
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch {}
+        return { status: response.status, json, text };
+      };
+      await wait(async () => (await fetch(grafana + '/api/health')).status === 200, 'Grafana to start', 120000);
+      await wait(async () => (await call('/api/datasources/uid/drill-prometheus')).status === 200, 'the Prometheus data source to be provisioned');
+      const dashboard = JSON.parse(await readFile(dashboardPath, 'utf8'));
+      const imported = await call('/api/dashboards/import', {
+        dashboard,
+        overwrite: true,
+        folderUid: '',
+        inputs: [{ name: 'DS_PROMETHEUS', type: 'datasource', pluginId: 'prometheus', value: 'drill-prometheus' }]
+      });
+      assert.equal(imported.status, 200, imported.text);
+      const stored = (await call('/api/dashboards/uid/' + dashboard.uid)).json.dashboard;
+      assert.equal(stored.title, dashboard.title);
+      assert.ok(!JSON.stringify(stored).includes('DS_PROMETHEUS'), 'the data source input was resolved on import');
+      // The job variable lists both scraped jobs.
+      const jobs = (await call('/api/datasources/uid/drill-prometheus/resources/api/v1/label/job/values')).json.data;
+      assert.ok(jobs.includes('app-mixer-data-plane') && jobs.includes('app-mixer-agent'), 'the job variable offers the scraped jobs: ' + jobs);
+      // Every panel query, with the job variable set to all, runs through Grafana without error.
+      const panels = stored.panels.filter(panel => panel.type !== 'row'),
+        answered = {};
+      assert.ok(panels.length >= 10, 'the dashboard has its panels');
+      for (const panel of panels) {
+        for (const [index, target] of panel.targets.entries()) {
+          const expr = target.expr.replaceAll('$job', '.*').replaceAll('$__rate_interval', '1m');
+          const result = await call('/api/ds/query', {
+            from: 'now-5m',
+            to: 'now',
+            queries: [{ refId: 'A', datasource: { type: 'prometheus', uid: 'drill-prometheus' }, expr, range: true, instant: false, intervalMs: 1000, maxDataPoints: 50 }]
+          });
+          assert.equal(result.status, 200, `${panel.title}: ${result.text.slice(0, 300)}`);
+          const outcome = result.json.results.A;
+          assert.ok(!outcome.error, `${panel.title}: ${outcome.error}`);
+          answered[`${panel.title}#${index}`] = outcome.frames.length;
+        }
+      }
+      // Panels fed by the metrics this drill enables have data; the opt-in gauges (tokens, costs, memories, approvals) do not.
+      for (const title of [
+        'Served publication version',
+        'Draining',
+        'Uptime',
+        'Durable runs by status',
+        'Journaled actions by status (uncertain and dispatching need an operator)',
+        'Oldest overdue and due schedule age'
+      ])
+        assert.ok(answered[title + '#0'] > 0, `${title} shows data`);
+      assert.equal(
+        Object.keys(answered).length,
+        panels.reduce((sum, panel) => sum + panel.targets.length, 0)
+      );
+
+      // Failure: no schedule worker for ten minutes, an action with an unknown outcome, a pod stuck draining.
+      now += 10 * 60000;
+      insertAction(path, 'charge', 'uncertain');
+      plane.setDraining(true);
+      const expected = ['AppMixerAgentScheduleBacklog', 'AppMixerAgentActionsUncertain', 'AppMixerDataPlaneStuckDraining'];
+      await wait(async () => {
+        const set = await firing();
+        return expected.every(a => set.has(a)) || [...set].join(',');
+      }, 'the drill alerts to fire');
+      // Then the Data Plane metrics endpoint goes away entirely.
+      planeServer.closeAllConnections();
+      await new Promise(resolve => planeServer.close(resolve));
+      servers.splice(servers.indexOf(planeServer), 1);
+      await wait(async () => (await firing()).has('AppMixerMetricsScrapeFailing'), 'the scrape alert to fire');
+      if (process.env.APP_MIXER_TEST_ALERT_EXPORT) await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT, JSON.stringify(await get('/api/v1/alerts'), null, 2));
+      const shown = (await get('/api/v1/alerts')).alerts.find(a => a.labels.alertname === 'AppMixerAgentScheduleBacklog');
+      assert.equal(shown.labels.severity, 'page');
+      assert.equal(shown.annotations.runbook, 'docs/runbooks.md#appmixeragentschedulebacklog');
+      // Alertmanager routes pages to on-call and the rest to tickets, carrying the runbook.
+      await wait(
+        () =>
+          (deliveries('page', 'AppMixerAgentScheduleBacklog', 'firing').length > 0 &&
+            deliveries('ticket', 'AppMixerAgentActionsUncertain', 'firing').length > 0 &&
+            deliveries('page', 'AppMixerMetricsScrapeFailing', 'firing').length > 0) ||
+          JSON.stringify(delivered.map(d => [d.path, d.status, d.alerts.map(a => a.labels.alertname)])),
+        'Alertmanager to deliver the drill alerts'
+      );
+      assert.equal(
+        deliveries('page', 'AppMixerAgentScheduleBacklog', 'firing')[0].alerts.find(a => a.labels.alertname === 'AppMixerAgentScheduleBacklog').annotations.runbook,
+        'docs/runbooks.md#appmixeragentschedulebacklog'
+      );
+      assert.equal(deliveries('ticket', 'AppMixerAgentScheduleBacklog', 'firing').length, 0, 'a page is not also ticketed');
+      assert.equal(deliveries('page', 'AppMixerAgentActionsUncertain', 'firing').length, 0, 'a ticket does not page');
+
+      // Recovery: the worker catches up and the action is reconciled, so those alerts resolve.
+      const schedule = store.schedules.get(scope, 'nightly');
+      store.schedules.fire(scope, 'nightly', schedule.revision, { definitionVersion: 1, maxAttempts: 1, runTimeoutMs: 10000, maxPending: 100 }, now);
+      const db = new DatabaseSync(path);
+      try {
+        db.prepare("UPDATE agent_action_journal SET status='failed' WHERE action_id='charge'").run();
+      } finally {
+        db.close();
+      }
+      await wait(async () => {
+        const set = await firing();
+        return (!set.has('AppMixerAgentScheduleBacklog') && !set.has('AppMixerAgentActionsUncertain')) || [...set].join(',');
+      }, 'the recovered alerts to resolve');
+      await wait(
+        () => deliveries('page', 'AppMixerAgentScheduleBacklog', 'resolved').length > 0 && deliveries('ticket', 'AppMixerAgentActionsUncertain', 'resolved').length > 0,
+        'Alertmanager to send the resolved notices'
+      );
+      if (process.env.APP_MIXER_TEST_ALERT_EXPORT) await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT.replace(/(\.json)?$/, '-deliveries.json'), JSON.stringify(delivered, null, 2));
+    } finally {
+      for (const container of containers) await run('docker', ['rm', '-f', container]).catch(() => {});
+      for (const server of servers) {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+      metrics?.close();
+      store?.close();
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }
-  // Panels fed by the metrics this drill enables have data; the opt-in gauges (tokens, costs, memories, approvals) do not.
-  for(const title of ['Served publication version','Draining','Uptime','Durable runs by status','Journaled actions by status (uncertain and dispatching need an operator)','Oldest overdue and due schedule age'])assert.ok(answered[title+'#0']>0,`${title} shows data`);
-  assert.equal(Object.keys(answered).length,panels.reduce((sum,panel)=>sum+panel.targets.length,0));
-
-  // Failure: no schedule worker for ten minutes, an action with an unknown outcome, a pod stuck draining.
-  now+=10*60000;insertAction(path,'charge','uncertain');plane.setDraining(true);
-  const expected=['AppMixerAgentScheduleBacklog','AppMixerAgentActionsUncertain','AppMixerDataPlaneStuckDraining'];
-  await wait(async()=>{const set=await firing();return expected.every(a=>set.has(a))||[...set].join(',');},'the drill alerts to fire');
-  // Then the Data Plane metrics endpoint goes away entirely.
-  planeServer.closeAllConnections();await new Promise(resolve=>planeServer.close(resolve));servers.splice(servers.indexOf(planeServer),1);
-  await wait(async()=>(await firing()).has('AppMixerMetricsScrapeFailing'),'the scrape alert to fire');
-  if(process.env.APP_MIXER_TEST_ALERT_EXPORT)await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT,JSON.stringify(await get('/api/v1/alerts'),null,2));
-  const shown=(await get('/api/v1/alerts')).alerts.find(a=>a.labels.alertname==='AppMixerAgentScheduleBacklog');assert.equal(shown.labels.severity,'page');assert.equal(shown.annotations.runbook,'docs/runbooks.md#appmixeragentschedulebacklog');
-  // Alertmanager routes pages to on-call and the rest to tickets, carrying the runbook.
-  await wait(()=>deliveries('page','AppMixerAgentScheduleBacklog','firing').length>0&&deliveries('ticket','AppMixerAgentActionsUncertain','firing').length>0&&deliveries('page','AppMixerMetricsScrapeFailing','firing').length>0||JSON.stringify(delivered.map(d=>[d.path,d.status,d.alerts.map(a=>a.labels.alertname)])),'Alertmanager to deliver the drill alerts');
-  assert.equal(deliveries('page','AppMixerAgentScheduleBacklog','firing')[0].alerts.find(a=>a.labels.alertname==='AppMixerAgentScheduleBacklog').annotations.runbook,'docs/runbooks.md#appmixeragentschedulebacklog');
-  assert.equal(deliveries('ticket','AppMixerAgentScheduleBacklog','firing').length,0,'a page is not also ticketed');assert.equal(deliveries('page','AppMixerAgentActionsUncertain','firing').length,0,'a ticket does not page');
-
-  // Recovery: the worker catches up and the action is reconciled, so those alerts resolve.
-  const schedule=store.schedules.get(scope,'nightly');store.schedules.fire(scope,'nightly',schedule.revision,{definitionVersion:1,maxAttempts:1,runTimeoutMs:10000,maxPending:100},now);
-  const db=new DatabaseSync(path);try{db.prepare("UPDATE agent_action_journal SET status='failed' WHERE action_id='charge'").run();}finally{db.close();}
-  await wait(async()=>{const set=await firing();return (!set.has('AppMixerAgentScheduleBacklog')&&!set.has('AppMixerAgentActionsUncertain'))||[...set].join(',');},'the recovered alerts to resolve');
-  await wait(()=>deliveries('page','AppMixerAgentScheduleBacklog','resolved').length>0&&deliveries('ticket','AppMixerAgentActionsUncertain','resolved').length>0,'Alertmanager to send the resolved notices');
-  if(process.env.APP_MIXER_TEST_ALERT_EXPORT)await writeFile(process.env.APP_MIXER_TEST_ALERT_EXPORT.replace(/(\.json)?$/,'-deliveries.json'),JSON.stringify(delivered,null,2));
- }finally{
-  for(const container of containers)await run('docker',['rm','-f',container]).catch(()=>{});
-  for(const server of servers){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
-  metrics?.close();store?.close();await rm(dir,{recursive:true,force:true}).catch(()=>{});
- }
-});
+);

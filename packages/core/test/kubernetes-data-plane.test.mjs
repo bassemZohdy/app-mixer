@@ -1,131 +1,763 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn,spawnSync} from 'node:child_process';
-import {once} from 'node:events';
-import {mkdtemp,writeFile,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {request as httpsRequest} from 'node:https';
-import {readFileSync} from 'node:fs';
-import {generateKeyPairSync} from 'node:crypto';
-import {SignJWT} from 'jose';
-import {signPublicationRelease,verifyPublicationRelease} from '../dist/index.js';
-import {fileURLToPath} from 'node:url';
-import {setTimeout as delay} from 'node:timers/promises';
-const service=fileURLToPath(new URL('../../../deploy/kubernetes/data-plane.mjs',import.meta.url));
-const launcher=fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs',import.meta.url));
-function assignedPort(child){return new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(Error('Data Plane did not report its port')),15000),onExit=(code,signal)=>finish(Error(`Data Plane exited before listening: ${code??signal}`)),onMessage=message=>{if(Number.isInteger(message?.dataPlanePort)&&message.dataPlanePort>0)finish(undefined,message.dataPlanePort);};function finish(error,value){clearTimeout(timer);child.off('exit',onExit);child.off('message',onMessage);if(error)reject(error);else resolve(value);}child.on('exit',onExit);child.on('message',onMessage);});}
-function assignedPorts(child){return new Promise((resolve,reject)=>{let dataPlanePort,metricsPort;const timer=setTimeout(()=>finish(Error('Data Plane did not report both ports')),15000),onExit=(code,signal)=>finish(Error(`Data Plane exited before listening: ${code??signal}`)),onMessage=message=>{if(Number.isInteger(message?.dataPlanePort)&&message.dataPlanePort>0)dataPlanePort=message.dataPlanePort;if(Number.isInteger(message?.metricsPort)&&message.metricsPort>0)metricsPort=message.metricsPort;if(dataPlanePort&&metricsPort)finish(undefined,{dataPlanePort,metricsPort});};function finish(error,value){clearTimeout(timer);child.off('exit',onExit);child.off('message',onMessage);if(error)reject(error);else resolve(value);}child.on('exit',onExit);child.on('message',onMessage);});}
-async function awaitReady(url,child){for(let i=0;i<100;i++){if(child.exitCode!==null)throw Error(`Data Plane exited: ${child.exitCode}`);try{return await fetch(url,{signal:AbortSignal.timeout(500)});}catch{await delay(50);}}throw Error('Data Plane failed to start');}
-test('mounted publication stays immutable and serves readiness without a Control Plane',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-data-')),path=join(dir,'publication.json'),publication={version:7,definition:{id:'demo',schemaVersion:1,revision:2,pages:[]}};await writeFile(path,JSON.stringify(publication));const child=spawn(process.execPath,[launcher],{env:{...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPort(child);
- try{const base=`http://127.0.0.1:${await listening}`;assert.equal((await awaitReady(base+'/health/ready',child)).status,200);assert.deepEqual(await (await fetch(base+'/application')).json(),publication);assert.equal((await fetch(base+'/application/versions/7')).status,200);assert.equal((await fetch(base+'/application/versions/6')).status,404);await writeFile(path,JSON.stringify({...publication,version:8}));assert.deepEqual(await (await fetch(base+'/application')).json(),publication);}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}await rm(dir,{recursive:true,force:true});}
-});
-test('missing or malformed publication fails startup',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-invalid-')),path=join(dir,'publication.json');try{for(const value of [{version:0,definition:{}},{version:1,definition:{}},{version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]},extra:true}]){await writeFile(path,JSON.stringify(value));const child=spawnSync(process.execPath,[service],{env:{...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:'3002'},encoding:'utf8',timeout:10000});assert.notEqual(child.status,0);}}finally{await rm(dir,{recursive:true,force:true});}
-});
-
-
-test('signed mode starts only for a trusted release bound to the app and environment',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-signed-release-')),path=join(dir,'release.json'),keyPath=join(dir,'keys.json'),pair=generateKeyPairSync('ed25519'),release=signPublicationRelease({version:3,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}},'production','key-1',pair.privateKey);await writeFile(path,JSON.stringify(release));await writeFile(keyPath,JSON.stringify([{keyId:'key-1',publicKey:pair.publicKey.export({format:'pem',type:'spki'})}]));const env={...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'signed',APP_MIXER_RELEASE_KEYS_PATH:keyPath,APP_MIXER_RELEASE_ENV:'production',APP_MIXER_APPLICATION_ID:'demo',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'};const child=spawn(process.execPath,[launcher],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPort(child);
- try{const p=await listening;assert.equal((await awaitReady(`http://127.0.0.1:${p}/health/ready`,child)).status,200);assert.equal((await (await fetch(`http://127.0.0.1:${p}/application`)).json()).version,3);}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}}
- try{for(const changed of [{...release,publication:{...release.publication,version:4}},{...release,environment:'staging'},{...release,keyId:'unknown'}]){await writeFile(path,JSON.stringify(changed));const result=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});assert.notEqual(result.status,0);}await writeFile(path,JSON.stringify(release));const missing=spawnSync(process.execPath,[service],{env:{...env,APP_MIXER_RELEASE_KEYS_PATH:''},encoding:'utf8',timeout:10000});assert.notEqual(missing.status,0);await writeFile(keyPath,JSON.stringify([{keyId:'key-1',publicKey:pair.privateKey.export({format:'pem',type:'pkcs8'})}]));const privateKey=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});assert.notEqual(privateKey.status,0);}finally{await rm(dir,{recursive:true,force:true});}
-});
-
-
-test('release signing command creates a verifiable artifact without overwriting files',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-signer-')),raw=join(dir,'publication.json'),key=join(dir,'private.pem'),out=join(dir,'signed.json'),pair=generateKeyPairSync('ed25519'),script=fileURLToPath(new URL('../../../deploy/kubernetes/sign-publication.mjs',import.meta.url)),publication={version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}};
- try{await writeFile(raw,JSON.stringify(publication));await writeFile(key,pair.privateKey.export({type:'pkcs8',format:'pem'}));const result=spawnSync(process.execPath,[script,raw,out,key,'key-1','production'],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);const {readFile}=await import('node:fs/promises');assert.deepEqual(verifyPublicationRelease(JSON.parse(await readFile(out,'utf8')),'production','demo',[{keyId:'key-1',publicKey:pair.publicKey}]),publication);assert.notEqual(spawnSync(process.execPath,[script,raw,out,key,'key-1','production'],{encoding:'utf8'}).status,0);}finally{await rm(dir,{recursive:true,force:true});}
-});
-
-
-test('JWT access mode requires a verified scoped tenant token for publication reads',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-jwt-data-')),path=join(dir,'publication.json'),keys=join(dir,'jwks.json'),pair=generateKeyPairSync('rsa',{modulusLength:2048}),now=Math.floor(Date.now()/1000),pub={version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}};await writeFile(path,JSON.stringify(pub));await writeFile(keys,JSON.stringify({keys:[{...pair.publicKey.export({format:'jwk'}),kid:'one',alg:'RS256',use:'sig'}]}));const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'jwt',APP_MIXER_REVOCATION_MODE:'disabled',APP_MIXER_JWKS_PATH:keys,APP_MIXER_JWT_ISSUER:'https://issuer.example/',APP_MIXER_JWT_AUDIENCE:'data-plane',APP_MIXER_TENANT_ID:'tenant',APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS:'750',APP_MIXER_PUBLICATION_AUTH_MAX_PENDING:'3',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs',import.meta.url))],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPort(child);
- const token=claims=>new SignJWT({iss:env.APP_MIXER_JWT_ISSUER,aud:env.APP_MIXER_JWT_AUDIENCE,sub:'alice',client_id:'client',jti:'id',iat:now,exp:now+300,tenant_id:'tenant',scope:'app-mixer:publication.read',...claims}).setProtectedHeader({alg:'RS256',kid:'one',typ:'at+jwt'}).sign(pair.privateKey);
- try{const base=`http://127.0.0.1:${await listening}`;assert.equal((await awaitReady(base+'/health/ready',child)).status,200);assert.equal((await fetch(base+'/application')).status,403);const valid=await token({}),get=t=>fetch(base+'/application',{headers:{authorization:`Bearer ${t}`}});assert.equal((await get(valid)).status,200);assert.equal((await get(await token({tenant_id:'other'}))).status,403);assert.equal((await get(await token({scope:'other'}))).status,403);assert.equal((await get(await token({exp:now-1}))).status,403);assert.equal((await get(await token({aud:'other'}))).status,403);for(const invalid of [{APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS:'99'},{APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS:'30001'},{APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS:'1.5'},{APP_MIXER_PUBLICATION_AUTH_MAX_PENDING:'0'},{APP_MIXER_PUBLICATION_AUTH_MAX_PENDING:'101'},{APP_MIXER_PUBLICATION_AUTH_MAX_PENDING:'01'}]){const failed=spawnSync(process.execPath,[service],{env:{...env,...invalid},encoding:'utf8',timeout:10000});assert.notEqual(failed.status,0);assert.match(failed.stderr,/Invalid publication authorization limits/);}}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}await rm(dir,{recursive:true,force:true});}
-});
-
-test('Kubernetes Data Plane exposes optional loopback metrics behind a separate JWT scope',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-metrics-')),path=join(dir,'publication.json'),keys=join(dir,'jwks.json'),pair=generateKeyPairSync('rsa',{modulusLength:2048}),now=Math.floor(Date.now()/1000);await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));await writeFile(keys,JSON.stringify({keys:[{...pair.publicKey.export({format:'jwk'}),kid:'one',alg:'RS256',use:'sig'}]}));const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'jwt',APP_MIXER_REVOCATION_MODE:'disabled',APP_MIXER_JWKS_PATH:keys,APP_MIXER_JWT_ISSUER:'https://issuer.example/',APP_MIXER_JWT_AUDIENCE:'data-plane',APP_MIXER_TENANT_ID:'tenant',APP_MIXER_METRICS_PORT:'3003',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs',import.meta.url))],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPorts(child),token=claims=>new SignJWT({iss:env.APP_MIXER_JWT_ISSUER,aud:env.APP_MIXER_JWT_AUDIENCE,sub:'alice',client_id:'client',jti:'id',iat:now,exp:now+300,tenant_id:'tenant',...claims}).setProtectedHeader({alg:'RS256',kid:'one',typ:'at+jwt'}).sign(pair.privateKey),get=(url,t)=>fetch(url,{headers:{authorization:`Bearer ${t}`}});
- try{
-  const {dataPlanePort,metricsPort}=await listening;assert.notEqual(dataPlanePort,metricsPort);const base=`http://127.0.0.1:${dataPlanePort}`,metrics=`http://127.0.0.1:${metricsPort}/metrics`;
-  assert.equal((await awaitReady(base+'/health/ready',child)).status,200);assert.equal((await awaitReady(metrics,child)).status,401);
-  const publication=await token({scope:'app-mixer:publication.read'}),scrape=await token({scope:'app-mixer:metrics.read'});assert.equal((await get(base+'/application',publication)).status,200);assert.equal((await get(metrics,publication)).status,401);assert.equal((await get(base+'/application',scrape)).status,403);assert.equal((await get(metrics,await token({scope:'app-mixer:metrics.read',tenant_id:'other'}))).status,401);
-  const response=await get(metrics,scrape);assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const body=await response.text();assert.match(body,/app_mixer_data_plane_requests_total\{route="application",outcome="completed",status_class="2xx"\}/);assert.doesNotMatch(body,/alice|tenant|Bearer/);
-  for(const invalid of [{APP_MIXER_ACCESS_MODE:'public'},{APP_MIXER_JWT_SCOPE:'app-mixer:metrics.read'},{APP_MIXER_METRICS_PORT:'3002'},{APP_MIXER_METRICS_PORT:'0'},{APP_MIXER_METRICS_BIND:'10.0.0.5'},{APP_MIXER_METRICS_BIND:'localhost'},{APP_MIXER_METRICS_BIND:'::'},{APP_MIXER_METRICS_BIND:''}]){const result=spawnSync(process.execPath,[service],{env:{...env,...invalid},encoding:'utf8',timeout:10000});assert.notEqual(result.status,0);}
-  {const result=spawnSync(process.execPath,[service],{env:{...env,APP_MIXER_METRICS_PORT:undefined,APP_MIXER_METRICS_BIND:'0.0.0.0'},encoding:'utf8',timeout:10000});assert.ok(result.status!==null&&result.status!==0,'a metrics bind without a metrics port is refused at start-up (not left running)');assert.match(result.stderr,/Invalid metrics configuration/);}
- }finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}await rm(dir,{recursive:true,force:true});}
-});
-
-test('metrics deny a scoped token when the revocation store is unavailable',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-metrics-revocation-')),path=join(dir,'publication.json'),keys=join(dir,'jwks.json'),dsn=join(dir,'dsn');const pair=generateKeyPairSync('rsa',{modulusLength:2048}),now=Math.floor(Date.now()/1000);await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));await writeFile(keys,JSON.stringify({keys:[{...pair.publicKey.export({format:'jwk'}),kid:'one'}]}));await writeFile(dsn,'postgresql://user:password@127.0.0.1:1/db');
- const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'jwt',APP_MIXER_JWKS_PATH:keys,APP_MIXER_JWT_ISSUER:'https://issuer.example/',APP_MIXER_JWT_AUDIENCE:'data-plane',APP_MIXER_TENANT_ID:'tenant',APP_MIXER_REVOCATION_MODE:'postgres',APP_MIXER_REVOCATION_DSN_PATH:dsn,APP_MIXER_REVOCATION_CA_PATH:fileURLToPath(new URL('./fixtures/capability-tls/ca-cert.pem',import.meta.url)),APP_MIXER_METRICS_PORT:'3003',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'};const token=await new SignJWT({iss:env.APP_MIXER_JWT_ISSUER,aud:env.APP_MIXER_JWT_AUDIENCE,sub:'alice',client_id:'client',jti:'id',iat:now,exp:now+300,tenant_id:'tenant',scope:'app-mixer:metrics.read'}).setProtectedHeader({alg:'RS256',kid:'one',typ:'at+jwt'}).sign(pair.privateKey);
- const child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs',import.meta.url))],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPorts(child);
- try{const {dataPlanePort,metricsPort}=await listening;assert.equal((await awaitReady(`http://127.0.0.1:${dataPlanePort}/health/live`,child)).status,200);const url=`http://127.0.0.1:${metricsPort}/metrics`;await awaitReady(url,child);assert.equal((await fetch(url,{headers:{authorization:`Bearer ${token}`}})).status,401);}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}await rm(dir,{recursive:true,force:true});}
-});
-
-
-test('TLS transport requires a trusted certificate and rejects missing TLS configuration',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-tls-data-')),path=join(dir,'publication.json'),fixture=name=>fileURLToPath(new URL(`./fixtures/capability-tls/${name}.pem`,import.meta.url));await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_TRANSPORT:'tls',APP_MIXER_TLS_CERT_PATH:fixture('server-cert'),APP_MIXER_TLS_KEY_PATH:fixture('server-key'),DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[launcher],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPort(child);let p;const get=ca=>new Promise((resolve,reject)=>{const req=httpsRequest({host:'127.0.0.1',port:p,path:'/application',ca},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();});
- try{p=await listening;let ready=false;for(let i=0;i<100;i++){if(child.exitCode!==null)throw Error('Data Plane exited');try{assert.equal(await get(readFileSync(fixture('ca-cert'))),200);ready=true;break;}catch(error){if(error.code!=='ECONNREFUSED')throw error;await delay(50);}}assert.equal(ready,true);await assert.rejects(get(readFileSync(fixture('rogue-cert'))));}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}}
- try{assert.notEqual(spawnSync(process.execPath,[service],{env:{...env,APP_MIXER_TLS_KEY_PATH:''},encoding:'utf8',timeout:10000}).status,0);assert.notEqual(spawnSync(process.execPath,[service],{env:{...env,APP_MIXER_TLS_CLIENT_CA_PATH:''},encoding:'utf8',timeout:10000}).status,0);}finally{await rm(dir,{recursive:true,force:true});}
-});
-
-
-test('TLS reload picks up renewed certificate files without restarting',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-tls-reload-')),path=join(dir,'publication.json'),cert=join(dir,'tls.crt'),key=join(dir,'tls.key'),fixture=name=>readFileSync(new URL(`./fixtures/capability-tls/${name}.pem`,import.meta.url));
- await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));await writeFile(cert,fixture('server-cert'));await writeFile(key,fixture('server-key'));
- const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_TRANSPORT:'tls',APP_MIXER_TLS_CERT_PATH:cert,APP_MIXER_TLS_KEY_PATH:key,APP_MIXER_TLS_RELOAD_MS:'1000',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[launcher],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPort(child);
- let p;const get=ca=>new Promise((resolve,reject)=>{const req=httpsRequest({host:'127.0.0.1',port:p,path:'/application',ca,agent:false},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();});
- try{
-  p=await listening;let ready=false;for(let i=0;i<100;i++){if(child.exitCode!==null)throw Error('Data Plane exited');try{assert.equal(await get(fixture('ca-cert')),200);ready=true;break;}catch(error){if(error.code!=='ECONNREFUSED')throw error;await delay(50);}}assert.equal(ready,true);
-  // Write the certificate before its key, as a non-atomic Secret update might; the mismatched pair must be rejected, not served.
-  await writeFile(cert,fixture('rotated-server-cert'));await delay(1300);assert.equal(await get(fixture('ca-cert')),200);await writeFile(key,fixture('rotated-server-key'));
-  let rotated=false;for(let i=0;i<60&&!rotated;i++){try{rotated=await get(fixture('rotated-server-cert'))===200;}catch{await delay(100);}}assert.equal(rotated,true);await assert.rejects(get(fixture('ca-cert')));assert.equal(child.exitCode,null);
- }finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}}
- try{for(const value of ['999','abc','86400001'])assert.notEqual(spawnSync(process.execPath,[service],{env:{...env,APP_MIXER_TLS_RELOAD_MS:value},encoding:'utf8',timeout:10000}).status,0);}finally{await rm(dir,{recursive:true,force:true});}
-});
-
-test('PostgreSQL revocation unavailability denies tokens and readiness',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-revoke-down-')),path=join(dir,'publication.json'),keys=join(dir,'jwks.json'),dsn=join(dir,'dsn'),pair=generateKeyPairSync('rsa',{modulusLength:2048}),now=Math.floor(Date.now()/1000);await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));await writeFile(keys,JSON.stringify({keys:[{...pair.publicKey.export({format:'jwk'}),kid:'one'}]}));await writeFile(dsn,'postgresql://user:password@127.0.0.1:1/db');const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'jwt',APP_MIXER_JWKS_PATH:keys,APP_MIXER_JWT_ISSUER:'https://issuer.example/',APP_MIXER_JWT_AUDIENCE:'data-plane',APP_MIXER_TENANT_ID:'tenant',APP_MIXER_REVOCATION_MODE:'postgres',APP_MIXER_REVOCATION_DSN_PATH:dsn,APP_MIXER_REVOCATION_CA_PATH:fileURLToPath(new URL('./fixtures/capability-tls/ca-cert.pem',import.meta.url)),DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[launcher],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPort(child),token=await new SignJWT({iss:env.APP_MIXER_JWT_ISSUER,aud:env.APP_MIXER_JWT_AUDIENCE,sub:'alice',client_id:'client',jti:'id',iat:now,exp:now+300,tenant_id:'tenant',scope:'app-mixer:publication.read'}).setProtectedHeader({alg:'RS256',kid:'one',typ:'at+jwt'}).sign(pair.privateKey);
- try{const base=`http://127.0.0.1:${await listening}`;assert.equal((await awaitReady(base+'/health/live',child)).status,200);assert.equal((await fetch(base+'/health/ready')).status,503);assert.equal((await fetch(base+'/application',{headers:{authorization:`Bearer ${token}`}})).status,403);}finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}}
- try{await writeFile(dsn,'postgresql://user:password@localhost/db?sslmode=disable');const invalid=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});assert.notEqual(invalid.status,0);assert.doesNotMatch(invalid.stderr,/user:password/);}finally{await rm(dir,{recursive:true,force:true});}
-});
-
-test('a release floor anchor needs the PostgreSQL floor mode and an absolute directory',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-anchor-')),path=join(dir,'publication.json');
- try{
-  await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));
-  for(const [mode,anchor] of [['disabled','/floor-anchor'],[undefined,'/floor-anchor'],['postgres','relative/path'],['postgres','/floor-anchor/../tmp'],['postgres','/bad path'],['postgres','']]){
-   const env={...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:'39123',APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR:anchor};
-   if(mode===undefined)delete env.APP_MIXER_RELEASE_FLOOR_MODE;else env.APP_MIXER_RELEASE_FLOOR_MODE=mode;
-   const child=spawnSync(process.execPath,[service],{env,encoding:'utf8',timeout:10000});
-   assert.ok(child.status!==null&&child.status!==0,'must exit with an error, not run until the timeout');assert.match(child.stderr,/Invalid publication release floor configuration/,`${mode}/${anchor}: ${child.stderr.slice(0,200)}`);
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { request as httpsRequest } from 'node:https';
+import { readFileSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
+import { SignJWT } from 'jose';
+import { signPublicationRelease, verifyPublicationRelease } from '../dist/index.js';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+const service = fileURLToPath(new URL('../../../deploy/kubernetes/data-plane.mjs', import.meta.url));
+const launcher = fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs', import.meta.url));
+function assignedPort(child) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(Error('Data Plane did not report its port')), 15000),
+      onExit = (code, signal) => finish(Error(`Data Plane exited before listening: ${code ?? signal}`)),
+      onMessage = message => {
+        if (Number.isInteger(message?.dataPlanePort) && message.dataPlanePort > 0) finish(undefined, message.dataPlanePort);
+      };
+    function finish(error, value) {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      child.off('message', onMessage);
+      if (error) reject(error);
+      else resolve(value);
+    }
+    child.on('exit', onExit);
+    child.on('message', onMessage);
+  });
+}
+function assignedPorts(child) {
+  return new Promise((resolve, reject) => {
+    let dataPlanePort, metricsPort;
+    const timer = setTimeout(() => finish(Error('Data Plane did not report both ports')), 15000),
+      onExit = (code, signal) => finish(Error(`Data Plane exited before listening: ${code ?? signal}`)),
+      onMessage = message => {
+        if (Number.isInteger(message?.dataPlanePort) && message.dataPlanePort > 0) dataPlanePort = message.dataPlanePort;
+        if (Number.isInteger(message?.metricsPort) && message.metricsPort > 0) metricsPort = message.metricsPort;
+        if (dataPlanePort && metricsPort) finish(undefined, { dataPlanePort, metricsPort });
+      };
+    function finish(error, value) {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      child.off('message', onMessage);
+      if (error) reject(error);
+      else resolve(value);
+    }
+    child.on('exit', onExit);
+    child.on('message', onMessage);
+  });
+}
+async function awaitReady(url, child) {
+  for (let i = 0; i < 100; i++) {
+    if (child.exitCode !== null) throw Error(`Data Plane exited: ${child.exitCode}`);
+    try {
+      return await fetch(url, { signal: AbortSignal.timeout(500) });
+    } catch {
+      await delay(50);
+    }
   }
- }finally{await rm(dir,{recursive:true,force:true});}
+  throw Error('Data Plane failed to start');
+}
+test('mounted publication stays immutable and serves readiness without a Control Plane', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-k8s-data-')),
+    path = join(dir, 'publication.json'),
+    publication = { version: 7, definition: { id: 'demo', schemaVersion: 1, revision: 2, pages: [] } };
+  await writeFile(path, JSON.stringify(publication));
+  const child = spawn(process.execPath, [launcher], {
+      env: {
+        ...process.env,
+        APP_MIXER_TRANSPORT: 'http',
+        APP_MIXER_ACCESS_MODE: 'public',
+        APP_MIXER_PUBLICATION_PATH: path,
+        APP_MIXER_PUBLICATION_MODE: 'unsigned',
+        DATA_PORT: '3002',
+        DATA_DRAIN_DELAY_MS: '0'
+      },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    }),
+    listening = assignedPort(child);
+  try {
+    const base = `http://127.0.0.1:${await listening}`;
+    assert.equal((await awaitReady(base + '/health/ready', child)).status, 200);
+    assert.deepEqual(await (await fetch(base + '/application')).json(), publication);
+    assert.equal((await fetch(base + '/application/versions/7')).status, 200);
+    assert.equal((await fetch(base + '/application/versions/6')).status, 404);
+    await writeFile(path, JSON.stringify({ ...publication, version: 8 }));
+    assert.deepEqual(await (await fetch(base + '/application')).json(), publication);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('mounted JWKS reload rotates both scopes and fails readiness closed when stale',{timeout:25000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-jwks-reload-')),path=join(dir,'publication.json'),keys=join(dir,'jwks.json'),first=generateKeyPairSync('rsa',{modulusLength:2048}),second=generateKeyPairSync('rsa',{modulusLength:2048}),now=Math.floor(Date.now()/1000),document=(...entries)=>JSON.stringify({keys:entries.map(([pair,kid])=>({...pair.publicKey.export({format:'jwk'}),kid,alg:'RS256',use:'sig'}))});await writeFile(path,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));await writeFile(keys,document([first,'one']));
- const env={...process.env,APP_MIXER_PUBLICATION_PATH:path,APP_MIXER_PUBLICATION_MODE:'unsigned',APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'jwt',APP_MIXER_REVOCATION_MODE:'disabled',APP_MIXER_JWKS_PATH:keys,APP_MIXER_JWKS_RELOAD_MS:'1000',APP_MIXER_JWT_ISSUER:'https://issuer.example/',APP_MIXER_JWT_AUDIENCE:'data-plane',APP_MIXER_TENANT_ID:'tenant',APP_MIXER_METRICS_PORT:'3003',DATA_PORT:'3002',DATA_DRAIN_DELAY_MS:'0'},child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs',import.meta.url))],{env,stdio:['ignore','ignore','ignore','ipc']}),listening=assignedPorts(child),token=(pair,kid,scope)=>new SignJWT({iss:env.APP_MIXER_JWT_ISSUER,aud:env.APP_MIXER_JWT_AUDIENCE,sub:'alice',client_id:'client',jti:'id',iat:now,exp:now+300,tenant_id:'tenant',scope}).setProtectedHeader({alg:'RS256',kid,typ:'at+jwt'}).sign(pair.privateKey),get=(url,t)=>fetch(url,{headers:{authorization:`Bearer ${t}`}}),waitFor=async fn=>{for(let i=0;i<100;i++){if(await fn())return;await delay(100);}throw Error('Timed out waiting for key rotation');};
- try{const {dataPlanePort,metricsPort}=await listening,base=`http://127.0.0.1:${dataPlanePort}`,metrics=`http://127.0.0.1:${metricsPort}/metrics`;for(const invalid of ['999','abc','3600001']){const result=spawnSync(process.execPath,[service],{env:{...env,APP_MIXER_JWKS_RELOAD_MS:invalid},encoding:'utf8',timeout:10000});assert.notEqual(result.status,0);assert.match(result.stderr,/Invalid JWKS reload configuration/);}assert.equal((await awaitReady(base+'/health/ready',child)).status,200);const old=await token(first,'one','app-mixer:publication.read'),fresh=await token(second,'two','app-mixer:publication.read'),scrape=await token(second,'two','app-mixer:metrics.read');assert.equal((await get(base+'/application',old)).status,200);assert.equal((await get(base+'/application',fresh)).status,403);await writeFile(keys,document([first,'one'],[second,'two']));await waitFor(async()=>(await get(base+'/application',fresh)).status===200);assert.equal((await get(metrics,scrape)).status,200);assert.equal((await get(base+'/application',old)).status,200);await writeFile(keys,document([second,'two']));await waitFor(async()=>(await get(base+'/application',old)).status===403);assert.equal((await get(base+'/application',fresh)).status,200);
-  await writeFile(keys,'{"keys":[]}');await waitFor(async()=>(await fetch(base+'/health/ready')).status===503);assert.equal((await fetch(base+'/health/live')).status,200);assert.equal((await get(base+'/application',fresh)).status,403);assert.equal((await get(metrics,scrape)).status,401);await writeFile(keys,document([second,'two']));await waitFor(async()=>(await fetch(base+'/health/ready')).status===200);assert.equal((await get(base+'/application',fresh)).status,200);assert.equal((await get(metrics,scrape)).status,200);
- }finally{if(child.exitCode===null&&child.signalCode===null){const done=once(child,'exit');child.kill();await done;}await rm(dir,{recursive:true,force:true});}
+test('missing or malformed publication fails startup', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-k8s-invalid-')),
+    path = join(dir, 'publication.json');
+  try {
+    for (const value of [
+      { version: 0, definition: {} },
+      { version: 1, definition: {} },
+      { version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] }, extra: true }
+    ]) {
+      await writeFile(path, JSON.stringify(value));
+      const child = spawnSync(process.execPath, [service], {
+        env: { ...process.env, APP_MIXER_TRANSPORT: 'http', APP_MIXER_ACCESS_MODE: 'public', APP_MIXER_PUBLICATION_PATH: path, APP_MIXER_PUBLICATION_MODE: 'unsigned', DATA_PORT: '3002' },
+        encoding: 'utf8',
+        timeout: 10000
+      });
+      assert.notEqual(child.status, 0);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('oversized mounted files stop startup with a clear error',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-k8s-large-'));
- try{
-  const base={...process.env,APP_MIXER_TRANSPORT:'http',APP_MIXER_ACCESS_MODE:'public',APP_MIXER_PUBLICATION_MODE:'unsigned',DATA_PORT:'3002'};
-  const publication=join(dir,'publication.json');await writeFile(publication,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[],padding:'x'.repeat(1024*1024+8192)}}));
-  let child=spawnSync(process.execPath,[service],{env:{...base,APP_MIXER_PUBLICATION_PATH:publication},encoding:'utf8',timeout:10000});
-  assert.notEqual(child.status,0);assert.match(child.stderr,/Publication too large/);
-  // A TLS certificate file over the limit is refused too, and so is a key set for release verification.
-  const small=join(dir,'small.json');await writeFile(small,JSON.stringify({version:1,definition:{id:'demo',schemaVersion:1,revision:0,pages:[]}}));
-  const cert=join(dir,'cert.pem');await writeFile(cert,'x'.repeat(70000));
-  child=spawnSync(process.execPath,[service],{env:{...base,APP_MIXER_TRANSPORT:'tls',APP_MIXER_PUBLICATION_PATH:small,APP_MIXER_TLS_CERT_PATH:cert,APP_MIXER_TLS_KEY_PATH:cert},encoding:'utf8',timeout:10000});
-  assert.notEqual(child.status,0);assert.match(child.stderr,/Invalid data plane transport configuration/);
-  const keys=join(dir,'keys.json');await writeFile(keys,'['+'1,'.repeat(20000)+'1]');
-  child=spawnSync(process.execPath,[service],{env:{...base,APP_MIXER_PUBLICATION_MODE:'signed',APP_MIXER_PUBLICATION_PATH:small,APP_MIXER_RELEASE_ENV:'production',APP_MIXER_APPLICATION_ID:'demo',APP_MIXER_RELEASE_KEYS_PATH:keys},encoding:'utf8',timeout:10000});
-  assert.notEqual(child.status,0);assert.match(child.stderr,/Invalid release verification configuration/);
- }finally{await rm(dir,{recursive:true,force:true});}
+test('signed mode starts only for a trusted release bound to the app and environment', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-signed-release-')),
+    path = join(dir, 'release.json'),
+    keyPath = join(dir, 'keys.json'),
+    pair = generateKeyPairSync('ed25519'),
+    release = signPublicationRelease({ version: 3, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }, 'production', 'key-1', pair.privateKey);
+  await writeFile(path, JSON.stringify(release));
+  await writeFile(keyPath, JSON.stringify([{ keyId: 'key-1', publicKey: pair.publicKey.export({ format: 'pem', type: 'spki' }) }]));
+  const env = {
+    ...process.env,
+    APP_MIXER_TRANSPORT: 'http',
+    APP_MIXER_ACCESS_MODE: 'public',
+    APP_MIXER_PUBLICATION_PATH: path,
+    APP_MIXER_PUBLICATION_MODE: 'signed',
+    APP_MIXER_RELEASE_KEYS_PATH: keyPath,
+    APP_MIXER_RELEASE_ENV: 'production',
+    APP_MIXER_APPLICATION_ID: 'demo',
+    DATA_PORT: '3002',
+    DATA_DRAIN_DELAY_MS: '0'
+  };
+  const child = spawn(process.execPath, [launcher], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPort(child);
+  try {
+    const p = await listening;
+    assert.equal((await awaitReady(`http://127.0.0.1:${p}/health/ready`, child)).status, 200);
+    assert.equal((await (await fetch(`http://127.0.0.1:${p}/application`)).json()).version, 3);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+  }
+  try {
+    for (const changed of [
+      { ...release, publication: { ...release.publication, version: 4 } },
+      { ...release, environment: 'staging' },
+      { ...release, keyId: 'unknown' }
+    ]) {
+      await writeFile(path, JSON.stringify(changed));
+      const result = spawnSync(process.execPath, [service], { env, encoding: 'utf8', timeout: 10000 });
+      assert.notEqual(result.status, 0);
+    }
+    await writeFile(path, JSON.stringify(release));
+    const missing = spawnSync(process.execPath, [service], { env: { ...env, APP_MIXER_RELEASE_KEYS_PATH: '' }, encoding: 'utf8', timeout: 10000 });
+    assert.notEqual(missing.status, 0);
+    await writeFile(keyPath, JSON.stringify([{ keyId: 'key-1', publicKey: pair.privateKey.export({ format: 'pem', type: 'pkcs8' }) }]));
+    const privateKey = spawnSync(process.execPath, [service], { env, encoding: 'utf8', timeout: 10000 });
+    assert.notEqual(privateKey.status, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('release signing command creates a verifiable artifact without overwriting files', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-signer-')),
+    raw = join(dir, 'publication.json'),
+    key = join(dir, 'private.pem'),
+    out = join(dir, 'signed.json'),
+    pair = generateKeyPairSync('ed25519'),
+    script = fileURLToPath(new URL('../../../deploy/kubernetes/sign-publication.mjs', import.meta.url)),
+    publication = { version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } };
+  try {
+    await writeFile(raw, JSON.stringify(publication));
+    await writeFile(key, pair.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+    const result = spawnSync(process.execPath, [script, raw, out, key, 'key-1', 'production'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const { readFile } = await import('node:fs/promises');
+    assert.deepEqual(verifyPublicationRelease(JSON.parse(await readFile(out, 'utf8')), 'production', 'demo', [{ keyId: 'key-1', publicKey: pair.publicKey }]), publication);
+    assert.notEqual(spawnSync(process.execPath, [script, raw, out, key, 'key-1', 'production'], { encoding: 'utf8' }).status, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('JWT access mode requires a verified scoped tenant token for publication reads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-jwt-data-')),
+    path = join(dir, 'publication.json'),
+    keys = join(dir, 'jwks.json'),
+    pair = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    now = Math.floor(Date.now() / 1000),
+    pub = { version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } };
+  await writeFile(path, JSON.stringify(pub));
+  await writeFile(keys, JSON.stringify({ keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: 'one', alg: 'RS256', use: 'sig' }] }));
+  const env = {
+      ...process.env,
+      APP_MIXER_PUBLICATION_PATH: path,
+      APP_MIXER_PUBLICATION_MODE: 'unsigned',
+      APP_MIXER_TRANSPORT: 'http',
+      APP_MIXER_ACCESS_MODE: 'jwt',
+      APP_MIXER_REVOCATION_MODE: 'disabled',
+      APP_MIXER_JWKS_PATH: keys,
+      APP_MIXER_JWT_ISSUER: 'https://issuer.example/',
+      APP_MIXER_JWT_AUDIENCE: 'data-plane',
+      APP_MIXER_TENANT_ID: 'tenant',
+      APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS: '750',
+      APP_MIXER_PUBLICATION_AUTH_MAX_PENDING: '3',
+      DATA_PORT: '3002',
+      DATA_DRAIN_DELAY_MS: '0'
+    },
+    child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs', import.meta.url))], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPort(child);
+  const token = claims =>
+    new SignJWT({
+      iss: env.APP_MIXER_JWT_ISSUER,
+      aud: env.APP_MIXER_JWT_AUDIENCE,
+      sub: 'alice',
+      client_id: 'client',
+      jti: 'id',
+      iat: now,
+      exp: now + 300,
+      tenant_id: 'tenant',
+      scope: 'app-mixer:publication.read',
+      ...claims
+    })
+      .setProtectedHeader({ alg: 'RS256', kid: 'one', typ: 'at+jwt' })
+      .sign(pair.privateKey);
+  try {
+    const base = `http://127.0.0.1:${await listening}`;
+    assert.equal((await awaitReady(base + '/health/ready', child)).status, 200);
+    assert.equal((await fetch(base + '/application')).status, 403);
+    const valid = await token({}),
+      get = t => fetch(base + '/application', { headers: { authorization: `Bearer ${t}` } });
+    assert.equal((await get(valid)).status, 200);
+    assert.equal((await get(await token({ tenant_id: 'other' }))).status, 403);
+    assert.equal((await get(await token({ scope: 'other' }))).status, 403);
+    assert.equal((await get(await token({ exp: now - 1 }))).status, 403);
+    assert.equal((await get(await token({ aud: 'other' }))).status, 403);
+    for (const invalid of [
+      { APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS: '99' },
+      { APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS: '30001' },
+      { APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS: '1.5' },
+      { APP_MIXER_PUBLICATION_AUTH_MAX_PENDING: '0' },
+      { APP_MIXER_PUBLICATION_AUTH_MAX_PENDING: '101' },
+      { APP_MIXER_PUBLICATION_AUTH_MAX_PENDING: '01' }
+    ]) {
+      const failed = spawnSync(process.execPath, [service], { env: { ...env, ...invalid }, encoding: 'utf8', timeout: 10000 });
+      assert.notEqual(failed.status, 0);
+      assert.match(failed.stderr, /Invalid publication authorization limits/);
+    }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Kubernetes Data Plane exposes optional loopback metrics behind a separate JWT scope', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-k8s-metrics-')),
+    path = join(dir, 'publication.json'),
+    keys = join(dir, 'jwks.json'),
+    pair = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    now = Math.floor(Date.now() / 1000);
+  await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+  await writeFile(keys, JSON.stringify({ keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: 'one', alg: 'RS256', use: 'sig' }] }));
+  const env = {
+      ...process.env,
+      APP_MIXER_PUBLICATION_PATH: path,
+      APP_MIXER_PUBLICATION_MODE: 'unsigned',
+      APP_MIXER_TRANSPORT: 'http',
+      APP_MIXER_ACCESS_MODE: 'jwt',
+      APP_MIXER_REVOCATION_MODE: 'disabled',
+      APP_MIXER_JWKS_PATH: keys,
+      APP_MIXER_JWT_ISSUER: 'https://issuer.example/',
+      APP_MIXER_JWT_AUDIENCE: 'data-plane',
+      APP_MIXER_TENANT_ID: 'tenant',
+      APP_MIXER_METRICS_PORT: '3003',
+      DATA_PORT: '3002',
+      DATA_DRAIN_DELAY_MS: '0'
+    },
+    child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs', import.meta.url))], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPorts(child),
+    token = claims =>
+      new SignJWT({ iss: env.APP_MIXER_JWT_ISSUER, aud: env.APP_MIXER_JWT_AUDIENCE, sub: 'alice', client_id: 'client', jti: 'id', iat: now, exp: now + 300, tenant_id: 'tenant', ...claims })
+        .setProtectedHeader({ alg: 'RS256', kid: 'one', typ: 'at+jwt' })
+        .sign(pair.privateKey),
+    get = (url, t) => fetch(url, { headers: { authorization: `Bearer ${t}` } });
+  try {
+    const { dataPlanePort, metricsPort } = await listening;
+    assert.notEqual(dataPlanePort, metricsPort);
+    const base = `http://127.0.0.1:${dataPlanePort}`,
+      metrics = `http://127.0.0.1:${metricsPort}/metrics`;
+    assert.equal((await awaitReady(base + '/health/ready', child)).status, 200);
+    assert.equal((await awaitReady(metrics, child)).status, 401);
+    const publication = await token({ scope: 'app-mixer:publication.read' }),
+      scrape = await token({ scope: 'app-mixer:metrics.read' });
+    assert.equal((await get(base + '/application', publication)).status, 200);
+    assert.equal((await get(metrics, publication)).status, 401);
+    assert.equal((await get(base + '/application', scrape)).status, 403);
+    assert.equal((await get(metrics, await token({ scope: 'app-mixer:metrics.read', tenant_id: 'other' }))).status, 401);
+    const response = await get(metrics, scrape);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const body = await response.text();
+    assert.match(body, /app_mixer_data_plane_requests_total\{route="application",outcome="completed",status_class="2xx"\}/);
+    assert.doesNotMatch(body, /alice|tenant|Bearer/);
+    for (const invalid of [
+      { APP_MIXER_ACCESS_MODE: 'public' },
+      { APP_MIXER_JWT_SCOPE: 'app-mixer:metrics.read' },
+      { APP_MIXER_METRICS_PORT: '3002' },
+      { APP_MIXER_METRICS_PORT: '0' },
+      { APP_MIXER_METRICS_BIND: '10.0.0.5' },
+      { APP_MIXER_METRICS_BIND: 'localhost' },
+      { APP_MIXER_METRICS_BIND: '::' },
+      { APP_MIXER_METRICS_BIND: '' }
+    ]) {
+      const result = spawnSync(process.execPath, [service], { env: { ...env, ...invalid }, encoding: 'utf8', timeout: 10000 });
+      assert.notEqual(result.status, 0);
+    }
+    {
+      const result = spawnSync(process.execPath, [service], { env: { ...env, APP_MIXER_METRICS_PORT: undefined, APP_MIXER_METRICS_BIND: '0.0.0.0' }, encoding: 'utf8', timeout: 10000 });
+      assert.ok(result.status !== null && result.status !== 0, 'a metrics bind without a metrics port is refused at start-up (not left running)');
+      assert.match(result.stderr, /Invalid metrics configuration/);
+    }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('metrics deny a scoped token when the revocation store is unavailable', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-metrics-revocation-')),
+    path = join(dir, 'publication.json'),
+    keys = join(dir, 'jwks.json'),
+    dsn = join(dir, 'dsn');
+  const pair = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    now = Math.floor(Date.now() / 1000);
+  await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+  await writeFile(keys, JSON.stringify({ keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: 'one' }] }));
+  await writeFile(dsn, 'postgresql://user:password@127.0.0.1:1/db');
+  const env = {
+    ...process.env,
+    APP_MIXER_PUBLICATION_PATH: path,
+    APP_MIXER_PUBLICATION_MODE: 'unsigned',
+    APP_MIXER_TRANSPORT: 'http',
+    APP_MIXER_ACCESS_MODE: 'jwt',
+    APP_MIXER_JWKS_PATH: keys,
+    APP_MIXER_JWT_ISSUER: 'https://issuer.example/',
+    APP_MIXER_JWT_AUDIENCE: 'data-plane',
+    APP_MIXER_TENANT_ID: 'tenant',
+    APP_MIXER_REVOCATION_MODE: 'postgres',
+    APP_MIXER_REVOCATION_DSN_PATH: dsn,
+    APP_MIXER_REVOCATION_CA_PATH: fileURLToPath(new URL('./fixtures/capability-tls/ca-cert.pem', import.meta.url)),
+    APP_MIXER_METRICS_PORT: '3003',
+    DATA_PORT: '3002',
+    DATA_DRAIN_DELAY_MS: '0'
+  };
+  const token = await new SignJWT({
+    iss: env.APP_MIXER_JWT_ISSUER,
+    aud: env.APP_MIXER_JWT_AUDIENCE,
+    sub: 'alice',
+    client_id: 'client',
+    jti: 'id',
+    iat: now,
+    exp: now + 300,
+    tenant_id: 'tenant',
+    scope: 'app-mixer:metrics.read'
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: 'one', typ: 'at+jwt' })
+    .sign(pair.privateKey);
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs', import.meta.url))], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPorts(child);
+  try {
+    const { dataPlanePort, metricsPort } = await listening;
+    assert.equal((await awaitReady(`http://127.0.0.1:${dataPlanePort}/health/live`, child)).status, 200);
+    const url = `http://127.0.0.1:${metricsPort}/metrics`;
+    await awaitReady(url, child);
+    assert.equal((await fetch(url, { headers: { authorization: `Bearer ${token}` } })).status, 401);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TLS transport requires a trusted certificate and rejects missing TLS configuration', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-tls-data-')),
+    path = join(dir, 'publication.json'),
+    fixture = name => fileURLToPath(new URL(`./fixtures/capability-tls/${name}.pem`, import.meta.url));
+  await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+  const env = {
+      ...process.env,
+      APP_MIXER_PUBLICATION_PATH: path,
+      APP_MIXER_PUBLICATION_MODE: 'unsigned',
+      APP_MIXER_ACCESS_MODE: 'public',
+      APP_MIXER_TRANSPORT: 'tls',
+      APP_MIXER_TLS_CERT_PATH: fixture('server-cert'),
+      APP_MIXER_TLS_KEY_PATH: fixture('server-key'),
+      DATA_PORT: '3002',
+      DATA_DRAIN_DELAY_MS: '0'
+    },
+    child = spawn(process.execPath, [launcher], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPort(child);
+  let p;
+  const get = ca =>
+    new Promise((resolve, reject) => {
+      const req = httpsRequest({ host: '127.0.0.1', port: p, path: '/application', ca }, res => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  try {
+    p = await listening;
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      if (child.exitCode !== null) throw Error('Data Plane exited');
+      try {
+        assert.equal(await get(readFileSync(fixture('ca-cert'))), 200);
+        ready = true;
+        break;
+      } catch (error) {
+        if (error.code !== 'ECONNREFUSED') throw error;
+        await delay(50);
+      }
+    }
+    assert.equal(ready, true);
+    await assert.rejects(get(readFileSync(fixture('rogue-cert'))));
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+  }
+  try {
+    assert.notEqual(spawnSync(process.execPath, [service], { env: { ...env, APP_MIXER_TLS_KEY_PATH: '' }, encoding: 'utf8', timeout: 10000 }).status, 0);
+    assert.notEqual(spawnSync(process.execPath, [service], { env: { ...env, APP_MIXER_TLS_CLIENT_CA_PATH: '' }, encoding: 'utf8', timeout: 10000 }).status, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TLS reload picks up renewed certificate files without restarting', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-tls-reload-')),
+    path = join(dir, 'publication.json'),
+    cert = join(dir, 'tls.crt'),
+    key = join(dir, 'tls.key'),
+    fixture = name => readFileSync(new URL(`./fixtures/capability-tls/${name}.pem`, import.meta.url));
+  await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+  await writeFile(cert, fixture('server-cert'));
+  await writeFile(key, fixture('server-key'));
+  const env = {
+      ...process.env,
+      APP_MIXER_PUBLICATION_PATH: path,
+      APP_MIXER_PUBLICATION_MODE: 'unsigned',
+      APP_MIXER_ACCESS_MODE: 'public',
+      APP_MIXER_TRANSPORT: 'tls',
+      APP_MIXER_TLS_CERT_PATH: cert,
+      APP_MIXER_TLS_KEY_PATH: key,
+      APP_MIXER_TLS_RELOAD_MS: '1000',
+      DATA_PORT: '3002',
+      DATA_DRAIN_DELAY_MS: '0'
+    },
+    child = spawn(process.execPath, [launcher], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPort(child);
+  let p;
+  const get = ca =>
+    new Promise((resolve, reject) => {
+      const req = httpsRequest({ host: '127.0.0.1', port: p, path: '/application', ca, agent: false }, res => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  try {
+    p = await listening;
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      if (child.exitCode !== null) throw Error('Data Plane exited');
+      try {
+        assert.equal(await get(fixture('ca-cert')), 200);
+        ready = true;
+        break;
+      } catch (error) {
+        if (error.code !== 'ECONNREFUSED') throw error;
+        await delay(50);
+      }
+    }
+    assert.equal(ready, true);
+    // Write the certificate before its key, as a non-atomic Secret update might; the mismatched pair must be rejected, not served.
+    await writeFile(cert, fixture('rotated-server-cert'));
+    await delay(1300);
+    assert.equal(await get(fixture('ca-cert')), 200);
+    await writeFile(key, fixture('rotated-server-key'));
+    let rotated = false;
+    for (let i = 0; i < 60 && !rotated; i++) {
+      try {
+        rotated = (await get(fixture('rotated-server-cert'))) === 200;
+      } catch {
+        await delay(100);
+      }
+    }
+    assert.equal(rotated, true);
+    await assert.rejects(get(fixture('ca-cert')));
+    assert.equal(child.exitCode, null);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+  }
+  try {
+    for (const value of ['999', 'abc', '86400001'])
+      assert.notEqual(spawnSync(process.execPath, [service], { env: { ...env, APP_MIXER_TLS_RELOAD_MS: value }, encoding: 'utf8', timeout: 10000 }).status, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('PostgreSQL revocation unavailability denies tokens and readiness', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-revoke-down-')),
+    path = join(dir, 'publication.json'),
+    keys = join(dir, 'jwks.json'),
+    dsn = join(dir, 'dsn'),
+    pair = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    now = Math.floor(Date.now() / 1000);
+  await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+  await writeFile(keys, JSON.stringify({ keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: 'one' }] }));
+  await writeFile(dsn, 'postgresql://user:password@127.0.0.1:1/db');
+  const env = {
+      ...process.env,
+      APP_MIXER_PUBLICATION_PATH: path,
+      APP_MIXER_PUBLICATION_MODE: 'unsigned',
+      APP_MIXER_TRANSPORT: 'http',
+      APP_MIXER_ACCESS_MODE: 'jwt',
+      APP_MIXER_JWKS_PATH: keys,
+      APP_MIXER_JWT_ISSUER: 'https://issuer.example/',
+      APP_MIXER_JWT_AUDIENCE: 'data-plane',
+      APP_MIXER_TENANT_ID: 'tenant',
+      APP_MIXER_REVOCATION_MODE: 'postgres',
+      APP_MIXER_REVOCATION_DSN_PATH: dsn,
+      APP_MIXER_REVOCATION_CA_PATH: fileURLToPath(new URL('./fixtures/capability-tls/ca-cert.pem', import.meta.url)),
+      DATA_PORT: '3002',
+      DATA_DRAIN_DELAY_MS: '0'
+    },
+    child = spawn(process.execPath, [launcher], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPort(child),
+    token = await new SignJWT({
+      iss: env.APP_MIXER_JWT_ISSUER,
+      aud: env.APP_MIXER_JWT_AUDIENCE,
+      sub: 'alice',
+      client_id: 'client',
+      jti: 'id',
+      iat: now,
+      exp: now + 300,
+      tenant_id: 'tenant',
+      scope: 'app-mixer:publication.read'
+    })
+      .setProtectedHeader({ alg: 'RS256', kid: 'one', typ: 'at+jwt' })
+      .sign(pair.privateKey);
+  try {
+    const base = `http://127.0.0.1:${await listening}`;
+    assert.equal((await awaitReady(base + '/health/live', child)).status, 200);
+    assert.equal((await fetch(base + '/health/ready')).status, 503);
+    assert.equal((await fetch(base + '/application', { headers: { authorization: `Bearer ${token}` } })).status, 403);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+  }
+  try {
+    await writeFile(dsn, 'postgresql://user:password@localhost/db?sslmode=disable');
+    const invalid = spawnSync(process.execPath, [service], { env, encoding: 'utf8', timeout: 10000 });
+    assert.notEqual(invalid.status, 0);
+    assert.doesNotMatch(invalid.stderr, /user:password/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a release floor anchor needs the PostgreSQL floor mode and an absolute directory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-k8s-anchor-')),
+    path = join(dir, 'publication.json');
+  try {
+    await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+    for (const [mode, anchor] of [
+      ['disabled', '/floor-anchor'],
+      [undefined, '/floor-anchor'],
+      ['postgres', 'relative/path'],
+      ['postgres', '/floor-anchor/../tmp'],
+      ['postgres', '/bad path'],
+      ['postgres', '']
+    ]) {
+      const env = {
+        ...process.env,
+        APP_MIXER_TRANSPORT: 'http',
+        APP_MIXER_ACCESS_MODE: 'public',
+        APP_MIXER_PUBLICATION_PATH: path,
+        APP_MIXER_PUBLICATION_MODE: 'unsigned',
+        DATA_PORT: '39123',
+        APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR: anchor
+      };
+      if (mode === undefined) delete env.APP_MIXER_RELEASE_FLOOR_MODE;
+      else env.APP_MIXER_RELEASE_FLOOR_MODE = mode;
+      const child = spawnSync(process.execPath, [service], { env, encoding: 'utf8', timeout: 10000 });
+      assert.ok(child.status !== null && child.status !== 0, 'must exit with an error, not run until the timeout');
+      assert.match(child.stderr, /Invalid publication release floor configuration/, `${mode}/${anchor}: ${child.stderr.slice(0, 200)}`);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('mounted JWKS reload rotates both scopes and fails readiness closed when stale', { timeout: 25000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-jwks-reload-')),
+    path = join(dir, 'publication.json'),
+    keys = join(dir, 'jwks.json'),
+    first = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    second = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    now = Math.floor(Date.now() / 1000),
+    document = (...entries) => JSON.stringify({ keys: entries.map(([pair, kid]) => ({ ...pair.publicKey.export({ format: 'jwk' }), kid, alg: 'RS256', use: 'sig' })) });
+  await writeFile(path, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+  await writeFile(keys, document([first, 'one']));
+  const env = {
+      ...process.env,
+      APP_MIXER_PUBLICATION_PATH: path,
+      APP_MIXER_PUBLICATION_MODE: 'unsigned',
+      APP_MIXER_TRANSPORT: 'http',
+      APP_MIXER_ACCESS_MODE: 'jwt',
+      APP_MIXER_REVOCATION_MODE: 'disabled',
+      APP_MIXER_JWKS_PATH: keys,
+      APP_MIXER_JWKS_RELOAD_MS: '1000',
+      APP_MIXER_JWT_ISSUER: 'https://issuer.example/',
+      APP_MIXER_JWT_AUDIENCE: 'data-plane',
+      APP_MIXER_TENANT_ID: 'tenant',
+      APP_MIXER_METRICS_PORT: '3003',
+      DATA_PORT: '3002',
+      DATA_DRAIN_DELAY_MS: '0'
+    },
+    child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/data-plane-ephemeral.mjs', import.meta.url))], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }),
+    listening = assignedPorts(child),
+    token = (pair, kid, scope) =>
+      new SignJWT({ iss: env.APP_MIXER_JWT_ISSUER, aud: env.APP_MIXER_JWT_AUDIENCE, sub: 'alice', client_id: 'client', jti: 'id', iat: now, exp: now + 300, tenant_id: 'tenant', scope })
+        .setProtectedHeader({ alg: 'RS256', kid, typ: 'at+jwt' })
+        .sign(pair.privateKey),
+    get = (url, t) => fetch(url, { headers: { authorization: `Bearer ${t}` } }),
+    waitFor = async fn => {
+      for (let i = 0; i < 100; i++) {
+        if (await fn()) return;
+        await delay(100);
+      }
+      throw Error('Timed out waiting for key rotation');
+    };
+  try {
+    const { dataPlanePort, metricsPort } = await listening,
+      base = `http://127.0.0.1:${dataPlanePort}`,
+      metrics = `http://127.0.0.1:${metricsPort}/metrics`;
+    for (const invalid of ['999', 'abc', '3600001']) {
+      const result = spawnSync(process.execPath, [service], { env: { ...env, APP_MIXER_JWKS_RELOAD_MS: invalid }, encoding: 'utf8', timeout: 10000 });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Invalid JWKS reload configuration/);
+    }
+    assert.equal((await awaitReady(base + '/health/ready', child)).status, 200);
+    const old = await token(first, 'one', 'app-mixer:publication.read'),
+      fresh = await token(second, 'two', 'app-mixer:publication.read'),
+      scrape = await token(second, 'two', 'app-mixer:metrics.read');
+    assert.equal((await get(base + '/application', old)).status, 200);
+    assert.equal((await get(base + '/application', fresh)).status, 403);
+    await writeFile(keys, document([first, 'one'], [second, 'two']));
+    await waitFor(async () => (await get(base + '/application', fresh)).status === 200);
+    assert.equal((await get(metrics, scrape)).status, 200);
+    assert.equal((await get(base + '/application', old)).status, 200);
+    await writeFile(keys, document([second, 'two']));
+    await waitFor(async () => (await get(base + '/application', old)).status === 403);
+    assert.equal((await get(base + '/application', fresh)).status, 200);
+    await writeFile(keys, '{"keys":[]}');
+    await waitFor(async () => (await fetch(base + '/health/ready')).status === 503);
+    assert.equal((await fetch(base + '/health/live')).status, 200);
+    assert.equal((await get(base + '/application', fresh)).status, 403);
+    assert.equal((await get(metrics, scrape)).status, 401);
+    await writeFile(keys, document([second, 'two']));
+    await waitFor(async () => (await fetch(base + '/health/ready')).status === 200);
+    assert.equal((await get(base + '/application', fresh)).status, 200);
+    assert.equal((await get(metrics, scrape)).status, 200);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = once(child, 'exit');
+      child.kill();
+      await done;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('oversized mounted files stop startup with a clear error', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-k8s-large-'));
+  try {
+    const base = { ...process.env, APP_MIXER_TRANSPORT: 'http', APP_MIXER_ACCESS_MODE: 'public', APP_MIXER_PUBLICATION_MODE: 'unsigned', DATA_PORT: '3002' };
+    const publication = join(dir, 'publication.json');
+    await writeFile(publication, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [], padding: 'x'.repeat(1024 * 1024 + 8192) } }));
+    let child = spawnSync(process.execPath, [service], { env: { ...base, APP_MIXER_PUBLICATION_PATH: publication }, encoding: 'utf8', timeout: 10000 });
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /Publication too large/);
+    // A TLS certificate file over the limit is refused too, and so is a key set for release verification.
+    const small = join(dir, 'small.json');
+    await writeFile(small, JSON.stringify({ version: 1, definition: { id: 'demo', schemaVersion: 1, revision: 0, pages: [] } }));
+    const cert = join(dir, 'cert.pem');
+    await writeFile(cert, 'x'.repeat(70000));
+    child = spawnSync(process.execPath, [service], {
+      env: { ...base, APP_MIXER_TRANSPORT: 'tls', APP_MIXER_PUBLICATION_PATH: small, APP_MIXER_TLS_CERT_PATH: cert, APP_MIXER_TLS_KEY_PATH: cert },
+      encoding: 'utf8',
+      timeout: 10000
+    });
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /Invalid data plane transport configuration/);
+    const keys = join(dir, 'keys.json');
+    await writeFile(keys, '[' + '1,'.repeat(20000) + '1]');
+    child = spawnSync(process.execPath, [service], {
+      env: {
+        ...base,
+        APP_MIXER_PUBLICATION_MODE: 'signed',
+        APP_MIXER_PUBLICATION_PATH: small,
+        APP_MIXER_RELEASE_ENV: 'production',
+        APP_MIXER_APPLICATION_ID: 'demo',
+        APP_MIXER_RELEASE_KEYS_PATH: keys
+      },
+      encoding: 'utf8',
+      timeout: 10000
+    });
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /Invalid release verification configuration/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

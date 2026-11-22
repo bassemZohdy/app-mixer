@@ -4,7 +4,7 @@ resources:
   - ../signed-jwt-tls-example
   - egress.yaml
 patches:
-  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+  - target: { group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane }
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/env/4/value

@@ -1,47 +1,312 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {once} from 'node:events';
-import {spawn} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-import {createServer as createHttpsServer} from 'node:https';
-import {DatabaseSync} from 'node:sqlite';
-import {generateKeyPairSync} from 'node:crypto';
-import {SignJWT} from 'jose';
-import {createJwtCapabilityAuthenticator} from '../../core/dist/index.js';
-import {SqliteAgentNoticeReceiver,createAgentNoticeReceiverServer} from '../dist/index.js';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { once } from 'node:events';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createServer as createHttpsServer } from 'node:https';
+import { DatabaseSync } from 'node:sqlite';
+import { generateKeyPairSync } from 'node:crypto';
+import { SignJWT } from 'jose';
+import { createJwtCapabilityAuthenticator } from '../../core/dist/index.js';
+import { SqliteAgentNoticeReceiver, createAgentNoticeReceiverServer } from '../dist/index.js';
 
-const scope={tenantId:'tenant',agentId:'agent'},sender={tenantId:'tenant',principalId:'sender'},reviewer={tenantId:'tenant',principalId:'reviewer'},payload={version:1,noticeId:1,...scope,runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:0},key='123e4567-e89b-42d3-a456-426614174000',key2='123e4567-e89b-42d3-a456-426614174001';
-function setup(options={}){const dir=mkdtempSync(join(tmpdir(),'notice-receiver-')),path=join(dir,'receiver.sqlite'),config={scope,maxPending:2,authorize:()=>true,clock:()=>100,...options};return {dir,path,config,receiver:new SqliteAgentNoticeReceiver(path,config)};}
-function close(s){s.receiver?.close();rmSync(s.dir,{recursive:true,force:true});}
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  sender = { tenantId: 'tenant', principalId: 'sender' },
+  reviewer = { tenantId: 'tenant', principalId: 'reviewer' },
+  payload = { version: 1, noticeId: 1, ...scope, runId: 'run', kind: 'approval_requested', subjectId: 'action', subjectRevision: 0 },
+  key = '123e4567-e89b-42d3-a456-426614174000',
+  key2 = '123e4567-e89b-42d3-a456-426614174001';
+function setup(options = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'notice-receiver-')),
+    path = join(dir, 'receiver.sqlite'),
+    config = { scope, maxPending: 2, authorize: () => true, clock: () => 100, ...options };
+  return { dir, path, config, receiver: new SqliteAgentNoticeReceiver(path, config) };
+}
+function close(s) {
+  s.receiver?.close();
+  rmSync(s.dir, { recursive: true, force: true });
+}
 
-test('HTTPS notice delivery supports refreshed and revoked JWT service credentials',async()=>{const s=setup({authorize:(actor,action)=>action==='receive'||action==='verify'?actor.principalId==='sender':true}),{privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048}),issuer='https://issuer.example/',audience='https://receiver.example/',now=1700000000000,auth=createJwtCapabilityAuthenticator({issuer,audience,jwks:{keys:[{...publicKey.export({format:'jwk'}),kid:'one'}]},clock:()=>now,maxTokenAgeSeconds:600,isTokenActive:claims=>claims.jti!=='revoked',resolveActor:claims=>({tenantId:claims.tenant,principalId:claims.sub})});let server,receiverServer,child;try{
- const issue=async(jti,sub='sender')=>new SignJWT({iss:issuer,aud:audience,sub,client_id:'service',jti,iat:now/1000,exp:now/1000+300,tenant:'tenant'}).setProtectedHeader({alg:'RS256',kid:'one',typ:'at+jwt'}).sign(privateKey),tokens=await Promise.all([issue('first'),issue('second'),issue('revoked'),issue('different','other')]),tls=new URL('../../core/test/fixtures/capability-tls/',import.meta.url);receiverServer=createAgentNoticeReceiverServer({receiver:s.receiver,authenticate:auth});server=createHttpsServer({key:readFileSync(new URL('server-key.pem',tls)),cert:readFileSync(new URL('server-cert.pem',tls))},receiverServer.listeners('request')[0]);server.listen(0,'127.0.0.1');await once(server,'listening');child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/notice-https-jwt-client.mjs',import.meta.url))],{env:{...process.env,NODE_EXTRA_CA_CERTS:fileURLToPath(new URL('ca-cert.pem',tls)),TEST_NOTICE_URL:`https://127.0.0.1:${server.address().port}/notice`,TEST_TOKENS:JSON.stringify(tokens)},stdio:['ignore','ignore','pipe']});let stderr='';child.stderr.on('data',x=>stderr+=String(x));const [code]=await once(child,'exit');assert.equal(code,0,stderr);const notices=(await s.receiver.list(reviewer)).items;assert.equal(notices.length,1);assert.equal(notices[0].senderId,'sender');
- }finally{if(child?.exitCode===null&&child.signalCode===null)child.kill();if(server)await new Promise(resolve=>server.close(resolve));receiverServer?.close();auth.close();close(s)}});
+test('HTTPS notice delivery supports refreshed and revoked JWT service credentials', async () => {
+  const s = setup({ authorize: (actor, action) => (action === 'receive' || action === 'verify' ? actor.principalId === 'sender' : true) }),
+    { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+    issuer = 'https://issuer.example/',
+    audience = 'https://receiver.example/',
+    now = 1700000000000,
+    auth = createJwtCapabilityAuthenticator({
+      issuer,
+      audience,
+      jwks: { keys: [{ ...publicKey.export({ format: 'jwk' }), kid: 'one' }] },
+      clock: () => now,
+      maxTokenAgeSeconds: 600,
+      isTokenActive: claims => claims.jti !== 'revoked',
+      resolveActor: claims => ({ tenantId: claims.tenant, principalId: claims.sub })
+    });
+  let server, receiverServer, child;
+  try {
+    const issue = async (jti, sub = 'sender') =>
+        new SignJWT({ iss: issuer, aud: audience, sub, client_id: 'service', jti, iat: now / 1000, exp: now / 1000 + 300, tenant: 'tenant' })
+          .setProtectedHeader({ alg: 'RS256', kid: 'one', typ: 'at+jwt' })
+          .sign(privateKey),
+      tokens = await Promise.all([issue('first'), issue('second'), issue('revoked'), issue('different', 'other')]),
+      tls = new URL('../../core/test/fixtures/capability-tls/', import.meta.url);
+    receiverServer = createAgentNoticeReceiverServer({ receiver: s.receiver, authenticate: auth });
+    server = createHttpsServer({ key: readFileSync(new URL('server-key.pem', tls)), cert: readFileSync(new URL('server-cert.pem', tls)) }, receiverServer.listeners('request')[0]);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/notice-https-jwt-client.mjs', import.meta.url))], {
+      env: {
+        ...process.env,
+        NODE_EXTRA_CA_CERTS: fileURLToPath(new URL('ca-cert.pem', tls)),
+        TEST_NOTICE_URL: `https://127.0.0.1:${server.address().port}/notice`,
+        TEST_TOKENS: JSON.stringify(tokens)
+      },
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', x => (stderr += String(x)));
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 0, stderr);
+    const notices = (await s.receiver.list(reviewer)).items;
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].senderId, 'sender');
+  } finally {
+    if (child?.exitCode === null && child.signalCode === null) child.kill();
+    if (server) await new Promise(resolve => server.close(resolve));
+    receiverServer?.close();
+    auth.close();
+    close(s);
+  }
+});
 
-test('status endpoint reports stored receipts without creating or exposing notices',async()=>{const s=setup(),server=createAgentNoticeReceiverServer({receiver:s.receiver,authenticate:req=>req.headers.authorization==='Bearer good'?sender:undefined});server.listen(0,'127.0.0.1');await once(server,'listening');try{const url=`http://127.0.0.1:${server.address().port}/notice`,post=(path,body=payload)=>fetch(url+path,{method:'POST',headers:{authorization:'Bearer good','content-type':'application/json','idempotency-key':key},body:JSON.stringify(body)});assert.equal((await post('/status')).status,404);assert.equal((await s.receiver.list(reviewer)).items.length,0);assert.equal((await post('')).status,204);assert.equal((await post('/status')).status,204);assert.equal((await post('/status',{...payload,subjectId:'different'})).status,409);}finally{await new Promise(r=>server.close(r));close(s)}});
+test('status endpoint reports stored receipts without creating or exposing notices', async () => {
+  const s = setup(),
+    server = createAgentNoticeReceiverServer({ receiver: s.receiver, authenticate: req => (req.headers.authorization === 'Bearer good' ? sender : undefined) });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/notice`,
+      post = (path, body = payload) =>
+        fetch(url + path, { method: 'POST', headers: { authorization: 'Bearer good', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body) });
+    assert.equal((await post('/status')).status, 404);
+    assert.equal((await s.receiver.list(reviewer)).items.length, 0);
+    assert.equal((await post('')).status, 204);
+    assert.equal((await post('/status')).status, 204);
+    assert.equal((await post('/status', { ...payload, subjectId: 'different' })).status, 409);
+  } finally {
+    await new Promise(r => server.close(r));
+    close(s);
+  }
+});
 
-test('receiver verification requires authorization and exact sender, message and key',async()=>{let allowed=true;const s=setup({authorize:(_actor,action)=>action!=='verify'||allowed});try{assert.equal(await s.receiver.verify(sender,key,payload),false);await s.receiver.receive(sender,key,payload);assert.equal(await s.receiver.verify(sender,key.toUpperCase(),payload),true);await assert.rejects(s.receiver.verify(sender,key,{...payload,subjectId:'other'}),/conflict/);await assert.rejects(s.receiver.verify({...sender,principalId:'other'},key,payload),/conflict/);allowed=false;await assert.rejects(s.receiver.verify(sender,key,payload),/denied/);}finally{close(s)}});
+test('receiver verification requires authorization and exact sender, message and key', async () => {
+  let allowed = true;
+  const s = setup({ authorize: (_actor, action) => action !== 'verify' || allowed });
+  try {
+    assert.equal(await s.receiver.verify(sender, key, payload), false);
+    await s.receiver.receive(sender, key, payload);
+    assert.equal(await s.receiver.verify(sender, key.toUpperCase(), payload), true);
+    await assert.rejects(s.receiver.verify(sender, key, { ...payload, subjectId: 'other' }), /conflict/);
+    await assert.rejects(s.receiver.verify({ ...sender, principalId: 'other' }, key, payload), /conflict/);
+    allowed = false;
+    await assert.rejects(s.receiver.verify(sender, key, payload), /denied/);
+  } finally {
+    close(s);
+  }
+});
 
-test('receiver atomically deduplicates across connections and enforces bounded backlog',async()=>{const s=setup({maxPending:1});let other,db;try{
- other=new SqliteAgentNoticeReceiver(s.path,s.config);const first=await s.receiver.receive(sender,key,payload);assert.equal(first.duplicate,false);assert.deepEqual(await other.receive(sender,key.toUpperCase(),payload),{id:first.id,duplicate:true});await assert.rejects(other.receive(sender,key,{...payload,subjectId:'different'}),/conflict/);await assert.rejects(other.receive({...sender,principalId:'different'},key,payload),/conflict/);await assert.rejects(other.receive(sender,key2,{...payload,noticeId:2}),/backlog full/);
- const initial=await s.receiver.list(reviewer);assert.deepEqual(initial.items.map(x=>x.id),[first.id]);assert.equal(initial.items[0].acknowledgedAt,null);const ack=await s.receiver.acknowledge(reviewer,first.id);assert.equal(ack.acknowledgedBy,'reviewer');assert.equal(ack.acknowledgedAt,100);assert.deepEqual(await other.receive(sender,key,payload),{id:first.id,duplicate:true});assert.equal((await other.receive(sender,key2,{...payload,noticeId:2})).duplicate,false);
- db=new DatabaseSync(s.path);assert.throws(()=>db.exec('UPDATE received_agent_notices SET message=\'{}\''),/immutable/);assert.throws(()=>db.exec('DELETE FROM received_agent_notice_acks'),/immutable/);assert.throws(()=>db.exec("INSERT OR REPLACE INTO received_agent_notice_acks VALUES (1,'tenant','agent','other',101)"),/immutable/);
- other.close();other=new SqliteAgentNoticeReceiver(s.path,s.config);assert.equal((await other.list(reviewer)).items.length,2);assert.equal((await other.receive(sender,key,payload)).duplicate,true);
- }finally{db?.close();other?.close();close(s)}});
+test('receiver atomically deduplicates across connections and enforces bounded backlog', async () => {
+  const s = setup({ maxPending: 1 });
+  let other, db;
+  try {
+    other = new SqliteAgentNoticeReceiver(s.path, s.config);
+    const first = await s.receiver.receive(sender, key, payload);
+    assert.equal(first.duplicate, false);
+    assert.deepEqual(await other.receive(sender, key.toUpperCase(), payload), { id: first.id, duplicate: true });
+    await assert.rejects(other.receive(sender, key, { ...payload, subjectId: 'different' }), /conflict/);
+    await assert.rejects(other.receive({ ...sender, principalId: 'different' }, key, payload), /conflict/);
+    await assert.rejects(other.receive(sender, key2, { ...payload, noticeId: 2 }), /backlog full/);
+    const initial = await s.receiver.list(reviewer);
+    assert.deepEqual(
+      initial.items.map(x => x.id),
+      [first.id]
+    );
+    assert.equal(initial.items[0].acknowledgedAt, null);
+    const ack = await s.receiver.acknowledge(reviewer, first.id);
+    assert.equal(ack.acknowledgedBy, 'reviewer');
+    assert.equal(ack.acknowledgedAt, 100);
+    assert.deepEqual(await other.receive(sender, key, payload), { id: first.id, duplicate: true });
+    assert.equal((await other.receive(sender, key2, { ...payload, noticeId: 2 })).duplicate, false);
+    db = new DatabaseSync(s.path);
+    assert.throws(() => db.exec("UPDATE received_agent_notices SET message='{}'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM received_agent_notice_acks'), /immutable/);
+    assert.throws(() => db.exec("INSERT OR REPLACE INTO received_agent_notice_acks VALUES (1,'tenant','agent','other',101)"), /immutable/);
+    other.close();
+    other = new SqliteAgentNoticeReceiver(s.path, s.config);
+    assert.equal((await other.list(reviewer)).items.length, 2);
+    assert.equal((await other.receive(sender, key, payload)).duplicate, true);
+  } finally {
+    db?.close();
+    other?.close();
+    close(s);
+  }
+});
 
-test('receiver authorizes sender, listing, each record and acknowledgement',async()=>{let allowReceive=true,allowAck=true;const s=setup({authorize:(actor,action,notice)=>action==='receive'?allowReceive&&actor.principalId==='sender':action==='list'?actor.principalId==='reviewer':action==='read'?notice?.message.subjectId==='visible':action==='acknowledge'?allowAck:false});try{
- await assert.rejects(s.receiver.receive({...sender,tenantId:'other'},key,payload),/actor/);allowReceive=false;await assert.rejects(s.receiver.receive(sender,key,payload),/denied/);allowReceive=true;await s.receiver.receive(sender,key,{...payload,subjectId:'hidden'});await s.receiver.receive(sender,key2,{...payload,subjectId:'visible'});const first=await s.receiver.list(reviewer,{limit:1});assert.deepEqual(first.items,[]);const second=await s.receiver.list(reviewer,{after:first.nextAfter,limit:1});assert.equal(second.items[0].message.subjectId,'visible');await assert.rejects(s.receiver.list(sender),/denied/);await assert.rejects(s.receiver.acknowledge(reviewer,1),/denied/);allowAck=false;await assert.rejects(s.receiver.acknowledge(reviewer,2),/denied/);allowAck=true;assert.equal((await s.receiver.acknowledge(reviewer,2)).acknowledgedBy,'reviewer');
- }finally{close(s)}});
+test('receiver authorizes sender, listing, each record and acknowledgement', async () => {
+  let allowReceive = true,
+    allowAck = true;
+  const s = setup({
+    authorize: (actor, action, notice) =>
+      action === 'receive'
+        ? allowReceive && actor.principalId === 'sender'
+        : action === 'list'
+          ? actor.principalId === 'reviewer'
+          : action === 'read'
+            ? notice?.message.subjectId === 'visible'
+            : action === 'acknowledge'
+              ? allowAck
+              : false
+  });
+  try {
+    await assert.rejects(s.receiver.receive({ ...sender, tenantId: 'other' }, key, payload), /actor/);
+    allowReceive = false;
+    await assert.rejects(s.receiver.receive(sender, key, payload), /denied/);
+    allowReceive = true;
+    await s.receiver.receive(sender, key, { ...payload, subjectId: 'hidden' });
+    await s.receiver.receive(sender, key2, { ...payload, subjectId: 'visible' });
+    const first = await s.receiver.list(reviewer, { limit: 1 });
+    assert.deepEqual(first.items, []);
+    const second = await s.receiver.list(reviewer, { after: first.nextAfter, limit: 1 });
+    assert.equal(second.items[0].message.subjectId, 'visible');
+    await assert.rejects(s.receiver.list(sender), /denied/);
+    await assert.rejects(s.receiver.acknowledge(reviewer, 1), /denied/);
+    allowAck = false;
+    await assert.rejects(s.receiver.acknowledge(reviewer, 2), /denied/);
+    allowAck = true;
+    assert.equal((await s.receiver.acknowledge(reviewer, 2)).acknowledgedBy, 'reviewer');
+  } finally {
+    close(s);
+  }
+});
 
-test('receiver rejects malformed or cross-scope data and rolls back failed inserts',async()=>{const s=setup();let db;try{for(const bad of [{...payload,tenantId:'other'},{...payload,extra:true},{...payload,subjectRevision:-1},{...payload,kind:'unknown'}])await assert.rejects(s.receiver.receive(sender,key,bad),/Invalid/);await assert.rejects(s.receiver.receive(sender,'bad',payload),/key/);db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER fail_receive BEFORE INSERT ON received_agent_notices BEGIN SELECT RAISE(ABORT,'storage failed'); END");await assert.rejects(s.receiver.receive(sender,key,payload),/storage failed/);assert.equal((await s.receiver.list(reviewer)).items.length,0);db.exec('DROP TRIGGER fail_receive');assert.equal((await s.receiver.receive(sender,key,payload)).duplicate,false);}finally{db?.close();close(s)}});
+test('receiver rejects malformed or cross-scope data and rolls back failed inserts', async () => {
+  const s = setup();
+  let db;
+  try {
+    for (const bad of [
+      { ...payload, tenantId: 'other' },
+      { ...payload, extra: true },
+      { ...payload, subjectRevision: -1 },
+      { ...payload, kind: 'unknown' }
+    ])
+      await assert.rejects(s.receiver.receive(sender, key, bad), /Invalid/);
+    await assert.rejects(s.receiver.receive(sender, 'bad', payload), /key/);
+    db = new DatabaseSync(s.path);
+    db.exec("CREATE TRIGGER fail_receive BEFORE INSERT ON received_agent_notices BEGIN SELECT RAISE(ABORT,'storage failed'); END");
+    await assert.rejects(s.receiver.receive(sender, key, payload), /storage failed/);
+    assert.equal((await s.receiver.list(reviewer)).items.length, 0);
+    db.exec('DROP TRIGGER fail_receive');
+    assert.equal((await s.receiver.receive(sender, key, payload)).duplicate, false);
+  } finally {
+    db?.close();
+    close(s);
+  }
+});
 
-test('concurrent receipt and acknowledgement preserve deduplication and authorization snapshots',async()=>{let delay=false,started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),s=setup({authorize:async(_actor,action)=>{if(delay&&action==='read'){started();await gate;}return true;}});let other;try{other=new SqliteAgentNoticeReceiver(s.path,{...s.config,authorize:()=>true});const [a,b]=await Promise.all([s.receiver.receive(sender,key,payload),other.receive(sender,key,payload)]);assert.equal(a.id,b.id);assert.equal(Number(a.duplicate)+Number(b.duplicate),1);delay=true;const pending=s.receiver.list(reviewer);await ready;await other.acknowledge(reviewer,a.id);release();assert.deepEqual((await pending).items,[]);assert.equal((await other.list(reviewer)).items[0].acknowledgedBy,'reviewer');}finally{other?.close();close(s)}});
+test('concurrent receipt and acknowledgement preserve deduplication and authorization snapshots', async () => {
+  let delay = false,
+    started,
+    release;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r)),
+    s = setup({
+      authorize: async (_actor, action) => {
+        if (delay && action === 'read') {
+          started();
+          await gate;
+        }
+        return true;
+      }
+    });
+  let other;
+  try {
+    other = new SqliteAgentNoticeReceiver(s.path, { ...s.config, authorize: () => true });
+    const [a, b] = await Promise.all([s.receiver.receive(sender, key, payload), other.receive(sender, key, payload)]);
+    assert.equal(a.id, b.id);
+    assert.equal(Number(a.duplicate) + Number(b.duplicate), 1);
+    delay = true;
+    const pending = s.receiver.list(reviewer);
+    await ready;
+    await other.acknowledge(reviewer, a.id);
+    release();
+    assert.deepEqual((await pending).items, []);
+    assert.equal((await other.list(reviewer)).items[0].acknowledgedBy, 'reviewer');
+  } finally {
+    other?.close();
+    close(s);
+  }
+});
 
-test('HTTPS receiver interoperates with transport and survives a lost acknowledgement',async()=>{const s=setup(),receiverServer=createAgentNoticeReceiverServer({receiver:s.receiver,authenticate:req=>req.headers.authorization==='Bearer '+'a'.repeat(32)?sender:undefined}),tls=new URL('../../core/test/fixtures/capability-tls/',import.meta.url),server=createHttpsServer({key:readFileSync(new URL('server-key.pem',tls)),cert:readFileSync(new URL('server-cert.pem',tls))},receiverServer.listeners('request')[0]);server.listen(0,'127.0.0.1');await once(server,'listening');let child;try{
- const url=`https://127.0.0.1:${server.address().port}/notice`,run=async(fixture='notice-https-client.mjs')=>{child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/'+fixture,import.meta.url))],{env:{...process.env,NODE_EXTRA_CA_CERTS:fileURLToPath(new URL('ca-cert.pem',tls)),TEST_NOTICE_URL:url},stdio:['ignore','ignore','pipe']});let stderr='';child.stderr.on('data',x=>stderr+=String(x));const [code]=await once(child,'exit');assert.equal(code,0,stderr);};await run();await run();await run('notice-https-verify.mjs');const list=await s.receiver.list(reviewer);assert.equal(list.items.length,1);assert.equal(list.items[0].senderId,'sender');assert.deepEqual(list.items[0].message,{noticeId:1,...scope,runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:0});
- }finally{if(child?.exitCode===null&&child.signalCode===null)child.kill();await new Promise(resolve=>server.close(resolve));receiverServer.close();close(s)}});
+test('HTTPS receiver interoperates with transport and survives a lost acknowledgement', async () => {
+  const s = setup(),
+    receiverServer = createAgentNoticeReceiverServer({ receiver: s.receiver, authenticate: req => (req.headers.authorization === 'Bearer ' + 'a'.repeat(32) ? sender : undefined) }),
+    tls = new URL('../../core/test/fixtures/capability-tls/', import.meta.url),
+    server = createHttpsServer({ key: readFileSync(new URL('server-key.pem', tls)), cert: readFileSync(new URL('server-cert.pem', tls)) }, receiverServer.listeners('request')[0]);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  let child;
+  try {
+    const url = `https://127.0.0.1:${server.address().port}/notice`,
+      run = async (fixture = 'notice-https-client.mjs') => {
+        child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/' + fixture, import.meta.url))], {
+          env: { ...process.env, NODE_EXTRA_CA_CERTS: fileURLToPath(new URL('ca-cert.pem', tls)), TEST_NOTICE_URL: url },
+          stdio: ['ignore', 'ignore', 'pipe']
+        });
+        let stderr = '';
+        child.stderr.on('data', x => (stderr += String(x)));
+        const [code] = await once(child, 'exit');
+        assert.equal(code, 0, stderr);
+      };
+    await run();
+    await run();
+    await run('notice-https-verify.mjs');
+    const list = await s.receiver.list(reviewer);
+    assert.equal(list.items.length, 1);
+    assert.equal(list.items[0].senderId, 'sender');
+    assert.deepEqual(list.items[0].message, { noticeId: 1, ...scope, runId: 'run', kind: 'approval_requested', subjectId: 'action', subjectRevision: 0 });
+  } finally {
+    if (child?.exitCode === null && child.signalCode === null) child.kill();
+    await new Promise(resolve => server.close(resolve));
+    receiverServer.close();
+    close(s);
+  }
+});
 
-test('receiver HTTP boundary authenticates and returns precise failures',async()=>{const s=setup(),server=createAgentNoticeReceiverServer({receiver:s.receiver,authenticate:req=>req.headers.authorization==='Bearer good'?sender:undefined});server.listen(0,'127.0.0.1');await once(server,'listening');try{const url=`http://127.0.0.1:${server.address().port}/notice`,post=(body,token='good',deliveryKey=key)=>fetch(url,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json','idempotency-key':deliveryKey},body:typeof body==='string'?body:JSON.stringify(body)});assert.equal((await post(payload,'bad')).status,401);assert.equal((await post(payload)).status,204);assert.equal((await post(payload)).status,204);assert.equal((await post({...payload,subjectId:'other'})).status,409);assert.equal((await post('{}')).status,400);assert.equal((await post(payload,'good','bad')).status,400);assert.equal((await post('x'.repeat(8193))).status,400);}finally{await new Promise(resolve=>server.close(resolve));close(s)}});
+test('receiver HTTP boundary authenticates and returns precise failures', async () => {
+  const s = setup(),
+    server = createAgentNoticeReceiverServer({ receiver: s.receiver, authenticate: req => (req.headers.authorization === 'Bearer good' ? sender : undefined) });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/notice`,
+      post = (body, token = 'good', deliveryKey = key) =>
+        fetch(url, {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': deliveryKey },
+          body: typeof body === 'string' ? body : JSON.stringify(body)
+        });
+    assert.equal((await post(payload, 'bad')).status, 401);
+    assert.equal((await post(payload)).status, 204);
+    assert.equal((await post(payload)).status, 204);
+    assert.equal((await post({ ...payload, subjectId: 'other' })).status, 409);
+    assert.equal((await post('{}')).status, 400);
+    assert.equal((await post(payload, 'good', 'bad')).status, 400);
+    assert.equal((await post('x'.repeat(8193))).status, 400);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    close(s);
+  }
+});

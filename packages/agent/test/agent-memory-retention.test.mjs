@@ -1,33 +1,302 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {SqliteAgentMemory,AgentMemoryRetentionWorker} from '../dist/index.js';
-const actor={tenantId:'tenant',principalId:'worker'},scope=id=>({tenantId:'tenant',agentId:id,owner:{kind:'organization',id:'org'},kind:'episodic'}),provenance={kind:'run',id:'run'};
+import { SqliteAgentMemory, AgentMemoryRetentionWorker } from '../dist/index.js';
+const actor = { tenantId: 'tenant', principalId: 'worker' },
+  scope = id => ({ tenantId: 'tenant', agentId: id, owner: { kind: 'organization', id: 'org' }, kind: 'episodic' }),
+  provenance = { kind: 'run', id: 'run' };
 
-test('retention worker cycles through fixed scopes, honors policies and records purge audit',async()=>{
- let now=100,denied=true;const errors=[],memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>now,authorize:(_actor,s,action)=>!(action==='purge'&&s.agentId==='blocked')}),scopes=[scope('one'),scope('blocked'),scope('three')];try{for(const s of scopes)await memory.put(actor,s,'note',{x:1},{expectedRevision:null,expiresAt:200,provenance});const options={memory,actor:{...actor},scopes:structuredClone(scopes),authorize:(_actor,s)=>s.agentId!=='one'||!denied,maxScopesPerPass:1,pollMs:100,onError:(error,s)=>errors.push([error.message,s.agentId])},worker=new AgentMemoryRetentionWorker(options);options.scopes[2].agentId='forged';options.actor.principalId='forged';now=200;assert.equal(await worker.runOnce(),0);assert.equal(await worker.runOnce(),0);assert.deepEqual(errors.map(x=>x[1]),['blocked']);assert.equal(await worker.runOnce(),1);assert.deepEqual((await memory.auditHistory(actor,scopes[2])).items.map(x=>x.action),['write','purge']);denied=false;assert.equal(await worker.runOnce(),1);assert.deepEqual((await memory.auditHistory(actor,scopes[0])).items.map(x=>x.actorId),['worker','worker']);assert.throws(()=>new AgentMemoryRetentionWorker({...options,actor,scopes:[scope('one'),scope('one')]}),/Duplicate/);assert.throws(()=>new AgentMemoryRetentionWorker({...options,actor,scopes:[{...scope('one'),tenantId:'other'}]}),/scope/);
- }finally{memory.close();}
+test('retention worker cycles through fixed scopes, honors policies and records purge audit', async () => {
+  let now = 100,
+    denied = true;
+  const errors = [],
+    memory = new SqliteAgentMemory(':memory:', {
+      enabled: true,
+      audit: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => now,
+      authorize: (_actor, s, action) => !(action === 'purge' && s.agentId === 'blocked')
+    }),
+    scopes = [scope('one'), scope('blocked'), scope('three')];
+  try {
+    for (const s of scopes) await memory.put(actor, s, 'note', { x: 1 }, { expectedRevision: null, expiresAt: 200, provenance });
+    const options = {
+        memory,
+        actor: { ...actor },
+        scopes: structuredClone(scopes),
+        authorize: (_actor, s) => s.agentId !== 'one' || !denied,
+        maxScopesPerPass: 1,
+        pollMs: 100,
+        onError: (error, s) => errors.push([error.message, s.agentId])
+      },
+      worker = new AgentMemoryRetentionWorker(options);
+    options.scopes[2].agentId = 'forged';
+    options.actor.principalId = 'forged';
+    now = 200;
+    assert.equal(await worker.runOnce(), 0);
+    assert.equal(await worker.runOnce(), 0);
+    assert.deepEqual(
+      errors.map(x => x[1]),
+      ['blocked']
+    );
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scopes[2])).items.map(x => x.action),
+      ['write', 'purge']
+    );
+    denied = false;
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scopes[0])).items.map(x => x.actorId),
+      ['worker', 'worker']
+    );
+    assert.throws(() => new AgentMemoryRetentionWorker({ ...options, actor, scopes: [scope('one'), scope('one')] }), /Duplicate/);
+    assert.throws(() => new AgentMemoryRetentionWorker({ ...options, actor, scopes: [{ ...scope('one'), tenantId: 'other' }] }), /scope/);
+  } finally {
+    memory.close();
+  }
 });
 
-test('retention worker stop waits for authorization and prevents new cleanup',async()=>{
- let now=100,release,started;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r),memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:()=>true});try{await memory.put(actor,scope('one'),'note','x',{expectedRevision:null,expiresAt:200,provenance});now=200;const worker=new AgentMemoryRetentionWorker({memory,actor,scopes:[scope('one')],authorize:async()=>{started();await gate;return true;},maxScopesPerPass:1,pollMs:100,onError:()=>{}});worker.start();await ready;assert.throws(()=>worker.runOnce(),/already running/);const stopping=worker.stop();release();await stopping;assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(x=>x.action),['write']);assert.equal(await worker.runOnce(),1);}finally{memory.close();}
+test('retention worker stop waits for authorization and prevents new cleanup', async () => {
+  let now = 100,
+    release,
+    started;
+  const gate = new Promise(r => (release = r)),
+    ready = new Promise(r => (started = r)),
+    memory = new SqliteAgentMemory(':memory:', { enabled: true, audit: true, maxEntries: 5, maxTtlMs: 1000, clock: () => now, authorize: () => true });
+  try {
+    await memory.put(actor, scope('one'), 'note', 'x', { expectedRevision: null, expiresAt: 200, provenance });
+    now = 200;
+    const worker = new AgentMemoryRetentionWorker({
+      memory,
+      actor,
+      scopes: [scope('one')],
+      authorize: async () => {
+        started();
+        await gate;
+        return true;
+      },
+      maxScopesPerPass: 1,
+      pollMs: 100,
+      onError: () => {}
+    });
+    worker.start();
+    await ready;
+    assert.throws(() => worker.runOnce(), /already running/);
+    const stopping = worker.stop();
+    release();
+    await stopping;
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(x => x.action),
+      ['write']
+    );
+    assert.equal(await worker.runOnce(), 1);
+  } finally {
+    memory.close();
+  }
 });
 
-test('manual retention stop leaves an unauthorized-to-start scope for retry',async()=>{
- let now=100,release,started,block=true;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r),memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:()=>true});
- try{await memory.put(actor,scope('one'),'note','x',{expectedRevision:null,expiresAt:200,provenance});now=200;const worker=new AgentMemoryRetentionWorker({memory,actor,scopes:[scope('one')],authorize:async()=>{if(block){started();await gate;}return true;},maxScopesPerPass:1,pollMs:100,onError:()=>{}});const pass=worker.runOnce();await ready;const stopping=worker.stop();block=false;release();assert.equal(await pass,0);await stopping;assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(x=>x.action),['write']);assert.equal(await worker.runOnce(),1);assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(x=>x.action),['write','purge']);}finally{memory.close();}
+test('manual retention stop leaves an unauthorized-to-start scope for retry', async () => {
+  let now = 100,
+    release,
+    started,
+    block = true;
+  const gate = new Promise(r => (release = r)),
+    ready = new Promise(r => (started = r)),
+    memory = new SqliteAgentMemory(':memory:', { enabled: true, audit: true, maxEntries: 5, maxTtlMs: 1000, clock: () => now, authorize: () => true });
+  try {
+    await memory.put(actor, scope('one'), 'note', 'x', { expectedRevision: null, expiresAt: 200, provenance });
+    now = 200;
+    const worker = new AgentMemoryRetentionWorker({
+      memory,
+      actor,
+      scopes: [scope('one')],
+      authorize: async () => {
+        if (block) {
+          started();
+          await gate;
+        }
+        return true;
+      },
+      maxScopesPerPass: 1,
+      pollMs: 100,
+      onError: () => {}
+    });
+    const pass = worker.runOnce();
+    await ready;
+    const stopping = worker.stop();
+    block = false;
+    release();
+    assert.equal(await pass, 0);
+    await stopping;
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(x => x.action),
+      ['write']
+    );
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(x => x.action),
+      ['write', 'purge']
+    );
+  } finally {
+    memory.close();
+  }
 });
 
-test('manual retention stop fences a purge still awaiting store authorization',async()=>{
- let now=100,release,started,block=true;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r),memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:async(_actor,_scope,action)=>{if(action==='purge'&&block){started();await gate;}return true;}});
- try{await memory.put(actor,scope('one'),'note','x',{expectedRevision:null,expiresAt:200,provenance});now=200;const worker=new AgentMemoryRetentionWorker({memory,actor,scopes:[scope('one')],authorize:()=>true,maxScopesPerPass:1,pollMs:100,onError:()=>{}});const pass=worker.runOnce();await ready;const stopping=worker.stop();block=false;release();assert.equal(await pass,0);await stopping;assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(x=>x.action),['write']);assert.equal(await worker.runOnce(),1);assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(x=>x.action),['write','purge']);}finally{memory.close();}
+test('manual retention stop fences a purge still awaiting store authorization', async () => {
+  let now = 100,
+    release,
+    started,
+    block = true;
+  const gate = new Promise(r => (release = r)),
+    ready = new Promise(r => (started = r)),
+    memory = new SqliteAgentMemory(':memory:', {
+      enabled: true,
+      audit: true,
+      maxEntries: 5,
+      maxTtlMs: 1000,
+      clock: () => now,
+      authorize: async (_actor, _scope, action) => {
+        if (action === 'purge' && block) {
+          started();
+          await gate;
+        }
+        return true;
+      }
+    });
+  try {
+    await memory.put(actor, scope('one'), 'note', 'x', { expectedRevision: null, expiresAt: 200, provenance });
+    now = 200;
+    const worker = new AgentMemoryRetentionWorker({ memory, actor, scopes: [scope('one')], authorize: () => true, maxScopesPerPass: 1, pollMs: 100, onError: () => {} });
+    const pass = worker.runOnce();
+    await ready;
+    const stopping = worker.stop();
+    block = false;
+    release();
+    assert.equal(await pass, 0);
+    await stopping;
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(x => x.action),
+      ['write']
+    );
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(x => x.action),
+      ['write', 'purge']
+    );
+  } finally {
+    memory.close();
+  }
 });
 
-test('bounded retention authorization cancels on stop and keeps its slot until the callback settles',{timeout:10000},async()=>{
- let now=100,release,entered,aborted,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),cancelled=new Promise(resolve=>aborted=resolve),errors=[],memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:()=>true});
- try{await memory.put(actor,scope('one'),'note','x',{expectedRevision:null,expiresAt:200,provenance});now=200;const options={memory,actor,scopes:[scope('one')],authorize:async(_actor,_scope,signal)=>{if(block){signal.addEventListener('abort',aborted,{once:true});entered();await gate;}return true;},authorizationTimeoutMs:1000,maxPendingAuthorizations:1,maxScopesPerPass:1,pollMs:100,onError:error=>errors.push(error.message)},worker=new AgentMemoryRetentionWorker(options);options.authorizationTimeoutMs=30000;options.maxPendingAuthorizations=100;const pass=worker.runOnce();await ready;await worker.stop();await cancelled;assert.equal(await pass,0);assert.equal(await worker.runOnce(),0);assert.ok(errors.includes('Memory retention authorization unavailable'));assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(event=>event.action),['write']);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await memory.auditHistory(actor,scope('one'))).items.map(event=>event.action),['write']);assert.equal(await worker.runOnce(),1);await worker.stop();}finally{release();memory.close();}
+test('bounded retention authorization cancels on stop and keeps its slot until the callback settles', { timeout: 10000 }, async () => {
+  let now = 100,
+    release,
+    entered,
+    aborted,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    cancelled = new Promise(resolve => (aborted = resolve)),
+    errors = [],
+    memory = new SqliteAgentMemory(':memory:', { enabled: true, audit: true, maxEntries: 5, maxTtlMs: 1000, clock: () => now, authorize: () => true });
+  try {
+    await memory.put(actor, scope('one'), 'note', 'x', { expectedRevision: null, expiresAt: 200, provenance });
+    now = 200;
+    const options = {
+        memory,
+        actor,
+        scopes: [scope('one')],
+        authorize: async (_actor, _scope, signal) => {
+          if (block) {
+            signal.addEventListener('abort', aborted, { once: true });
+            entered();
+            await gate;
+          }
+          return true;
+        },
+        authorizationTimeoutMs: 1000,
+        maxPendingAuthorizations: 1,
+        maxScopesPerPass: 1,
+        pollMs: 100,
+        onError: error => errors.push(error.message)
+      },
+      worker = new AgentMemoryRetentionWorker(options);
+    options.authorizationTimeoutMs = 30000;
+    options.maxPendingAuthorizations = 100;
+    const pass = worker.runOnce();
+    await ready;
+    await worker.stop();
+    await cancelled;
+    assert.equal(await pass, 0);
+    assert.equal(await worker.runOnce(), 0);
+    assert.ok(errors.includes('Memory retention authorization unavailable'));
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(event => event.action),
+      ['write']
+    );
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope('one'))).items.map(event => event.action),
+      ['write']
+    );
+    assert.equal(await worker.runOnce(), 1);
+    await worker.stop();
+  } finally {
+    release();
+    memory.close();
+  }
 });
 
-test('retention authorization timeout fails closed and validates its paired limits',{timeout:10000},async()=>{
- let now=100,release,aborted,block=true;const gate=new Promise(resolve=>release=resolve),cancelled=new Promise(resolve=>aborted=resolve),errors=[],memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:5,maxTtlMs:1000,clock:()=>now,authorize:()=>true});
- try{await memory.put(actor,scope('one'),'note','x',{expectedRevision:null,expiresAt:200,provenance});now=200;const options={memory,actor,scopes:[scope('one')],authorize:async(_actor,_scope,signal)=>{if(block){signal.addEventListener('abort',aborted,{once:true});await gate;}return true;},maxScopesPerPass:1,pollMs:100,onError:error=>errors.push(error.message)};for(const invalid of [{authorizationTimeoutMs:100},{maxPendingAuthorizations:1},{authorizationTimeoutMs:99,maxPendingAuthorizations:1},{authorizationTimeoutMs:100,maxPendingAuthorizations:0},{authorizationTimeoutMs:30001,maxPendingAuthorizations:1}])assert.throws(()=>new AgentMemoryRetentionWorker({...options,...invalid}),/Invalid memory retention worker/);const worker=new AgentMemoryRetentionWorker({...options,authorizationTimeoutMs:100,maxPendingAuthorizations:1});assert.equal(await worker.runOnce(),0);await cancelled;assert.ok(errors.includes('Memory retention authorization unavailable'));assert.equal(await worker.runOnce(),0);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(await worker.runOnce(),1);await worker.stop();}finally{release();memory.close();}
+test('retention authorization timeout fails closed and validates its paired limits', { timeout: 10000 }, async () => {
+  let now = 100,
+    release,
+    aborted,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    cancelled = new Promise(resolve => (aborted = resolve)),
+    errors = [],
+    memory = new SqliteAgentMemory(':memory:', { enabled: true, audit: true, maxEntries: 5, maxTtlMs: 1000, clock: () => now, authorize: () => true });
+  try {
+    await memory.put(actor, scope('one'), 'note', 'x', { expectedRevision: null, expiresAt: 200, provenance });
+    now = 200;
+    const options = {
+      memory,
+      actor,
+      scopes: [scope('one')],
+      authorize: async (_actor, _scope, signal) => {
+        if (block) {
+          signal.addEventListener('abort', aborted, { once: true });
+          await gate;
+        }
+        return true;
+      },
+      maxScopesPerPass: 1,
+      pollMs: 100,
+      onError: error => errors.push(error.message)
+    };
+    for (const invalid of [
+      { authorizationTimeoutMs: 100 },
+      { maxPendingAuthorizations: 1 },
+      { authorizationTimeoutMs: 99, maxPendingAuthorizations: 1 },
+      { authorizationTimeoutMs: 100, maxPendingAuthorizations: 0 },
+      { authorizationTimeoutMs: 30001, maxPendingAuthorizations: 1 }
+    ])
+      assert.throws(() => new AgentMemoryRetentionWorker({ ...options, ...invalid }), /Invalid memory retention worker/);
+    const worker = new AgentMemoryRetentionWorker({ ...options, authorizationTimeoutMs: 100, maxPendingAuthorizations: 1 });
+    assert.equal(await worker.runOnce(), 0);
+    await cancelled;
+    assert.ok(errors.includes('Memory retention authorization unavailable'));
+    assert.equal(await worker.runOnce(), 0);
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await worker.runOnce(), 1);
+    await worker.stop();
+  } finally {
+    release();
+    memory.close();
+  }
 });

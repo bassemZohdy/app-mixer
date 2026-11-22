@@ -1,106 +1,1123 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
-import {createServer as createHttpsServer} from 'node:https';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {spawn} from 'node:child_process';
-import {once} from 'node:events';
-import {fileURLToPath} from 'node:url';
-import {SqliteAgentRuns,SqliteAgentApprovals,SqliteAgentDelegations,SqliteAgentActionJournal,SqliteAgentNotices,SqliteAgentNoticeDelivery,SqliteAgentNoticeReceiver,createAgentNoticeReceiverServer} from '../dist/index.js';
-import {AgentNoticeDeliveryWorker} from '../dist/index.js';
-import {createAgentNoticeHttpsTransport,createAgentNoticeHttpsVerifier} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},service={tenantId:'tenant',principalId:'service'},reviewer={tenantId:'tenant',principalId:'reviewer'},other={tenantId:'tenant',principalId:'other'};
-function setup(){const dir=mkdtempSync(join(tmpdir(),'notices-')),path=join(dir,'db'),runs=new SqliteAgentRuns(path);let now=10;let run=runs.create(scope,'run',{definitionVersion:1,maxAttempts:3,deadline:1000},0);run=runs.claim(scope,'run',run.revision,'worker',300,now);const approvals=new SqliteAgentApprovals(path,{scope,runId:'run',clock:()=>now,authorize:()=>true}),delegations=new SqliteAgentDelegations(path,{scope,runId:'run',clock:()=>now,authorize:()=>true}),journal=new SqliteAgentActionJournal(path,{scope,runId:'run',leaseToken:run.leaseToken,clock:()=>now}),notices=new SqliteAgentNotices(path,{scope,clock:()=>now,authorize:()=>true});return {dir,path,runs,run,approvals,delegations,journal,notices,set now(value){now=value}};}
-function close(s){s.notices.close();s.journal.close();s.delegations.close();s.approvals.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true})}
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { createServer as createHttpsServer } from 'node:https';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import {
+  SqliteAgentRuns,
+  SqliteAgentApprovals,
+  SqliteAgentDelegations,
+  SqliteAgentActionJournal,
+  SqliteAgentNotices,
+  SqliteAgentNoticeDelivery,
+  SqliteAgentNoticeReceiver,
+  createAgentNoticeReceiverServer
+} from '../dist/index.js';
+import { AgentNoticeDeliveryWorker } from '../dist/index.js';
+import { createAgentNoticeHttpsTransport, createAgentNoticeHttpsVerifier } from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  service = { tenantId: 'tenant', principalId: 'service' },
+  reviewer = { tenantId: 'tenant', principalId: 'reviewer' },
+  other = { tenantId: 'tenant', principalId: 'other' };
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), 'notices-')),
+    path = join(dir, 'db'),
+    runs = new SqliteAgentRuns(path);
+  let now = 10;
+  let run = runs.create(scope, 'run', { definitionVersion: 1, maxAttempts: 3, deadline: 1000 }, 0);
+  run = runs.claim(scope, 'run', run.revision, 'worker', 300, now);
+  const approvals = new SqliteAgentApprovals(path, { scope, runId: 'run', clock: () => now, authorize: () => true }),
+    delegations = new SqliteAgentDelegations(path, { scope, runId: 'run', clock: () => now, authorize: () => true }),
+    journal = new SqliteAgentActionJournal(path, { scope, runId: 'run', leaseToken: run.leaseToken, clock: () => now }),
+    notices = new SqliteAgentNotices(path, { scope, clock: () => now, authorize: () => true });
+  return {
+    dir,
+    path,
+    runs,
+    run,
+    approvals,
+    delegations,
+    journal,
+    notices,
+    set now(value) {
+      now = value;
+    }
+  };
+}
+function close(s) {
+  s.notices.close();
+  s.journal.close();
+  s.delegations.close();
+  s.approvals.close();
+  s.runs.close();
+  rmSync(s.dir, { recursive: true, force: true });
+}
 
-test('notice transport obtains a fresh bounded credential for every send and verification',async()=>{const originalFetch=globalThis.fetch,credentials=['a'.repeat(32),'b'.repeat(32)],destination={id:'channel',url:'https://notify.example/notice',getBearerToken:async()=>credentials.shift()},options={scope,destinations:[destination],timeoutMs:1000},send=createAgentNoticeHttpsTransport(options),verify=createAgentNoticeHttpsVerifier(options),message={noticeId:1,...scope,runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:0},key='123e4567-e89b-42d3-a456-426614174000',headers=[];destination.getBearerToken=()=>{throw Error('changed')};try{globalThis.fetch=async(_url,request)=>{headers.push(request.headers.authorization);return new Response(null,{status:204});};await send(message,'channel',key);assert.equal(await verify(message,'channel',key),true);assert.deepEqual(headers,['Bearer '+'a'.repeat(32),'Bearer '+'b'.repeat(32)]);await assert.rejects(send(message,'channel',key),/Notice transport failed/);assert.equal(headers.length,2);for(const bad of [{id:'channel',url:'https://example.test',bearerToken:'a'.repeat(32),getBearerToken:()=>''},{id:'channel',url:'https://example.test'},{id:'channel',url:'https://example.test',getBearerToken:'bad'}])assert.throws(()=>createAgentNoticeHttpsTransport({...options,destinations:[bad]}),/configuration/);
- let release;const slow=createAgentNoticeHttpsTransport({...options,timeoutMs:100,destinations:[{id:'channel',url:'https://example.test',getBearerToken:()=>new Promise(resolve=>release=resolve)}]});let timer;try{const hold=new Promise(resolve=>{timer=setTimeout(resolve,1000)});await assert.rejects(slow(message,'channel',key),/Notice transport failed/);release('c'.repeat(32));await Promise.race([hold,new Promise(resolve=>setImmediate(resolve))]);assert.equal(headers.length,2);}finally{clearTimeout(timer);}
- }finally{globalThis.fetch=originalFetch}});
-
-for(const committed of [false,true])test(`notice HTTPS recovery after sender death ${committed?'after':'before'} receiver commit`,async()=>{
- const s=setup(),tls=new URL('../../core/test/fixtures/capability-tls/',import.meta.url),sender={tenantId:'tenant',principalId:'sender'},receiverPath=join(s.dir,'receiver.sqlite'),receiverOptions={scope,maxPending:10,authorize:()=>true,clock:()=>10};let outbox,receiver,otherReceiver,receiverHttp,server,child,heldResponse;
- try{
-  await s.approvals.request(service,s.run.leaseToken,'action','lookup',{private:'secret'},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});const item=await outbox.queue(reviewer,1,'channel');outbox.close();outbox=undefined;
-  receiver=new SqliteAgentNoticeReceiver(receiverPath,receiverOptions);otherReceiver=new SqliteAgentNoticeReceiver(receiverPath,{...receiverOptions,scope:{tenantId:'other',agentId:'agent'}});await otherReceiver.receive({tenantId:'other',principalId:'sender'},item.idempotencyKey,{version:1,noticeId:1,tenantId:'other',agentId:'agent',runId:'other-run',kind:'approval_requested',subjectId:'action',subjectRevision:0});receiverHttp=createAgentNoticeReceiverServer({receiver,authenticate:req=>req.headers.authorization==='Bearer '+'a'.repeat(32)?sender:undefined});const handler=receiverHttp.listeners('request')[0];let reached;const checkpoint=new Promise(resolve=>reached=resolve);
-  server=createHttpsServer({key:readFileSync(new URL('server-key.pem',tls)),cert:readFileSync(new URL('server-cert.pem',tls))},(req,res)=>{if(req.url==='/notice'){if(!committed){heldResponse=res;reached();return;}res.end=(..._args)=>{heldResponse=res;reached();return res;};handler(req,res);}else handler(req,res);});server.listen(0,'127.0.0.1');await once(server,'listening');
-  const env={...process.env,NODE_EXTRA_CA_CERTS:fileURLToPath(new URL('ca-cert.pem',tls)),TEST_NOTICE_URL:`https://127.0.0.1:${server.address().port}/notice`,TEST_DB:s.path,TEST_DELIVERY:String(item.id)},fixture=fileURLToPath(new URL('./fixtures/notice-https-crash-worker.mjs',import.meta.url));child=spawn(process.execPath,[fixture],{env:{...env,TEST_MODE:'send'},stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',x=>stderr+=String(x));let timer;try{await Promise.race([checkpoint,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Delivery did not reach receiver: '+stderr)),15000)}),once(child,'exit').then(()=>{throw Error('Sender exited before checkpoint: '+stderr)})]);}finally{clearTimeout(timer);}const exited=once(child,'exit');child.kill();await exited;heldResponse?.destroy();
-  receiver.close();receiver=new SqliteAgentNoticeReceiver(receiverPath,receiverOptions);receiverHttp.close();receiverHttp=createAgentNoticeReceiverServer({receiver,authenticate:req=>req.headers.authorization==='Bearer '+'a'.repeat(32)?sender:undefined});server.removeAllListeners('request');server.on('request',receiverHttp.listeners('request')[0]);
-  assert.equal((await receiver.list(reviewer)).items.length,committed?1:0);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});assert.equal((await outbox.get(reviewer,item.id)).status,'sending');outbox.close();outbox=undefined;
-  child=spawn(process.execPath,[fixture],{env:{...env,TEST_MODE:'recover'},stdio:['ignore','pipe','pipe']});let output='',recoveryError='';child.stdout.on('data',x=>output+=String(x));child.stderr.on('data',x=>recoveryError+=String(x));const [exitCode]=await once(child,'exit');assert.equal(exitCode,0,recoveryError);assert.equal(JSON.parse(output.trim()).status,committed?'delivered':'uncertain');outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});assert.equal((await outbox.get(reviewer,item.id)).status,committed?'delivered':'uncertain');const events=(await outbox.history(reviewer,item.id)).items.map(x=>x.action);assert.deepEqual(events,committed?['queued','sending','recovered','reconciled_delivered']:['queued','sending','recovered']);assert.equal((await receiver.list(reviewer)).items.length,committed?1:0);assert.equal((await otherReceiver.list({tenantId:'other',principalId:'reviewer'})).items[0].message.runId,'other-run');
- }finally{if(child?.exitCode===null&&child.signalCode===null)child.kill();heldResponse?.destroy();server?.closeAllConnections();if(server)await new Promise(resolve=>server.close(resolve));receiverHttp?.close();otherReceiver?.close();receiver?.close();outbox?.close();close(s);}
+test('notice transport obtains a fresh bounded credential for every send and verification', async () => {
+  const originalFetch = globalThis.fetch,
+    credentials = ['a'.repeat(32), 'b'.repeat(32)],
+    destination = { id: 'channel', url: 'https://notify.example/notice', getBearerToken: async () => credentials.shift() },
+    options = { scope, destinations: [destination], timeoutMs: 1000 },
+    send = createAgentNoticeHttpsTransport(options),
+    verify = createAgentNoticeHttpsVerifier(options),
+    message = { noticeId: 1, ...scope, runId: 'run', kind: 'approval_requested', subjectId: 'action', subjectRevision: 0 },
+    key = '123e4567-e89b-42d3-a456-426614174000',
+    headers = [];
+  destination.getBearerToken = () => {
+    throw Error('changed');
+  };
+  try {
+    globalThis.fetch = async (_url, request) => {
+      headers.push(request.headers.authorization);
+      return new Response(null, { status: 204 });
+    };
+    await send(message, 'channel', key);
+    assert.equal(await verify(message, 'channel', key), true);
+    assert.deepEqual(headers, ['Bearer ' + 'a'.repeat(32), 'Bearer ' + 'b'.repeat(32)]);
+    await assert.rejects(send(message, 'channel', key), /Notice transport failed/);
+    assert.equal(headers.length, 2);
+    for (const bad of [
+      { id: 'channel', url: 'https://example.test', bearerToken: 'a'.repeat(32), getBearerToken: () => '' },
+      { id: 'channel', url: 'https://example.test' },
+      { id: 'channel', url: 'https://example.test', getBearerToken: 'bad' }
+    ])
+      assert.throws(() => createAgentNoticeHttpsTransport({ ...options, destinations: [bad] }), /configuration/);
+    let release;
+    const slow = createAgentNoticeHttpsTransport({
+      ...options,
+      timeoutMs: 100,
+      destinations: [{ id: 'channel', url: 'https://example.test', getBearerToken: () => new Promise(resolve => (release = resolve)) }]
+    });
+    let timer;
+    try {
+      const hold = new Promise(resolve => {
+        timer = setTimeout(resolve, 1000);
+      });
+      await assert.rejects(slow(message, 'channel', key), /Notice transport failed/);
+      release('c'.repeat(32));
+      await Promise.race([hold, new Promise(resolve => setImmediate(resolve))]);
+      assert.equal(headers.length, 2);
+    } finally {
+      clearTimeout(timer);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test('HTTPS notice verification accepts only positive receipt status and treats absence as inconclusive',async()=>{const originalFetch=globalThis.fetch,options={scope,destinations:[{id:'channel',url:'https://notify.example/notice',bearerToken:'a'.repeat(32)}]},verify=createAgentNoticeHttpsVerifier(options),message={noticeId:1,...scope,runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:0},key='123e4567-e89b-42d3-a456-426614174000';try{let status=404;globalThis.fetch=async(url,request)=>{assert.equal(url,'https://notify.example/notice/status');assert.equal(request.headers['idempotency-key'],key);assert.equal(request.headers.authorization,'Bearer '+'a'.repeat(32));assert.equal(request.redirect,'error');return new Response(null,{status});};assert.equal(await verify(message,'channel',key),false);status=204;assert.equal(await verify(message,'channel',key),true);status=409;await assert.rejects(verify(message,'channel',key),/verification failed/);}finally{globalThis.fetch=originalFetch}});
+for (const committed of [false, true])
+  test(`notice HTTPS recovery after sender death ${committed ? 'after' : 'before'} receiver commit`, async () => {
+    const s = setup(),
+      tls = new URL('../../core/test/fixtures/capability-tls/', import.meta.url),
+      sender = { tenantId: 'tenant', principalId: 'sender' },
+      receiverPath = join(s.dir, 'receiver.sqlite'),
+      receiverOptions = { scope, maxPending: 10, authorize: () => true, clock: () => 10 };
+    let outbox, receiver, otherReceiver, receiverHttp, server, child, heldResponse;
+    try {
+      await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', { private: 'secret' }, 90);
+      outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: () => true });
+      const item = await outbox.queue(reviewer, 1, 'channel');
+      outbox.close();
+      outbox = undefined;
+      receiver = new SqliteAgentNoticeReceiver(receiverPath, receiverOptions);
+      otherReceiver = new SqliteAgentNoticeReceiver(receiverPath, { ...receiverOptions, scope: { tenantId: 'other', agentId: 'agent' } });
+      await otherReceiver.receive({ tenantId: 'other', principalId: 'sender' }, item.idempotencyKey, {
+        version: 1,
+        noticeId: 1,
+        tenantId: 'other',
+        agentId: 'agent',
+        runId: 'other-run',
+        kind: 'approval_requested',
+        subjectId: 'action',
+        subjectRevision: 0
+      });
+      receiverHttp = createAgentNoticeReceiverServer({ receiver, authenticate: req => (req.headers.authorization === 'Bearer ' + 'a'.repeat(32) ? sender : undefined) });
+      const handler = receiverHttp.listeners('request')[0];
+      let reached;
+      const checkpoint = new Promise(resolve => (reached = resolve));
+      server = createHttpsServer({ key: readFileSync(new URL('server-key.pem', tls)), cert: readFileSync(new URL('server-cert.pem', tls)) }, (req, res) => {
+        if (req.url === '/notice') {
+          if (!committed) {
+            heldResponse = res;
+            reached();
+            return;
+          }
+          res.end = (..._args) => {
+            heldResponse = res;
+            reached();
+            return res;
+          };
+          handler(req, res);
+        } else handler(req, res);
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const env = {
+          ...process.env,
+          NODE_EXTRA_CA_CERTS: fileURLToPath(new URL('ca-cert.pem', tls)),
+          TEST_NOTICE_URL: `https://127.0.0.1:${server.address().port}/notice`,
+          TEST_DB: s.path,
+          TEST_DELIVERY: String(item.id)
+        },
+        fixture = fileURLToPath(new URL('./fixtures/notice-https-crash-worker.mjs', import.meta.url));
+      child = spawn(process.execPath, [fixture], { env: { ...env, TEST_MODE: 'send' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', x => (stderr += String(x)));
+      let timer;
+      try {
+        await Promise.race([
+          checkpoint,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(Error('Delivery did not reach receiver: ' + stderr)), 15000);
+          }),
+          once(child, 'exit').then(() => {
+            throw Error('Sender exited before checkpoint: ' + stderr);
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+      heldResponse?.destroy();
+      receiver.close();
+      receiver = new SqliteAgentNoticeReceiver(receiverPath, receiverOptions);
+      receiverHttp.close();
+      receiverHttp = createAgentNoticeReceiverServer({ receiver, authenticate: req => (req.headers.authorization === 'Bearer ' + 'a'.repeat(32) ? sender : undefined) });
+      server.removeAllListeners('request');
+      server.on('request', receiverHttp.listeners('request')[0]);
+      assert.equal((await receiver.list(reviewer)).items.length, committed ? 1 : 0);
+      outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: () => true });
+      assert.equal((await outbox.get(reviewer, item.id)).status, 'sending');
+      outbox.close();
+      outbox = undefined;
+      child = spawn(process.execPath, [fixture], { env: { ...env, TEST_MODE: 'recover' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '',
+        recoveryError = '';
+      child.stdout.on('data', x => (output += String(x)));
+      child.stderr.on('data', x => (recoveryError += String(x)));
+      const [exitCode] = await once(child, 'exit');
+      assert.equal(exitCode, 0, recoveryError);
+      assert.equal(JSON.parse(output.trim()).status, committed ? 'delivered' : 'uncertain');
+      outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: () => true });
+      assert.equal((await outbox.get(reviewer, item.id)).status, committed ? 'delivered' : 'uncertain');
+      const events = (await outbox.history(reviewer, item.id)).items.map(x => x.action);
+      assert.deepEqual(events, committed ? ['queued', 'sending', 'recovered', 'reconciled_delivered'] : ['queued', 'sending', 'recovered']);
+      assert.equal((await receiver.list(reviewer)).items.length, committed ? 1 : 0);
+      assert.equal((await otherReceiver.list({ tenantId: 'other', principalId: 'reviewer' })).items[0].message.runId, 'other-run');
+    } finally {
+      if (child?.exitCode === null && child.signalCode === null) child.kill();
+      heldResponse?.destroy();
+      server?.closeAllConnections();
+      if (server) await new Promise(resolve => server.close(resolve));
+      receiverHttp?.close();
+      otherReceiver?.close();
+      receiver?.close();
+      outbox?.close();
+      close(s);
+    }
+  });
 
-test('verified receiver evidence reconciles only an unchanged uncertain delivery',async()=>{const s=setup();let outbox,other;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);let allowed=true;const options={scope,clock:()=>10,authorize:(_actor,action)=>action!=='reconcile'||allowed};outbox=new SqliteAgentNoticeDelivery(s.path,options);other=new SqliteAgentNoticeDelivery(s.path,options);const item=await outbox.queue(reviewer,1,'channel');await assert.rejects(outbox.dispatch(reviewer,item.id,async()=>{throw Error('response lost')}),/uncertain/);assert.equal(await outbox.verifyAndReconcileDelivered(reviewer,item.id,async()=>false),undefined);assert.equal((await outbox.get(reviewer,item.id)).status,'uncertain');await assert.rejects(outbox.verifyAndReconcileDelivered(reviewer,item.id,async()=>{throw Error('offline')}),/offline/);assert.equal((await outbox.get(reviewer,item.id)).status,'uncertain');
- let started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),pending=outbox.verifyAndReconcileDelivered(reviewer,item.id,async(_message,destination,idempotencyKey)=>{assert.equal(destination,'channel');assert.equal(idempotencyKey,item.idempotencyKey);started();await gate;return true;});await ready;await other.reconcile(reviewer,item.id,'not_delivered');release();await assert.rejects(pending,/changed/);await assert.rejects(outbox.dispatch(reviewer,item.id,async()=>{throw Error('lost again')}),/uncertain/);allowed=false;await assert.rejects(outbox.verifyAndReconcileDelivered(reviewer,item.id,async()=>true),/denied/);allowed=true;const result=await outbox.verifyAndReconcileDelivered(reviewer,item.id,async()=>true);assert.equal(result.status,'delivered');assert.equal((await outbox.history(reviewer,item.id)).items.at(-1).action,'reconciled_delivered');
- }finally{other?.close();outbox?.close();close(s)}});
-
-test('HTTPS notice transport uses fixed destination and credentials with stable idempotency',async()=>{const s=setup(),originalFetch=globalThis.fetch;let outbox;try{
- await s.approvals.request(service,s.run.leaseToken,'action','lookup',{secret:'do not send'},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true,authorizeList:()=>true});const first=await outbox.queue(reviewer,1,'primary'),second=await outbox.queue(reviewer,1,'backup'),targets=[{id:'primary',url:'https://notify.example/ingest',bearerToken:'a'.repeat(32)},{id:'backup',url:'https://backup.example/ingest',bearerToken:'b'.repeat(32)}],transport=createAgentNoticeHttpsTransport({scope,destinations:targets,timeoutMs:1000}),calls=[];targets[0].url='https://attacker.example/';targets[0].bearerToken='x'.repeat(32);targets.length=0;
- globalThis.fetch=async(url,options)=>{calls.push({url,options,body:JSON.parse(options.body)});return new Response(null,{status:url.includes('backup')?503:204});};const worker=new AgentNoticeDeliveryWorker({outbox,actor:reviewer,maxPerPass:10,pollMs:100,send:transport,onError:()=>{}});assert.equal(await worker.runOnce(),1);assert.equal(calls.length,2);assert.equal(calls[0].url,'https://notify.example/ingest');assert.equal(calls[0].options.headers.authorization,'Bearer '+'a'.repeat(32));assert.equal(calls[0].options.headers['idempotency-key'],first.idempotencyKey);assert.equal(calls[0].options.redirect,'error');assert.ok(calls[0].options.signal instanceof AbortSignal);assert.deepEqual(calls[0].body,{version:1,noticeId:1,tenantId:'tenant',agentId:'agent',runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:0});assert.equal(JSON.stringify(calls[0].body).includes('do not send'),false);assert.equal((await outbox.get(reviewer,first.id)).status,'delivered');assert.equal((await outbox.get(reviewer,second.id)).status,'uncertain');await worker.runOnce();assert.equal(calls.length,2);
- await outbox.reconcile(reviewer,second.id,'not_delivered');globalThis.fetch=async(url,options)=>{calls.push({url,options});return new Response(null,{status:204})};await worker.runOnce();await worker.runOnce();assert.equal(calls.at(-1).options.headers['idempotency-key'],second.idempotencyKey);assert.equal((await outbox.get(reviewer,second.id)).status,'delivered');
- }finally{globalThis.fetch=originalFetch;outbox?.close();close(s)}});
-
-test('HTTPS transport rejects unsafe configuration and cross-scope or malformed deliveries',async()=>{const base={scope,destinations:[{id:'channel',url:'https://notify.example/ingest',bearerToken:'a'.repeat(32)}]},destination=base.destinations[0],message={noticeId:1,...scope,runId:'run',kind:'approval_requested',subjectId:'action',subjectRevision:1},key='123e4567-e89b-42d3-a456-426614174000';
- for(const options of [{...base,destinations:[{...destination,url:'http://example.test'}]},{...base,destinations:[{...destination,url:'https://user:pass@example.test'}]},{...base,destinations:[{...destination,url:'https://example.test/?secret=x'}]},{...base,destinations:[{...destination,bearerToken:'short'}]},{...base,destinations:[destination,destination]},{...base,timeoutMs:1}])assert.throws(()=>createAgentNoticeHttpsTransport(options),/configuration/);
- const transport=createAgentNoticeHttpsTransport(base);await assert.rejects(transport({...message,tenantId:'other'},'channel',key),/Invalid/);await assert.rejects(transport(message,'unknown',key),/Invalid/);await assert.rejects(transport(message,'channel','bad-key'),/Invalid/);const originalFetch=globalThis.fetch;try{globalThis.fetch=async()=>{throw Error('secret from provider')};await assert.rejects(transport(message,'channel',key),error=>error.message==='Notice transport failed'&&!String(error).includes('secret'));globalThis.fetch=async()=>new Response(null,{status:302,headers:{location:'https://elsewhere.test'}});await assert.rejects(transport(message,'channel',key),/Notice transport failed/);const timed=createAgentNoticeHttpsTransport({...base,timeoutMs:100});let aborted=false;globalThis.fetch=(_url,options)=>new Promise((_resolve,reject)=>{const fallback=setTimeout(()=>reject(Error('abort signal missing')),2000);options.signal.addEventListener('abort',()=>{aborted=true;clearTimeout(fallback);reject(Error('timed out'));},{once:true});});await assert.rejects(timed(message,'channel',key),/Notice transport failed/);assert.equal(aborted,true);}finally{globalThis.fetch=originalFetch;}
+test('HTTPS notice verification accepts only positive receipt status and treats absence as inconclusive', async () => {
+  const originalFetch = globalThis.fetch,
+    options = { scope, destinations: [{ id: 'channel', url: 'https://notify.example/notice', bearerToken: 'a'.repeat(32) }] },
+    verify = createAgentNoticeHttpsVerifier(options),
+    message = { noticeId: 1, ...scope, runId: 'run', kind: 'approval_requested', subjectId: 'action', subjectRevision: 0 },
+    key = '123e4567-e89b-42d3-a456-426614174000';
+  try {
+    let status = 404;
+    globalThis.fetch = async (url, request) => {
+      assert.equal(url, 'https://notify.example/notice/status');
+      assert.equal(request.headers['idempotency-key'], key);
+      assert.equal(request.headers.authorization, 'Bearer ' + 'a'.repeat(32));
+      assert.equal(request.redirect, 'error');
+      return new Response(null, { status });
+    };
+    assert.equal(await verify(message, 'channel', key), false);
+    status = 204;
+    assert.equal(await verify(message, 'channel', key), true);
+    status = 409;
+    await assert.rejects(verify(message, 'channel', key), /verification failed/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test('HTTPS notice transport reaches a certificate-validated local receiver',async()=>{const tls=new URL('../../core/test/fixtures/capability-tls/',import.meta.url),requests=[],server=createHttpsServer({key:readFileSync(new URL('server-key.pem',tls)),cert:readFileSync(new URL('server-cert.pem',tls))},(req,res)=>{const chunks=[];req.on('data',x=>chunks.push(x));req.on('end',()=>{requests.push({method:req.method,url:req.url,headers:req.headers,body:JSON.parse(Buffer.concat(chunks).toString())});res.writeHead(204);res.end();});});server.listen(0,'127.0.0.1');await once(server,'listening');let child;try{child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/notice-https-client.mjs',import.meta.url))],{env:{...process.env,NODE_EXTRA_CA_CERTS:fileURLToPath(new URL('ca-cert.pem',tls)),TEST_NOTICE_URL:`https://127.0.0.1:${server.address().port}/notice`},stdio:['ignore','ignore','pipe']});let stderr='';child.stderr.on('data',x=>stderr+=String(x));const [code]=await once(child,'exit');assert.equal(code,0,stderr);assert.equal(requests.length,1);assert.equal(requests[0].method,'POST');assert.equal(requests[0].url,'/notice');assert.equal(requests[0].headers.authorization,'Bearer '+'a'.repeat(32));assert.equal(requests[0].headers['idempotency-key'],'123e4567-e89b-42d3-a456-426614174000');assert.equal(requests[0].body.subjectRevision,0);}finally{if(child?.exitCode===null&&child.signalCode===null)child.kill();await new Promise(resolve=>server.close(resolve));}});
-
-test('notice delivery worker scans bounded pages and never retries uncertain sends',async()=>{const s=setup();let outbox;try{
- await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorizeList:()=>true,authorize:()=>true});const one=await outbox.queue(reviewer,1,'first'),two=await outbox.queue(reviewer,1,'second'),three=await outbox.queue(reviewer,1,'third'),calls=[],errors=[];
- const actor={...reviewer},options={outbox,actor,maxPerPass:1,pollMs:100,send:async(_message,destination,key)=>{calls.push({destination,key});if(destination==='second')throw Error('lost response');},onError:(error,id)=>errors.push({error,id})},worker=new AgentNoticeDeliveryWorker(options);actor.principalId='other';options.maxPerPass=100;
- assert.equal(await worker.runOnce(),1);assert.equal(await worker.runOnce(),0);assert.equal(await worker.runOnce(),1);assert.deepEqual(calls.map(x=>x.destination),['first','second','third']);assert.equal(calls[0].key,one.idempotencyKey);assert.equal(calls[1].key,two.idempotencyKey);assert.equal(calls[2].key,three.idempotencyKey);assert.equal(errors[0].id,two.id);assert.equal((await outbox.get(reviewer,two.id)).status,'uncertain');
- for(let i=0;i<5;i++)await worker.runOnce();assert.equal(calls.length,3);const events=await outbox.history(reviewer,one.id);assert.equal(events.items.at(-1).principalId,'reviewer');await outbox.reconcile(reviewer,two.id,'not_delivered');await worker.runOnce();await worker.runOnce();assert.equal(calls.filter(x=>x.destination==='second').length,2);assert.equal((await outbox.get(reviewer,two.id)).status,'uncertain');
- }finally{outbox?.close();close(s)}});
-
-test('stopping a notice worker fences a dispatch waiting for authorization',async()=>{const s=setup();let outbox,worker;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);let started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorizeList:()=>true,authorize:async(_actor,action)=>{if(action==='dispatch'){started();await gate;}return true;}});const item=await outbox.queue(reviewer,1,'channel');let sent=0;worker=new AgentNoticeDeliveryWorker({outbox,actor:reviewer,maxPerPass:5,pollMs:100,send:async()=>{sent++},onError:()=>{}});worker.start();await ready;const stopped=worker.stop();release();await stopped;assert.equal(sent,0);assert.equal((await outbox.get(reviewer,item.id)).status,'uncertain');assert.deepEqual((await outbox.history(reviewer,item.id)).items.map(x=>x.action),['queued','sending','uncertain']);}finally{await worker?.stop();outbox?.close();close(s)}});
-
-test('notice worker checks list authorization and rejects overlapping passes',async()=>{const s=setup();let outbox;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);let release,started,allow=true;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorizeList:async()=>{started();await gate;return allow},authorize:()=>true});const worker=new AgentNoticeDeliveryWorker({outbox,actor:reviewer,maxPerPass:1,pollMs:100,send:async()=>{},onError:()=>{}}),pending=worker.runOnce();await ready;assert.throws(()=>worker.runOnce(),/already running/);allow=false;release();await assert.rejects(pending,/denied/);}finally{outbox?.close();close(s)}});
-
-test('competing notice workers claim a delivery only once',async()=>{const s=setup();let a,b;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);const options={scope,clock:()=>10,authorizeList:()=>true,authorize:()=>true};a=new SqliteAgentNoticeDelivery(s.path,options);b=new SqliteAgentNoticeDelivery(s.path,options);const item=await a.queue(reviewer,1,'channel');let started,release,calls=0;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),send=async()=>{calls++;started();await gate;},worker1=new AgentNoticeDeliveryWorker({outbox:a,actor:reviewer,maxPerPass:10,pollMs:100,send,onError:()=>{}}),worker2=new AgentNoticeDeliveryWorker({outbox:b,actor:reviewer,maxPerPass:10,pollMs:100,send,onError:()=>{}}),first=worker1.runOnce();await ready;assert.equal(await worker2.runOnce(),0);release();assert.equal(await first,1);assert.equal(calls,1);assert.equal((await b.get(reviewer,item.id)).status,'delivered');}finally{b?.close();a?.close();close(s)}});
-
-test('approval notice is atomic, deduplicated and acknowledged per reviewer',async()=>{const s=setup();let db,reopened;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{value:'private'},90);await s.approvals.request(service,s.run.leaseToken,'action','lookup',{value:'private'},90);let list=await s.notices.list(reviewer);assert.equal(list.items.length,1);const notice=list.items[0];assert.equal(notice.kind,'approval_requested');assert.equal(notice.actionable,true);assert.equal(JSON.stringify(notice).includes('private'),false);assert.equal((await s.notices.acknowledge(reviewer,notice.id)).acknowledgedAt,10);assert.equal((await s.notices.acknowledge(reviewer,notice.id)).acknowledgedAt,10);assert.equal((await s.notices.list(other)).items[0].acknowledgedAt,null);await s.approvals.decide(reviewer,'action','rejected');assert.equal((await s.notices.list(reviewer)).items[0].actionable,false);reopened=new SqliteAgentNotices(s.path,{scope,clock:()=>10,authorize:()=>true});assert.equal((await reopened.list(reviewer)).items[0].acknowledgedAt,10);db=new DatabaseSync(s.path);assert.throws(()=>db.exec('DELETE FROM agent_notices'),/immutable/);assert.throws(()=>db.exec('DELETE FROM agent_notice_receipts'),/immutable/);
- }finally{db?.close();reopened?.close();close(s)}});
-
-test('renewal notices appear atomically with waits and stop being actionable after renewal',async()=>{const s=setup();try{const grant=(await s.delegations.issue(reviewer,{...scope,runId:'run',grantId:'grant',principalId:'user',permissionVersion:'v1',expiresAt:20})).grant;s.now=20;const run=s.runs.pauseForDelegation(scope,'run',s.run.revision,s.run.leaseToken,'grant',grant.revision,20);const notice=(await s.notices.list(reviewer)).items[0];assert.equal(run.status,'paused');assert.equal(notice.kind,'delegation_renewal_required');assert.equal(notice.actionable,true);await s.delegations.renew(reviewer,'grant',1,'v2',100);assert.equal((await s.notices.list(reviewer)).items[0].actionable,false);}finally{close(s)}});
-
-test('notice policy and tenant scope prevent discovery and acknowledgement',async()=>{const s=setup();let restricted;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);restricted=new SqliteAgentNotices(s.path,{scope,clock:()=>10,authorize:(actor,action)=>actor.principalId==='reviewer'&&action==='list'});assert.deepEqual((await restricted.list(reviewer)).items,[]);await assert.rejects(restricted.acknowledge(reviewer,1),/denied/);await assert.rejects(s.notices.list({tenantId:'other',principalId:'reviewer'}),/actor/);await assert.rejects(s.notices.acknowledge(reviewer,999),/not found/);}finally{restricted?.close();close(s)}});
-
-test('notice insertion failures roll back approval and renewal transitions',async()=>{const s=setup();let db;try{db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER fail_notice BEFORE INSERT ON agent_notices BEGIN SELECT RAISE(ABORT,'notice failed'); END");await assert.rejects(s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90),/notice failed/);assert.equal(await s.approvals.get(reviewer,'action'),undefined);const grant=(await s.delegations.issue(reviewer,{...scope,runId:'run',grantId:'grant',principalId:'user',permissionVersion:'v1',expiresAt:20})).grant;s.now=20;assert.throws(()=>s.runs.pauseForDelegation(scope,'run',s.run.revision,s.run.leaseToken,'grant',grant.revision,20),/notice failed/);assert.equal(s.runs.get(scope,'run').status,'running');assert.equal((await s.notices.list(reviewer)).items.length,0);}finally{db?.close();close(s)}});
-
-test('pagination filters each notice and authorization races cannot expose changed state',async()=>{const s=setup();let restricted,release,started;try{await s.approvals.request(service,s.run.leaseToken,'a','lookup',{},90);await s.approvals.request(service,s.run.leaseToken,'b','lookup',{},90);restricted=new SqliteAgentNotices(s.path,{scope,clock:()=>10,authorize:(_actor,action,notice)=>action==='list'||action==='read'&&notice.subjectId==='b'});const page=await restricted.list(reviewer,{limit:1});assert.equal(page.items.length,0);assert.equal(page.nextAfter,1);assert.equal((await restricted.list(reviewer,{after:page.nextAfter,limit:1})).items[0].subjectId,'b');restricted.close();const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);restricted=new SqliteAgentNotices(s.path,{scope,clock:()=>10,authorize:async(_actor,action)=>{if(action==='read'){started();await gate}return true}});const pending=restricted.list(reviewer);await ready;await s.approvals.decide(reviewer,'a','rejected');release();assert.deepEqual((await pending).items.map(n=>n.subjectId),['b']);}finally{restricted?.close();close(s)}});
-
-test('notice delivery is authorized, deduplicated and sends only notice metadata',async()=>{const s=setup();let outbox;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{secret:'private'},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:(actor,_action,delivery,message)=>actor.principalId==='reviewer'&&delivery.destinationId==='channel'&&message.subjectId==='action'});await assert.rejects(outbox.queue(other,1,'channel'),/denied/);const queued=await outbox.queue(reviewer,1,'channel');assert.deepEqual(await outbox.queue(reviewer,1,'channel'),queued);let count=0;const sent=await outbox.dispatch(reviewer,queued.id,async(message,destination,key)=>{count++;assert.equal(destination,'channel');assert.equal(key,queued.idempotencyKey);assert.equal(message.subjectId,'action');assert.equal(JSON.stringify(message).includes('private'),false)});assert.equal(sent.status,'delivered');assert.equal(sent.attempts,1);assert.equal(count,1);await assert.rejects(outbox.dispatch(reviewer,queued.id,async()=>{}),/changed/);assert.equal((await outbox.get(reviewer,queued.id)).status,'delivered');await assert.rejects(outbox.get({...reviewer,tenantId:'other'},queued.id),/actor/);}finally{outbox?.close();close(s)}});
-
-test('uncertain deliveries cannot replay until authorized reconciliation and reuse the same key',async()=>{const s=setup();let outbox,second;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);const options={scope,clock:()=>10,authorize:()=>true};outbox=new SqliteAgentNoticeDelivery(s.path,options);second=new SqliteAgentNoticeDelivery(s.path,options);const item=await outbox.queue(reviewer,1,'channel');let started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise((_,reject)=>release=reject),pending=outbox.dispatch(reviewer,item.id,async()=>{started();await gate});const observed=assert.rejects(pending,/outcome uncertain/);await ready;assert.throws(()=>outbox.close(),/active/);await assert.rejects(outbox.recover(reviewer,item.id),/recovery/);await assert.rejects(second.dispatch(reviewer,item.id,async()=>{}),/changed/);release(Error('response lost'));await observed;assert.equal((await second.get(reviewer,item.id)).status,'uncertain');await assert.rejects(second.dispatch(reviewer,item.id,async()=>{}),/changed/);const reset=await second.reconcile(reviewer,item.id,'not_delivered');assert.equal(reset.status,'pending');const delivered=await second.dispatch(reviewer,item.id,async(_message,_destination,key)=>assert.equal(key,item.idempotencyKey));assert.equal(delivered.status,'delivered');assert.equal(delivered.attempts,2);}finally{second?.close();outbox?.close();close(s)}});
-
-test('notice delivery refuses expired or decided requests without dispatching',async()=>{const s=setup();let outbox;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});const item=await outbox.queue(reviewer,1,'channel');await s.approvals.decide(reviewer,'action','approved');let sent=false;await assert.rejects(outbox.dispatch(reviewer,item.id,async()=>{sent=true}),/not actionable/);assert.equal(sent,false);assert.equal((await outbox.get(reviewer,item.id)).status,'pending');await assert.rejects(outbox.queue(reviewer,1,'other'),/not actionable/);}finally{outbox?.close();close(s)}});
-
-test('a crashed notice sender requires explicit recovery and preserves the delivery key',async()=>{const s=setup();let outbox,child;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);const opts={scope,clock:()=>10,authorize:()=>true,authorizeList:()=>true};outbox=new SqliteAgentNoticeDelivery(s.path,opts);const item=await outbox.queue(reviewer,1,'channel');outbox.close();outbox=undefined;child=spawn(process.execPath,[fileURLToPath(new URL('./fixtures/notice-delivery-crash.mjs',import.meta.url))],{env:{...process.env,TEST_DB:s.path,TEST_DELIVERY:String(item.id)},stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',part=>stderr+=part);await Promise.race([new Promise((resolve,reject)=>{child.stdout.on('data',part=>{if(String(part).includes('SENDING'))resolve()});child.once('exit',()=>reject(Error('Sender exited early: '+stderr)));}),new Promise((_,reject)=>setTimeout(()=>reject(Error('Sender did not start')),30000).unref())]);const exited=once(child,'exit');child.kill();await exited;outbox=new SqliteAgentNoticeDelivery(s.path,opts);assert.equal((await outbox.list(reviewer)).items[0].status,'sending');await assert.rejects(outbox.dispatch(reviewer,item.id,async()=>{}),/changed/);assert.equal((await outbox.recover(reviewer,item.id)).status,'uncertain');assert.equal((await outbox.reconcile(reviewer,item.id,'not_delivered')).status,'pending');assert.equal((await outbox.dispatch(reviewer,item.id,async(_message,_destination,key)=>assert.equal(key,item.idempotencyKey))).status,'delivered');assert.deepEqual((await outbox.history(reviewer,item.id)).items.map(event=>event.action),['queued','sending','recovered','reconciled_not_delivered','sending','delivered']);}finally{if(child&&child.exitCode===null&&child.signalCode===null)child.kill();outbox?.close();close(s)}});
-
-test('delivery listing checks scope and individual read policy',async()=>{const s=setup();let outbox;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);let allowList=true;outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorizeList:()=>allowList,authorize:(_actor,action,delivery)=>action!=='read'||delivery.destinationId==='visible'});await outbox.queue(reviewer,1,'hidden');await outbox.queue(reviewer,1,'visible');const first=await outbox.list(reviewer,{limit:1});assert.deepEqual(first.items,[]);assert.ok(first.nextAfter);const second=await outbox.list(reviewer,{after:first.nextAfter,limit:1});assert.equal(second.items[0].destinationId,'visible');allowList=false;await assert.rejects(outbox.list(reviewer),/denied/);await assert.rejects(outbox.list({...reviewer,tenantId:'other'}),/actor/);}finally{outbox?.close();close(s)}});
-
-test('delivery history is scoped, immutable, paginated and attributes decisions',async()=>{const s=setup();let outbox,db;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{secret:'private'},90);let allowRead=true;outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:(_actor,action)=>action!=='read'||allowRead});const item=await outbox.queue(reviewer,1,'channel');await outbox.queue(reviewer,1,'channel');await assert.rejects(outbox.dispatch(service,item.id,async()=>{throw Error('unknown')}),/uncertain/);await outbox.reconcile(other,item.id,'not_delivered');await outbox.dispatch(service,item.id,async()=>{});const first=await outbox.history(reviewer,item.id,{limit:2}),second=await outbox.history(reviewer,item.id,{after:first.nextAfter,limit:100}),events=[...first.items,...second.items];assert.deepEqual(events.map(e=>e.action),['queued','sending','uncertain','reconciled_not_delivered','sending','delivered']);assert.deepEqual(events.map(e=>e.principalId),['reviewer','service','service','other','service','service']);assert.deepEqual(events.map(e=>e.revision),[1,2,3,4,5,6]);assert.equal(JSON.stringify(events).includes('private'),false);allowRead=false;await assert.rejects(outbox.history(reviewer,item.id),/denied/);await assert.rejects(outbox.history({...reviewer,tenantId:'other'},item.id),/actor/);db=new DatabaseSync(s.path);assert.throws(()=>db.exec('DELETE FROM agent_notice_delivery_events'),/immutable/);assert.throws(()=>db.exec("UPDATE agent_notice_delivery_events SET action='delivered'"),/immutable/);assert.throws(()=>db.exec("INSERT OR REPLACE INTO agent_notice_delivery_events(tenant_id,agent_id,delivery_id,revision,action,principal_id,observed_at) VALUES ('tenant','agent',1,1,'queued','other',10)"),/immutable/);}finally{db?.close();outbox?.close();close(s)}});
-
-test('audit failure prevents dispatch and a failed completion audit leaves delivery uncertain',async()=>{const s=setup();let outbox,db;try{await s.approvals.request(service,s.run.leaseToken,'action','lookup',{},90);outbox=new SqliteAgentNoticeDelivery(s.path,{scope,clock:()=>10,authorize:()=>true});const item=await outbox.queue(reviewer,1,'channel');db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER fail_sending BEFORE INSERT ON agent_notice_delivery_events WHEN NEW.action='sending' BEGIN SELECT RAISE(ABORT,'audit failed'); END");let calls=0;await assert.rejects(outbox.dispatch(service,item.id,async()=>{calls++}),/audit failed/);assert.equal(calls,0);assert.equal((await outbox.get(reviewer,item.id)).status,'pending');db.exec('DROP TRIGGER fail_sending');db.exec("CREATE TRIGGER fail_delivered BEFORE INSERT ON agent_notice_delivery_events WHEN NEW.action='delivered' BEGIN SELECT RAISE(ABORT,'audit failed'); END");await assert.rejects(outbox.dispatch(service,item.id,async()=>{calls++}),/outcome uncertain/);assert.equal(calls,1);assert.equal((await outbox.get(reviewer,item.id)).status,'uncertain');assert.deepEqual((await outbox.history(reviewer,item.id)).items.map(event=>event.action),['queued','sending','uncertain']);}finally{db?.close();outbox?.close();close(s)}});
-
-test('notice listing rechecks scope and per-notice permission before returning',async()=>{
- const s=setup();let restricted,entered,release,allowList=true,allowFirst=true,blocked=true;try{await s.approvals.request(service,s.run.leaseToken,'a','lookup',{},90);await s.approvals.request(service,s.run.leaseToken,'b','lookup',{},90);let gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);restricted=new SqliteAgentNotices(s.path,{scope,clock:()=>10,authorize:async(_actor,action,notice)=>{if(action==='list')return allowList;if(notice.subjectId==='b'&&blocked){blocked=false;entered();await gate;}return notice.subjectId!=='a'||allowFirst;}});let pending=restricted.list(reviewer);await ready;allowFirst=false;release();assert.deepEqual((await pending).items.map(item=>item.subjectId),['b']);blocked=true;allowFirst=true;gate=new Promise(resolve=>release=resolve);ready=new Promise(resolve=>entered=resolve);pending=restricted.list(reviewer);await ready;allowList=false;release();await assert.rejects(pending,/Notice access denied/);
- }finally{release?.();restricted?.close();close(s);}
+test('verified receiver evidence reconciles only an unchanged uncertain delivery', async () => {
+  const s = setup();
+  let outbox, other;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    let allowed = true;
+    const options = { scope, clock: () => 10, authorize: (_actor, action) => action !== 'reconcile' || allowed };
+    outbox = new SqliteAgentNoticeDelivery(s.path, options);
+    other = new SqliteAgentNoticeDelivery(s.path, options);
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    await assert.rejects(
+      outbox.dispatch(reviewer, item.id, async () => {
+        throw Error('response lost');
+      }),
+      /uncertain/
+    );
+    assert.equal(await outbox.verifyAndReconcileDelivered(reviewer, item.id, async () => false), undefined);
+    assert.equal((await outbox.get(reviewer, item.id)).status, 'uncertain');
+    await assert.rejects(
+      outbox.verifyAndReconcileDelivered(reviewer, item.id, async () => {
+        throw Error('offline');
+      }),
+      /offline/
+    );
+    assert.equal((await outbox.get(reviewer, item.id)).status, 'uncertain');
+    let started, release;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r)),
+      pending = outbox.verifyAndReconcileDelivered(reviewer, item.id, async (_message, destination, idempotencyKey) => {
+        assert.equal(destination, 'channel');
+        assert.equal(idempotencyKey, item.idempotencyKey);
+        started();
+        await gate;
+        return true;
+      });
+    await ready;
+    await other.reconcile(reviewer, item.id, 'not_delivered');
+    release();
+    await assert.rejects(pending, /changed/);
+    await assert.rejects(
+      outbox.dispatch(reviewer, item.id, async () => {
+        throw Error('lost again');
+      }),
+      /uncertain/
+    );
+    allowed = false;
+    await assert.rejects(
+      outbox.verifyAndReconcileDelivered(reviewer, item.id, async () => true),
+      /denied/
+    );
+    allowed = true;
+    const result = await outbox.verifyAndReconcileDelivered(reviewer, item.id, async () => true);
+    assert.equal(result.status, 'delivered');
+    assert.equal((await outbox.history(reviewer, item.id)).items.at(-1).action, 'reconciled_delivered');
+  } finally {
+    other?.close();
+    outbox?.close();
+    close(s);
+  }
 });
 
-test('notice cancellation fences late acknowledgement and retains bounded policy capacity',{timeout:10000},async()=>{
- const s=setup();let release,entered,policyAborted,block=true;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>entered=resolve),aborted=new Promise(resolve=>policyAborted=resolve);
- const limited=new SqliteAgentNotices(s.path,{scope,clock:()=>10,timeoutMs:1000,maxPending:1,authorize:async(_actor,action,_notice,signal)=>{if(action==='acknowledge'&&block){entered();signal.addEventListener('abort',policyAborted,{once:true});await gate;}return true;}});
- try{await s.approvals.request(service,s.run.leaseToken,'action','pay',{},90);const controller=new AbortController(),pending=limited.acknowledge(reviewer,1,controller.signal);await started;controller.abort();await assert.rejects(pending,/Notice authorization unavailable/);await aborted;await assert.rejects(limited.list(reviewer),/Notice authorization unavailable/);assert.equal((await s.notices.list(reviewer)).items[0].acknowledgedAt,null);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await limited.acknowledge(reviewer,1)).acknowledgedAt,10);await assert.rejects(limited.list(reviewer,{},AbortSignal.abort()),/Notice authorization unavailable/);await assert.rejects(limited.list(reviewer,{},{}),/Invalid notice signal/);}finally{release();limited.close();close(s)}
+test('HTTPS notice transport uses fixed destination and credentials with stable idempotency', async () => {
+  const s = setup(),
+    originalFetch = globalThis.fetch;
+  let outbox;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', { secret: 'do not send' }, 90);
+    outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: () => true, authorizeList: () => true });
+    const first = await outbox.queue(reviewer, 1, 'primary'),
+      second = await outbox.queue(reviewer, 1, 'backup'),
+      targets = [
+        { id: 'primary', url: 'https://notify.example/ingest', bearerToken: 'a'.repeat(32) },
+        { id: 'backup', url: 'https://backup.example/ingest', bearerToken: 'b'.repeat(32) }
+      ],
+      transport = createAgentNoticeHttpsTransport({ scope, destinations: targets, timeoutMs: 1000 }),
+      calls = [];
+    targets[0].url = 'https://attacker.example/';
+    targets[0].bearerToken = 'x'.repeat(32);
+    targets.length = 0;
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url, options, body: JSON.parse(options.body) });
+      return new Response(null, { status: url.includes('backup') ? 503 : 204 });
+    };
+    const worker = new AgentNoticeDeliveryWorker({ outbox, actor: reviewer, maxPerPass: 10, pollMs: 100, send: transport, onError: () => {} });
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, 'https://notify.example/ingest');
+    assert.equal(calls[0].options.headers.authorization, 'Bearer ' + 'a'.repeat(32));
+    assert.equal(calls[0].options.headers['idempotency-key'], first.idempotencyKey);
+    assert.equal(calls[0].options.redirect, 'error');
+    assert.ok(calls[0].options.signal instanceof AbortSignal);
+    assert.deepEqual(calls[0].body, { version: 1, noticeId: 1, tenantId: 'tenant', agentId: 'agent', runId: 'run', kind: 'approval_requested', subjectId: 'action', subjectRevision: 0 });
+    assert.equal(JSON.stringify(calls[0].body).includes('do not send'), false);
+    assert.equal((await outbox.get(reviewer, first.id)).status, 'delivered');
+    assert.equal((await outbox.get(reviewer, second.id)).status, 'uncertain');
+    await worker.runOnce();
+    assert.equal(calls.length, 2);
+    await outbox.reconcile(reviewer, second.id, 'not_delivered');
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url, options });
+      return new Response(null, { status: 204 });
+    };
+    await worker.runOnce();
+    await worker.runOnce();
+    assert.equal(calls.at(-1).options.headers['idempotency-key'], second.idempotencyKey);
+    assert.equal((await outbox.get(reviewer, second.id)).status, 'delivered');
+  } finally {
+    globalThis.fetch = originalFetch;
+    outbox?.close();
+    close(s);
+  }
 });
 
-test('notice policy deadline covers the complete listing',{timeout:10000},async()=>{
- const s=setup();const limited=new SqliteAgentNotices(s.path,{scope,clock:()=>10,timeoutMs:100,maxPending:1,authorize:async()=>{await new Promise(resolve=>setTimeout(resolve,65));return true;}});
- try{await assert.rejects(limited.list(reviewer),/Notice authorization unavailable/);await new Promise(resolve=>setTimeout(resolve,80));}finally{limited.close();close(s)}
+test('HTTPS transport rejects unsafe configuration and cross-scope or malformed deliveries', async () => {
+  const base = { scope, destinations: [{ id: 'channel', url: 'https://notify.example/ingest', bearerToken: 'a'.repeat(32) }] },
+    destination = base.destinations[0],
+    message = { noticeId: 1, ...scope, runId: 'run', kind: 'approval_requested', subjectId: 'action', subjectRevision: 1 },
+    key = '123e4567-e89b-42d3-a456-426614174000';
+  for (const options of [
+    { ...base, destinations: [{ ...destination, url: 'http://example.test' }] },
+    { ...base, destinations: [{ ...destination, url: 'https://user:pass@example.test' }] },
+    { ...base, destinations: [{ ...destination, url: 'https://example.test/?secret=x' }] },
+    { ...base, destinations: [{ ...destination, bearerToken: 'short' }] },
+    { ...base, destinations: [destination, destination] },
+    { ...base, timeoutMs: 1 }
+  ])
+    assert.throws(() => createAgentNoticeHttpsTransport(options), /configuration/);
+  const transport = createAgentNoticeHttpsTransport(base);
+  await assert.rejects(transport({ ...message, tenantId: 'other' }, 'channel', key), /Invalid/);
+  await assert.rejects(transport(message, 'unknown', key), /Invalid/);
+  await assert.rejects(transport(message, 'channel', 'bad-key'), /Invalid/);
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw Error('secret from provider');
+    };
+    await assert.rejects(transport(message, 'channel', key), error => error.message === 'Notice transport failed' && !String(error).includes('secret'));
+    globalThis.fetch = async () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.test' } });
+    await assert.rejects(transport(message, 'channel', key), /Notice transport failed/);
+    const timed = createAgentNoticeHttpsTransport({ ...base, timeoutMs: 100 });
+    let aborted = false;
+    globalThis.fetch = (_url, options) =>
+      new Promise((_resolve, reject) => {
+        const fallback = setTimeout(() => reject(Error('abort signal missing')), 2000);
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            clearTimeout(fallback);
+            reject(Error('timed out'));
+          },
+          { once: true }
+        );
+      });
+    await assert.rejects(timed(message, 'channel', key), /Notice transport failed/);
+    assert.equal(aborted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('HTTPS notice transport reaches a certificate-validated local receiver', async () => {
+  const tls = new URL('../../core/test/fixtures/capability-tls/', import.meta.url),
+    requests = [],
+    server = createHttpsServer({ key: readFileSync(new URL('server-key.pem', tls)), cert: readFileSync(new URL('server-cert.pem', tls)) }, (req, res) => {
+      const chunks = [];
+      req.on('data', x => chunks.push(x));
+      req.on('end', () => {
+        requests.push({ method: req.method, url: req.url, headers: req.headers, body: JSON.parse(Buffer.concat(chunks).toString()) });
+        res.writeHead(204);
+        res.end();
+      });
+    });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  let child;
+  try {
+    child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/notice-https-client.mjs', import.meta.url))], {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: fileURLToPath(new URL('ca-cert.pem', tls)), TEST_NOTICE_URL: `https://127.0.0.1:${server.address().port}/notice` },
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', x => (stderr += String(x)));
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 0, stderr);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, 'POST');
+    assert.equal(requests[0].url, '/notice');
+    assert.equal(requests[0].headers.authorization, 'Bearer ' + 'a'.repeat(32));
+    assert.equal(requests[0].headers['idempotency-key'], '123e4567-e89b-42d3-a456-426614174000');
+    assert.equal(requests[0].body.subjectRevision, 0);
+  } finally {
+    if (child?.exitCode === null && child.signalCode === null) child.kill();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('notice delivery worker scans bounded pages and never retries uncertain sends', async () => {
+  const s = setup();
+  let outbox;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorizeList: () => true, authorize: () => true });
+    const one = await outbox.queue(reviewer, 1, 'first'),
+      two = await outbox.queue(reviewer, 1, 'second'),
+      three = await outbox.queue(reviewer, 1, 'third'),
+      calls = [],
+      errors = [];
+    const actor = { ...reviewer },
+      options = {
+        outbox,
+        actor,
+        maxPerPass: 1,
+        pollMs: 100,
+        send: async (_message, destination, key) => {
+          calls.push({ destination, key });
+          if (destination === 'second') throw Error('lost response');
+        },
+        onError: (error, id) => errors.push({ error, id })
+      },
+      worker = new AgentNoticeDeliveryWorker(options);
+    actor.principalId = 'other';
+    options.maxPerPass = 100;
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(await worker.runOnce(), 0);
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(
+      calls.map(x => x.destination),
+      ['first', 'second', 'third']
+    );
+    assert.equal(calls[0].key, one.idempotencyKey);
+    assert.equal(calls[1].key, two.idempotencyKey);
+    assert.equal(calls[2].key, three.idempotencyKey);
+    assert.equal(errors[0].id, two.id);
+    assert.equal((await outbox.get(reviewer, two.id)).status, 'uncertain');
+    for (let i = 0; i < 5; i++) await worker.runOnce();
+    assert.equal(calls.length, 3);
+    const events = await outbox.history(reviewer, one.id);
+    assert.equal(events.items.at(-1).principalId, 'reviewer');
+    await outbox.reconcile(reviewer, two.id, 'not_delivered');
+    await worker.runOnce();
+    await worker.runOnce();
+    assert.equal(calls.filter(x => x.destination === 'second').length, 2);
+    assert.equal((await outbox.get(reviewer, two.id)).status, 'uncertain');
+  } finally {
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('stopping a notice worker fences a dispatch waiting for authorization', async () => {
+  const s = setup();
+  let outbox, worker;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    let started, release;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    outbox = new SqliteAgentNoticeDelivery(s.path, {
+      scope,
+      clock: () => 10,
+      authorizeList: () => true,
+      authorize: async (_actor, action) => {
+        if (action === 'dispatch') {
+          started();
+          await gate;
+        }
+        return true;
+      }
+    });
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    let sent = 0;
+    worker = new AgentNoticeDeliveryWorker({
+      outbox,
+      actor: reviewer,
+      maxPerPass: 5,
+      pollMs: 100,
+      send: async () => {
+        sent++;
+      },
+      onError: () => {}
+    });
+    worker.start();
+    await ready;
+    const stopped = worker.stop();
+    release();
+    await stopped;
+    assert.equal(sent, 0);
+    assert.equal((await outbox.get(reviewer, item.id)).status, 'uncertain');
+    assert.deepEqual(
+      (await outbox.history(reviewer, item.id)).items.map(x => x.action),
+      ['queued', 'sending', 'uncertain']
+    );
+  } finally {
+    await worker?.stop();
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('notice worker checks list authorization and rejects overlapping passes', async () => {
+  const s = setup();
+  let outbox;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    let release,
+      started,
+      allow = true;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    outbox = new SqliteAgentNoticeDelivery(s.path, {
+      scope,
+      clock: () => 10,
+      authorizeList: async () => {
+        started();
+        await gate;
+        return allow;
+      },
+      authorize: () => true
+    });
+    const worker = new AgentNoticeDeliveryWorker({ outbox, actor: reviewer, maxPerPass: 1, pollMs: 100, send: async () => {}, onError: () => {} }),
+      pending = worker.runOnce();
+    await ready;
+    assert.throws(() => worker.runOnce(), /already running/);
+    allow = false;
+    release();
+    await assert.rejects(pending, /denied/);
+  } finally {
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('competing notice workers claim a delivery only once', async () => {
+  const s = setup();
+  let a, b;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    const options = { scope, clock: () => 10, authorizeList: () => true, authorize: () => true };
+    a = new SqliteAgentNoticeDelivery(s.path, options);
+    b = new SqliteAgentNoticeDelivery(s.path, options);
+    const item = await a.queue(reviewer, 1, 'channel');
+    let started,
+      release,
+      calls = 0;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r)),
+      send = async () => {
+        calls++;
+        started();
+        await gate;
+      },
+      worker1 = new AgentNoticeDeliveryWorker({ outbox: a, actor: reviewer, maxPerPass: 10, pollMs: 100, send, onError: () => {} }),
+      worker2 = new AgentNoticeDeliveryWorker({ outbox: b, actor: reviewer, maxPerPass: 10, pollMs: 100, send, onError: () => {} }),
+      first = worker1.runOnce();
+    await ready;
+    assert.equal(await worker2.runOnce(), 0);
+    release();
+    assert.equal(await first, 1);
+    assert.equal(calls, 1);
+    assert.equal((await b.get(reviewer, item.id)).status, 'delivered');
+  } finally {
+    b?.close();
+    a?.close();
+    close(s);
+  }
+});
+
+test('approval notice is atomic, deduplicated and acknowledged per reviewer', async () => {
+  const s = setup();
+  let db, reopened;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', { value: 'private' }, 90);
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', { value: 'private' }, 90);
+    let list = await s.notices.list(reviewer);
+    assert.equal(list.items.length, 1);
+    const notice = list.items[0];
+    assert.equal(notice.kind, 'approval_requested');
+    assert.equal(notice.actionable, true);
+    assert.equal(JSON.stringify(notice).includes('private'), false);
+    assert.equal((await s.notices.acknowledge(reviewer, notice.id)).acknowledgedAt, 10);
+    assert.equal((await s.notices.acknowledge(reviewer, notice.id)).acknowledgedAt, 10);
+    assert.equal((await s.notices.list(other)).items[0].acknowledgedAt, null);
+    await s.approvals.decide(reviewer, 'action', 'rejected');
+    assert.equal((await s.notices.list(reviewer)).items[0].actionable, false);
+    reopened = new SqliteAgentNotices(s.path, { scope, clock: () => 10, authorize: () => true });
+    assert.equal((await reopened.list(reviewer)).items[0].acknowledgedAt, 10);
+    db = new DatabaseSync(s.path);
+    assert.throws(() => db.exec('DELETE FROM agent_notices'), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM agent_notice_receipts'), /immutable/);
+  } finally {
+    db?.close();
+    reopened?.close();
+    close(s);
+  }
+});
+
+test('renewal notices appear atomically with waits and stop being actionable after renewal', async () => {
+  const s = setup();
+  try {
+    const grant = (await s.delegations.issue(reviewer, { ...scope, runId: 'run', grantId: 'grant', principalId: 'user', permissionVersion: 'v1', expiresAt: 20 })).grant;
+    s.now = 20;
+    const run = s.runs.pauseForDelegation(scope, 'run', s.run.revision, s.run.leaseToken, 'grant', grant.revision, 20);
+    const notice = (await s.notices.list(reviewer)).items[0];
+    assert.equal(run.status, 'paused');
+    assert.equal(notice.kind, 'delegation_renewal_required');
+    assert.equal(notice.actionable, true);
+    await s.delegations.renew(reviewer, 'grant', 1, 'v2', 100);
+    assert.equal((await s.notices.list(reviewer)).items[0].actionable, false);
+  } finally {
+    close(s);
+  }
+});
+
+test('notice policy and tenant scope prevent discovery and acknowledgement', async () => {
+  const s = setup();
+  let restricted;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    restricted = new SqliteAgentNotices(s.path, { scope, clock: () => 10, authorize: (actor, action) => actor.principalId === 'reviewer' && action === 'list' });
+    assert.deepEqual((await restricted.list(reviewer)).items, []);
+    await assert.rejects(restricted.acknowledge(reviewer, 1), /denied/);
+    await assert.rejects(s.notices.list({ tenantId: 'other', principalId: 'reviewer' }), /actor/);
+    await assert.rejects(s.notices.acknowledge(reviewer, 999), /not found/);
+  } finally {
+    restricted?.close();
+    close(s);
+  }
+});
+
+test('notice insertion failures roll back approval and renewal transitions', async () => {
+  const s = setup();
+  let db;
+  try {
+    db = new DatabaseSync(s.path);
+    db.exec("CREATE TRIGGER fail_notice BEFORE INSERT ON agent_notices BEGIN SELECT RAISE(ABORT,'notice failed'); END");
+    await assert.rejects(s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90), /notice failed/);
+    assert.equal(await s.approvals.get(reviewer, 'action'), undefined);
+    const grant = (await s.delegations.issue(reviewer, { ...scope, runId: 'run', grantId: 'grant', principalId: 'user', permissionVersion: 'v1', expiresAt: 20 })).grant;
+    s.now = 20;
+    assert.throws(() => s.runs.pauseForDelegation(scope, 'run', s.run.revision, s.run.leaseToken, 'grant', grant.revision, 20), /notice failed/);
+    assert.equal(s.runs.get(scope, 'run').status, 'running');
+    assert.equal((await s.notices.list(reviewer)).items.length, 0);
+  } finally {
+    db?.close();
+    close(s);
+  }
+});
+
+test('pagination filters each notice and authorization races cannot expose changed state', async () => {
+  const s = setup();
+  let restricted, release, started;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'a', 'lookup', {}, 90);
+    await s.approvals.request(service, s.run.leaseToken, 'b', 'lookup', {}, 90);
+    restricted = new SqliteAgentNotices(s.path, { scope, clock: () => 10, authorize: (_actor, action, notice) => action === 'list' || (action === 'read' && notice.subjectId === 'b') });
+    const page = await restricted.list(reviewer, { limit: 1 });
+    assert.equal(page.items.length, 0);
+    assert.equal(page.nextAfter, 1);
+    assert.equal((await restricted.list(reviewer, { after: page.nextAfter, limit: 1 })).items[0].subjectId, 'b');
+    restricted.close();
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r));
+    restricted = new SqliteAgentNotices(s.path, {
+      scope,
+      clock: () => 10,
+      authorize: async (_actor, action) => {
+        if (action === 'read') {
+          started();
+          await gate;
+        }
+        return true;
+      }
+    });
+    const pending = restricted.list(reviewer);
+    await ready;
+    await s.approvals.decide(reviewer, 'a', 'rejected');
+    release();
+    assert.deepEqual(
+      (await pending).items.map(n => n.subjectId),
+      ['b']
+    );
+  } finally {
+    restricted?.close();
+    close(s);
+  }
+});
+
+test('notice delivery is authorized, deduplicated and sends only notice metadata', async () => {
+  const s = setup();
+  let outbox;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', { secret: 'private' }, 90);
+    outbox = new SqliteAgentNoticeDelivery(s.path, {
+      scope,
+      clock: () => 10,
+      authorize: (actor, _action, delivery, message) => actor.principalId === 'reviewer' && delivery.destinationId === 'channel' && message.subjectId === 'action'
+    });
+    await assert.rejects(outbox.queue(other, 1, 'channel'), /denied/);
+    const queued = await outbox.queue(reviewer, 1, 'channel');
+    assert.deepEqual(await outbox.queue(reviewer, 1, 'channel'), queued);
+    let count = 0;
+    const sent = await outbox.dispatch(reviewer, queued.id, async (message, destination, key) => {
+      count++;
+      assert.equal(destination, 'channel');
+      assert.equal(key, queued.idempotencyKey);
+      assert.equal(message.subjectId, 'action');
+      assert.equal(JSON.stringify(message).includes('private'), false);
+    });
+    assert.equal(sent.status, 'delivered');
+    assert.equal(sent.attempts, 1);
+    assert.equal(count, 1);
+    await assert.rejects(
+      outbox.dispatch(reviewer, queued.id, async () => {}),
+      /changed/
+    );
+    assert.equal((await outbox.get(reviewer, queued.id)).status, 'delivered');
+    await assert.rejects(outbox.get({ ...reviewer, tenantId: 'other' }, queued.id), /actor/);
+  } finally {
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('uncertain deliveries cannot replay until authorized reconciliation and reuse the same key', async () => {
+  const s = setup();
+  let outbox, second;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    const options = { scope, clock: () => 10, authorize: () => true };
+    outbox = new SqliteAgentNoticeDelivery(s.path, options);
+    second = new SqliteAgentNoticeDelivery(s.path, options);
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    let started, release;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise((_, reject) => (release = reject)),
+      pending = outbox.dispatch(reviewer, item.id, async () => {
+        started();
+        await gate;
+      });
+    const observed = assert.rejects(pending, /outcome uncertain/);
+    await ready;
+    assert.throws(() => outbox.close(), /active/);
+    await assert.rejects(outbox.recover(reviewer, item.id), /recovery/);
+    await assert.rejects(
+      second.dispatch(reviewer, item.id, async () => {}),
+      /changed/
+    );
+    release(Error('response lost'));
+    await observed;
+    assert.equal((await second.get(reviewer, item.id)).status, 'uncertain');
+    await assert.rejects(
+      second.dispatch(reviewer, item.id, async () => {}),
+      /changed/
+    );
+    const reset = await second.reconcile(reviewer, item.id, 'not_delivered');
+    assert.equal(reset.status, 'pending');
+    const delivered = await second.dispatch(reviewer, item.id, async (_message, _destination, key) => assert.equal(key, item.idempotencyKey));
+    assert.equal(delivered.status, 'delivered');
+    assert.equal(delivered.attempts, 2);
+  } finally {
+    second?.close();
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('notice delivery refuses expired or decided requests without dispatching', async () => {
+  const s = setup();
+  let outbox;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: () => true });
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    await s.approvals.decide(reviewer, 'action', 'approved');
+    let sent = false;
+    await assert.rejects(
+      outbox.dispatch(reviewer, item.id, async () => {
+        sent = true;
+      }),
+      /not actionable/
+    );
+    assert.equal(sent, false);
+    assert.equal((await outbox.get(reviewer, item.id)).status, 'pending');
+    await assert.rejects(outbox.queue(reviewer, 1, 'other'), /not actionable/);
+  } finally {
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('a crashed notice sender requires explicit recovery and preserves the delivery key', async () => {
+  const s = setup();
+  let outbox, child;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    const opts = { scope, clock: () => 10, authorize: () => true, authorizeList: () => true };
+    outbox = new SqliteAgentNoticeDelivery(s.path, opts);
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    outbox.close();
+    outbox = undefined;
+    child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/notice-delivery-crash.mjs', import.meta.url))], {
+      env: { ...process.env, TEST_DB: s.path, TEST_DELIVERY: String(item.id) },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', part => (stderr += part));
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        child.stdout.on('data', part => {
+          if (String(part).includes('SENDING')) resolve();
+        });
+        child.once('exit', () => reject(Error('Sender exited early: ' + stderr)));
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(Error('Sender did not start')), 30000).unref())
+    ]);
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+    outbox = new SqliteAgentNoticeDelivery(s.path, opts);
+    assert.equal((await outbox.list(reviewer)).items[0].status, 'sending');
+    await assert.rejects(
+      outbox.dispatch(reviewer, item.id, async () => {}),
+      /changed/
+    );
+    assert.equal((await outbox.recover(reviewer, item.id)).status, 'uncertain');
+    assert.equal((await outbox.reconcile(reviewer, item.id, 'not_delivered')).status, 'pending');
+    assert.equal((await outbox.dispatch(reviewer, item.id, async (_message, _destination, key) => assert.equal(key, item.idempotencyKey))).status, 'delivered');
+    assert.deepEqual(
+      (await outbox.history(reviewer, item.id)).items.map(event => event.action),
+      ['queued', 'sending', 'recovered', 'reconciled_not_delivered', 'sending', 'delivered']
+    );
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('delivery listing checks scope and individual read policy', async () => {
+  const s = setup();
+  let outbox;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    let allowList = true;
+    outbox = new SqliteAgentNoticeDelivery(s.path, {
+      scope,
+      clock: () => 10,
+      authorizeList: () => allowList,
+      authorize: (_actor, action, delivery) => action !== 'read' || delivery.destinationId === 'visible'
+    });
+    await outbox.queue(reviewer, 1, 'hidden');
+    await outbox.queue(reviewer, 1, 'visible');
+    const first = await outbox.list(reviewer, { limit: 1 });
+    assert.deepEqual(first.items, []);
+    assert.ok(first.nextAfter);
+    const second = await outbox.list(reviewer, { after: first.nextAfter, limit: 1 });
+    assert.equal(second.items[0].destinationId, 'visible');
+    allowList = false;
+    await assert.rejects(outbox.list(reviewer), /denied/);
+    await assert.rejects(outbox.list({ ...reviewer, tenantId: 'other' }), /actor/);
+  } finally {
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('delivery history is scoped, immutable, paginated and attributes decisions', async () => {
+  const s = setup();
+  let outbox, db;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', { secret: 'private' }, 90);
+    let allowRead = true;
+    outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: (_actor, action) => action !== 'read' || allowRead });
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    await outbox.queue(reviewer, 1, 'channel');
+    await assert.rejects(
+      outbox.dispatch(service, item.id, async () => {
+        throw Error('unknown');
+      }),
+      /uncertain/
+    );
+    await outbox.reconcile(other, item.id, 'not_delivered');
+    await outbox.dispatch(service, item.id, async () => {});
+    const first = await outbox.history(reviewer, item.id, { limit: 2 }),
+      second = await outbox.history(reviewer, item.id, { after: first.nextAfter, limit: 100 }),
+      events = [...first.items, ...second.items];
+    assert.deepEqual(
+      events.map(e => e.action),
+      ['queued', 'sending', 'uncertain', 'reconciled_not_delivered', 'sending', 'delivered']
+    );
+    assert.deepEqual(
+      events.map(e => e.principalId),
+      ['reviewer', 'service', 'service', 'other', 'service', 'service']
+    );
+    assert.deepEqual(
+      events.map(e => e.revision),
+      [1, 2, 3, 4, 5, 6]
+    );
+    assert.equal(JSON.stringify(events).includes('private'), false);
+    allowRead = false;
+    await assert.rejects(outbox.history(reviewer, item.id), /denied/);
+    await assert.rejects(outbox.history({ ...reviewer, tenantId: 'other' }, item.id), /actor/);
+    db = new DatabaseSync(s.path);
+    assert.throws(() => db.exec('DELETE FROM agent_notice_delivery_events'), /immutable/);
+    assert.throws(() => db.exec("UPDATE agent_notice_delivery_events SET action='delivered'"), /immutable/);
+    assert.throws(
+      () => db.exec("INSERT OR REPLACE INTO agent_notice_delivery_events(tenant_id,agent_id,delivery_id,revision,action,principal_id,observed_at) VALUES ('tenant','agent',1,1,'queued','other',10)"),
+      /immutable/
+    );
+  } finally {
+    db?.close();
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('audit failure prevents dispatch and a failed completion audit leaves delivery uncertain', async () => {
+  const s = setup();
+  let outbox, db;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'lookup', {}, 90);
+    outbox = new SqliteAgentNoticeDelivery(s.path, { scope, clock: () => 10, authorize: () => true });
+    const item = await outbox.queue(reviewer, 1, 'channel');
+    db = new DatabaseSync(s.path);
+    db.exec("CREATE TRIGGER fail_sending BEFORE INSERT ON agent_notice_delivery_events WHEN NEW.action='sending' BEGIN SELECT RAISE(ABORT,'audit failed'); END");
+    let calls = 0;
+    await assert.rejects(
+      outbox.dispatch(service, item.id, async () => {
+        calls++;
+      }),
+      /audit failed/
+    );
+    assert.equal(calls, 0);
+    assert.equal((await outbox.get(reviewer, item.id)).status, 'pending');
+    db.exec('DROP TRIGGER fail_sending');
+    db.exec("CREATE TRIGGER fail_delivered BEFORE INSERT ON agent_notice_delivery_events WHEN NEW.action='delivered' BEGIN SELECT RAISE(ABORT,'audit failed'); END");
+    await assert.rejects(
+      outbox.dispatch(service, item.id, async () => {
+        calls++;
+      }),
+      /outcome uncertain/
+    );
+    assert.equal(calls, 1);
+    assert.equal((await outbox.get(reviewer, item.id)).status, 'uncertain');
+    assert.deepEqual(
+      (await outbox.history(reviewer, item.id)).items.map(event => event.action),
+      ['queued', 'sending', 'uncertain']
+    );
+  } finally {
+    db?.close();
+    outbox?.close();
+    close(s);
+  }
+});
+
+test('notice listing rechecks scope and per-notice permission before returning', async () => {
+  const s = setup();
+  let restricted,
+    entered,
+    release,
+    allowList = true,
+    allowFirst = true,
+    blocked = true;
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'a', 'lookup', {}, 90);
+    await s.approvals.request(service, s.run.leaseToken, 'b', 'lookup', {}, 90);
+    let gate = new Promise(resolve => (release = resolve)),
+      ready = new Promise(resolve => (entered = resolve));
+    restricted = new SqliteAgentNotices(s.path, {
+      scope,
+      clock: () => 10,
+      authorize: async (_actor, action, notice) => {
+        if (action === 'list') return allowList;
+        if (notice.subjectId === 'b' && blocked) {
+          blocked = false;
+          entered();
+          await gate;
+        }
+        return notice.subjectId !== 'a' || allowFirst;
+      }
+    });
+    let pending = restricted.list(reviewer);
+    await ready;
+    allowFirst = false;
+    release();
+    assert.deepEqual(
+      (await pending).items.map(item => item.subjectId),
+      ['b']
+    );
+    blocked = true;
+    allowFirst = true;
+    gate = new Promise(resolve => (release = resolve));
+    ready = new Promise(resolve => (entered = resolve));
+    pending = restricted.list(reviewer);
+    await ready;
+    allowList = false;
+    release();
+    await assert.rejects(pending, /Notice access denied/);
+  } finally {
+    release?.();
+    restricted?.close();
+    close(s);
+  }
+});
+
+test('notice cancellation fences late acknowledgement and retains bounded policy capacity', { timeout: 10000 }, async () => {
+  const s = setup();
+  let release,
+    entered,
+    policyAborted,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    started = new Promise(resolve => (entered = resolve)),
+    aborted = new Promise(resolve => (policyAborted = resolve));
+  const limited = new SqliteAgentNotices(s.path, {
+    scope,
+    clock: () => 10,
+    timeoutMs: 1000,
+    maxPending: 1,
+    authorize: async (_actor, action, _notice, signal) => {
+      if (action === 'acknowledge' && block) {
+        entered();
+        signal.addEventListener('abort', policyAborted, { once: true });
+        await gate;
+      }
+      return true;
+    }
+  });
+  try {
+    await s.approvals.request(service, s.run.leaseToken, 'action', 'pay', {}, 90);
+    const controller = new AbortController(),
+      pending = limited.acknowledge(reviewer, 1, controller.signal);
+    await started;
+    controller.abort();
+    await assert.rejects(pending, /Notice authorization unavailable/);
+    await aborted;
+    await assert.rejects(limited.list(reviewer), /Notice authorization unavailable/);
+    assert.equal((await s.notices.list(reviewer)).items[0].acknowledgedAt, null);
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await limited.acknowledge(reviewer, 1)).acknowledgedAt, 10);
+    await assert.rejects(limited.list(reviewer, {}, AbortSignal.abort()), /Notice authorization unavailable/);
+    await assert.rejects(limited.list(reviewer, {}, {}), /Invalid notice signal/);
+  } finally {
+    release();
+    limited.close();
+    close(s);
+  }
+});
+
+test('notice policy deadline covers the complete listing', { timeout: 10000 }, async () => {
+  const s = setup();
+  const limited = new SqliteAgentNotices(s.path, {
+    scope,
+    clock: () => 10,
+    timeoutMs: 100,
+    maxPending: 1,
+    authorize: async () => {
+      await new Promise(resolve => setTimeout(resolve, 65));
+      return true;
+    }
+  });
+  try {
+    await assert.rejects(limited.list(reviewer), /Notice authorization unavailable/);
+    await new Promise(resolve => setTimeout(resolve, 80));
+  } finally {
+    limited.close();
+    close(s);
+  }
 });

@@ -6,7 +6,7 @@ resources:
   - ../signed-jwt-tls-revocation-fresh-example
   - floor-anchor-claim.yaml
 patches:
-  - target: {group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane}
+  - target: { group: apps, version: v1, kind: Deployment, name: app-mixer-data-plane }
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/env/-

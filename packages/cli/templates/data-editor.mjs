@@ -1,418 +1,2507 @@
-import {invokeCapability} from './capabilities.mjs';
+import { invokeCapability } from './capabilities.mjs';
 
-function decimalMultiple(value,divisor){
-  const parts=number=>{const [mantissa,exp='0']=number.toString().split('e'),[whole,fraction='']=mantissa.split('.');return [BigInt(whole+fraction),Number(exp)-fraction.length];};
-  const [numerator,numeratorExponent]=parts(value),[denominator,denominatorExponent]=parts(divisor),difference=numeratorExponent-denominatorExponent;
-  return difference>=0?(numerator*10n**BigInt(difference))%denominator===0n:numerator%(denominator*10n**BigInt(-difference))===0n;
+function decimalMultiple(value, divisor) {
+  const parts = number => {
+    const [mantissa, exp = '0'] = number.toString().split('e'),
+      [whole, fraction = ''] = mantissa.split('.');
+    return [BigInt(whole + fraction), Number(exp) - fraction.length];
+  };
+  const [numerator, numeratorExponent] = parts(value),
+    [denominator, denominatorExponent] = parts(divisor),
+    difference = numeratorExponent - denominatorExponent;
+  return difference >= 0 ? (numerator * 10n ** BigInt(difference)) % denominator === 0n : numerator % (denominator * 10n ** BigInt(-difference)) === 0n;
 }
-function matchesContains(rule,value){
-  if(typeof rule.always==='boolean')return rule.always;
-  if(rule.allOf&&!rule.allOf.every(child=>matchesContains(child,value)))return false;
-  if(rule.anyOf&&!rule.anyOf.some(child=>matchesContains(child,value)))return false;
-  if(rule.oneOf&&rule.oneOf.filter(child=>matchesContains(child,value)).length!==1)return false;
-  if(rule.not&&matchesContains(rule.not,value))return false;
-  if(rule.conditional){const branch=matchesContains(rule.conditional.condition,value)?rule.conditional.then:rule.conditional.else;if(branch&&!matchesContains(branch,value))return false;}
-  if(rule.choices&&!rule.choices.includes(canonicalFormValue(value)))return false;
-  if(rule.type!==undefined){
-    const types=Array.isArray(rule.type)?rule.type:[rule.type];
-    if(!types.some(type=>type==='null'?value===null:type==='array'?Array.isArray(value):type==='object'?value!==null&&typeof value==='object'&&!Array.isArray(value):type==='integer'?typeof value==='number'&&Number.isInteger(value):typeof value===type))return false;
+function matchesContains(rule, value) {
+  if (typeof rule.always === 'boolean') return rule.always;
+  if (rule.allOf && !rule.allOf.every(child => matchesContains(child, value))) return false;
+  if (rule.anyOf && !rule.anyOf.some(child => matchesContains(child, value))) return false;
+  if (rule.oneOf && rule.oneOf.filter(child => matchesContains(child, value)).length !== 1) return false;
+  if (rule.not && matchesContains(rule.not, value)) return false;
+  if (rule.conditional) {
+    const branch = matchesContains(rule.conditional.condition, value) ? rule.conditional.then : rule.conditional.else;
+    if (branch && !matchesContains(branch, value)) return false;
   }
-  if(typeof value==='number'){
-    if(rule.minimum!==undefined&&value<rule.minimum||rule.maximum!==undefined&&value>rule.maximum||rule.exclusiveMinimum!==undefined&&value<=rule.exclusiveMinimum||rule.exclusiveMaximum!==undefined&&value>=rule.exclusiveMaximum||rule.multipleOf!==undefined&&!decimalMultiple(value,rule.multipleOf))return false;
+  if (rule.choices && !rule.choices.includes(canonicalFormValue(value))) return false;
+  if (rule.type !== undefined) {
+    const types = Array.isArray(rule.type) ? rule.type : [rule.type];
+    if (
+      !types.some(type =>
+        type === 'null'
+          ? value === null
+          : type === 'array'
+            ? Array.isArray(value)
+            : type === 'object'
+              ? value !== null && typeof value === 'object' && !Array.isArray(value)
+              : type === 'integer'
+                ? typeof value === 'number' && Number.isInteger(value)
+                : typeof value === type
+      )
+    )
+      return false;
   }
-  if(typeof value==='string'){
-    const length=Array.from(value).length;
-    if(rule.minLength!==undefined&&length<rule.minLength||rule.maxLength!==undefined&&length>rule.maxLength||rule.pattern&&!rule.pattern.test(value))return false;
+  if (typeof value === 'number') {
+    if (
+      (rule.minimum !== undefined && value < rule.minimum) ||
+      (rule.maximum !== undefined && value > rule.maximum) ||
+      (rule.exclusiveMinimum !== undefined && value <= rule.exclusiveMinimum) ||
+      (rule.exclusiveMaximum !== undefined && value >= rule.exclusiveMaximum) ||
+      (rule.multipleOf !== undefined && !decimalMultiple(value, rule.multipleOf))
+    )
+      return false;
   }
-  if(Array.isArray(value)){
-    if(rule.minItems!==undefined&&value.length<rule.minItems||rule.maxItems!==undefined&&value.length>rule.maxItems)return false;
-    if(rule.uniqueItems&&new Set(value.map(canonicalFormValue)).size!==value.length)return false;
-    if(rule.prefixItems)for(let i=0;i<Math.min(value.length,rule.prefixItems.length);i++)if(!matchesContains(rule.prefixItems[i],value[i]))return false;
-    if(rule.items&&!value.slice(rule.prefixItems?.length??0).every(item=>matchesContains(rule.items,item)))return false;
-    if(rule.contains){const count=value.filter(item=>matchesContains(rule.contains,item)).length;if(count<rule.contains.min||(rule.contains.max!==undefined&&count>rule.contains.max))return false;}
+  if (typeof value === 'string') {
+    const length = Array.from(value).length;
+    if ((rule.minLength !== undefined && length < rule.minLength) || (rule.maxLength !== undefined && length > rule.maxLength) || (rule.pattern && !rule.pattern.test(value))) return false;
   }
-  if(value!==null&&typeof value==='object'&&!Array.isArray(value)){
-    const names=Object.keys(value);
-    if(rule.minProperties!==undefined&&names.length<rule.minProperties||rule.maxProperties!==undefined&&names.length>rule.maxProperties||rule.propertyNames&&!names.every(name=>matchesContains(rule.propertyNames,name)))return false;
-    if(rule.required.some(key=>!Object.hasOwn(value,key)))return false;
-    for(const dependency of rule.dependentRequired)if(Object.hasOwn(value,dependency.trigger)&&dependency.required.some(key=>!Object.hasOwn(value,key)))return false;
-    for(const dependency of rule.dependentSchemas)if(Object.hasOwn(value,dependency.trigger)&&!matchesContains(dependency.rule,value))return false;
-    for(const [key,child] of Object.entries(value)){
-      let matched=false;
-      if(Object.hasOwn(rule.properties,key)){matched=true;if(!matchesContains(rule.properties[key],child))return false;}
-      for(const entry of rule.patternProperties){if(entry.pattern.test(key)){matched=true;if(!matchesContains(entry.rule,child))return false;}}
-      if(!matched&&rule.additionalProperties&&!matchesContains(rule.additionalProperties,child))return false;
+  if (Array.isArray(value)) {
+    if ((rule.minItems !== undefined && value.length < rule.minItems) || (rule.maxItems !== undefined && value.length > rule.maxItems)) return false;
+    if (rule.uniqueItems && new Set(value.map(canonicalFormValue)).size !== value.length) return false;
+    if (rule.prefixItems) for (let i = 0; i < Math.min(value.length, rule.prefixItems.length); i++) if (!matchesContains(rule.prefixItems[i], value[i])) return false;
+    if (rule.items && !value.slice(rule.prefixItems?.length ?? 0).every(item => matchesContains(rule.items, item))) return false;
+    if (rule.contains) {
+      const count = value.filter(item => matchesContains(rule.contains, item)).length;
+      if (count < rule.contains.min || (rule.contains.max !== undefined && count > rule.contains.max)) return false;
+    }
+  }
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const names = Object.keys(value);
+    if (
+      (rule.minProperties !== undefined && names.length < rule.minProperties) ||
+      (rule.maxProperties !== undefined && names.length > rule.maxProperties) ||
+      (rule.propertyNames && !names.every(name => matchesContains(rule.propertyNames, name)))
+    )
+      return false;
+    if (rule.required.some(key => !Object.hasOwn(value, key))) return false;
+    for (const dependency of rule.dependentRequired) if (Object.hasOwn(value, dependency.trigger) && dependency.required.some(key => !Object.hasOwn(value, key))) return false;
+    for (const dependency of rule.dependentSchemas) if (Object.hasOwn(value, dependency.trigger) && !matchesContains(dependency.rule, value)) return false;
+    for (const [key, child] of Object.entries(value)) {
+      let matched = false;
+      if (Object.hasOwn(rule.properties, key)) {
+        matched = true;
+        if (!matchesContains(rule.properties[key], child)) return false;
+      }
+      for (const entry of rule.patternProperties) {
+        if (entry.pattern.test(key)) {
+          matched = true;
+          if (!matchesContains(entry.rule, child)) return false;
+        }
+      }
+      if (!matched && rule.additionalProperties && !matchesContains(rule.additionalProperties, child)) return false;
     }
   }
   return true;
 }
-function normalizeFields(fields,schemaKeys=false) {
-  if(fields===undefined)return undefined;
-  if(!Array.isArray(fields)||fields.length<1||fields.length>40)throw Error('Invalid record fields');
-  const seen=new Set();return fields.map(field=>{
-    if(!field||typeof field!=='object'||Array.isArray(field)||Object.keys(field).some(key=>!['key','label','type','required','min','max','maxLength','options'].includes(key))||typeof field.key!=='string'||(schemaKeys?(field.key.length>64||/[\x00-\x1f\x7f]/.test(field.key)):!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(field.key))||['constructor','prototype','__proto__'].includes(field.key)||seen.has(field.key)||typeof field.label!=='string'||!field.label.trim()||field.label.length>120||!(['string','number','integer','boolean'].includes(field.type)||(schemaKeys&&['null','mixed'].includes(field.type)))||(field.required!==undefined&&typeof field.required!=='boolean'))throw Error('Invalid record fields');
-    seen.add(field.key);const numeric=field.type==='number'||field.type==='integer';
-    if((field.min!==undefined&&(!numeric||!Number.isFinite(field.min)))||(field.max!==undefined&&(!numeric||!Number.isFinite(field.max)))||(field.min!==undefined&&field.max!==undefined&&field.min>field.max)||(field.maxLength!==undefined&&(field.type!=='string'||!Number.isSafeInteger(field.maxLength)||field.maxLength<1||field.maxLength>4096))||(field.options!==undefined&&(field.type!=='string'||!Array.isArray(field.options)||field.options.length<1||field.options.length>100||field.options.some(value=>typeof value!=='string'||!value||value.length>120)||new Set(field.options).size!==field.options.length)))throw Error('Invalid record fields');
-    return {key:field.key,label:field.label,type:field.type,required:field.required===true,...(field.min===undefined?{}:{min:field.min}),...(field.max===undefined?{}:{max:field.max}),...(field.maxLength===undefined?{}:{maxLength:field.maxLength}),...(field.options===undefined?{}:{options:[...field.options]})};
+function normalizeFields(fields, schemaKeys = false) {
+  if (fields === undefined) return undefined;
+  if (!Array.isArray(fields) || fields.length < 1 || fields.length > 40) throw Error('Invalid record fields');
+  const seen = new Set();
+  return fields.map(field => {
+    if (
+      !field ||
+      typeof field !== 'object' ||
+      Array.isArray(field) ||
+      Object.keys(field).some(key => !['key', 'label', 'type', 'required', 'min', 'max', 'maxLength', 'options'].includes(key)) ||
+      typeof field.key !== 'string' ||
+      (schemaKeys ? field.key.length > 64 || /[\x00-\x1f\x7f]/.test(field.key) : !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(field.key)) ||
+      ['constructor', 'prototype', '__proto__'].includes(field.key) ||
+      seen.has(field.key) ||
+      typeof field.label !== 'string' ||
+      !field.label.trim() ||
+      field.label.length > 120 ||
+      !(['string', 'number', 'integer', 'boolean'].includes(field.type) || (schemaKeys && ['null', 'mixed'].includes(field.type))) ||
+      (field.required !== undefined && typeof field.required !== 'boolean')
+    )
+      throw Error('Invalid record fields');
+    seen.add(field.key);
+    const numeric = field.type === 'number' || field.type === 'integer';
+    if (
+      (field.min !== undefined && (!numeric || !Number.isFinite(field.min))) ||
+      (field.max !== undefined && (!numeric || !Number.isFinite(field.max))) ||
+      (field.min !== undefined && field.max !== undefined && field.min > field.max) ||
+      (field.maxLength !== undefined && (field.type !== 'string' || !Number.isSafeInteger(field.maxLength) || field.maxLength < 1 || field.maxLength > 4096)) ||
+      (field.options !== undefined &&
+        (field.type !== 'string' ||
+          !Array.isArray(field.options) ||
+          field.options.length < 1 ||
+          field.options.length > 100 ||
+          field.options.some(value => typeof value !== 'string' || !value || value.length > 120) ||
+          new Set(field.options).size !== field.options.length))
+    )
+      throw Error('Invalid record fields');
+    return {
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      required: field.required === true,
+      ...(field.min === undefined ? {} : { min: field.min }),
+      ...(field.max === undefined ? {} : { max: field.max }),
+      ...(field.maxLength === undefined ? {} : { maxLength: field.maxLength }),
+      ...(field.options === undefined ? {} : { options: [...field.options] })
+    };
   });
 }
-function resolveFormSchema(root){
-  const object=value=>value&&typeof value==='object'&&!Array.isArray(value);let count=0;
-  const pointer=ref=>{
-    if(ref==='#')return root;
-    if(typeof ref!=='string'||!ref.startsWith('#/'))throw Error('Unsupported record JSON Schema form');
-    let value=root;for(const segment of ref.slice(2).split('/')){let raw;try{raw=decodeURIComponent(segment);}catch{throw Error('Unsupported record JSON Schema form');}if(/~(?![01])/.test(raw))throw Error('Unsupported record JSON Schema form');const key=raw.replace(/~1/g,'/').replace(/~0/g,'~');if((!object(value)&&!Array.isArray(value))||(Array.isArray(value)&&!/^(0|[1-9][0-9]*)$/.test(key))||!Object.hasOwn(value,key))throw Error('Unsupported record JSON Schema form');value=value[key];}return value;
+function resolveFormSchema(root) {
+  const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  let count = 0;
+  const pointer = ref => {
+    if (ref === '#') return root;
+    if (typeof ref !== 'string' || !ref.startsWith('#/')) throw Error('Unsupported record JSON Schema form');
+    let value = root;
+    for (const segment of ref.slice(2).split('/')) {
+      let raw;
+      try {
+        raw = decodeURIComponent(segment);
+      } catch {
+        throw Error('Unsupported record JSON Schema form');
+      }
+      if (/~(?![01])/.test(raw)) throw Error('Unsupported record JSON Schema form');
+      const key = raw.replace(/~1/g, '/').replace(/~0/g, '~');
+      if ((!object(value) && !Array.isArray(value)) || (Array.isArray(value) && !/^(0|[1-9][0-9]*)$/.test(key)) || !Object.hasOwn(value, key)) throw Error('Unsupported record JSON Schema form');
+      value = value[key];
+    }
+    return value;
   };
-  const visit=(schema,stack,depth)=>{
-    if(++count>1000||depth>30)throw Error('Unsupported record JSON Schema form');
-    if(!object(schema))return schema;
-    if(Object.hasOwn(schema,'$comment')&&(typeof schema.$comment!=='string'||schema.$comment.length>1024))throw Error('Unsupported record JSON Schema form');
-    if(Object.hasOwn(schema,'$ref')){
-      if(Object.keys(schema).some(key=>!['$ref','$defs','$schema','$comment','title','description'].includes(key))||(schema.$defs!==undefined&&!object(schema.$defs))||(schema.$schema!==undefined&&(depth!==0||schema.$schema!=='https://json-schema.org/draft/2020-12/schema'))||typeof schema.$ref!=='string'||stack.includes(schema.$ref))throw Error('Unsupported record JSON Schema form');
-      const resolved=visit(pointer(schema.$ref),[...stack,schema.$ref],depth+1);
-      if(typeof resolved==='boolean'){
-        if((schema.title!==undefined&&(typeof schema.title!=='string'||schema.title.length>120))||(schema.description!==undefined&&(typeof schema.description!=='string'||schema.description.length>1024)))throw Error('Unsupported record JSON Schema form');
+  const visit = (schema, stack, depth) => {
+    if (++count > 1000 || depth > 30) throw Error('Unsupported record JSON Schema form');
+    if (!object(schema)) return schema;
+    if (Object.hasOwn(schema, '$comment') && (typeof schema.$comment !== 'string' || schema.$comment.length > 1024)) throw Error('Unsupported record JSON Schema form');
+    if (Object.hasOwn(schema, '$ref')) {
+      if (
+        Object.keys(schema).some(key => !['$ref', '$defs', '$schema', '$comment', 'title', 'description'].includes(key)) ||
+        (schema.$defs !== undefined && !object(schema.$defs)) ||
+        (schema.$schema !== undefined && (depth !== 0 || schema.$schema !== 'https://json-schema.org/draft/2020-12/schema')) ||
+        typeof schema.$ref !== 'string' ||
+        stack.includes(schema.$ref)
+      )
+        throw Error('Unsupported record JSON Schema form');
+      const resolved = visit(pointer(schema.$ref), [...stack, schema.$ref], depth + 1);
+      if (typeof resolved === 'boolean') {
+        if (
+          (schema.title !== undefined && (typeof schema.title !== 'string' || schema.title.length > 120)) ||
+          (schema.description !== undefined && (typeof schema.description !== 'string' || schema.description.length > 1024))
+        )
+          throw Error('Unsupported record JSON Schema form');
         return resolved;
       }
-      if(!object(resolved))throw Error('Unsupported record JSON Schema form');
-      return {...resolved,...(Object.hasOwn(schema,'title')?{title:schema.title}:{}),...(Object.hasOwn(schema,'description')?{description:schema.description}:{})};
+      if (!object(resolved)) throw Error('Unsupported record JSON Schema form');
+      return { ...resolved, ...(Object.hasOwn(schema, 'title') ? { title: schema.title } : {}), ...(Object.hasOwn(schema, 'description') ? { description: schema.description } : {}) };
     }
-    if(Object.hasOwn(schema,'$defs')&&!object(schema.$defs))throw Error('Unsupported record JSON Schema form');
-    const result=Object.create(null);for(const [key,value] of Object.entries(schema)){
-      if(key==='$defs'||key==='$comment')continue;
-      if(['properties','patternProperties'].includes(key)&&object(value)){const properties=Object.create(null);for(const [name,child] of Object.entries(value))properties[name]=visit(child,stack,depth+1);result[key]=properties;}
-      else if(['items','contains','propertyNames','additionalProperties','if','then','else','not'].includes(key))result[key]=visit(value,stack,depth+1);
-      else if(['allOf','anyOf','oneOf','prefixItems'].includes(key)&&Array.isArray(value))result[key]=value.map(child=>visit(child,stack,depth+1));
-      else if(key==='dependentSchemas'&&object(value)){const rules=Object.create(null);for(const [name,child] of Object.entries(value))rules[name]=visit(child,stack,depth+1);result[key]=rules;}
-      else result[key]=value;
-    }return result;
+    if (Object.hasOwn(schema, '$defs') && !object(schema.$defs)) throw Error('Unsupported record JSON Schema form');
+    const result = Object.create(null);
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === '$defs' || key === '$comment') continue;
+      if (['properties', 'patternProperties'].includes(key) && object(value)) {
+        const properties = Object.create(null);
+        for (const [name, child] of Object.entries(value)) properties[name] = visit(child, stack, depth + 1);
+        result[key] = properties;
+      } else if (['items', 'contains', 'propertyNames', 'additionalProperties', 'if', 'then', 'else', 'not'].includes(key)) result[key] = visit(value, stack, depth + 1);
+      else if (['allOf', 'anyOf', 'oneOf', 'prefixItems'].includes(key) && Array.isArray(value)) result[key] = value.map(child => visit(child, stack, depth + 1));
+      else if (key === 'dependentSchemas' && object(value)) {
+        const rules = Object.create(null);
+        for (const [name, child] of Object.entries(value)) rules[name] = visit(child, stack, depth + 1);
+        result[key] = rules;
+      } else result[key] = value;
+    }
+    return result;
   };
-  return visit(root,[],0);
+  return visit(root, [], 0);
 }
 
-function fieldsFromJsonSchema(jsonSchema,context={nodes:0},arrayDepth=0) {
-  const object=value=>value&&typeof value==='object'&&!Array.isArray(value), keys=(value,allowed)=>Object.keys(value).every(key=>allowed.includes(key));
-  const fields=[],groups=[],dependencies=[],conditions=[],propertyCounts=[],propertyNames=[],objectRules=[];
-  const ruleKeys=(value,allowed)=>keys(value,[...allowed,'title','description'])&&(value.title===undefined||(typeof value.title==='string'&&value.title.length<=120))&&(value.description===undefined||(typeof value.description==='string'&&value.description.length<=1024));
-  const pattern=(value,type)=>{if(value===undefined)return undefined;if(type!=='string'||typeof value!=='string'||value.length>512)throw Error('Unsupported record JSON Schema form');try{return new RegExp(value,'u');}catch{throw Error('Unsupported record JSON Schema form');}};
-  const numericConstraints=(schema,numeric)=>{const keys=['exclusiveMinimum','exclusiveMaximum','multipleOf'];for(const key of keys)if(schema[key]!==undefined&&(!numeric||typeof schema[key]!=='number'||!Number.isFinite(schema[key])||(key==='multipleOf'&&schema[key]<=0)))throw Error('Unsupported record JSON Schema form');return {...(schema.exclusiveMinimum===undefined?{}:{exclusiveMin:schema.exclusiveMinimum}),...(schema.exclusiveMaximum===undefined?{}:{exclusiveMax:schema.exclusiveMaximum}),...(schema.multipleOf===undefined?{}:{multipleOf:schema.multipleOf})};};
-  const scalarType=type=>Array.isArray(type)&&type.length===2&&type.includes('null')&&new Set(type).size===2&&type.some(value=>['string','number','integer','boolean','object','array'].includes(value))?{type:type.find(value=>value!=='null'),nullable:true}:{type,nullable:false};
-  const schemaScalar=value=>{if(value.type==='mixed'||Object.hasOwn(value,'_nullable')||Object.hasOwn(value,'_choices'))throw Error('Unsupported record JSON Schema form');if(Object.hasOwn(value,'const')){const {const:fixed,...rest}=value;if(value.enum!==undefined){if(!Array.isArray(value.enum))throw Error('Unsupported record JSON Schema form');schemaScalar(rest);if(!value.enum.includes(fixed))throw Error('Unsupported record JSON Schema form');}return schemaScalar({...rest,enum:[fixed]});}const explicit=scalarType(value.type);if(['string','number','integer','boolean','null'].includes(explicit.type)&&value.enum!==undefined){if(!Array.isArray(value.enum)||!value.enum.length||value.enum.length>100||new Set(value.enum).size!==value.enum.length||value.enum.some(choice=>choice!==null&&typeof choice!=='string'&&typeof choice!=='boolean'&&!(typeof choice==='number'&&Number.isFinite(choice))))throw Error('Unsupported record JSON Schema form');const choices=value.enum.filter(choice=>choice===null?explicit.type==='null'||explicit.nullable:explicit.type==='integer'?typeof choice==='number'&&Number.isInteger(choice):typeof choice===explicit.type);if(!choices.length)throw Error('Unsupported record JSON Schema form');if(choices.length!==value.enum.length)return schemaScalar({...value,enum:choices});}if(Array.isArray(value.type)&&value.type.filter(type=>type!=='null').length>1&&value.enum!==undefined){const types=value.type,allowed=['string','number','integer','boolean','null'];if(!types.length||types.length>allowed.length||types.some(type=>!allowed.includes(type))||new Set(types).size!==types.length||!Array.isArray(value.enum)||!value.enum.length||value.enum.length>100||new Set(value.enum).size!==value.enum.length||value.enum.some(choice=>choice!==null&&typeof choice!=='string'&&typeof choice!=='boolean'&&!(typeof choice==='number'&&Number.isFinite(choice))))throw Error('Unsupported record JSON Schema form');const choices=value.enum.filter(choice=>choice===null?types.includes('null'):typeof choice==='number'?(types.includes('number')||types.includes('integer')&&Number.isInteger(choice)):types.includes(typeof choice));if(!choices.length)throw Error('Unsupported record JSON Schema form');const copy={...value,enum:choices};delete copy.type;return schemaScalar(copy);}if(value.type===undefined&&Array.isArray(value.enum)&&value.enum.length){const present=value.enum.filter(choice=>choice!==null),types=new Set(present.map(choice=>typeof choice));if(!present.length)return schemaScalar({...value,type:'null'});if(types.size>1&&present.every(choice=>typeof choice==='string'&&choice.length<=120||typeof choice==='boolean'||typeof choice==='number'&&Number.isFinite(choice))){if(value.enum.length>100||new Set(value.enum).size!==value.enum.length)throw Error('Unsupported record JSON Schema form');const keys=['minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','allOf','anyOf','oneOf','not','if','then','else'],rules=Object.fromEntries(keys.filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]])),rule=compileContains(rules,0),choices=value.enum.filter(choice=>matchesContains(rule,choice));if(!choices.length)throw Error('Unsupported record JSON Schema form');const copy={...value};delete copy.enum;for(const key of keys)delete copy[key];const nonNull=choices.filter(choice=>choice!==null);if(!nonNull.length)return {...copy,type:'null'};copy.type='mixed';copy._choices=nonNull;if(choices.includes(null))copy._nullable=true;return copy;}if(types.size===1&&['string','number','boolean'].includes(typeof present[0])){const type=typeof present[0]==='number'&&present.every(choice=>Number.isSafeInteger(choice))?'integer':typeof present[0];return schemaScalar({...value,type:value.enum.includes(null)?[type,'null']:type});}}const result=scalarType(value.type);const combinators=['allOf','anyOf','oneOf','not','if','then','else'];if(['string','number','integer','boolean','null'].includes(result.type)&&Array.isArray(value.enum)&&combinators.some(key=>Object.hasOwn(value,key))){const plain={...value};for(const key of combinators)delete plain[key];schemaScalar(plain);const keys=['minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern',...combinators],rules=Object.fromEntries(keys.filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]])),rule=compileContains(rules,0),choices=value.enum.filter(choice=>matchesContains(rule,choice));if(!choices.length)throw Error('Unsupported record JSON Schema form');return schemaScalar({...plain,enum:choices});}if(result.type==='null'){if(value.enum!==undefined&&(!Array.isArray(value.enum)||value.enum.length!==1||value.enum[0]!==null))throw Error('Unsupported record JSON Schema form');const copy={...value};delete copy.enum;return copy;}if(!['string','number','integer','boolean','object','array'].includes(result.type))return {...value};const copy={...value,type:result.type};let nullable=result.nullable;if(value.enum!==undefined){if(!['string','number','integer','boolean'].includes(result.type)||!Array.isArray(value.enum)||value.enum.length<1||value.enum.length>100||new Set(value.enum).size!==value.enum.length||value.enum.some(choice=>choice===null?!nullable:result.type==='string'?typeof choice!=='string'||choice.length>120:result.type==='boolean'?typeof choice!=='boolean':typeof choice!=='number'||!Number.isFinite(choice)||(result.type==='integer'&&!Number.isSafeInteger(choice))))throw Error('Unsupported record JSON Schema form');nullable=nullable&&value.enum.includes(null);copy._choices=value.enum.filter(choice=>choice!==null);delete copy.enum;}return nullable?{...copy,_nullable:true}:copy;};
-  function canonicalSchemaValue(value,ancestors=new Set(),depth=0){
-    context.literalNodes=(context.literalNodes??0)+1;
-    if(context.literalNodes>1000||depth>20)throw Error('Unsupported record JSON Schema form');
-    if(value===null||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value)||typeof value==='string'&&value.length<=1024)return JSON.stringify(value);
-    if(!value||typeof value!=='object'||ancestors.has(value))throw Error('Unsupported record JSON Schema form');
-    if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)throw Error('Unsupported record JSON Schema form');
-    const next=new Set(ancestors);next.add(value);
-    if(Array.isArray(value)){
-      if(value.length>1000||Object.keys(value).length!==value.length)throw Error('Unsupported record JSON Schema form');
-      for(let i=0;i<value.length;i++)if(!Object.hasOwn(value,i))throw Error('Unsupported record JSON Schema form');
-      return '['+value.map(item=>canonicalSchemaValue(item,next,depth+1)).join(',')+']';
+function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0) {
+  const object = value => value && typeof value === 'object' && !Array.isArray(value),
+    keys = (value, allowed) => Object.keys(value).every(key => allowed.includes(key));
+  const fields = [],
+    groups = [],
+    dependencies = [],
+    conditions = [],
+    propertyCounts = [],
+    propertyNames = [],
+    objectRules = [];
+  const ruleKeys = (value, allowed) =>
+    keys(value, [...allowed, 'title', 'description']) &&
+    (value.title === undefined || (typeof value.title === 'string' && value.title.length <= 120)) &&
+    (value.description === undefined || (typeof value.description === 'string' && value.description.length <= 1024));
+  const pattern = (value, type) => {
+    if (value === undefined) return undefined;
+    if (type !== 'string' || typeof value !== 'string' || value.length > 512) throw Error('Unsupported record JSON Schema form');
+    try {
+      return new RegExp(value, 'u');
+    } catch {
+      throw Error('Unsupported record JSON Schema form');
     }
-    const keys=Object.keys(value).sort();if(keys.length>1000||keys.some(key=>key.length>1024))throw Error('Unsupported record JSON Schema form');
-    return '{'+keys.map(key=>JSON.stringify(key)+':'+canonicalSchemaValue(value[key],next,depth+1)).join(',')+'}';
+  };
+  const numericConstraints = (schema, numeric) => {
+    const keys = ['exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'];
+    for (const key of keys)
+      if (schema[key] !== undefined && (!numeric || typeof schema[key] !== 'number' || !Number.isFinite(schema[key]) || (key === 'multipleOf' && schema[key] <= 0)))
+        throw Error('Unsupported record JSON Schema form');
+    return {
+      ...(schema.exclusiveMinimum === undefined ? {} : { exclusiveMin: schema.exclusiveMinimum }),
+      ...(schema.exclusiveMaximum === undefined ? {} : { exclusiveMax: schema.exclusiveMaximum }),
+      ...(schema.multipleOf === undefined ? {} : { multipleOf: schema.multipleOf })
+    };
+  };
+  const scalarType = type =>
+    Array.isArray(type) && type.length === 2 && type.includes('null') && new Set(type).size === 2 && type.some(value => ['string', 'number', 'integer', 'boolean', 'object', 'array'].includes(value))
+      ? { type: type.find(value => value !== 'null'), nullable: true }
+      : { type, nullable: false };
+  const schemaScalar = value => {
+    if (value.type === 'mixed' || Object.hasOwn(value, '_nullable') || Object.hasOwn(value, '_choices')) throw Error('Unsupported record JSON Schema form');
+    if (Object.hasOwn(value, 'const')) {
+      const { const: fixed, ...rest } = value;
+      if (value.enum !== undefined) {
+        if (!Array.isArray(value.enum)) throw Error('Unsupported record JSON Schema form');
+        schemaScalar(rest);
+        if (!value.enum.includes(fixed)) throw Error('Unsupported record JSON Schema form');
+      }
+      return schemaScalar({ ...rest, enum: [fixed] });
+    }
+    const explicit = scalarType(value.type);
+    if (['string', 'number', 'integer', 'boolean', 'null'].includes(explicit.type) && value.enum !== undefined) {
+      if (
+        !Array.isArray(value.enum) ||
+        !value.enum.length ||
+        value.enum.length > 100 ||
+        new Set(value.enum).size !== value.enum.length ||
+        value.enum.some(choice => choice !== null && typeof choice !== 'string' && typeof choice !== 'boolean' && !(typeof choice === 'number' && Number.isFinite(choice)))
+      )
+        throw Error('Unsupported record JSON Schema form');
+      const choices = value.enum.filter(choice =>
+        choice === null ? explicit.type === 'null' || explicit.nullable : explicit.type === 'integer' ? typeof choice === 'number' && Number.isInteger(choice) : typeof choice === explicit.type
+      );
+      if (!choices.length) throw Error('Unsupported record JSON Schema form');
+      if (choices.length !== value.enum.length) return schemaScalar({ ...value, enum: choices });
+    }
+    if (Array.isArray(value.type) && value.type.filter(type => type !== 'null').length > 1 && value.enum !== undefined) {
+      const types = value.type,
+        allowed = ['string', 'number', 'integer', 'boolean', 'null'];
+      if (
+        !types.length ||
+        types.length > allowed.length ||
+        types.some(type => !allowed.includes(type)) ||
+        new Set(types).size !== types.length ||
+        !Array.isArray(value.enum) ||
+        !value.enum.length ||
+        value.enum.length > 100 ||
+        new Set(value.enum).size !== value.enum.length ||
+        value.enum.some(choice => choice !== null && typeof choice !== 'string' && typeof choice !== 'boolean' && !(typeof choice === 'number' && Number.isFinite(choice)))
+      )
+        throw Error('Unsupported record JSON Schema form');
+      const choices = value.enum.filter(choice =>
+        choice === null ? types.includes('null') : typeof choice === 'number' ? types.includes('number') || (types.includes('integer') && Number.isInteger(choice)) : types.includes(typeof choice)
+      );
+      if (!choices.length) throw Error('Unsupported record JSON Schema form');
+      const copy = { ...value, enum: choices };
+      delete copy.type;
+      return schemaScalar(copy);
+    }
+    if (value.type === undefined && Array.isArray(value.enum) && value.enum.length) {
+      const present = value.enum.filter(choice => choice !== null),
+        types = new Set(present.map(choice => typeof choice));
+      if (!present.length) return schemaScalar({ ...value, type: 'null' });
+      if (types.size > 1 && present.every(choice => (typeof choice === 'string' && choice.length <= 120) || typeof choice === 'boolean' || (typeof choice === 'number' && Number.isFinite(choice)))) {
+        if (value.enum.length > 100 || new Set(value.enum).size !== value.enum.length) throw Error('Unsupported record JSON Schema form');
+        const keys = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'],
+          rules = Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])),
+          rule = compileContains(rules, 0),
+          choices = value.enum.filter(choice => matchesContains(rule, choice));
+        if (!choices.length) throw Error('Unsupported record JSON Schema form');
+        const copy = { ...value };
+        delete copy.enum;
+        for (const key of keys) delete copy[key];
+        const nonNull = choices.filter(choice => choice !== null);
+        if (!nonNull.length) return { ...copy, type: 'null' };
+        copy.type = 'mixed';
+        copy._choices = nonNull;
+        if (choices.includes(null)) copy._nullable = true;
+        return copy;
+      }
+      if (types.size === 1 && ['string', 'number', 'boolean'].includes(typeof present[0])) {
+        const type = typeof present[0] === 'number' && present.every(choice => Number.isSafeInteger(choice)) ? 'integer' : typeof present[0];
+        return schemaScalar({ ...value, type: value.enum.includes(null) ? [type, 'null'] : type });
+      }
+    }
+    const result = scalarType(value.type);
+    const combinators = ['allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'];
+    if (['string', 'number', 'integer', 'boolean', 'null'].includes(result.type) && Array.isArray(value.enum) && combinators.some(key => Object.hasOwn(value, key))) {
+      const plain = { ...value };
+      for (const key of combinators) delete plain[key];
+      schemaScalar(plain);
+      const keys = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', ...combinators],
+        rules = Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])),
+        rule = compileContains(rules, 0),
+        choices = value.enum.filter(choice => matchesContains(rule, choice));
+      if (!choices.length) throw Error('Unsupported record JSON Schema form');
+      return schemaScalar({ ...plain, enum: choices });
+    }
+    if (result.type === 'null') {
+      if (value.enum !== undefined && (!Array.isArray(value.enum) || value.enum.length !== 1 || value.enum[0] !== null)) throw Error('Unsupported record JSON Schema form');
+      const copy = { ...value };
+      delete copy.enum;
+      return copy;
+    }
+    if (!['string', 'number', 'integer', 'boolean', 'object', 'array'].includes(result.type)) return { ...value };
+    const copy = { ...value, type: result.type };
+    let nullable = result.nullable;
+    if (value.enum !== undefined) {
+      if (
+        !['string', 'number', 'integer', 'boolean'].includes(result.type) ||
+        !Array.isArray(value.enum) ||
+        value.enum.length < 1 ||
+        value.enum.length > 100 ||
+        new Set(value.enum).size !== value.enum.length ||
+        value.enum.some(choice =>
+          choice === null
+            ? !nullable
+            : result.type === 'string'
+              ? typeof choice !== 'string' || choice.length > 120
+              : result.type === 'boolean'
+                ? typeof choice !== 'boolean'
+                : typeof choice !== 'number' || !Number.isFinite(choice) || (result.type === 'integer' && !Number.isSafeInteger(choice))
+        )
+      )
+        throw Error('Unsupported record JSON Schema form');
+      nullable = nullable && value.enum.includes(null);
+      copy._choices = value.enum.filter(choice => choice !== null);
+      delete copy.enum;
+    }
+    return nullable ? { ...copy, _nullable: true } : copy;
+  };
+  function canonicalSchemaValue(value, ancestors = new Set(), depth = 0) {
+    context.literalNodes = (context.literalNodes ?? 0) + 1;
+    if (context.literalNodes > 1000 || depth > 20) throw Error('Unsupported record JSON Schema form');
+    if (value === null || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value.length <= 1024)) return JSON.stringify(value);
+    if (!value || typeof value !== 'object' || ancestors.has(value)) throw Error('Unsupported record JSON Schema form');
+    if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw Error('Unsupported record JSON Schema form');
+    const next = new Set(ancestors);
+    next.add(value);
+    if (Array.isArray(value)) {
+      if (value.length > 1000 || Object.keys(value).length !== value.length) throw Error('Unsupported record JSON Schema form');
+      for (let i = 0; i < value.length; i++) if (!Object.hasOwn(value, i)) throw Error('Unsupported record JSON Schema form');
+      return '[' + value.map(item => canonicalSchemaValue(item, next, depth + 1)).join(',') + ']';
+    }
+    const keys = Object.keys(value).sort();
+    if (keys.length > 1000 || keys.some(key => key.length > 1024)) throw Error('Unsupported record JSON Schema form');
+    return '{' + keys.map(key => JSON.stringify(key) + ':' + canonicalSchemaValue(value[key], next, depth + 1)).join(',') + '}';
   }
-  function compileContains(spec,depth){
-    if(++context.nodes>200||depth>5)throw Error('Unsupported record JSON Schema form');
-    if(typeof spec==='boolean')return {always:spec};
-    if(!object(spec)||!ruleKeys(spec,['type','const','enum','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','properties','patternProperties','required','dependentRequired','dependentSchemas','additionalProperties','minProperties','maxProperties','propertyNames','items','prefixItems','minItems','maxItems','uniqueItems','contains','minContains','maxContains','allOf','anyOf','oneOf','not','if','then','else']))throw Error('Unsupported record JSON Schema form');
-    const allowedTypes=['string','number','integer','boolean','null','object','array'],types=spec.type===undefined?undefined:Array.isArray(spec.type)?spec.type:[spec.type];
-    if(types!==undefined&&(!types.length||types.length>allowedTypes.length||types.some(type=>!allowedTypes.includes(type))||new Set(types).size!==types.length))throw Error('Unsupported record JSON Schema form');
-    for(const key of ['minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf'])if(spec[key]!==undefined&&(typeof spec[key]!=='number'||!Number.isFinite(spec[key])||(key==='multipleOf'&&spec[key]<=0)))throw Error('Unsupported record JSON Schema form');
-    for(const key of ['minLength','maxLength'])if(spec[key]!==undefined&&(!Number.isSafeInteger(spec[key])||spec[key]<0||spec[key]>1048576))throw Error('Unsupported record JSON Schema form');
-    const regex=pattern(spec.pattern,'string'),hasConst=Object.hasOwn(spec,'const'),hasEnum=Object.hasOwn(spec,'enum');
-    if(hasEnum&&(!Array.isArray(spec.enum)||spec.enum.length<1||spec.enum.length>100))throw Error('Unsupported record JSON Schema form');
-    const enumChoices=hasEnum?spec.enum.map(value=>canonicalSchemaValue(value)):undefined,fixed=hasConst?canonicalSchemaValue(spec.const):undefined;
-    if((enumChoices&&new Set(enumChoices).size!==enumChoices.length)||(hasConst&&enumChoices&&!enumChoices.includes(fixed)))throw Error('Unsupported record JSON Schema form');
+  function compileContains(spec, depth) {
+    if (++context.nodes > 200 || depth > 5) throw Error('Unsupported record JSON Schema form');
+    if (typeof spec === 'boolean') return { always: spec };
+    if (
+      !object(spec) ||
+      !ruleKeys(spec, [
+        'type',
+        'const',
+        'enum',
+        'minimum',
+        'maximum',
+        'exclusiveMinimum',
+        'exclusiveMaximum',
+        'multipleOf',
+        'minLength',
+        'maxLength',
+        'pattern',
+        'properties',
+        'patternProperties',
+        'required',
+        'dependentRequired',
+        'dependentSchemas',
+        'additionalProperties',
+        'minProperties',
+        'maxProperties',
+        'propertyNames',
+        'items',
+        'prefixItems',
+        'minItems',
+        'maxItems',
+        'uniqueItems',
+        'contains',
+        'minContains',
+        'maxContains',
+        'allOf',
+        'anyOf',
+        'oneOf',
+        'not',
+        'if',
+        'then',
+        'else'
+      ])
+    )
+      throw Error('Unsupported record JSON Schema form');
+    const allowedTypes = ['string', 'number', 'integer', 'boolean', 'null', 'object', 'array'],
+      types = spec.type === undefined ? undefined : Array.isArray(spec.type) ? spec.type : [spec.type];
+    if (types !== undefined && (!types.length || types.length > allowedTypes.length || types.some(type => !allowedTypes.includes(type)) || new Set(types).size !== types.length))
+      throw Error('Unsupported record JSON Schema form');
+    for (const key of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'])
+      if (spec[key] !== undefined && (typeof spec[key] !== 'number' || !Number.isFinite(spec[key]) || (key === 'multipleOf' && spec[key] <= 0))) throw Error('Unsupported record JSON Schema form');
+    for (const key of ['minLength', 'maxLength'])
+      if (spec[key] !== undefined && (!Number.isSafeInteger(spec[key]) || spec[key] < 0 || spec[key] > 1048576)) throw Error('Unsupported record JSON Schema form');
+    const regex = pattern(spec.pattern, 'string'),
+      hasConst = Object.hasOwn(spec, 'const'),
+      hasEnum = Object.hasOwn(spec, 'enum');
+    if (hasEnum && (!Array.isArray(spec.enum) || spec.enum.length < 1 || spec.enum.length > 100)) throw Error('Unsupported record JSON Schema form');
+    const enumChoices = hasEnum ? spec.enum.map(value => canonicalSchemaValue(value)) : undefined,
+      fixed = hasConst ? canonicalSchemaValue(spec.const) : undefined;
+    if ((enumChoices && new Set(enumChoices).size !== enumChoices.length) || (hasConst && enumChoices && !enumChoices.includes(fixed))) throw Error('Unsupported record JSON Schema form');
 
-    for(const key of ['minProperties','maxProperties'])if(spec[key]!==undefined&&(!Number.isSafeInteger(spec[key])||spec[key]<0||spec[key]>1048576))throw Error('Unsupported record JSON Schema form');
-    if(spec.properties!==undefined&&(!object(spec.properties)||Object.keys(spec.properties).length>40))throw Error('Unsupported record JSON Schema form');
-    const validDependencyNames=names=>Array.isArray(names)&&names.length<=40&&names.every(key=>typeof key==='string'&&key.length<=256)&&new Set(names).size===names.length;
-    if(spec.required!==undefined&&!validDependencyNames(spec.required))throw Error('Unsupported record JSON Schema form');
-    if(spec.dependentRequired!==undefined&&(!object(spec.dependentRequired)||Object.keys(spec.dependentRequired).length>40))throw Error('Unsupported record JSON Schema form');
-    if(spec.dependentSchemas!==undefined&&(!object(spec.dependentSchemas)||Object.keys(spec.dependentSchemas).length>40))throw Error('Unsupported record JSON Schema form');
-    const dependentRequired=[];for(const [trigger,required] of Object.entries(spec.dependentRequired??{})){if(trigger.length>256||!validDependencyNames(required))throw Error('Unsupported record JSON Schema form');dependentRequired.push({trigger,required:[...required]});}
-    const normalizeTargetObject=value=>{
-      if(!object(value))return value;
-      const out={...value};if(out.type===undefined)out.type='object';
-      for(const key of ['allOf','anyOf','oneOf'])if(Array.isArray(out[key]))out[key]=out[key].map(normalizeTargetObject);
-      for(const key of ['not','if','then','else'])if(out[key]!==undefined)out[key]=normalizeTargetObject(out[key]);
+    for (const key of ['minProperties', 'maxProperties'])
+      if (spec[key] !== undefined && (!Number.isSafeInteger(spec[key]) || spec[key] < 0 || spec[key] > 1048576)) throw Error('Unsupported record JSON Schema form');
+    if (spec.properties !== undefined && (!object(spec.properties) || Object.keys(spec.properties).length > 40)) throw Error('Unsupported record JSON Schema form');
+    const validDependencyNames = names => Array.isArray(names) && names.length <= 40 && names.every(key => typeof key === 'string' && key.length <= 256) && new Set(names).size === names.length;
+    if (spec.required !== undefined && !validDependencyNames(spec.required)) throw Error('Unsupported record JSON Schema form');
+    if (spec.dependentRequired !== undefined && (!object(spec.dependentRequired) || Object.keys(spec.dependentRequired).length > 40)) throw Error('Unsupported record JSON Schema form');
+    if (spec.dependentSchemas !== undefined && (!object(spec.dependentSchemas) || Object.keys(spec.dependentSchemas).length > 40)) throw Error('Unsupported record JSON Schema form');
+    const dependentRequired = [];
+    for (const [trigger, required] of Object.entries(spec.dependentRequired ?? {})) {
+      if (trigger.length > 256 || !validDependencyNames(required)) throw Error('Unsupported record JSON Schema form');
+      dependentRequired.push({ trigger, required: [...required] });
+    }
+    const normalizeTargetObject = value => {
+      if (!object(value)) return value;
+      const out = { ...value };
+      if (out.type === undefined) out.type = 'object';
+      for (const key of ['allOf', 'anyOf', 'oneOf']) if (Array.isArray(out[key])) out[key] = out[key].map(normalizeTargetObject);
+      for (const key of ['not', 'if', 'then', 'else']) if (out[key] !== undefined) out[key] = normalizeTargetObject(out[key]);
       return out;
     };
-    const dependentSchemas=[];for(const [trigger,child] of Object.entries(spec.dependentSchemas??{})){if(trigger.length>256)throw Error('Unsupported record JSON Schema form');dependentSchemas.push({trigger,rule:compileContains(normalizeTargetObject(child),depth+1)});}
-    if(spec.patternProperties!==undefined&&(!object(spec.patternProperties)||Object.keys(spec.patternProperties).length>40))throw Error('Unsupported record JSON Schema form');
-    if(spec.additionalProperties!==undefined&&typeof spec.additionalProperties!=='boolean'&&!object(spec.additionalProperties))throw Error('Unsupported record JSON Schema form');
-    for(const key of ['minItems','maxItems'])if(spec[key]!==undefined&&(!Number.isSafeInteger(spec[key])||spec[key]<0||spec[key]>1048576))throw Error('Unsupported record JSON Schema form');
-    if(spec.prefixItems!==undefined&&(!Array.isArray(spec.prefixItems)||spec.prefixItems.length<1||spec.prefixItems.length>40))throw Error('Unsupported record JSON Schema form');
-    if(spec.uniqueItems!==undefined&&typeof spec.uniqueItems!=='boolean')throw Error('Unsupported record JSON Schema form');
-    if(spec.contains===undefined&&(spec.minContains!==undefined||spec.maxContains!==undefined))throw Error('Unsupported record JSON Schema form');
-    const min=spec.minContains??1,max=spec.maxContains;
-    if(spec.contains!==undefined&&(!Number.isSafeInteger(min)||min<0||(max!==undefined&&(!Number.isSafeInteger(max)||max<0||max<min))))throw Error('Unsupported record JSON Schema form');
-    const properties=Object.create(null);for(const [key,value] of Object.entries(spec.properties??{})){if(key.length>256)throw Error('Unsupported record JSON Schema form');properties[key]=compileContains(value,depth+1);}
-    const patternProperties=[];for(const [key,value] of Object.entries(spec.patternProperties??{}))patternProperties.push({pattern:pattern(key,'string'),rule:compileContains(value,depth+1)});
-    const additionalProperties=spec.additionalProperties===undefined?undefined:compileContains(spec.additionalProperties,depth+1);
-    const nameSpec=spec.propertyNames===undefined?undefined:object(spec.propertyNames)&&spec.propertyNames.type===undefined?{...spec.propertyNames,type:'string'}:spec.propertyNames;
-    const propertyNames=nameSpec===undefined?undefined:compileContains(nameSpec,depth+1),items=spec.items===undefined?undefined:compileContains(spec.items,depth+1),prefixItems=spec.prefixItems===undefined?undefined:spec.prefixItems.map(child=>compileContains(child,depth+1)),contains=spec.contains===undefined?undefined:{...compileContains(spec.contains,depth+1),min,max};
-    const combinations={};for(const key of ['allOf','anyOf','oneOf'])if(spec[key]!==undefined){if(!Array.isArray(spec[key])||spec[key].length<1||spec[key].length>40)throw Error('Unsupported record JSON Schema form');combinations[key]=spec[key].map(child=>compileContains(child,depth+1));}
-    const not=spec.not===undefined?undefined:compileContains(spec.not,depth+1);
-    if(spec.if===undefined&&(spec.then!==undefined||spec.else!==undefined)||spec.if!==undefined&&spec.then===undefined&&spec.else===undefined)throw Error('Unsupported record JSON Schema form');
-    const conditional=spec.if===undefined?undefined:{condition:compileContains(spec.if,depth+1),then:spec.then===undefined?undefined:compileContains(spec.then,depth+1),else:spec.else===undefined?undefined:compileContains(spec.else,depth+1)};
-    return {type:Array.isArray(spec.type)?[...spec.type]:spec.type,choices:hasConst?[fixed]:enumChoices,minimum:spec.minimum,maximum:spec.maximum,exclusiveMinimum:spec.exclusiveMinimum,exclusiveMaximum:spec.exclusiveMaximum,multipleOf:spec.multipleOf,minLength:spec.minLength,maxLength:spec.maxLength,pattern:regex,properties,patternProperties,required:spec.required===undefined?[]:[...spec.required],dependentRequired,dependentSchemas,additionalProperties,minProperties:spec.minProperties,maxProperties:spec.maxProperties,propertyNames,items,prefixItems,minItems:spec.minItems,maxItems:spec.maxItems,uniqueItems:spec.uniqueItems===true,contains,...combinations,not,conditional};
+    const dependentSchemas = [];
+    for (const [trigger, child] of Object.entries(spec.dependentSchemas ?? {})) {
+      if (trigger.length > 256) throw Error('Unsupported record JSON Schema form');
+      dependentSchemas.push({ trigger, rule: compileContains(normalizeTargetObject(child), depth + 1) });
+    }
+    if (spec.patternProperties !== undefined && (!object(spec.patternProperties) || Object.keys(spec.patternProperties).length > 40)) throw Error('Unsupported record JSON Schema form');
+    if (spec.additionalProperties !== undefined && typeof spec.additionalProperties !== 'boolean' && !object(spec.additionalProperties)) throw Error('Unsupported record JSON Schema form');
+    for (const key of ['minItems', 'maxItems'])
+      if (spec[key] !== undefined && (!Number.isSafeInteger(spec[key]) || spec[key] < 0 || spec[key] > 1048576)) throw Error('Unsupported record JSON Schema form');
+    if (spec.prefixItems !== undefined && (!Array.isArray(spec.prefixItems) || spec.prefixItems.length < 1 || spec.prefixItems.length > 40)) throw Error('Unsupported record JSON Schema form');
+    if (spec.uniqueItems !== undefined && typeof spec.uniqueItems !== 'boolean') throw Error('Unsupported record JSON Schema form');
+    if (spec.contains === undefined && (spec.minContains !== undefined || spec.maxContains !== undefined)) throw Error('Unsupported record JSON Schema form');
+    const min = spec.minContains ?? 1,
+      max = spec.maxContains;
+    if (spec.contains !== undefined && (!Number.isSafeInteger(min) || min < 0 || (max !== undefined && (!Number.isSafeInteger(max) || max < 0 || max < min))))
+      throw Error('Unsupported record JSON Schema form');
+    const properties = Object.create(null);
+    for (const [key, value] of Object.entries(spec.properties ?? {})) {
+      if (key.length > 256) throw Error('Unsupported record JSON Schema form');
+      properties[key] = compileContains(value, depth + 1);
+    }
+    const patternProperties = [];
+    for (const [key, value] of Object.entries(spec.patternProperties ?? {})) patternProperties.push({ pattern: pattern(key, 'string'), rule: compileContains(value, depth + 1) });
+    const additionalProperties = spec.additionalProperties === undefined ? undefined : compileContains(spec.additionalProperties, depth + 1);
+    const nameSpec =
+      spec.propertyNames === undefined ? undefined : object(spec.propertyNames) && spec.propertyNames.type === undefined ? { ...spec.propertyNames, type: 'string' } : spec.propertyNames;
+    const propertyNames = nameSpec === undefined ? undefined : compileContains(nameSpec, depth + 1),
+      items = spec.items === undefined ? undefined : compileContains(spec.items, depth + 1),
+      prefixItems = spec.prefixItems === undefined ? undefined : spec.prefixItems.map(child => compileContains(child, depth + 1)),
+      contains = spec.contains === undefined ? undefined : { ...compileContains(spec.contains, depth + 1), min, max };
+    const combinations = {};
+    for (const key of ['allOf', 'anyOf', 'oneOf'])
+      if (spec[key] !== undefined) {
+        if (!Array.isArray(spec[key]) || spec[key].length < 1 || spec[key].length > 40) throw Error('Unsupported record JSON Schema form');
+        combinations[key] = spec[key].map(child => compileContains(child, depth + 1));
+      }
+    const not = spec.not === undefined ? undefined : compileContains(spec.not, depth + 1);
+    if ((spec.if === undefined && (spec.then !== undefined || spec.else !== undefined)) || (spec.if !== undefined && spec.then === undefined && spec.else === undefined))
+      throw Error('Unsupported record JSON Schema form');
+    const conditional =
+      spec.if === undefined
+        ? undefined
+        : {
+            condition: compileContains(spec.if, depth + 1),
+            then: spec.then === undefined ? undefined : compileContains(spec.then, depth + 1),
+            else: spec.else === undefined ? undefined : compileContains(spec.else, depth + 1)
+          };
+    return {
+      type: Array.isArray(spec.type) ? [...spec.type] : spec.type,
+      choices: hasConst ? [fixed] : enumChoices,
+      minimum: spec.minimum,
+      maximum: spec.maximum,
+      exclusiveMinimum: spec.exclusiveMinimum,
+      exclusiveMaximum: spec.exclusiveMaximum,
+      multipleOf: spec.multipleOf,
+      minLength: spec.minLength,
+      maxLength: spec.maxLength,
+      pattern: regex,
+      properties,
+      patternProperties,
+      required: spec.required === undefined ? [] : [...spec.required],
+      dependentRequired,
+      dependentSchemas,
+      additionalProperties,
+      minProperties: spec.minProperties,
+      maxProperties: spec.maxProperties,
+      propertyNames,
+      items,
+      prefixItems,
+      minItems: spec.minItems,
+      maxItems: spec.maxItems,
+      uniqueItems: spec.uniqueItems === true,
+      contains,
+      ...combinations,
+      not,
+      conditional
+    };
   }
-  function visit(node,path,labels,needed,depth){
-    if(++context.nodes>200||arrayDepth>3)throw Error('Unsupported record JSON Schema form');
-    if(depth>5||!object(node)||!keys(node,depth===0?['$schema','type','title','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not']:['type','title','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not','_nullable'])||node.type!=='object'||!object(node.properties)||(node.title!==undefined&&(typeof node.title!=='string'||!node.title.trim()||node.title.length>120))||(node.description!==undefined&&(typeof node.description!=='string'||node.description.length>1024))||(node.additionalProperties!==undefined&&typeof node.additionalProperties!=='boolean'&&!object(node.additionalProperties))||(depth===0&&node.$schema!==undefined&&node.$schema!=='https://json-schema.org/draft/2020-12/schema'))throw Error('Unsupported record JSON Schema form');
-    if((node.minProperties!==undefined&&(!Number.isSafeInteger(node.minProperties)||node.minProperties<0))||(node.maxProperties!==undefined&&(!Number.isSafeInteger(node.maxProperties)||node.maxProperties<0))||(node.minProperties!==undefined&&node.maxProperties!==undefined&&node.minProperties>node.maxProperties))throw Error('Unsupported record JSON Schema form');
-    if(node.minProperties!==undefined||node.maxProperties!==undefined)propertyCounts.push({path:[...path],min:node.minProperties,max:node.maxProperties});
-    if(node.propertyNames!==undefined)propertyNames.push({path:[...path],rule:compileContains(node.propertyNames,0)});
-    const required=node.required===undefined?[]:node.required;if(!Array.isArray(required)||required.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(required).size!==required.length)throw Error('Unsupported record JSON Schema form');
-    const validNames=names=>Array.isArray(names)&&names.length<=40&&names.every(key=>typeof key==='string'&&Object.hasOwn(node.properties,key))&&new Set(names).size===names.length;
-    const normalizeObjectRule=value=>{
-      if(!object(value))return value;
-      if(value.properties!==undefined&&(!object(value.properties)||Object.keys(value.properties).some(key=>!Object.hasOwn(node.properties,key))))throw Error('Unsupported record JSON Schema form');
-      if(value.required!==undefined&&!validNames(value.required))throw Error('Unsupported record JSON Schema form');
-      const out={...value};
-      if(out.type===undefined&&['properties','patternProperties','required','dependentRequired','dependentSchemas','additionalProperties','minProperties','maxProperties','propertyNames'].some(key=>Object.hasOwn(out,key)))out.type='object';
-      for(const key of ['allOf','anyOf','oneOf'])if(Array.isArray(out[key]))out[key]=out[key].map(normalizeObjectRule);
-      if(out.not!==undefined)out.not=normalizeObjectRule(out.not);
+  function visit(node, path, labels, needed, depth) {
+    if (++context.nodes > 200 || arrayDepth > 3) throw Error('Unsupported record JSON Schema form');
+    if (
+      depth > 5 ||
+      !object(node) ||
+      !keys(
+        node,
+        depth === 0
+          ? [
+              '$schema',
+              'type',
+              'title',
+              'description',
+              'properties',
+              'patternProperties',
+              'required',
+              'additionalProperties',
+              'dependentRequired',
+              'dependentSchemas',
+              'if',
+              'then',
+              'else',
+              'minProperties',
+              'maxProperties',
+              'propertyNames',
+              'allOf',
+              'anyOf',
+              'oneOf',
+              'not'
+            ]
+          : [
+              'type',
+              'title',
+              'description',
+              'properties',
+              'patternProperties',
+              'required',
+              'additionalProperties',
+              'dependentRequired',
+              'dependentSchemas',
+              'if',
+              'then',
+              'else',
+              'minProperties',
+              'maxProperties',
+              'propertyNames',
+              'allOf',
+              'anyOf',
+              'oneOf',
+              'not',
+              '_nullable'
+            ]
+      ) ||
+      node.type !== 'object' ||
+      !object(node.properties) ||
+      (node.title !== undefined && (typeof node.title !== 'string' || !node.title.trim() || node.title.length > 120)) ||
+      (node.description !== undefined && (typeof node.description !== 'string' || node.description.length > 1024)) ||
+      (node.additionalProperties !== undefined && typeof node.additionalProperties !== 'boolean' && !object(node.additionalProperties)) ||
+      (depth === 0 && node.$schema !== undefined && node.$schema !== 'https://json-schema.org/draft/2020-12/schema')
+    )
+      throw Error('Unsupported record JSON Schema form');
+    if (
+      (node.minProperties !== undefined && (!Number.isSafeInteger(node.minProperties) || node.minProperties < 0)) ||
+      (node.maxProperties !== undefined && (!Number.isSafeInteger(node.maxProperties) || node.maxProperties < 0)) ||
+      (node.minProperties !== undefined && node.maxProperties !== undefined && node.minProperties > node.maxProperties)
+    )
+      throw Error('Unsupported record JSON Schema form');
+    if (node.minProperties !== undefined || node.maxProperties !== undefined) propertyCounts.push({ path: [...path], min: node.minProperties, max: node.maxProperties });
+    if (node.propertyNames !== undefined) propertyNames.push({ path: [...path], rule: compileContains(node.propertyNames, 0) });
+    const required = node.required === undefined ? [] : node.required;
+    if (!Array.isArray(required) || required.some(key => typeof key !== 'string' || !Object.hasOwn(node.properties, key)) || new Set(required).size !== required.length)
+      throw Error('Unsupported record JSON Schema form');
+    const validNames = names =>
+      Array.isArray(names) && names.length <= 40 && names.every(key => typeof key === 'string' && Object.hasOwn(node.properties, key)) && new Set(names).size === names.length;
+    const normalizeObjectRule = value => {
+      if (!object(value)) return value;
+      if (value.properties !== undefined && (!object(value.properties) || Object.keys(value.properties).some(key => !Object.hasOwn(node.properties, key))))
+        throw Error('Unsupported record JSON Schema form');
+      if (value.required !== undefined && !validNames(value.required)) throw Error('Unsupported record JSON Schema form');
+      const out = { ...value };
+      if (
+        out.type === undefined &&
+        ['properties', 'patternProperties', 'required', 'dependentRequired', 'dependentSchemas', 'additionalProperties', 'minProperties', 'maxProperties', 'propertyNames'].some(key =>
+          Object.hasOwn(out, key)
+        )
+      )
+        out.type = 'object';
+      for (const key of ['allOf', 'anyOf', 'oneOf']) if (Array.isArray(out[key])) out[key] = out[key].map(normalizeObjectRule);
+      if (out.not !== undefined) out.not = normalizeObjectRule(out.not);
       return out;
     };
-    const objectRuleFor=(value,predicates)=>{
-      const combined={type:'object',minProperties:value.minProperties,maxProperties:value.maxProperties,propertyNames:value.propertyNames,patternProperties:value.patternProperties,additionalProperties:value.additionalProperties};
-      for(const key of ['allOf','anyOf','oneOf'])if(value[key]!==undefined)combined[key]=Array.isArray(value[key])?value[key].map(normalizeObjectRule):value[key];
-      if(value.not!==undefined)combined.not=normalizeObjectRule(value.not);
-      const rule=compileContains(combined,0);
-      for(const predicate of predicates)rule.properties[predicate.key]=predicate.rule;
+    const objectRuleFor = (value, predicates) => {
+      const combined = {
+        type: 'object',
+        minProperties: value.minProperties,
+        maxProperties: value.maxProperties,
+        propertyNames: value.propertyNames,
+        patternProperties: value.patternProperties,
+        additionalProperties: value.additionalProperties
+      };
+      for (const key of ['allOf', 'anyOf', 'oneOf']) if (value[key] !== undefined) combined[key] = Array.isArray(value[key]) ? value[key].map(normalizeObjectRule) : value[key];
+      if (value.not !== undefined) combined.not = normalizeObjectRule(value.not);
+      const rule = compileContains(combined, 0);
+      for (const predicate of predicates) rule.properties[predicate.key] = predicate.rule;
       return rule;
     };
-    const branch=value=>{
-      if(value===undefined)return {required:[],predicates:[]};
-      if(typeof value==='boolean')return {required:[],predicates:[],objectRule:compileContains(value,0)};
-      if(!object(value)||!ruleKeys(value,['required','properties','patternProperties','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'])||!['required','properties','patternProperties','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'].some(key=>Object.hasOwn(value,key))||(value.required!==undefined&&!validNames(value.required))||(value.properties!==undefined&&(!object(value.properties)||Object.keys(value.properties).length>40)))throw Error('Unsupported record JSON Schema form');
-      const predicates=[];for(const [key,test] of Object.entries(value.properties??{})){if(!Object.hasOwn(node.properties,key))throw Error('Unsupported record JSON Schema form');predicates.push({key,rule:compileContains(test,0)});}
-      return {required:[...(value.required??[])],predicates,objectRule:objectRuleFor(value,predicates)};
+    const branch = value => {
+      if (value === undefined) return { required: [], predicates: [] };
+      if (typeof value === 'boolean') return { required: [], predicates: [], objectRule: compileContains(value, 0) };
+      if (
+        !object(value) ||
+        !ruleKeys(value, ['required', 'properties', 'patternProperties', 'minProperties', 'maxProperties', 'propertyNames', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not']) ||
+        !['required', 'properties', 'patternProperties', 'minProperties', 'maxProperties', 'propertyNames', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not'].some(key =>
+          Object.hasOwn(value, key)
+        ) ||
+        (value.required !== undefined && !validNames(value.required)) ||
+        (value.properties !== undefined && (!object(value.properties) || Object.keys(value.properties).length > 40))
+      )
+        throw Error('Unsupported record JSON Schema form');
+      const predicates = [];
+      for (const [key, test] of Object.entries(value.properties ?? {})) {
+        if (!Object.hasOwn(node.properties, key)) throw Error('Unsupported record JSON Schema form');
+        predicates.push({ key, rule: compileContains(test, 0) });
+      }
+      return { required: [...(value.required ?? [])], predicates, objectRule: objectRuleFor(value, predicates) };
     };
-    if(['allOf','anyOf','oneOf','not'].some(key=>node[key]!==undefined)){
-      const combined={type:'object'};for(const key of ['allOf','anyOf','oneOf'])if(node[key]!==undefined)combined[key]=Array.isArray(node[key])?node[key].map(normalizeObjectRule):node[key];
-      if(node.not!==undefined)combined.not=normalizeObjectRule(node.not);
-      objectRules.push({path:[...path],rule:compileContains(combined,0)});if(objectRules.length>40)throw Error('Unsupported record JSON Schema form');
+    if (['allOf', 'anyOf', 'oneOf', 'not'].some(key => node[key] !== undefined)) {
+      const combined = { type: 'object' };
+      for (const key of ['allOf', 'anyOf', 'oneOf']) if (node[key] !== undefined) combined[key] = Array.isArray(node[key]) ? node[key].map(normalizeObjectRule) : node[key];
+      if (node.not !== undefined) combined.not = normalizeObjectRule(node.not);
+      objectRules.push({ path: [...path], rule: compileContains(combined, 0) });
+      if (objectRules.length > 40) throw Error('Unsupported record JSON Schema form');
     }
-    if(node.patternProperties!==undefined||node.additionalProperties!==undefined){
-      const rule=compileContains({type:'object',patternProperties:node.patternProperties,additionalProperties:node.additionalProperties},0);
-      for(const key of Object.keys(node.properties))rule.properties[key]={always:true};
-      objectRules.push({path:[...path],rule});if(objectRules.length>40)throw Error('Unsupported record JSON Schema form');
+    if (node.patternProperties !== undefined || node.additionalProperties !== undefined) {
+      const rule = compileContains({ type: 'object', patternProperties: node.patternProperties, additionalProperties: node.additionalProperties }, 0);
+      for (const key of Object.keys(node.properties)) rule.properties[key] = { always: true };
+      objectRules.push({ path: [...path], rule });
+      if (objectRules.length > 40) throw Error('Unsupported record JSON Schema form');
     }
-    if(node.dependentRequired!==undefined){if(!object(node.dependentRequired)||Object.keys(node.dependentRequired).length>40)throw Error('Unsupported record JSON Schema form');for(const [trigger,requiredKeys] of Object.entries(node.dependentRequired)){if(!Object.hasOwn(node.properties,trigger)||!Array.isArray(requiredKeys)||requiredKeys.length>40||requiredKeys.some(key=>typeof key!=='string'||!Object.hasOwn(node.properties,key))||new Set(requiredKeys).size!==requiredKeys.length)throw Error('Unsupported record JSON Schema form');dependencies.push({path:[...path],trigger,required:[...requiredKeys]});if(dependencies.length>40)throw Error('Unsupported record JSON Schema form');}}
-    if(node.dependentSchemas!==undefined){if(!object(node.dependentSchemas)||Object.keys(node.dependentSchemas).length>40)throw Error('Unsupported record JSON Schema form');for(const [trigger,schema] of Object.entries(node.dependentSchemas)){if(!Object.hasOwn(node.properties,trigger)||schema===undefined)throw Error('Unsupported record JSON Schema form');dependencies.push({path:[...path],trigger,...branch(schema)});if(dependencies.length>40)throw Error('Unsupported record JSON Schema form');}}
-    if(node.if!==undefined||node.then!==undefined||node.else!==undefined){
-      const condition=node.if;
-      if(node.then===undefined&&node.else===undefined)throw Error('Unsupported record JSON Schema form');
-      if(typeof condition==='boolean'){
-        conditions.push({path:[...path],predicates:[],required:[],objectRule:compileContains(condition,0),then:branch(node.then),else:branch(node.else)});
-      }else{
-        if(!object(condition)||!ruleKeys(condition,['properties','patternProperties','required','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'])||!['properties','patternProperties','required','minProperties','maxProperties','propertyNames','additionalProperties','allOf','anyOf','oneOf','not'].some(key=>Object.hasOwn(condition,key))||(condition.required!==undefined&&!validNames(condition.required))||(condition.properties!==undefined&&(!object(condition.properties)||Object.keys(condition.properties).length>40)))throw Error('Unsupported record JSON Schema form');
-        const predicates=[];for(const [key,test] of Object.entries(condition.properties??{})){if(!Object.hasOwn(node.properties,key))throw Error('Unsupported record JSON Schema form');predicates.push({key,rule:compileContains(test,0)});}
-        conditions.push({path:[...path],predicates,required:[...(condition.required??[])],objectRule:objectRuleFor(condition,predicates),then:branch(node.then),else:branch(node.else)});
+    if (node.dependentRequired !== undefined) {
+      if (!object(node.dependentRequired) || Object.keys(node.dependentRequired).length > 40) throw Error('Unsupported record JSON Schema form');
+      for (const [trigger, requiredKeys] of Object.entries(node.dependentRequired)) {
+        if (
+          !Object.hasOwn(node.properties, trigger) ||
+          !Array.isArray(requiredKeys) ||
+          requiredKeys.length > 40 ||
+          requiredKeys.some(key => typeof key !== 'string' || !Object.hasOwn(node.properties, key)) ||
+          new Set(requiredKeys).size !== requiredKeys.length
+        )
+          throw Error('Unsupported record JSON Schema form');
+        dependencies.push({ path: [...path], trigger, required: [...requiredKeys] });
+        if (dependencies.length > 40) throw Error('Unsupported record JSON Schema form');
       }
-      if(conditions.length>40)throw Error('Unsupported record JSON Schema form');
     }
-    if(depth){groups.push({path, label:labels.join(' / '), required:needed,nullable:node._nullable===true,description:node.description});if(groups.length>40)throw Error('Unsupported record JSON Schema form');}
-    for(const [key,originalProperty] of Object.entries(node.properties)){
-      const property=object(originalProperty)?schemaScalar(originalProperty):originalProperty;
-      if(++context.nodes>200)throw Error('Unsupported record JSON Schema form');
-      if(key.length>64||/[\x00-\x1f\x7f]/.test(key)||['constructor','prototype','__proto__'].includes(key)||!object(property))throw Error('Unsupported record JSON Schema form');
-      const next=[...path,key],name=property.title??(key||'(empty property name)'),requiredField=required.includes(key);
-      if(property.type==='object'){visit(property,next,[...labels,name],requiredField,depth+1);continue;}
-      if(property.type==='array'){
-        if(property.description!==undefined&&(typeof property.description!=='string'||property.description.length>1024))throw Error('Unsupported record JSON Schema form');
+    if (node.dependentSchemas !== undefined) {
+      if (!object(node.dependentSchemas) || Object.keys(node.dependentSchemas).length > 40) throw Error('Unsupported record JSON Schema form');
+      for (const [trigger, schema] of Object.entries(node.dependentSchemas)) {
+        if (!Object.hasOwn(node.properties, trigger) || schema === undefined) throw Error('Unsupported record JSON Schema form');
+        dependencies.push({ path: [...path], trigger, ...branch(schema) });
+        if (dependencies.length > 40) throw Error('Unsupported record JSON Schema form');
+      }
+    }
+    if (node.if !== undefined || node.then !== undefined || node.else !== undefined) {
+      const condition = node.if;
+      if (node.then === undefined && node.else === undefined) throw Error('Unsupported record JSON Schema form');
+      if (typeof condition === 'boolean') {
+        conditions.push({ path: [...path], predicates: [], required: [], objectRule: compileContains(condition, 0), then: branch(node.then), else: branch(node.else) });
+      } else {
+        if (
+          !object(condition) ||
+          !ruleKeys(condition, ['properties', 'patternProperties', 'required', 'minProperties', 'maxProperties', 'propertyNames', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not']) ||
+          !['properties', 'patternProperties', 'required', 'minProperties', 'maxProperties', 'propertyNames', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not'].some(key =>
+            Object.hasOwn(condition, key)
+          ) ||
+          (condition.required !== undefined && !validNames(condition.required)) ||
+          (condition.properties !== undefined && (!object(condition.properties) || Object.keys(condition.properties).length > 40))
+        )
+          throw Error('Unsupported record JSON Schema form');
+        const predicates = [];
+        for (const [key, test] of Object.entries(condition.properties ?? {})) {
+          if (!Object.hasOwn(node.properties, key)) throw Error('Unsupported record JSON Schema form');
+          predicates.push({ key, rule: compileContains(test, 0) });
+        }
+        conditions.push({ path: [...path], predicates, required: [...(condition.required ?? [])], objectRule: objectRuleFor(condition, predicates), then: branch(node.then), else: branch(node.else) });
+      }
+      if (conditions.length > 40) throw Error('Unsupported record JSON Schema form');
+    }
+    if (depth) {
+      groups.push({ path, label: labels.join(' / '), required: needed, nullable: node._nullable === true, description: node.description });
+      if (groups.length > 40) throw Error('Unsupported record JSON Schema form');
+    }
+    for (const [key, originalProperty] of Object.entries(node.properties)) {
+      const property = object(originalProperty) ? schemaScalar(originalProperty) : originalProperty;
+      if (++context.nodes > 200) throw Error('Unsupported record JSON Schema form');
+      if (key.length > 64 || /[\x00-\x1f\x7f]/.test(key) || ['constructor', 'prototype', '__proto__'].includes(key) || !object(property)) throw Error('Unsupported record JSON Schema form');
+      const next = [...path, key],
+        name = property.title ?? (key || '(empty property name)'),
+        requiredField = required.includes(key);
+      if (property.type === 'object') {
+        visit(property, next, [...labels, name], requiredField, depth + 1);
+        continue;
+      }
+      if (property.type === 'array') {
+        if (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024)) throw Error('Unsupported record JSON Schema form');
         let contains;
-        if(property.contains!==undefined){
-          const min=property.minContains??1,max=property.maxContains;
-          if(!Number.isSafeInteger(min)||min<0||(max!==undefined&&(!Number.isSafeInteger(max)||max<0||max<min)))throw Error('Unsupported record JSON Schema form');
-          contains={...compileContains(property.contains,0),min,max};
-        }else if(property.minContains!==undefined||property.maxContains!==undefined)throw Error('Unsupported record JSON Schema form');
-        if(property.prefixItems!==undefined){
-          if(!keys(property,['type','title','description','prefixItems','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains','_nullable'])||!Array.isArray(property.prefixItems)||property.prefixItems.length<1||property.prefixItems.length>40||(property.uniqueItems!==undefined&&typeof property.uniqueItems!=='boolean')||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120)))throw Error('Unsupported record JSON Schema form');
-          const compileItem=spec=>{
-            const type=object(spec)?scalarType(schemaScalar(spec).type).type:undefined;
-            if(type==='object'){const compiled=fieldsFromJsonSchema({type:'object',properties:{item:{type:'array',items:spec}},required:['item']},context,arrayDepth)[0];return {type:'objectItem',nullable:compiled.itemNullable,itemFields:compiled.itemFields,itemDescription:compiled.itemDescription,itemTitle:spec.title};}
-            if(!['string','number','integer','boolean','array','null','mixed'].includes(type))throw Error('Unsupported record JSON Schema form');
-            return {...fieldsFromJsonSchema({type:'object',properties:{item:spec},required:['item']},context,arrayDepth+1)[0],itemTitle:spec.title};
+        if (property.contains !== undefined) {
+          const min = property.minContains ?? 1,
+            max = property.maxContains;
+          if (!Number.isSafeInteger(min) || min < 0 || (max !== undefined && (!Number.isSafeInteger(max) || max < 0 || max < min))) throw Error('Unsupported record JSON Schema form');
+          contains = { ...compileContains(property.contains, 0), min, max };
+        } else if (property.minContains !== undefined || property.maxContains !== undefined) throw Error('Unsupported record JSON Schema form');
+        if (property.prefixItems !== undefined) {
+          if (
+            !keys(property, ['type', 'title', 'description', 'prefixItems', 'items', 'minItems', 'maxItems', 'uniqueItems', 'contains', 'minContains', 'maxContains', '_nullable']) ||
+            !Array.isArray(property.prefixItems) ||
+            property.prefixItems.length < 1 ||
+            property.prefixItems.length > 40 ||
+            (property.uniqueItems !== undefined && typeof property.uniqueItems !== 'boolean') ||
+            (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120))
+          )
+            throw Error('Unsupported record JSON Schema form');
+          const compileItem = spec => {
+            const type = object(spec) ? scalarType(schemaScalar(spec).type).type : undefined;
+            if (type === 'object') {
+              const compiled = fieldsFromJsonSchema({ type: 'object', properties: { item: { type: 'array', items: spec } }, required: ['item'] }, context, arrayDepth)[0];
+              return { type: 'objectItem', nullable: compiled.itemNullable, itemFields: compiled.itemFields, itemDescription: compiled.itemDescription, itemTitle: spec.title };
+            }
+            if (!['string', 'number', 'integer', 'boolean', 'array', 'null', 'mixed'].includes(type)) throw Error('Unsupported record JSON Schema form');
+            return { ...fieldsFromJsonSchema({ type: 'object', properties: { item: spec }, required: ['item'] }, context, arrayDepth + 1)[0], itemTitle: spec.title };
           };
-          const prefixItems=property.prefixItems.map(compileItem),item=property.items===false?undefined:compileItem(property.items),minItems=property.minItems===undefined?0:property.minItems,requestedMax=property.maxItems===undefined?50:property.maxItems;
-          if(!Number.isSafeInteger(minItems)||!Number.isSafeInteger(requestedMax)||minItems<0||requestedMax<minItems||requestedMax>50)throw Error('Unsupported record JSON Schema form');
-          const maxItems=item?requestedMax:Math.min(requestedMax,prefixItems.length);
-          if(minItems>maxItems)throw Error('Unsupported record JSON Schema form');
-          const label=[...labels,name].join(' / ');if(label.length>120)throw Error('Unsupported record JSON Schema form');
-          fields.push({key,label,...(property.description===undefined?{}:{description:property.description}),type:'array',path:next,required:requiredField,nullable:property._nullable===true,prefixItems,item,minItems,maxItems,uniqueItems:property.uniqueItems===true,contains});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;
+          const prefixItems = property.prefixItems.map(compileItem),
+            item = property.items === false ? undefined : compileItem(property.items),
+            minItems = property.minItems === undefined ? 0 : property.minItems,
+            requestedMax = property.maxItems === undefined ? 50 : property.maxItems;
+          if (!Number.isSafeInteger(minItems) || !Number.isSafeInteger(requestedMax) || minItems < 0 || requestedMax < minItems || requestedMax > 50)
+            throw Error('Unsupported record JSON Schema form');
+          const maxItems = item ? requestedMax : Math.min(requestedMax, prefixItems.length);
+          if (minItems > maxItems) throw Error('Unsupported record JSON Schema form');
+          const label = [...labels, name].join(' / ');
+          if (label.length > 120) throw Error('Unsupported record JSON Schema form');
+          fields.push({
+            key,
+            label,
+            ...(property.description === undefined ? {} : { description: property.description }),
+            type: 'array',
+            path: next,
+            required: requiredField,
+            nullable: property._nullable === true,
+            prefixItems,
+            item,
+            minItems,
+            maxItems,
+            uniqueItems: property.uniqueItems === true,
+            contains
+          });
+          if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
+          continue;
         }
-        if(object(property.items)&&scalarType(property.items.type).type==='array'){
-          const minItems=property.minItems===undefined?0:property.minItems,maxItems=property.maxItems===undefined?50:property.maxItems;
-          if(!keys(property,['type','title','description','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains','_nullable'])||(property.uniqueItems!==undefined&&typeof property.uniqueItems!=='boolean')||!Number.isSafeInteger(minItems)||!Number.isSafeInteger(maxItems)||minItems<0||maxItems<minItems||maxItems>50||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120)))throw Error('Unsupported record JSON Schema form');
-          const item={...fieldsFromJsonSchema({type:'object',properties:{item:property.items},required:['item']},context,arrayDepth+1)[0],itemTitle:property.items.title},label=[...labels,name].join(' / ');if(label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,...(property.description===undefined?{}:{description:property.description}),type:'array',path:next,required:requiredField,nullable:property._nullable===true,item,minItems,maxItems,uniqueItems:property.uniqueItems===true,contains});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;
+        if (object(property.items) && scalarType(property.items.type).type === 'array') {
+          const minItems = property.minItems === undefined ? 0 : property.minItems,
+            maxItems = property.maxItems === undefined ? 50 : property.maxItems;
+          if (
+            !keys(property, ['type', 'title', 'description', 'items', 'minItems', 'maxItems', 'uniqueItems', 'contains', 'minContains', 'maxContains', '_nullable']) ||
+            (property.uniqueItems !== undefined && typeof property.uniqueItems !== 'boolean') ||
+            !Number.isSafeInteger(minItems) ||
+            !Number.isSafeInteger(maxItems) ||
+            minItems < 0 ||
+            maxItems < minItems ||
+            maxItems > 50 ||
+            (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120))
+          )
+            throw Error('Unsupported record JSON Schema form');
+          const item = { ...fieldsFromJsonSchema({ type: 'object', properties: { item: property.items }, required: ['item'] }, context, arrayDepth + 1)[0], itemTitle: property.items.title },
+            label = [...labels, name].join(' / ');
+          if (label.length > 120) throw Error('Unsupported record JSON Schema form');
+          fields.push({
+            key,
+            label,
+            ...(property.description === undefined ? {} : { description: property.description }),
+            type: 'array',
+            path: next,
+            required: requiredField,
+            nullable: property._nullable === true,
+            item,
+            minItems,
+            maxItems,
+            uniqueItems: property.uniqueItems === true,
+            contains
+          });
+          if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
+          continue;
         }
-        if(object(property.items)&&scalarType(property.items.type).type==='object'){
-          const spec=schemaScalar(property.items),minItems=property.minItems===undefined?0:property.minItems,maxItems=property.maxItems===undefined?50:property.maxItems;
-          if(!keys(property,['type','title','description','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains','_nullable'])||!keys(spec,['type','title','description','properties','patternProperties','required','additionalProperties','dependentRequired','dependentSchemas','if','then','else','minProperties','maxProperties','propertyNames','allOf','anyOf','oneOf','not','_nullable'])||!object(spec.properties)||(property.uniqueItems!==undefined&&typeof property.uniqueItems!=='boolean')||!Number.isSafeInteger(minItems)||!Number.isSafeInteger(maxItems)||minItems<0||maxItems<minItems||maxItems>50||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120))||(spec.title!==undefined&&(typeof spec.title!=='string'||!spec.title.trim()||spec.title.length>120))||(spec.description!==undefined&&(typeof spec.description!=='string'||spec.description.length>1024)))throw Error('Unsupported record JSON Schema form');
-          const {title:unused,description:itemDescription,_nullable:itemNullable,...itemSchema}=spec,itemFields=fieldsFromJsonSchema(itemSchema,context,arrayDepth+1),label=[...labels,name].join(' / ');if(label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,...(property.description===undefined?{}:{description:property.description}),type:'objectArray',path:next,required:requiredField,nullable:property._nullable===true,itemNullable:itemNullable===true,itemDescription,itemTitle:spec.title,itemFields,minItems,maxItems,uniqueItems:property.uniqueItems===true,contains});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;
+        if (object(property.items) && scalarType(property.items.type).type === 'object') {
+          const spec = schemaScalar(property.items),
+            minItems = property.minItems === undefined ? 0 : property.minItems,
+            maxItems = property.maxItems === undefined ? 50 : property.maxItems;
+          if (
+            !keys(property, ['type', 'title', 'description', 'items', 'minItems', 'maxItems', 'uniqueItems', 'contains', 'minContains', 'maxContains', '_nullable']) ||
+            !keys(spec, [
+              'type',
+              'title',
+              'description',
+              'properties',
+              'patternProperties',
+              'required',
+              'additionalProperties',
+              'dependentRequired',
+              'dependentSchemas',
+              'if',
+              'then',
+              'else',
+              'minProperties',
+              'maxProperties',
+              'propertyNames',
+              'allOf',
+              'anyOf',
+              'oneOf',
+              'not',
+              '_nullable'
+            ]) ||
+            !object(spec.properties) ||
+            (property.uniqueItems !== undefined && typeof property.uniqueItems !== 'boolean') ||
+            !Number.isSafeInteger(minItems) ||
+            !Number.isSafeInteger(maxItems) ||
+            minItems < 0 ||
+            maxItems < minItems ||
+            maxItems > 50 ||
+            (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
+            (spec.title !== undefined && (typeof spec.title !== 'string' || !spec.title.trim() || spec.title.length > 120)) ||
+            (spec.description !== undefined && (typeof spec.description !== 'string' || spec.description.length > 1024))
+          )
+            throw Error('Unsupported record JSON Schema form');
+          const { title: unused, description: itemDescription, _nullable: itemNullable, ...itemSchema } = spec,
+            itemFields = fieldsFromJsonSchema(itemSchema, context, arrayDepth + 1),
+            label = [...labels, name].join(' / ');
+          if (label.length > 120) throw Error('Unsupported record JSON Schema form');
+          fields.push({
+            key,
+            label,
+            ...(property.description === undefined ? {} : { description: property.description }),
+            type: 'objectArray',
+            path: next,
+            required: requiredField,
+            nullable: property._nullable === true,
+            itemNullable: itemNullable === true,
+            itemDescription,
+            itemTitle: spec.title,
+            itemFields,
+            minItems,
+            maxItems,
+            uniqueItems: property.uniqueItems === true,
+            contains
+          });
+          if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
+          continue;
         }
-        if(!keys(property,['type','title','description','items','minItems','maxItems','uniqueItems','contains','minContains','maxContains','_nullable'])||!object(property.items)||!keys(property.items,['type','title','description','enum','const','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','allOf','anyOf','oneOf','not','if','then','else'])||!['string','number','integer','boolean','null','mixed'].includes(scalarType(schemaScalar(property.items).type).type)||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120)))throw Error('Unsupported record JSON Schema form');
-        const spec=schemaScalar(property.items),numeric=spec.type==='number'||spec.type==='integer',minItems=property.minItems===undefined?0:property.minItems,maxItems=property.maxItems===undefined?50:property.maxItems;
-        if(!keys(spec,['type','title','description','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','_nullable','_choices'])||(property.uniqueItems!==undefined&&typeof property.uniqueItems!=='boolean')||!Number.isSafeInteger(minItems)||!Number.isSafeInteger(maxItems)||minItems<0||maxItems<minItems||maxItems>50||((spec.minimum!==undefined||spec.maximum!==undefined)&&!numeric)||(spec.minLength!==undefined&&(spec.type!=='string'||!Number.isSafeInteger(spec.minLength)||spec.minLength<0||spec.minLength>1048576))||(spec.maxLength!==undefined&&(spec.type!=='string'||!Number.isSafeInteger(spec.maxLength)||spec.maxLength<0||spec.maxLength>1048576))||(spec.minLength!==undefined&&spec.maxLength!==undefined&&spec.minLength>spec.maxLength))throw Error('Unsupported record JSON Schema form');
-        let item;try{item=normalizeFields([{key,label:'Item',type:spec.type,required:true,...(spec.minimum===undefined?{}:{min:spec.minimum}),...(spec.maximum===undefined?{}:{max:spec.maximum})}],true)[0];}catch{throw Error('Unsupported record JSON Schema form');}
-        if((spec.title!==undefined&&(typeof spec.title!=='string'||!spec.title.trim()||spec.title.length>120))||(spec.description!==undefined&&(typeof spec.description!=='string'||spec.description.length>1024)))throw Error('Unsupported record JSON Schema form');
-        item={...item,itemTitle:spec.title,...(spec.description===undefined?{}:{description:spec.description}),...numericConstraints(spec,numeric),...(spec._choices===undefined?{}:{jsonChoices:[...spec._choices]})};if(spec._nullable||spec.type==='null')item={...item,nullable:true};const itemPattern=pattern(spec.pattern,spec.type);if(itemPattern)item={...item,jsonPattern:itemPattern};
-        if(spec.type==='string')item={...item,jsonString:true,...(spec.minLength===undefined?{}:{jsonMinLength:spec.minLength}),...(spec.maxLength===undefined?{}:{jsonMaxLength:spec.maxLength})};
-        const label=[...labels,name].join(' / ');if(label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,...(property.description===undefined?{}:{description:property.description}),type:'array',path:next,required:requiredField,nullable:property._nullable===true,item,minItems,maxItems,uniqueItems:property.uniqueItems===true,contains});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;
+        if (
+          !keys(property, ['type', 'title', 'description', 'items', 'minItems', 'maxItems', 'uniqueItems', 'contains', 'minContains', 'maxContains', '_nullable']) ||
+          !object(property.items) ||
+          !keys(property.items, [
+            'type',
+            'title',
+            'description',
+            'enum',
+            'const',
+            'minimum',
+            'maximum',
+            'exclusiveMinimum',
+            'exclusiveMaximum',
+            'multipleOf',
+            'minLength',
+            'maxLength',
+            'pattern',
+            'allOf',
+            'anyOf',
+            'oneOf',
+            'not',
+            'if',
+            'then',
+            'else'
+          ]) ||
+          !['string', 'number', 'integer', 'boolean', 'null', 'mixed'].includes(scalarType(schemaScalar(property.items).type).type) ||
+          (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120))
+        )
+          throw Error('Unsupported record JSON Schema form');
+        const spec = schemaScalar(property.items),
+          numeric = spec.type === 'number' || spec.type === 'integer',
+          minItems = property.minItems === undefined ? 0 : property.minItems,
+          maxItems = property.maxItems === undefined ? 50 : property.maxItems;
+        if (
+          !keys(spec, ['type', 'title', 'description', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', '_nullable', '_choices']) ||
+          (property.uniqueItems !== undefined && typeof property.uniqueItems !== 'boolean') ||
+          !Number.isSafeInteger(minItems) ||
+          !Number.isSafeInteger(maxItems) ||
+          minItems < 0 ||
+          maxItems < minItems ||
+          maxItems > 50 ||
+          ((spec.minimum !== undefined || spec.maximum !== undefined) && !numeric) ||
+          (spec.minLength !== undefined && (spec.type !== 'string' || !Number.isSafeInteger(spec.minLength) || spec.minLength < 0 || spec.minLength > 1048576)) ||
+          (spec.maxLength !== undefined && (spec.type !== 'string' || !Number.isSafeInteger(spec.maxLength) || spec.maxLength < 0 || spec.maxLength > 1048576)) ||
+          (spec.minLength !== undefined && spec.maxLength !== undefined && spec.minLength > spec.maxLength)
+        )
+          throw Error('Unsupported record JSON Schema form');
+        let item;
+        try {
+          item = normalizeFields(
+            [{ key, label: 'Item', type: spec.type, required: true, ...(spec.minimum === undefined ? {} : { min: spec.minimum }), ...(spec.maximum === undefined ? {} : { max: spec.maximum }) }],
+            true
+          )[0];
+        } catch {
+          throw Error('Unsupported record JSON Schema form');
+        }
+        if (
+          (spec.title !== undefined && (typeof spec.title !== 'string' || !spec.title.trim() || spec.title.length > 120)) ||
+          (spec.description !== undefined && (typeof spec.description !== 'string' || spec.description.length > 1024))
+        )
+          throw Error('Unsupported record JSON Schema form');
+        item = {
+          ...item,
+          itemTitle: spec.title,
+          ...(spec.description === undefined ? {} : { description: spec.description }),
+          ...numericConstraints(spec, numeric),
+          ...(spec._choices === undefined ? {} : { jsonChoices: [...spec._choices] })
+        };
+        if (spec._nullable || spec.type === 'null') item = { ...item, nullable: true };
+        const itemPattern = pattern(spec.pattern, spec.type);
+        if (itemPattern) item = { ...item, jsonPattern: itemPattern };
+        if (spec.type === 'string')
+          item = { ...item, jsonString: true, ...(spec.minLength === undefined ? {} : { jsonMinLength: spec.minLength }), ...(spec.maxLength === undefined ? {} : { jsonMaxLength: spec.maxLength }) };
+        const label = [...labels, name].join(' / ');
+        if (label.length > 120) throw Error('Unsupported record JSON Schema form');
+        fields.push({
+          key,
+          label,
+          ...(property.description === undefined ? {} : { description: property.description }),
+          type: 'array',
+          path: next,
+          required: requiredField,
+          nullable: property._nullable === true,
+          item,
+          minItems,
+          maxItems,
+          uniqueItems: property.uniqueItems === true,
+          contains
+        });
+        if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
+        continue;
       }
-      if(property.type==='mixed'){if(!keys(property,['type','title','description','_nullable','_choices'])||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120))||(property.description!==undefined&&(typeof property.description!=='string'||property.description.length>1024)))throw Error('Unsupported record JSON Schema form');const label=[...labels,name].join(' / ');if(!label.trim()||label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,type:'mixed',path:next,required:requiredField,jsonChoices:[...property._choices],nullable:property._nullable===true,...(property.description===undefined?{}:{description:property.description})});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;}
-      if(property.type==='null'){if(!keys(property,['type','title','description'])||(property.title!==undefined&&(typeof property.title!=='string'||!property.title.trim()||property.title.length>120))||(property.description!==undefined&&(typeof property.description!=='string'||property.description.length>1024)))throw Error('Unsupported record JSON Schema form');const label=[...labels,name].join(' / ');if(!label.trim()||label.length>120)throw Error('Unsupported record JSON Schema form');fields.push({key,label,type:'null',path:next,required:requiredField,nullable:true,...(property.description===undefined?{}:{description:property.description})});if(fields.length>40)throw Error('Unsupported record JSON Schema form');continue;}
-      if(!keys(property,['type','title','description','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','_nullable','_choices'])||!['string','number','integer','boolean'].includes(property.type)||(property.title!==undefined&&typeof property.title!=='string'))throw Error('Unsupported record JSON Schema form');
-      const numeric=property.type==='number'||property.type==='integer';if((property.description!==undefined&&(typeof property.description!=='string'||property.description.length>1024))||((property.minimum!==undefined||property.maximum!==undefined)&&!numeric)||(property.minLength!==undefined&&(property.type!=='string'||!Number.isSafeInteger(property.minLength)||property.minLength<0||property.minLength>1048576))||(property.maxLength!==undefined&&(property.type!=='string'||!Number.isSafeInteger(property.maxLength)||property.maxLength<0||property.maxLength>1048576))||(property.minLength!==undefined&&property.maxLength!==undefined&&property.minLength>property.maxLength))throw Error('Unsupported record JSON Schema form');
-      const fieldPattern=pattern(property.pattern,property.type);const field={key,label:[...labels,name].join(' / '),type:property.type,required:requiredField,...(property.minimum===undefined?{}:{min:property.minimum}),...(property.maximum===undefined?{}:{max:property.maximum})};
-      try{fields.push({...normalizeFields([field],true)[0],path:next,...(property.description===undefined?{}:{description:property.description}),...numericConstraints(property,numeric),...(property._choices===undefined?{}:{jsonChoices:[...property._choices]}),...(fieldPattern?{jsonPattern:fieldPattern}:{}),...(property._nullable?{nullable:true}:{}),...(property.type==='string'?{jsonString:true,...(property.minLength===undefined?{}:{jsonMinLength:property.minLength}),...(property.maxLength===undefined?{}:{jsonMaxLength:property.maxLength})}:{})});}catch{throw Error('Unsupported record JSON Schema form');}
-      if(fields.length>40)throw Error('Unsupported record JSON Schema form');
+      if (property.type === 'mixed') {
+        if (
+          !keys(property, ['type', 'title', 'description', '_nullable', '_choices']) ||
+          (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
+          (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024))
+        )
+          throw Error('Unsupported record JSON Schema form');
+        const label = [...labels, name].join(' / ');
+        if (!label.trim() || label.length > 120) throw Error('Unsupported record JSON Schema form');
+        fields.push({
+          key,
+          label,
+          type: 'mixed',
+          path: next,
+          required: requiredField,
+          jsonChoices: [...property._choices],
+          nullable: property._nullable === true,
+          ...(property.description === undefined ? {} : { description: property.description })
+        });
+        if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
+        continue;
+      }
+      if (property.type === 'null') {
+        if (
+          !keys(property, ['type', 'title', 'description']) ||
+          (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
+          (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024))
+        )
+          throw Error('Unsupported record JSON Schema form');
+        const label = [...labels, name].join(' / ');
+        if (!label.trim() || label.length > 120) throw Error('Unsupported record JSON Schema form');
+        fields.push({ key, label, type: 'null', path: next, required: requiredField, nullable: true, ...(property.description === undefined ? {} : { description: property.description }) });
+        if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
+        continue;
+      }
+      if (
+        !keys(property, ['type', 'title', 'description', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', '_nullable', '_choices']) ||
+        !['string', 'number', 'integer', 'boolean'].includes(property.type) ||
+        (property.title !== undefined && typeof property.title !== 'string')
+      )
+        throw Error('Unsupported record JSON Schema form');
+      const numeric = property.type === 'number' || property.type === 'integer';
+      if (
+        (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024)) ||
+        ((property.minimum !== undefined || property.maximum !== undefined) && !numeric) ||
+        (property.minLength !== undefined && (property.type !== 'string' || !Number.isSafeInteger(property.minLength) || property.minLength < 0 || property.minLength > 1048576)) ||
+        (property.maxLength !== undefined && (property.type !== 'string' || !Number.isSafeInteger(property.maxLength) || property.maxLength < 0 || property.maxLength > 1048576)) ||
+        (property.minLength !== undefined && property.maxLength !== undefined && property.minLength > property.maxLength)
+      )
+        throw Error('Unsupported record JSON Schema form');
+      const fieldPattern = pattern(property.pattern, property.type);
+      const field = {
+        key,
+        label: [...labels, name].join(' / '),
+        type: property.type,
+        required: requiredField,
+        ...(property.minimum === undefined ? {} : { min: property.minimum }),
+        ...(property.maximum === undefined ? {} : { max: property.maximum })
+      };
+      try {
+        fields.push({
+          ...normalizeFields([field], true)[0],
+          path: next,
+          ...(property.description === undefined ? {} : { description: property.description }),
+          ...numericConstraints(property, numeric),
+          ...(property._choices === undefined ? {} : { jsonChoices: [...property._choices] }),
+          ...(fieldPattern ? { jsonPattern: fieldPattern } : {}),
+          ...(property._nullable ? { nullable: true } : {}),
+          ...(property.type === 'string'
+            ? {
+                jsonString: true,
+                ...(property.minLength === undefined ? {} : { jsonMinLength: property.minLength }),
+                ...(property.maxLength === undefined ? {} : { jsonMaxLength: property.maxLength })
+              }
+            : {})
+        });
+      } catch {
+        throw Error('Unsupported record JSON Schema form');
+      }
+      if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
     }
   }
-  visit(jsonSchema,[],[],true,0);if(!fields.length)throw Error('Unsupported record JSON Schema form');fields.title=jsonSchema.title;fields.description=jsonSchema.description;fields.groups=groups;fields.dependencies=dependencies;fields.conditions=conditions;fields.propertyCounts=propertyCounts;fields.propertyNames=propertyNames;fields.objectRules=objectRules;return fields;
+  visit(jsonSchema, [], [], true, 0);
+  if (!fields.length) throw Error('Unsupported record JSON Schema form');
+  fields.title = jsonSchema.title;
+  fields.description = jsonSchema.description;
+  fields.groups = groups;
+  fields.dependencies = dependencies;
+  fields.conditions = conditions;
+  fields.propertyCounts = propertyCounts;
+  fields.propertyNames = propertyNames;
+  fields.objectRules = objectRules;
+  return fields;
 }
 
-function canonicalFormValue(value){if(Array.isArray(value))return '['+value.map(canonicalFormValue).join(',')+']';if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonicalFormValue(value[key])).join(',')+'}';return JSON.stringify(value);}
-function pathValue(value,path){for(const key of path){if(!value||typeof value!=='object'||Array.isArray(value)||!Object.hasOwn(value,key))return undefined;value=value[key];}return value;}
-function validateFormObjectRules(rules,value){for(const item of rules??[]){const current=pathValue(value,item.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;if(!matchesContains(item.rule,current))throw Error((item.path.length?item.path.join(' / ')+' ': 'Object ')+'does not satisfy the schema rules.');}}
-function validateFormDependencies(dependencies,value){for(const rule of dependencies??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current)||!Object.hasOwn(current,rule.trigger))continue;const prefix=rule.path.length?rule.path.join(' / ')+' / ':'';for(const required of rule.required)if(!Object.hasOwn(current,required))throw Error(prefix+required+' is required when '+rule.trigger+' is provided.');for(const test of rule.predicates??[])if(Object.hasOwn(current,test.key)&&!matchesContains(test.rule,current[test.key]))throw Error(prefix+test.key+' does not satisfy the dependency for '+rule.trigger+'.');if(rule.objectRule&&!matchesContains(rule.objectRule,current))throw Error(prefix+'object does not satisfy the dependency for '+rule.trigger+'.');}}
-function validateFormConditions(conditions,value){for(const rule of conditions??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;const matched=rule.required.every(key=>Object.hasOwn(current,key))&&rule.predicates.every(test=>!Object.hasOwn(current,test.key)||matchesContains(test.rule,current[test.key]))&&matchesContains(rule.objectRule,current),branch=matched?rule.then:rule.else,prefix=rule.path.length?rule.path.join(' / ')+' / ':'';for(const required of branch.required)if(!Object.hasOwn(current,required))throw Error(prefix+required+' is required by a condition.');for(const test of branch.predicates)if(Object.hasOwn(current,test.key)&&!matchesContains(test.rule,current[test.key]))throw Error(prefix+test.key+' does not satisfy a condition.');if(branch.objectRule&&!matchesContains(branch.objectRule,current))throw Error(prefix+'object does not satisfy a condition.');}}
-function validateFormPropertyCounts(rules,value){for(const rule of rules??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;const count=Object.keys(current).length,label=rule.path.length?rule.path.join(' / '):'Record';if(rule.min!==undefined&&count<rule.min)throw Error(label+' requires at least '+rule.min+' properties.');if(rule.max!==undefined&&count>rule.max)throw Error(label+' allows at most '+rule.max+' properties.');}}
-function validateFormPropertyNames(rules,value){for(const rule of rules??[]){const current=pathValue(value,rule.path);if(!current||typeof current!=='object'||Array.isArray(current))continue;for(const name of Object.keys(current))if(!matchesContains(rule.rule,name))throw Error((rule.path.length?rule.path.join(' / '):'Record')+' has a property name that does not match the schema.');}}
-function pathParent(value,path){for(const key of path.slice(0,-1))value=value[key];return value;}
-function pathActive(groups,path){return groups.filter(group=>group.path.length<path.length&&group.path.every((key,i)=>key===path[i])).every(group=>group.control.checked&&!(group.nullToggle&&group.nullToggle.checked));}
-
-function descriptionHelp(document,target,text){if(!text)return undefined;const help=document.createElement('span'),key=Symbol.for('app-mixer.field-help-counter');let n=document[key]??0,id;do{id='app-mixer-field-help-'+(++n);}while(document.getElementById(id)||document.getElementById('app-mixer-field-label-'+n));document[key]=n;help.id=id;help.textContent=text;target.appendChild(help);return id;}
-function groupControl(document,group,value){const wrapper=document.createElement('div'),label=document.createElement('label'),control=document.createElement('input');control.type='checkbox';control.checked=group.required||value!==undefined;label.append(control,document.createTextNode(' Include '+group.label+' (clearing removes this object)'));if(!group.required)wrapper.appendChild(label);let nullToggle;if(group.nullable){const nullLabel=document.createElement('label');nullToggle=document.createElement('input');nullToggle.type='checkbox';nullToggle.checked=value===null;nullLabel.append(nullToggle,document.createTextNode(' Set '+group.label+' to null'));wrapper.appendChild(nullLabel);}const help=descriptionHelp(document,wrapper,group.description);if(help){if(!group.required)control.setAttribute('aria-describedby',help);nullToggle?.setAttribute('aria-describedby',help);}return {...group,control,nullToggle,wrapper,help,dirty:false};}
-function linkGroupHelp(item,groups){for(const group of groups)if(group.help&&group.path.length<item.field.path.length&&group.path.every((key,i)=>key===item.field.path[i])){const current=item.control.getAttribute('aria-describedby');item.control.setAttribute('aria-describedby',current?current+' '+group.help:group.help);}}
-function disableGroup(group,disabled){group.control.disabled=disabled;if(group.nullToggle)group.nullToggle.disabled=disabled||!group.control.checked;}
-
-function fieldControl(document,field) {
-  field={...field};
-  if(field.type==='null'){const label=document.createElement('label'),control=document.createElement('input'),text=document.createTextNode(''),error=document.createElement('small');control.type='checkbox';control.checked=field.required;control.disabled=field.required;error.setAttribute('role','alert');label.append(control,text);const help=descriptionHelp(document,label,field.description);if(help)control.setAttribute('aria-describedby',help);label.append(error);const update=()=>{text.textContent=field.required?' '+field.label+' (always null)':' Include '+field.label+' as null';};update();return {field,control,error,include:control,setLabel(value){field.label=value;update();},setDisabled(disabled){control.disabled=disabled||field.required;},setValue(value){control.checked=field.required||value===null;}};}
-  if(field.type==='array'||field.type==='objectArray'){
-    const wrapper=document.createElement('div'),control=document.createElement('fieldset'),title=document.createElement('legend'),error=document.createElement('small'),list=document.createElement('div'),add=document.createElement('button');
-    title.textContent=field.label+(field.required?' (required)':' (optional)');control.appendChild(title);if(field.description){const help=document.createElement('span'),key=Symbol.for('app-mixer.field-help-counter');let n=document[key]??0,id;do{id='app-mixer-field-help-'+(++n);}while(document.getElementById(id)||document.getElementById('app-mixer-field-label-'+n));document[key]=n;help.id=id;help.textContent=field.description;control.setAttribute('aria-describedby',id);control.appendChild(help);}let include,includeText,nullText;
-    if(!field.required){const label=document.createElement('label');include=document.createElement('input');include.type='checkbox';includeText=document.createTextNode(' Include '+field.label);label.append(include,includeText);control.appendChild(label);}
-    let nullToggle;if(field.nullable){const label=document.createElement('label');nullToggle=document.createElement('input');nullToggle.type='checkbox';nullText=document.createTextNode(' Set '+field.label+' to null');label.append(nullToggle,nullText);control.appendChild(label);}
-    add.type='button';add.textContent='Add '+field.label+' item';error.setAttribute('role','alert');control.append(list,add,error);wrapper.appendChild(control);const rows=[];
-    const rowLabel=(row,index)=>field.label+' '+(row.itemTitle??'item')+' '+(index+1);const refresh=()=>{for(let i=0;i<rows.length;i++){if(rows[i].item)rows[i].item.setLabel(rowLabel(rows[i],i));else rows[i].legend.textContent=rowLabel(rows[i],i);}if(nullToggle)nullToggle.disabled=control.disabled||(!field.required&&!include.checked);add.disabled=control.disabled||(!field.required&&!include.checked)||(nullToggle&&nullToggle.checked)||rows.length>=field.maxItems;for(const row of rows){const index=rows.indexOf(row),parentDisabled=control.disabled||(!field.required&&!include.checked)||(nullToggle&&nullToggle.checked);row.remove.textContent='Remove '+rowLabel(row,index);if(row.nullText)row.nullText.textContent=' Set '+rowLabel(row,index)+' to null';if(row.nullToggle)row.nullToggle.disabled=parentDisabled;const disabled=parentDisabled||(row.nullToggle&&row.nullToggle.checked);for(const group of row.groups??[])disableGroup(group,disabled||!pathActive(row.groups,group.path));for(const item of row.items??[row.item]){item.control.disabled=disabled||(row.groups&&!pathActive(row.groups,item.field.path));item.setDisabled?.(item.control.disabled);item.refresh?.();}row.remove.disabled=parentDisabled||!!field.prefixItems&&index<field.prefixItems.length&&index!==rows.length-1;}};
-    const append=value=>{const remove=document.createElement('button'),row=document.createElement('div'),itemField=field.prefixItems?.[rows.length]??field.item;remove.type='button';remove.textContent='Remove '+field.label+' item';let entry;
-      if(field.type==='objectArray'||itemField?.type==='objectItem'){const objectField=field.type==='objectArray'?field:itemField;const box=document.createElement('fieldset'),legend=document.createElement('legend'),original=value===undefined||value===null?{}:JSON.parse(JSON.stringify(value)),groups=objectField.itemFields.groups.map(group=>groupControl(document,group,pathValue(original,group.path))),items=objectField.itemFields.map(child=>{const item=fieldControl(document,child),initial=pathValue(original,child.path);if(item.setValue)item.setValue(initial);else item.control.value=initial===undefined?'':String(initial);item.control.addEventListener('input',()=>{item.dirty=true});item.control.addEventListener('change',()=>{item.dirty=true});return item;});box.appendChild(legend);const itemHelp=descriptionHelp(document,box,objectField.itemDescription);if(itemHelp)box.setAttribute('aria-describedby',itemHelp);let nullToggle,nullText;if(objectField.itemNullable||(objectField.type==='objectItem'&&objectField.nullable)){const label=document.createElement('label');nullToggle=document.createElement('input');nullToggle.type='checkbox';nullToggle.checked=value===null;nullText=document.createTextNode('');label.append(nullToggle,nullText);box.appendChild(label);nullToggle.addEventListener('change',()=>{refresh();control.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));});}for(const group of groups){if(!group.required||group.nullable||group.description)box.appendChild(group.wrapper);for(const toggle of [group.control,group.nullToggle])toggle?.addEventListener('change',()=>{refresh();control.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));});}for(const item of items){linkGroupHelp(item,groups);box.appendChild(item.wrapper??item.control.parentElement);}row.append(box,remove);entry={items,groups,legend,original,nullToggle,nullText,remove,row,itemFields:objectField.itemFields};}
-      else {if(!itemField)throw Error('Unsupported record JSON Schema form');const item=fieldControl(document,field.prefixItems?{...itemField,label:field.label+' item '+(rows.length+1)}:itemField);if(item.setValue)item.setValue(value);else if(value!==undefined)item.control.value=String(value);row.append(item.wrapper??item.control.parentElement,remove);entry={item,remove,row};}
-      entry.itemTitle=field.type==='objectArray'?field.itemTitle:itemField?.itemTitle;list.appendChild(row);rows.push(entry);remove.addEventListener('click',()=>{const focused=document.activeElement===remove;rows.splice(rows.indexOf(entry),1);row.remove();refresh();if(focused&&!add.disabled)add.focus();control.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));});refresh();};
-    add.addEventListener('click',()=>{const focused=document.activeElement===add;append(undefined);if(focused)rows.at(-1).row.querySelector('input:not(:disabled),select:not(:disabled),textarea:not(:disabled),button:not(:disabled)')?.focus();control.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));});if(include)include.addEventListener('change',refresh);if(nullToggle)nullToggle.addEventListener('change',refresh);
-    return {field,control,error,dirty:false,rows,include,nullToggle,refresh,setLabel(value){if(field.label===value)return;field.label=value;title.textContent=value+(field.required?' (required)':' (optional)');add.textContent='Add '+value+' item';if(includeText)includeText.textContent=' Include '+value;if(nullText)nullText.textContent=' Set '+value+' to null';refresh();},setValue(value){list.replaceChildren();rows.length=0;if(include)include.checked=value!==undefined;if(nullToggle)nullToggle.checked=value===null;if(value!==undefined&&value!==null)for(const item of value)append(item);refresh();}};
+function canonicalFormValue(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonicalFormValue).join(',') + ']';
+  if (value && typeof value === 'object')
+    return (
+      '{' +
+      Object.keys(value)
+        .sort()
+        .map(key => JSON.stringify(key) + ':' + canonicalFormValue(value[key]))
+        .join(',') +
+      '}'
+    );
+  return JSON.stringify(value);
+}
+function pathValue(value, path) {
+  for (const key of path) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, key)) return undefined;
+    value = value[key];
   }
-  const label=document.createElement('label'),title=document.createElement('span'),error=document.createElement('small'),control=field.type==='boolean'||field.options||field.jsonChoices?document.createElement('select'):document.createElement('input');
-  label.style.display='block';label.style.margin='0.75rem 0';title.style.display='block';control.style.display='block';control.style.width='100%';control.style.maxWidth='28rem';control.style.boxSizing='border-box';error.style.display='block';
-  title.textContent=field.label+(field.required?' (required)':' (optional)');label.appendChild(title);
-  if(control.tagName==='SELECT'){const choices=field.jsonChoices??(field.type==='boolean'?['true','false']:field.options);const blank=document.createElement('option');blank.value='';blank.textContent='Select an option';control.appendChild(blank);for(let index=0;index<choices.length;index++){const choice=choices[index],option=document.createElement('option');option.value=field.jsonChoices?String(index+1):choice;option.textContent=typeof choice==='boolean'?(choice?'Yes':'No'):field.type==='boolean'?(choice==='true'?'Yes':'No'):choice===''?'(empty)':String(choice);if(field.type==='mixed')option.textContent+=' ('+(typeof choice==='string'?'text':typeof choice)+')';control.appendChild(option);}}
-  else {control.type=field.type==='string'?'text':'number';if(field.type==='number')control.step='any';if(field.type==='integer')control.step='1';if(field.maxLength!==undefined)control.maxLength=field.maxLength;}
-  control.required=field.required;error.setAttribute('role','alert');label.append(control);if(field.description){const help=document.createElement('span');const key=Symbol.for('app-mixer.field-help-counter');let n=document[key]??0,id;do{id='app-mixer-field-help-'+(++n);}while(document.getElementById(id)||document.getElementById('app-mixer-field-label-'+n));document[key]=n;title.id='app-mixer-field-label-'+n;help.id=id;help.textContent=field.description;control.setAttribute('aria-labelledby',title.id);control.setAttribute('aria-describedby',id);label.appendChild(help);}label.appendChild(error);
-  let include,nullToggle,wrapper,disabled=false,includeText,nullText;const setLabel=value=>{if(field.label===value)return;field.label=value;title.textContent=value+(field.required?' (required)':' (optional)');if(includeText)includeText.textContent=' Include '+value;if(nullText)nullText.textContent=' Set '+value+' to null';};
-  if(field.jsonString||field.nullable||field.jsonChoices){if(field.jsonString&&!field.required||field.nullable){wrapper=document.createElement('div');if(field.jsonString&&!field.required){const includeLabel=document.createElement('label');include=document.createElement('input');include.type='checkbox';includeText=document.createTextNode(' Include '+field.label);includeLabel.append(include,includeText);wrapper.appendChild(includeLabel);}if(field.nullable){const nullLabel=document.createElement('label');nullToggle=document.createElement('input');nullToggle.type='checkbox';nullText=document.createTextNode(' Set '+field.label+' to null');nullLabel.append(nullToggle,nullText);wrapper.appendChild(nullLabel);}wrapper.appendChild(label);}const update=()=>{if(include)include.disabled=disabled;if(nullToggle)nullToggle.disabled=disabled||(include&&!include.checked);control.disabled=disabled||(include&&!include.checked)||(nullToggle&&nullToggle.checked);};for(const toggle of [include,nullToggle])toggle?.addEventListener('change',()=>{update();control.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));});return {field,control,error,dirty:false,include,nullToggle,wrapper,setLabel,setDisabled(value){disabled=value;update();},setValue(value){if(include)include.checked=value!==undefined;if(nullToggle)nullToggle.checked=value===null;control.value=value===undefined||value===null?'':field.jsonChoices?String(field.jsonChoices.indexOf(value)+1):String(value);update();}};}
-  return {field,control,error,dirty:false,setLabel};
+  return value;
+}
+function validateFormObjectRules(rules, value) {
+  for (const item of rules ?? []) {
+    const current = pathValue(value, item.path);
+    if (!current || typeof current !== 'object' || Array.isArray(current)) continue;
+    if (!matchesContains(item.rule, current)) throw Error((item.path.length ? item.path.join(' / ') + ' ' : 'Object ') + 'does not satisfy the schema rules.');
+  }
+}
+function validateFormDependencies(dependencies, value) {
+  for (const rule of dependencies ?? []) {
+    const current = pathValue(value, rule.path);
+    if (!current || typeof current !== 'object' || Array.isArray(current) || !Object.hasOwn(current, rule.trigger)) continue;
+    const prefix = rule.path.length ? rule.path.join(' / ') + ' / ' : '';
+    for (const required of rule.required) if (!Object.hasOwn(current, required)) throw Error(prefix + required + ' is required when ' + rule.trigger + ' is provided.');
+    for (const test of rule.predicates ?? [])
+      if (Object.hasOwn(current, test.key) && !matchesContains(test.rule, current[test.key])) throw Error(prefix + test.key + ' does not satisfy the dependency for ' + rule.trigger + '.');
+    if (rule.objectRule && !matchesContains(rule.objectRule, current)) throw Error(prefix + 'object does not satisfy the dependency for ' + rule.trigger + '.');
+  }
+}
+function validateFormConditions(conditions, value) {
+  for (const rule of conditions ?? []) {
+    const current = pathValue(value, rule.path);
+    if (!current || typeof current !== 'object' || Array.isArray(current)) continue;
+    const matched =
+        rule.required.every(key => Object.hasOwn(current, key)) &&
+        rule.predicates.every(test => !Object.hasOwn(current, test.key) || matchesContains(test.rule, current[test.key])) &&
+        matchesContains(rule.objectRule, current),
+      branch = matched ? rule.then : rule.else,
+      prefix = rule.path.length ? rule.path.join(' / ') + ' / ' : '';
+    for (const required of branch.required) if (!Object.hasOwn(current, required)) throw Error(prefix + required + ' is required by a condition.');
+    for (const test of branch.predicates) if (Object.hasOwn(current, test.key) && !matchesContains(test.rule, current[test.key])) throw Error(prefix + test.key + ' does not satisfy a condition.');
+    if (branch.objectRule && !matchesContains(branch.objectRule, current)) throw Error(prefix + 'object does not satisfy a condition.');
+  }
+}
+function validateFormPropertyCounts(rules, value) {
+  for (const rule of rules ?? []) {
+    const current = pathValue(value, rule.path);
+    if (!current || typeof current !== 'object' || Array.isArray(current)) continue;
+    const count = Object.keys(current).length,
+      label = rule.path.length ? rule.path.join(' / ') : 'Record';
+    if (rule.min !== undefined && count < rule.min) throw Error(label + ' requires at least ' + rule.min + ' properties.');
+    if (rule.max !== undefined && count > rule.max) throw Error(label + ' allows at most ' + rule.max + ' properties.');
+  }
+}
+function validateFormPropertyNames(rules, value) {
+  for (const rule of rules ?? []) {
+    const current = pathValue(value, rule.path);
+    if (!current || typeof current !== 'object' || Array.isArray(current)) continue;
+    for (const name of Object.keys(current))
+      if (!matchesContains(rule.rule, name)) throw Error((rule.path.length ? rule.path.join(' / ') : 'Record') + ' has a property name that does not match the schema.');
+  }
+}
+function pathParent(value, path) {
+  for (const key of path.slice(0, -1)) value = value[key];
+  return value;
+}
+function pathActive(groups, path) {
+  return groups
+    .filter(group => group.path.length < path.length && group.path.every((key, i) => key === path[i]))
+    .every(group => group.control.checked && !(group.nullToggle && group.nullToggle.checked));
 }
 
+function descriptionHelp(document, target, text) {
+  if (!text) return undefined;
+  const help = document.createElement('span'),
+    key = Symbol.for('app-mixer.field-help-counter');
+  let n = document[key] ?? 0,
+    id;
+  do {
+    id = 'app-mixer-field-help-' + ++n;
+  } while (document.getElementById(id) || document.getElementById('app-mixer-field-label-' + n));
+  document[key] = n;
+  help.id = id;
+  help.textContent = text;
+  target.appendChild(help);
+  return id;
+}
+function groupControl(document, group, value) {
+  const wrapper = document.createElement('div'),
+    label = document.createElement('label'),
+    control = document.createElement('input');
+  control.type = 'checkbox';
+  control.checked = group.required || value !== undefined;
+  label.append(control, document.createTextNode(' Include ' + group.label + ' (clearing removes this object)'));
+  if (!group.required) wrapper.appendChild(label);
+  let nullToggle;
+  if (group.nullable) {
+    const nullLabel = document.createElement('label');
+    nullToggle = document.createElement('input');
+    nullToggle.type = 'checkbox';
+    nullToggle.checked = value === null;
+    nullLabel.append(nullToggle, document.createTextNode(' Set ' + group.label + ' to null'));
+    wrapper.appendChild(nullLabel);
+  }
+  const help = descriptionHelp(document, wrapper, group.description);
+  if (help) {
+    if (!group.required) control.setAttribute('aria-describedby', help);
+    nullToggle?.setAttribute('aria-describedby', help);
+  }
+  return { ...group, control, nullToggle, wrapper, help, dirty: false };
+}
+function linkGroupHelp(item, groups) {
+  for (const group of groups)
+    if (group.help && group.path.length < item.field.path.length && group.path.every((key, i) => key === item.field.path[i])) {
+      const current = item.control.getAttribute('aria-describedby');
+      item.control.setAttribute('aria-describedby', current ? current + ' ' + group.help : group.help);
+    }
+}
+function disableGroup(group, disabled) {
+  group.control.disabled = disabled;
+  if (group.nullToggle) group.nullToggle.disabled = disabled || !group.control.checked;
+}
+
+function fieldControl(document, field) {
+  field = { ...field };
+  if (field.type === 'null') {
+    const label = document.createElement('label'),
+      control = document.createElement('input'),
+      text = document.createTextNode(''),
+      error = document.createElement('small');
+    control.type = 'checkbox';
+    control.checked = field.required;
+    control.disabled = field.required;
+    error.setAttribute('role', 'alert');
+    label.append(control, text);
+    const help = descriptionHelp(document, label, field.description);
+    if (help) control.setAttribute('aria-describedby', help);
+    label.append(error);
+    const update = () => {
+      text.textContent = field.required ? ' ' + field.label + ' (always null)' : ' Include ' + field.label + ' as null';
+    };
+    update();
+    return {
+      field,
+      control,
+      error,
+      include: control,
+      setLabel(value) {
+        field.label = value;
+        update();
+      },
+      setDisabled(disabled) {
+        control.disabled = disabled || field.required;
+      },
+      setValue(value) {
+        control.checked = field.required || value === null;
+      }
+    };
+  }
+  if (field.type === 'array' || field.type === 'objectArray') {
+    const wrapper = document.createElement('div'),
+      control = document.createElement('fieldset'),
+      title = document.createElement('legend'),
+      error = document.createElement('small'),
+      list = document.createElement('div'),
+      add = document.createElement('button');
+    title.textContent = field.label + (field.required ? ' (required)' : ' (optional)');
+    control.appendChild(title);
+    if (field.description) {
+      const help = document.createElement('span'),
+        key = Symbol.for('app-mixer.field-help-counter');
+      let n = document[key] ?? 0,
+        id;
+      do {
+        id = 'app-mixer-field-help-' + ++n;
+      } while (document.getElementById(id) || document.getElementById('app-mixer-field-label-' + n));
+      document[key] = n;
+      help.id = id;
+      help.textContent = field.description;
+      control.setAttribute('aria-describedby', id);
+      control.appendChild(help);
+    }
+    let include, includeText, nullText;
+    if (!field.required) {
+      const label = document.createElement('label');
+      include = document.createElement('input');
+      include.type = 'checkbox';
+      includeText = document.createTextNode(' Include ' + field.label);
+      label.append(include, includeText);
+      control.appendChild(label);
+    }
+    let nullToggle;
+    if (field.nullable) {
+      const label = document.createElement('label');
+      nullToggle = document.createElement('input');
+      nullToggle.type = 'checkbox';
+      nullText = document.createTextNode(' Set ' + field.label + ' to null');
+      label.append(nullToggle, nullText);
+      control.appendChild(label);
+    }
+    add.type = 'button';
+    add.textContent = 'Add ' + field.label + ' item';
+    error.setAttribute('role', 'alert');
+    control.append(list, add, error);
+    wrapper.appendChild(control);
+    const rows = [];
+    const rowLabel = (row, index) => field.label + ' ' + (row.itemTitle ?? 'item') + ' ' + (index + 1);
+    const refresh = () => {
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].item) rows[i].item.setLabel(rowLabel(rows[i], i));
+        else rows[i].legend.textContent = rowLabel(rows[i], i);
+      }
+      if (nullToggle) nullToggle.disabled = control.disabled || (!field.required && !include.checked);
+      add.disabled = control.disabled || (!field.required && !include.checked) || (nullToggle && nullToggle.checked) || rows.length >= field.maxItems;
+      for (const row of rows) {
+        const index = rows.indexOf(row),
+          parentDisabled = control.disabled || (!field.required && !include.checked) || (nullToggle && nullToggle.checked);
+        row.remove.textContent = 'Remove ' + rowLabel(row, index);
+        if (row.nullText) row.nullText.textContent = ' Set ' + rowLabel(row, index) + ' to null';
+        if (row.nullToggle) row.nullToggle.disabled = parentDisabled;
+        const disabled = parentDisabled || (row.nullToggle && row.nullToggle.checked);
+        for (const group of row.groups ?? []) disableGroup(group, disabled || !pathActive(row.groups, group.path));
+        for (const item of row.items ?? [row.item]) {
+          item.control.disabled = disabled || (row.groups && !pathActive(row.groups, item.field.path));
+          item.setDisabled?.(item.control.disabled);
+          item.refresh?.();
+        }
+        row.remove.disabled = parentDisabled || (!!field.prefixItems && index < field.prefixItems.length && index !== rows.length - 1);
+      }
+    };
+    const append = value => {
+      const remove = document.createElement('button'),
+        row = document.createElement('div'),
+        itemField = field.prefixItems?.[rows.length] ?? field.item;
+      remove.type = 'button';
+      remove.textContent = 'Remove ' + field.label + ' item';
+      let entry;
+      if (field.type === 'objectArray' || itemField?.type === 'objectItem') {
+        const objectField = field.type === 'objectArray' ? field : itemField;
+        const box = document.createElement('fieldset'),
+          legend = document.createElement('legend'),
+          original = value === undefined || value === null ? {} : JSON.parse(JSON.stringify(value)),
+          groups = objectField.itemFields.groups.map(group => groupControl(document, group, pathValue(original, group.path))),
+          items = objectField.itemFields.map(child => {
+            const item = fieldControl(document, child),
+              initial = pathValue(original, child.path);
+            if (item.setValue) item.setValue(initial);
+            else item.control.value = initial === undefined ? '' : String(initial);
+            item.control.addEventListener('input', () => {
+              item.dirty = true;
+            });
+            item.control.addEventListener('change', () => {
+              item.dirty = true;
+            });
+            return item;
+          });
+        box.appendChild(legend);
+        const itemHelp = descriptionHelp(document, box, objectField.itemDescription);
+        if (itemHelp) box.setAttribute('aria-describedby', itemHelp);
+        let nullToggle, nullText;
+        if (objectField.itemNullable || (objectField.type === 'objectItem' && objectField.nullable)) {
+          const label = document.createElement('label');
+          nullToggle = document.createElement('input');
+          nullToggle.type = 'checkbox';
+          nullToggle.checked = value === null;
+          nullText = document.createTextNode('');
+          label.append(nullToggle, nullText);
+          box.appendChild(label);
+          nullToggle.addEventListener('change', () => {
+            refresh();
+            control.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+          });
+        }
+        for (const group of groups) {
+          if (!group.required || group.nullable || group.description) box.appendChild(group.wrapper);
+          for (const toggle of [group.control, group.nullToggle])
+            toggle?.addEventListener('change', () => {
+              refresh();
+              control.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+            });
+        }
+        for (const item of items) {
+          linkGroupHelp(item, groups);
+          box.appendChild(item.wrapper ?? item.control.parentElement);
+        }
+        row.append(box, remove);
+        entry = { items, groups, legend, original, nullToggle, nullText, remove, row, itemFields: objectField.itemFields };
+      } else {
+        if (!itemField) throw Error('Unsupported record JSON Schema form');
+        const item = fieldControl(document, field.prefixItems ? { ...itemField, label: field.label + ' item ' + (rows.length + 1) } : itemField);
+        if (item.setValue) item.setValue(value);
+        else if (value !== undefined) item.control.value = String(value);
+        row.append(item.wrapper ?? item.control.parentElement, remove);
+        entry = { item, remove, row };
+      }
+      entry.itemTitle = field.type === 'objectArray' ? field.itemTitle : itemField?.itemTitle;
+      list.appendChild(row);
+      rows.push(entry);
+      remove.addEventListener('click', () => {
+        const focused = document.activeElement === remove;
+        rows.splice(rows.indexOf(entry), 1);
+        row.remove();
+        refresh();
+        if (focused && !add.disabled) add.focus();
+        control.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+      });
+      refresh();
+    };
+    add.addEventListener('click', () => {
+      const focused = document.activeElement === add;
+      append(undefined);
+      if (focused) rows.at(-1).row.querySelector('input:not(:disabled),select:not(:disabled),textarea:not(:disabled),button:not(:disabled)')?.focus();
+      control.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+    });
+    if (include) include.addEventListener('change', refresh);
+    if (nullToggle) nullToggle.addEventListener('change', refresh);
+    return {
+      field,
+      control,
+      error,
+      dirty: false,
+      rows,
+      include,
+      nullToggle,
+      refresh,
+      setLabel(value) {
+        if (field.label === value) return;
+        field.label = value;
+        title.textContent = value + (field.required ? ' (required)' : ' (optional)');
+        add.textContent = 'Add ' + value + ' item';
+        if (includeText) includeText.textContent = ' Include ' + value;
+        if (nullText) nullText.textContent = ' Set ' + value + ' to null';
+        refresh();
+      },
+      setValue(value) {
+        list.replaceChildren();
+        rows.length = 0;
+        if (include) include.checked = value !== undefined;
+        if (nullToggle) nullToggle.checked = value === null;
+        if (value !== undefined && value !== null) for (const item of value) append(item);
+        refresh();
+      }
+    };
+  }
+  const label = document.createElement('label'),
+    title = document.createElement('span'),
+    error = document.createElement('small'),
+    control = field.type === 'boolean' || field.options || field.jsonChoices ? document.createElement('select') : document.createElement('input');
+  label.style.display = 'block';
+  label.style.margin = '0.75rem 0';
+  title.style.display = 'block';
+  control.style.display = 'block';
+  control.style.width = '100%';
+  control.style.maxWidth = '28rem';
+  control.style.boxSizing = 'border-box';
+  error.style.display = 'block';
+  title.textContent = field.label + (field.required ? ' (required)' : ' (optional)');
+  label.appendChild(title);
+  if (control.tagName === 'SELECT') {
+    const choices = field.jsonChoices ?? (field.type === 'boolean' ? ['true', 'false'] : field.options);
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = 'Select an option';
+    control.appendChild(blank);
+    for (let index = 0; index < choices.length; index++) {
+      const choice = choices[index],
+        option = document.createElement('option');
+      option.value = field.jsonChoices ? String(index + 1) : choice;
+      option.textContent = typeof choice === 'boolean' ? (choice ? 'Yes' : 'No') : field.type === 'boolean' ? (choice === 'true' ? 'Yes' : 'No') : choice === '' ? '(empty)' : String(choice);
+      if (field.type === 'mixed') option.textContent += ' (' + (typeof choice === 'string' ? 'text' : typeof choice) + ')';
+      control.appendChild(option);
+    }
+  } else {
+    control.type = field.type === 'string' ? 'text' : 'number';
+    if (field.type === 'number') control.step = 'any';
+    if (field.type === 'integer') control.step = '1';
+    if (field.maxLength !== undefined) control.maxLength = field.maxLength;
+  }
+  control.required = field.required;
+  error.setAttribute('role', 'alert');
+  label.append(control);
+  if (field.description) {
+    const help = document.createElement('span');
+    const key = Symbol.for('app-mixer.field-help-counter');
+    let n = document[key] ?? 0,
+      id;
+    do {
+      id = 'app-mixer-field-help-' + ++n;
+    } while (document.getElementById(id) || document.getElementById('app-mixer-field-label-' + n));
+    document[key] = n;
+    title.id = 'app-mixer-field-label-' + n;
+    help.id = id;
+    help.textContent = field.description;
+    control.setAttribute('aria-labelledby', title.id);
+    control.setAttribute('aria-describedby', id);
+    label.appendChild(help);
+  }
+  label.appendChild(error);
+  let include,
+    nullToggle,
+    wrapper,
+    disabled = false,
+    includeText,
+    nullText;
+  const setLabel = value => {
+    if (field.label === value) return;
+    field.label = value;
+    title.textContent = value + (field.required ? ' (required)' : ' (optional)');
+    if (includeText) includeText.textContent = ' Include ' + value;
+    if (nullText) nullText.textContent = ' Set ' + value + ' to null';
+  };
+  if (field.jsonString || field.nullable || field.jsonChoices) {
+    if ((field.jsonString && !field.required) || field.nullable) {
+      wrapper = document.createElement('div');
+      if (field.jsonString && !field.required) {
+        const includeLabel = document.createElement('label');
+        include = document.createElement('input');
+        include.type = 'checkbox';
+        includeText = document.createTextNode(' Include ' + field.label);
+        includeLabel.append(include, includeText);
+        wrapper.appendChild(includeLabel);
+      }
+      if (field.nullable) {
+        const nullLabel = document.createElement('label');
+        nullToggle = document.createElement('input');
+        nullToggle.type = 'checkbox';
+        nullText = document.createTextNode(' Set ' + field.label + ' to null');
+        nullLabel.append(nullToggle, nullText);
+        wrapper.appendChild(nullLabel);
+      }
+      wrapper.appendChild(label);
+    }
+    const update = () => {
+      if (include) include.disabled = disabled;
+      if (nullToggle) nullToggle.disabled = disabled || (include && !include.checked);
+      control.disabled = disabled || (include && !include.checked) || (nullToggle && nullToggle.checked);
+    };
+    for (const toggle of [include, nullToggle])
+      toggle?.addEventListener('change', () => {
+        update();
+        control.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+      });
+    return {
+      field,
+      control,
+      error,
+      dirty: false,
+      include,
+      nullToggle,
+      wrapper,
+      setLabel,
+      setDisabled(value) {
+        disabled = value;
+        update();
+      },
+      setValue(value) {
+        if (include) include.checked = value !== undefined;
+        if (nullToggle) nullToggle.checked = value === null;
+        control.value = value === undefined || value === null ? '' : field.jsonChoices ? String(field.jsonChoices.indexOf(value) + 1) : String(value);
+        update();
+      }
+    };
+  }
+  return { field, control, error, dirty: false, setLabel };
+}
 
 // The host chooses the capabilities; application definitions only supply a label.
-export function createRecordEditor({getOperation,putOperation,listOperation,filterFields,rangeFilterFields,prefixFilterFields,containsFilterFields,arrayContainsFilterFields,existsFilterFields,notEqualFilterFields,multipleFilters,allowAnyFilters,allowReverseOrder,allowIdPrefix,fields,jsonSchema,expectedSchemaVersion}) {
-  const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
-  if(!validOperation(getOperation)||!validOperation(putOperation)||(listOperation!==undefined&&!validOperation(listOperation)))throw Error('Invalid record editor capabilities');
-  if(filterFields!==undefined&&(!listOperation||!Array.isArray(filterFields)||filterFields.length<1||filterFields.length>40||new Set(filterFields.map(x=>x?.field)).size!==filterFields.length||!filterFields.every(x=>x&&typeof x==='object'&&!Array.isArray(x)&&Object.keys(x).every(k=>['field','label','type'].includes(k))&&typeof x.field==='string'&&x.field.length<=128&&Array.from(x.field).every(c=>c.charCodeAt(0)>=32&&c.charCodeAt(0)!==127)&&!['__proto__','prototype','constructor'].includes(x.field)&&typeof x.label==='string'&&!!x.label.trim()&&x.label.length<=120&&['string','number','boolean'].includes(x.type))))throw Error('Invalid record filter fields');
-  if(multipleFilters!==undefined&&(typeof multipleFilters!=='boolean'||multipleFilters&&!filterFields))throw Error('Invalid record filter fields');
-  if(allowAnyFilters!==undefined&&(typeof allowAnyFilters!=='boolean'||allowAnyFilters&&multipleFilters!==true))throw Error('Invalid record filter fields');
-  if(allowReverseOrder!==undefined&&(typeof allowReverseOrder!=='boolean'||allowReverseOrder&&!listOperation))throw Error('Invalid record order');
-  if(allowIdPrefix!==undefined&&(typeof allowIdPrefix!=='boolean'||allowIdPrefix&&!listOperation))throw Error('Invalid record ID prefix');
-  if(rangeFilterFields!==undefined&&(!Array.isArray(rangeFilterFields)||new Set(rangeFilterFields).size!==rangeFilterFields.length||!rangeFilterFields.every(field=>filterFields?.some(item=>item.field===field&&item.type==='number'))))throw Error('Invalid record filter fields');
-  if(prefixFilterFields!==undefined&&(!Array.isArray(prefixFilterFields)||new Set(prefixFilterFields).size!==prefixFilterFields.length||!prefixFilterFields.every(field=>filterFields?.some(item=>item.field===field&&item.type==='string'))))throw Error('Invalid record filter fields');
-  if(containsFilterFields!==undefined&&(!Array.isArray(containsFilterFields)||new Set(containsFilterFields).size!==containsFilterFields.length||!containsFilterFields.every(field=>filterFields?.some(item=>item.field===field&&item.type==='string'))))throw Error('Invalid record filter fields');
-  if(arrayContainsFilterFields!==undefined&&(!Array.isArray(arrayContainsFilterFields)||new Set(arrayContainsFilterFields).size!==arrayContainsFilterFields.length||!arrayContainsFilterFields.every(field=>filterFields?.some(item=>item.field===field))))throw Error('Invalid record filter fields');
-  if(existsFilterFields!==undefined&&(!Array.isArray(existsFilterFields)||new Set(existsFilterFields).size!==existsFilterFields.length||!existsFilterFields.every(field=>filterFields?.some(item=>item.field===field))))throw Error('Invalid record filter fields');
-  if(notEqualFilterFields!==undefined&&(!Array.isArray(notEqualFilterFields)||new Set(notEqualFilterFields).size!==notEqualFilterFields.length||!notEqualFilterFields.every(field=>filterFields?.some(item=>item.field===field))))throw Error('Invalid record filter fields');
-  const filters=filterFields?.map(x=>({...x}));
-  const filterValueOf=field=>field===''?String.fromCharCode(1):field;const rangeFields=new Set((rangeFilterFields??[]).map(filterValueOf)),prefixFields=new Set((prefixFilterFields??[]).map(filterValueOf)),containsFields=new Set((containsFilterFields??[]).map(filterValueOf)),arrayContainsFields=new Set((arrayContainsFilterFields??[]).map(filterValueOf)),existsFields=new Set((existsFilterFields??[]).map(filterValueOf)),notEqualFields=new Set((notEqualFilterFields??[]).map(filterValueOf));
-  if(expectedSchemaVersion!==undefined&&(!Number.isSafeInteger(expectedSchemaVersion)||expectedSchemaVersion<0))throw Error('Invalid record schema version');
-  if(fields!==undefined&&jsonSchema!==undefined)throw Error('Invalid record editor schema');
-  const schema=jsonSchema===undefined?normalizeFields(fields):fieldsFromJsonSchema(resolveFormSchema(jsonSchema));
-  const validate=component=>{
-    if(!component||Object.keys(component).some(key=>!['id','component','label'].includes(key))||
-       (component.label!==undefined&&(typeof component.label!=='string'||component.label.length>120)))throw Error('Invalid record editor');
+export function createRecordEditor({
+  getOperation,
+  putOperation,
+  listOperation,
+  filterFields,
+  rangeFilterFields,
+  prefixFilterFields,
+  containsFilterFields,
+  arrayContainsFilterFields,
+  existsFilterFields,
+  notEqualFilterFields,
+  multipleFilters,
+  allowAnyFilters,
+  allowReverseOrder,
+  allowIdPrefix,
+  fields,
+  jsonSchema,
+  expectedSchemaVersion
+}) {
+  const validOperation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
+  if (!validOperation(getOperation) || !validOperation(putOperation) || (listOperation !== undefined && !validOperation(listOperation))) throw Error('Invalid record editor capabilities');
+  if (
+    filterFields !== undefined &&
+    (!listOperation ||
+      !Array.isArray(filterFields) ||
+      filterFields.length < 1 ||
+      filterFields.length > 40 ||
+      new Set(filterFields.map(x => x?.field)).size !== filterFields.length ||
+      !filterFields.every(
+        x =>
+          x &&
+          typeof x === 'object' &&
+          !Array.isArray(x) &&
+          Object.keys(x).every(k => ['field', 'label', 'type'].includes(k)) &&
+          typeof x.field === 'string' &&
+          x.field.length <= 128 &&
+          Array.from(x.field).every(c => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127) &&
+          !['__proto__', 'prototype', 'constructor'].includes(x.field) &&
+          typeof x.label === 'string' &&
+          !!x.label.trim() &&
+          x.label.length <= 120 &&
+          ['string', 'number', 'boolean'].includes(x.type)
+      ))
+  )
+    throw Error('Invalid record filter fields');
+  if (multipleFilters !== undefined && (typeof multipleFilters !== 'boolean' || (multipleFilters && !filterFields))) throw Error('Invalid record filter fields');
+  if (allowAnyFilters !== undefined && (typeof allowAnyFilters !== 'boolean' || (allowAnyFilters && multipleFilters !== true))) throw Error('Invalid record filter fields');
+  if (allowReverseOrder !== undefined && (typeof allowReverseOrder !== 'boolean' || (allowReverseOrder && !listOperation))) throw Error('Invalid record order');
+  if (allowIdPrefix !== undefined && (typeof allowIdPrefix !== 'boolean' || (allowIdPrefix && !listOperation))) throw Error('Invalid record ID prefix');
+  if (
+    rangeFilterFields !== undefined &&
+    (!Array.isArray(rangeFilterFields) ||
+      new Set(rangeFilterFields).size !== rangeFilterFields.length ||
+      !rangeFilterFields.every(field => filterFields?.some(item => item.field === field && item.type === 'number')))
+  )
+    throw Error('Invalid record filter fields');
+  if (
+    prefixFilterFields !== undefined &&
+    (!Array.isArray(prefixFilterFields) ||
+      new Set(prefixFilterFields).size !== prefixFilterFields.length ||
+      !prefixFilterFields.every(field => filterFields?.some(item => item.field === field && item.type === 'string')))
+  )
+    throw Error('Invalid record filter fields');
+  if (
+    containsFilterFields !== undefined &&
+    (!Array.isArray(containsFilterFields) ||
+      new Set(containsFilterFields).size !== containsFilterFields.length ||
+      !containsFilterFields.every(field => filterFields?.some(item => item.field === field && item.type === 'string')))
+  )
+    throw Error('Invalid record filter fields');
+  if (
+    arrayContainsFilterFields !== undefined &&
+    (!Array.isArray(arrayContainsFilterFields) ||
+      new Set(arrayContainsFilterFields).size !== arrayContainsFilterFields.length ||
+      !arrayContainsFilterFields.every(field => filterFields?.some(item => item.field === field)))
+  )
+    throw Error('Invalid record filter fields');
+  if (
+    existsFilterFields !== undefined &&
+    (!Array.isArray(existsFilterFields) || new Set(existsFilterFields).size !== existsFilterFields.length || !existsFilterFields.every(field => filterFields?.some(item => item.field === field)))
+  )
+    throw Error('Invalid record filter fields');
+  if (
+    notEqualFilterFields !== undefined &&
+    (!Array.isArray(notEqualFilterFields) ||
+      new Set(notEqualFilterFields).size !== notEqualFilterFields.length ||
+      !notEqualFilterFields.every(field => filterFields?.some(item => item.field === field)))
+  )
+    throw Error('Invalid record filter fields');
+  const filters = filterFields?.map(x => ({ ...x }));
+  const filterValueOf = field => (field === '' ? String.fromCharCode(1) : field);
+  const rangeFields = new Set((rangeFilterFields ?? []).map(filterValueOf)),
+    prefixFields = new Set((prefixFilterFields ?? []).map(filterValueOf)),
+    containsFields = new Set((containsFilterFields ?? []).map(filterValueOf)),
+    arrayContainsFields = new Set((arrayContainsFilterFields ?? []).map(filterValueOf)),
+    existsFields = new Set((existsFilterFields ?? []).map(filterValueOf)),
+    notEqualFields = new Set((notEqualFilterFields ?? []).map(filterValueOf));
+  if (expectedSchemaVersion !== undefined && (!Number.isSafeInteger(expectedSchemaVersion) || expectedSchemaVersion < 0)) throw Error('Invalid record schema version');
+  if (fields !== undefined && jsonSchema !== undefined) throw Error('Invalid record editor schema');
+  const schema = jsonSchema === undefined ? normalizeFields(fields) : fieldsFromJsonSchema(resolveFormSchema(jsonSchema));
+  const validate = component => {
+    if (
+      !component ||
+      Object.keys(component).some(key => !['id', 'component', 'label'].includes(key)) ||
+      (component.label !== undefined && (typeof component.label !== 'string' || component.label.length > 120))
+    )
+      throw Error('Invalid record editor');
   };
-  const render=(component,_child,_data,document)=>{
-    const root=document.createElement('section'),heading=document.createElement('h3'),idLabel=document.createElement('label'),id=document.createElement('input'),valueLabel=document.createElement('label'),value=document.createElement('textarea'),load=document.createElement('button'),save=document.createElement('button'),status=document.createElement('p');
-    heading.textContent=component.label||schema?.title||'Record';idLabel.textContent='Record ID';valueLabel.textContent='Record data (JSON object)';
-    idLabel.appendChild(id);valueLabel.appendChild(value);load.type='button';load.textContent='Load';save.type='button';save.textContent='Save';save.disabled=true;
-    status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.textContent='Enter a record ID and load it.';
-    const browse=listOperation?document.createElement('button'):null,next=listOperation?document.createElement('button'):null,results=listOperation?document.createElement('ul'):null,listStatus=listOperation?document.createElement('p'):null;let cursor;
-    if(browse){browse.type='button';browse.textContent='Browse records';next.type='button';next.textContent='Next page';next.disabled=true;listStatus.setAttribute('role','status');listStatus.setAttribute('aria-live','polite');}
-    let prefixInput,prefixLabel;if(browse&&allowIdPrefix){prefixLabel=document.createElement('label');prefixLabel.textContent='Record ID starts with';prefixInput=document.createElement('input');prefixInput.maxLength=256;prefixLabel.appendChild(prefixInput);}
-    let orderSelect,orderLabel;if(browse&&allowReverseOrder){orderLabel=document.createElement('label');orderLabel.textContent='Record order';orderSelect=document.createElement('select');for(const [value,text] of [['asc','ID ascending'],['desc','ID descending']]){const option=document.createElement('option');option.value=value;option.textContent=text;orderSelect.appendChild(option);}orderLabel.appendChild(orderSelect);}
-    let filterField,filterValue,filterNull,filterLabel,filterValueLabel,filterNullLabel,filterOperator,filterOperatorLabel,filterMode,filterModeLabel,filterGeneration=0;const extraFilters=[],extraFilterContainer=multipleFilters?document.createElement('div'):null,addFilter=multipleFilters?document.createElement('button'):null;
-    const makeOperator=()=>{const label=document.createElement('label'),select=document.createElement('select');label.textContent='Comparison';for(const [value,text] of [['eq','Equals'],['neq','Not equal to'],['gt','Greater than'],['gte','At least'],['lt','Less than'],['lte','At most'],['prefix','Starts with'],['contains','Contains'],['arrayContains','Array contains'],['exists','Is present'],['missing','Is missing']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.appendChild(option);}label.appendChild(select);return {label,select};};
-    if(filters){filterLabel=document.createElement('label');filterLabel.textContent='Filter field';filterField=document.createElement('select');const all=document.createElement('option');all.value='';all.textContent='All records';filterField.append(all);for(const f of filters){const option=document.createElement('option');option.value=filterValueOf(f.field);option.textContent=f.label;filterField.append(option);}filterLabel.append(filterField);if(rangeFields.size||prefixFields.size||containsFields.size||arrayContainsFields.size||existsFields.size||notEqualFields.size){const operator=makeOperator();filterOperatorLabel=operator.label;filterOperator=operator.select;}filterValueLabel=document.createElement('label');filterValueLabel.textContent='Filter value';filterValue=document.createElement('input');filterValue.maxLength=1024;filterValueLabel.append(filterValue);filterNullLabel=document.createElement('label');filterNull=document.createElement('input');filterNull.type='checkbox';filterNullLabel.append(filterNull,document.createTextNode(' Match null'));}
-    if(allowAnyFilters){filterModeLabel=document.createElement('label');filterModeLabel.textContent='Match conditions';filterMode=document.createElement('select');for(const [value,text] of [['all','All conditions'],['any','Any condition']]){const option=document.createElement('option');option.value=value;option.textContent=text;filterMode.appendChild(option);}filterModeLabel.appendChild(filterMode);}
-    const controls=schema?.map(field=>fieldControl(document,field))??[],groups=(schema?.groups??[]).map(group=>groupControl(document,group,undefined));root.append(heading);const schemaHelp=descriptionHelp(document,root,schema?.description);if(schemaHelp)root.setAttribute('aria-describedby',schemaHelp);if(browse){if(filters){root.appendChild(filterLabel);if(filterOperatorLabel)root.appendChild(filterOperatorLabel);root.append(filterValueLabel,filterNullLabel);if(filterModeLabel)root.appendChild(filterModeLabel);}if(addFilter){addFilter.type='button';addFilter.textContent='Add filter';root.append(extraFilterContainer,addFilter);}if(prefixLabel)root.appendChild(prefixLabel);if(orderLabel)root.appendChild(orderLabel);root.append(browse,results,next,listStatus);}root.append(idLabel,load);if(schema){for(const group of groups)if(!group.required||group.nullable||group.description)root.appendChild(group.wrapper);for(const item of controls){linkGroupHelp(item,groups);root.appendChild(item.wrapper??item.control.parentElement);}}else root.appendChild(valueLabel);root.append(save,status);
-    const parentActive=path=>groups.filter(group=>group.path.length<path.length&&group.path.every((key,i)=>key===path[i])).every(group=>group.control.checked&&!(group.nullToggle&&group.nullToggle.checked));
-    const groupActive=path=>groups.filter(group=>group.path.length<path.length&&group.path.every((key,i)=>key===path[i])).every(group=>group.control.checked&&!(group.nullToggle&&group.nullToggle.checked));
-    const compatible=(field,value,budget)=>{if(++budget.count>10000)return false;if(value===null)return field.nullable===true;if(field.jsonChoices&&!field.jsonChoices.includes(value))return false;if(field.type==='mixed')return typeof value==='string'||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value);if(field.type==='array')return Array.isArray(value)&&value.length<=field.maxItems&&value.every((entry,index)=>{const item=field.prefixItems?.[index]??field.item;return !!item&&compatible(item,entry,budget);});if(field.type==='objectItem'||field.type==='objectArray'){const objectCompatible=entry=>++budget.count<=10000&&(entry===null?(field.type==='objectItem'?field.nullable:field.itemNullable):!!entry&&typeof entry==='object'&&!Array.isArray(entry)&&field.itemFields.groups.every(group=>{const nested=pathValue(entry,group.path);return nested===undefined||(nested===null&&group.nullable)||(nested&&typeof nested==='object'&&!Array.isArray(nested));})&&field.itemFields.every(child=>{const nested=pathValue(entry,child.path);return nested===undefined||compatible(child,nested,budget);}));return field.type==='objectItem'?objectCompatible(value):Array.isArray(value)&&value.length<=field.maxItems&&value.every(objectCompatible);}return (field.type==='string'&&typeof value==='string'&&(!field.options||field.options.includes(value)))||(field.type==='boolean'&&typeof value==='boolean')||((field.type==='number'||field.type==='integer')&&typeof value==='number'&&Number.isFinite(value)&&(field.type!=='integer'||Number.isSafeInteger(value)));};
-    const syncItem=(item,saved)=>{item.dirty=false;if(item.field.type==='objectArray')item.rows.forEach((row,index)=>{row.original=Array.isArray(saved)&&saved[index]?JSON.parse(JSON.stringify(saved[index])):{};for(const child of row.items)syncItem(child,pathValue(row.original,child.field.path));});else if(item.field.type==='array')item.rows.forEach((row,index)=>{const value=Array.isArray(saved)?saved[index]:undefined;if(row.item)syncItem(row.item,value);else {row.original=value&&typeof value==='object'?JSON.parse(JSON.stringify(value)):{};for(const child of row.items)syncItem(child,pathValue(row.original,child.field.path));}});};
-    const at=(data,path)=>{let value=data;for(const key of path){if(!value||typeof value!=='object'||Array.isArray(value)||!Object.hasOwn(value,key))return undefined;value=value[key];}return value;};
-    const parent=(data,path)=>{let value=data;for(const key of path.slice(0,-1))value=value[key];return value;};
-    let revision=null,loadedId='',busy=false,preserveEdits=false,original={},lastSavedJSON='';
-    const setBusy=active=>{busy=active;id.disabled=active;value.disabled=active;load.disabled=active;save.disabled=active||!loadedId;for(const group of groups)disableGroup(group,active||(!loadedId&&!preserveEdits)||!parentActive(group.path));for(const item of controls){item.control.disabled=active||(!loadedId&&!preserveEdits)||!groupActive(item.field.path??[item.field.key]);item.setDisabled?.(item.control.disabled);item.refresh?.();}if(browse){browse.disabled=active;next.disabled=active||!cursor;if(orderSelect)orderSelect.disabled=active;if(prefixInput)prefixInput.disabled=active;if(filters){filterField.disabled=active;if(filterMode)filterMode.disabled=active;if(filterOperator)filterOperator.disabled=active||!(rangeFields.has(filterField.value)||prefixFields.has(filterField.value)||containsFields.has(filterField.value)||arrayContainsFields.has(filterField.value)||existsFields.has(filterField.value)||notEqualFields.has(filterField.value));filterNull.disabled=active||!filterField.value||(filterOperator&&filterOperator.value!=='eq'&&filterOperator.value!=='neq'&&filterOperator.value!=='arrayContains');filterValue.disabled=active||!filterField.value||filterNull.checked||['exists','missing'].includes(filterOperator?.value);for(const row of extraFilters){row.field.disabled=active;if(row.operator)row.operator.disabled=active||!(rangeFields.has(row.field.value)||prefixFields.has(row.field.value)||containsFields.has(row.field.value)||arrayContainsFields.has(row.field.value)||existsFields.has(row.field.value)||notEqualFields.has(row.field.value));row.nullInput.disabled=active||!row.field.value||(row.operator&&row.operator.value!=='eq'&&row.operator.value!=='neq'&&row.operator.value!=='arrayContains');row.value.disabled=active||!row.field.value||row.nullInput.checked||['exists','missing'].includes(row.operator?.value);row.remove.disabled=active;}if(addFilter)addFilter.disabled=active||extraFilters.length>=9;}for(const button of results.querySelectorAll('button'))button.disabled=active;}};
-    if(filters){const changed=()=>{filterGeneration++;cursor=undefined;results.replaceChildren();for(const row of [{field:filterField,value:filterValue,operator:filterOperator,nullInput:filterNull},...extraFilters]){const selected=filters.find(f=>filterValueOf(f.field)===row.field.value);if(row.operator){for(const option of row.operator.options)option.disabled=option.value==='neq'?!notEqualFields.has(row.field.value):option.value==='prefix'?!prefixFields.has(row.field.value):option.value==='contains'?!containsFields.has(row.field.value):option.value==='arrayContains'?!arrayContainsFields.has(row.field.value):['exists','missing'].includes(option.value)?!existsFields.has(row.field.value):option.value!=='eq'&&!rangeFields.has(row.field.value);if(row.operator.selectedOptions[0]?.disabled)row.operator.value='eq';}if(row.operator&&row.operator.value!=='eq'&&row.operator.value!=='neq'&&row.operator.value!=='arrayContains')row.nullInput.checked=false;if(row.nullInput.nextSibling)row.nullInput.nextSibling.textContent=row.operator?.value==='neq'?' Compare with null':' Match null';row.value.placeholder=selected?.type==='boolean'?'true or false':selected?.type==='number'?'Enter a number':'';}listStatus.textContent='Filter changed. Browse to see matching records.';setBusy(busy);};
-     for(const control of [filterField,filterValue,filterNull,filterOperator,filterMode].filter(Boolean)){control.addEventListener('input',changed);control.addEventListener('change',changed);}
-     if(addFilter)addFilter.addEventListener('click',()=>{if(busy||extraFilters.length>=9)return;const container=document.createElement('fieldset'),legend=document.createElement('legend'),fieldLabel=document.createElement('label'),field=document.createElement('select'),empty=document.createElement('option'),valueLabel=document.createElement('label'),value=document.createElement('input'),nullLabel=document.createElement('label'),nullInput=document.createElement('input'),remove=document.createElement('button');legend.textContent='Additional filter';container.appendChild(legend);fieldLabel.textContent='Filter field';empty.value='';empty.textContent='Choose a field';field.appendChild(empty);for(const f of filters){const option=document.createElement('option');option.value=filterValueOf(f.field);option.textContent=f.label;field.appendChild(option);}fieldLabel.appendChild(field);const comparison=rangeFields.size||prefixFields.size||containsFields.size||arrayContainsFields.size||existsFields.size||notEqualFields.size?makeOperator():null;valueLabel.textContent='Filter value';value.maxLength=1024;valueLabel.appendChild(value);nullInput.type='checkbox';nullLabel.append(nullInput,document.createTextNode(' Match null'));remove.type='button';remove.textContent='Remove filter';container.appendChild(fieldLabel);if(comparison)container.appendChild(comparison.label);container.append(valueLabel,nullLabel,remove);const row={container,field,value,nullInput,remove,operator:comparison?.select};extraFilters.push(row);extraFilterContainer.appendChild(container);for(const control of [field,value,nullInput,comparison?.select].filter(Boolean)){control.addEventListener('input',changed);control.addEventListener('change',changed);}remove.addEventListener('click',()=>{if(busy)return;extraFilters.splice(extraFilters.indexOf(row),1);container.remove();changed();});changed();});setBusy(false);}
+  const render = (component, _child, _data, document) => {
+    const root = document.createElement('section'),
+      heading = document.createElement('h3'),
+      idLabel = document.createElement('label'),
+      id = document.createElement('input'),
+      valueLabel = document.createElement('label'),
+      value = document.createElement('textarea'),
+      load = document.createElement('button'),
+      save = document.createElement('button'),
+      status = document.createElement('p');
+    heading.textContent = component.label || schema?.title || 'Record';
+    idLabel.textContent = 'Record ID';
+    valueLabel.textContent = 'Record data (JSON object)';
+    idLabel.appendChild(id);
+    valueLabel.appendChild(value);
+    load.type = 'button';
+    load.textContent = 'Load';
+    save.type = 'button';
+    save.textContent = 'Save';
+    save.disabled = true;
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.textContent = 'Enter a record ID and load it.';
+    const browse = listOperation ? document.createElement('button') : null,
+      next = listOperation ? document.createElement('button') : null,
+      results = listOperation ? document.createElement('ul') : null,
+      listStatus = listOperation ? document.createElement('p') : null;
+    let cursor;
+    if (browse) {
+      browse.type = 'button';
+      browse.textContent = 'Browse records';
+      next.type = 'button';
+      next.textContent = 'Next page';
+      next.disabled = true;
+      listStatus.setAttribute('role', 'status');
+      listStatus.setAttribute('aria-live', 'polite');
+    }
+    let prefixInput, prefixLabel;
+    if (browse && allowIdPrefix) {
+      prefixLabel = document.createElement('label');
+      prefixLabel.textContent = 'Record ID starts with';
+      prefixInput = document.createElement('input');
+      prefixInput.maxLength = 256;
+      prefixLabel.appendChild(prefixInput);
+    }
+    let orderSelect, orderLabel;
+    if (browse && allowReverseOrder) {
+      orderLabel = document.createElement('label');
+      orderLabel.textContent = 'Record order';
+      orderSelect = document.createElement('select');
+      for (const [value, text] of [
+        ['asc', 'ID ascending'],
+        ['desc', 'ID descending']
+      ]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        orderSelect.appendChild(option);
+      }
+      orderLabel.appendChild(orderSelect);
+    }
+    let filterField,
+      filterValue,
+      filterNull,
+      filterLabel,
+      filterValueLabel,
+      filterNullLabel,
+      filterOperator,
+      filterOperatorLabel,
+      filterMode,
+      filterModeLabel,
+      filterGeneration = 0;
+    const extraFilters = [],
+      extraFilterContainer = multipleFilters ? document.createElement('div') : null,
+      addFilter = multipleFilters ? document.createElement('button') : null;
+    const makeOperator = () => {
+      const label = document.createElement('label'),
+        select = document.createElement('select');
+      label.textContent = 'Comparison';
+      for (const [value, text] of [
+        ['eq', 'Equals'],
+        ['neq', 'Not equal to'],
+        ['gt', 'Greater than'],
+        ['gte', 'At least'],
+        ['lt', 'Less than'],
+        ['lte', 'At most'],
+        ['prefix', 'Starts with'],
+        ['contains', 'Contains'],
+        ['arrayContains', 'Array contains'],
+        ['exists', 'Is present'],
+        ['missing', 'Is missing']
+      ]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      label.appendChild(select);
+      return { label, select };
+    };
+    if (filters) {
+      filterLabel = document.createElement('label');
+      filterLabel.textContent = 'Filter field';
+      filterField = document.createElement('select');
+      const all = document.createElement('option');
+      all.value = '';
+      all.textContent = 'All records';
+      filterField.append(all);
+      for (const f of filters) {
+        const option = document.createElement('option');
+        option.value = filterValueOf(f.field);
+        option.textContent = f.label;
+        filterField.append(option);
+      }
+      filterLabel.append(filterField);
+      if (rangeFields.size || prefixFields.size || containsFields.size || arrayContainsFields.size || existsFields.size || notEqualFields.size) {
+        const operator = makeOperator();
+        filterOperatorLabel = operator.label;
+        filterOperator = operator.select;
+      }
+      filterValueLabel = document.createElement('label');
+      filterValueLabel.textContent = 'Filter value';
+      filterValue = document.createElement('input');
+      filterValue.maxLength = 1024;
+      filterValueLabel.append(filterValue);
+      filterNullLabel = document.createElement('label');
+      filterNull = document.createElement('input');
+      filterNull.type = 'checkbox';
+      filterNullLabel.append(filterNull, document.createTextNode(' Match null'));
+    }
+    if (allowAnyFilters) {
+      filterModeLabel = document.createElement('label');
+      filterModeLabel.textContent = 'Match conditions';
+      filterMode = document.createElement('select');
+      for (const [value, text] of [
+        ['all', 'All conditions'],
+        ['any', 'Any condition']
+      ]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        filterMode.appendChild(option);
+      }
+      filterModeLabel.appendChild(filterMode);
+    }
+    const controls = schema?.map(field => fieldControl(document, field)) ?? [],
+      groups = (schema?.groups ?? []).map(group => groupControl(document, group, undefined));
+    root.append(heading);
+    const schemaHelp = descriptionHelp(document, root, schema?.description);
+    if (schemaHelp) root.setAttribute('aria-describedby', schemaHelp);
+    if (browse) {
+      if (filters) {
+        root.appendChild(filterLabel);
+        if (filterOperatorLabel) root.appendChild(filterOperatorLabel);
+        root.append(filterValueLabel, filterNullLabel);
+        if (filterModeLabel) root.appendChild(filterModeLabel);
+      }
+      if (addFilter) {
+        addFilter.type = 'button';
+        addFilter.textContent = 'Add filter';
+        root.append(extraFilterContainer, addFilter);
+      }
+      if (prefixLabel) root.appendChild(prefixLabel);
+      if (orderLabel) root.appendChild(orderLabel);
+      root.append(browse, results, next, listStatus);
+    }
+    root.append(idLabel, load);
+    if (schema) {
+      for (const group of groups) if (!group.required || group.nullable || group.description) root.appendChild(group.wrapper);
+      for (const item of controls) {
+        linkGroupHelp(item, groups);
+        root.appendChild(item.wrapper ?? item.control.parentElement);
+      }
+    } else root.appendChild(valueLabel);
+    root.append(save, status);
+    const parentActive = path =>
+      groups.filter(group => group.path.length < path.length && group.path.every((key, i) => key === path[i])).every(group => group.control.checked && !(group.nullToggle && group.nullToggle.checked));
+    const groupActive = path =>
+      groups.filter(group => group.path.length < path.length && group.path.every((key, i) => key === path[i])).every(group => group.control.checked && !(group.nullToggle && group.nullToggle.checked));
+    const compatible = (field, value, budget) => {
+      if (++budget.count > 10000) return false;
+      if (value === null) return field.nullable === true;
+      if (field.jsonChoices && !field.jsonChoices.includes(value)) return false;
+      if (field.type === 'mixed') return typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
+      if (field.type === 'array')
+        return (
+          Array.isArray(value) &&
+          value.length <= field.maxItems &&
+          value.every((entry, index) => {
+            const item = field.prefixItems?.[index] ?? field.item;
+            return !!item && compatible(item, entry, budget);
+          })
+        );
+      if (field.type === 'objectItem' || field.type === 'objectArray') {
+        const objectCompatible = entry =>
+          ++budget.count <= 10000 &&
+          (entry === null
+            ? field.type === 'objectItem'
+              ? field.nullable
+              : field.itemNullable
+            : !!entry &&
+              typeof entry === 'object' &&
+              !Array.isArray(entry) &&
+              field.itemFields.groups.every(group => {
+                const nested = pathValue(entry, group.path);
+                return nested === undefined || (nested === null && group.nullable) || (nested && typeof nested === 'object' && !Array.isArray(nested));
+              }) &&
+              field.itemFields.every(child => {
+                const nested = pathValue(entry, child.path);
+                return nested === undefined || compatible(child, nested, budget);
+              }));
+        return field.type === 'objectItem' ? objectCompatible(value) : Array.isArray(value) && value.length <= field.maxItems && value.every(objectCompatible);
+      }
+      return (
+        (field.type === 'string' && typeof value === 'string' && (!field.options || field.options.includes(value))) ||
+        (field.type === 'boolean' && typeof value === 'boolean') ||
+        ((field.type === 'number' || field.type === 'integer') && typeof value === 'number' && Number.isFinite(value) && (field.type !== 'integer' || Number.isSafeInteger(value)))
+      );
+    };
+    const syncItem = (item, saved) => {
+      item.dirty = false;
+      if (item.field.type === 'objectArray')
+        item.rows.forEach((row, index) => {
+          row.original = Array.isArray(saved) && saved[index] ? JSON.parse(JSON.stringify(saved[index])) : {};
+          for (const child of row.items) syncItem(child, pathValue(row.original, child.field.path));
+        });
+      else if (item.field.type === 'array')
+        item.rows.forEach((row, index) => {
+          const value = Array.isArray(saved) ? saved[index] : undefined;
+          if (row.item) syncItem(row.item, value);
+          else {
+            row.original = value && typeof value === 'object' ? JSON.parse(JSON.stringify(value)) : {};
+            for (const child of row.items) syncItem(child, pathValue(row.original, child.field.path));
+          }
+        });
+    };
+    const at = (data, path) => {
+      let value = data;
+      for (const key of path) {
+        if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, key)) return undefined;
+        value = value[key];
+      }
+      return value;
+    };
+    const parent = (data, path) => {
+      let value = data;
+      for (const key of path.slice(0, -1)) value = value[key];
+      return value;
+    };
+    let revision = null,
+      loadedId = '',
+      busy = false,
+      preserveEdits = false,
+      original = {},
+      lastSavedJSON = '';
+    const setBusy = active => {
+      busy = active;
+      id.disabled = active;
+      value.disabled = active;
+      load.disabled = active;
+      save.disabled = active || !loadedId;
+      for (const group of groups) disableGroup(group, active || (!loadedId && !preserveEdits) || !parentActive(group.path));
+      for (const item of controls) {
+        item.control.disabled = active || (!loadedId && !preserveEdits) || !groupActive(item.field.path ?? [item.field.key]);
+        item.setDisabled?.(item.control.disabled);
+        item.refresh?.();
+      }
+      if (browse) {
+        browse.disabled = active;
+        next.disabled = active || !cursor;
+        if (orderSelect) orderSelect.disabled = active;
+        if (prefixInput) prefixInput.disabled = active;
+        if (filters) {
+          filterField.disabled = active;
+          if (filterMode) filterMode.disabled = active;
+          if (filterOperator)
+            filterOperator.disabled =
+              active ||
+              !(
+                rangeFields.has(filterField.value) ||
+                prefixFields.has(filterField.value) ||
+                containsFields.has(filterField.value) ||
+                arrayContainsFields.has(filterField.value) ||
+                existsFields.has(filterField.value) ||
+                notEqualFields.has(filterField.value)
+              );
+          filterNull.disabled = active || !filterField.value || (filterOperator && filterOperator.value !== 'eq' && filterOperator.value !== 'neq' && filterOperator.value !== 'arrayContains');
+          filterValue.disabled = active || !filterField.value || filterNull.checked || ['exists', 'missing'].includes(filterOperator?.value);
+          for (const row of extraFilters) {
+            row.field.disabled = active;
+            if (row.operator)
+              row.operator.disabled =
+                active ||
+                !(
+                  rangeFields.has(row.field.value) ||
+                  prefixFields.has(row.field.value) ||
+                  containsFields.has(row.field.value) ||
+                  arrayContainsFields.has(row.field.value) ||
+                  existsFields.has(row.field.value) ||
+                  notEqualFields.has(row.field.value)
+                );
+            row.nullInput.disabled = active || !row.field.value || (row.operator && row.operator.value !== 'eq' && row.operator.value !== 'neq' && row.operator.value !== 'arrayContains');
+            row.value.disabled = active || !row.field.value || row.nullInput.checked || ['exists', 'missing'].includes(row.operator?.value);
+            row.remove.disabled = active;
+          }
+          if (addFilter) addFilter.disabled = active || extraFilters.length >= 9;
+        }
+        for (const button of results.querySelectorAll('button')) button.disabled = active;
+      }
+    };
+    if (filters) {
+      const changed = () => {
+        filterGeneration++;
+        cursor = undefined;
+        results.replaceChildren();
+        for (const row of [{ field: filterField, value: filterValue, operator: filterOperator, nullInput: filterNull }, ...extraFilters]) {
+          const selected = filters.find(f => filterValueOf(f.field) === row.field.value);
+          if (row.operator) {
+            for (const option of row.operator.options)
+              option.disabled =
+                option.value === 'neq'
+                  ? !notEqualFields.has(row.field.value)
+                  : option.value === 'prefix'
+                    ? !prefixFields.has(row.field.value)
+                    : option.value === 'contains'
+                      ? !containsFields.has(row.field.value)
+                      : option.value === 'arrayContains'
+                        ? !arrayContainsFields.has(row.field.value)
+                        : ['exists', 'missing'].includes(option.value)
+                          ? !existsFields.has(row.field.value)
+                          : option.value !== 'eq' && !rangeFields.has(row.field.value);
+            if (row.operator.selectedOptions[0]?.disabled) row.operator.value = 'eq';
+          }
+          if (row.operator && row.operator.value !== 'eq' && row.operator.value !== 'neq' && row.operator.value !== 'arrayContains') row.nullInput.checked = false;
+          if (row.nullInput.nextSibling) row.nullInput.nextSibling.textContent = row.operator?.value === 'neq' ? ' Compare with null' : ' Match null';
+          row.value.placeholder = selected?.type === 'boolean' ? 'true or false' : selected?.type === 'number' ? 'Enter a number' : '';
+        }
+        listStatus.textContent = 'Filter changed. Browse to see matching records.';
+        setBusy(busy);
+      };
+      for (const control of [filterField, filterValue, filterNull, filterOperator, filterMode].filter(Boolean)) {
+        control.addEventListener('input', changed);
+        control.addEventListener('change', changed);
+      }
+      if (addFilter)
+        addFilter.addEventListener('click', () => {
+          if (busy || extraFilters.length >= 9) return;
+          const container = document.createElement('fieldset'),
+            legend = document.createElement('legend'),
+            fieldLabel = document.createElement('label'),
+            field = document.createElement('select'),
+            empty = document.createElement('option'),
+            valueLabel = document.createElement('label'),
+            value = document.createElement('input'),
+            nullLabel = document.createElement('label'),
+            nullInput = document.createElement('input'),
+            remove = document.createElement('button');
+          legend.textContent = 'Additional filter';
+          container.appendChild(legend);
+          fieldLabel.textContent = 'Filter field';
+          empty.value = '';
+          empty.textContent = 'Choose a field';
+          field.appendChild(empty);
+          for (const f of filters) {
+            const option = document.createElement('option');
+            option.value = filterValueOf(f.field);
+            option.textContent = f.label;
+            field.appendChild(option);
+          }
+          fieldLabel.appendChild(field);
+          const comparison = rangeFields.size || prefixFields.size || containsFields.size || arrayContainsFields.size || existsFields.size || notEqualFields.size ? makeOperator() : null;
+          valueLabel.textContent = 'Filter value';
+          value.maxLength = 1024;
+          valueLabel.appendChild(value);
+          nullInput.type = 'checkbox';
+          nullLabel.append(nullInput, document.createTextNode(' Match null'));
+          remove.type = 'button';
+          remove.textContent = 'Remove filter';
+          container.appendChild(fieldLabel);
+          if (comparison) container.appendChild(comparison.label);
+          container.append(valueLabel, nullLabel, remove);
+          const row = { container, field, value, nullInput, remove, operator: comparison?.select };
+          extraFilters.push(row);
+          extraFilterContainer.appendChild(container);
+          for (const control of [field, value, nullInput, comparison?.select].filter(Boolean)) {
+            control.addEventListener('input', changed);
+            control.addEventListener('change', changed);
+          }
+          remove.addEventListener('click', () => {
+            if (busy) return;
+            extraFilters.splice(extraFilters.indexOf(row), 1);
+            container.remove();
+            changed();
+          });
+          changed();
+        });
+      setBusy(false);
+    }
 
-    if(orderSelect)orderSelect.addEventListener('change',()=>{filterGeneration++;cursor=undefined;results.replaceChildren();listStatus.textContent='Order changed. Browse to see records.';setBusy(busy);});
-    if(prefixInput)prefixInput.addEventListener('input',()=>{filterGeneration++;cursor=undefined;results.replaceChildren();listStatus.textContent='ID prefix changed. Browse to see records.';setBusy(busy);});
+    if (orderSelect)
+      orderSelect.addEventListener('change', () => {
+        filterGeneration++;
+        cursor = undefined;
+        results.replaceChildren();
+        listStatus.textContent = 'Order changed. Browse to see records.';
+        setBusy(busy);
+      });
+    if (prefixInput)
+      prefixInput.addEventListener('input', () => {
+        filterGeneration++;
+        cursor = undefined;
+        results.replaceChildren();
+        listStatus.textContent = 'ID prefix changed. Browse to see records.';
+        setBusy(busy);
+      });
 
-    const readField=item=>{const {field,control}=item;if(field.type==='null')return field.required||control.checked?null:undefined;if(field.type==='array'||field.type==='objectArray'){if(item.include&&!item.include.checked)return undefined;if(item.nullToggle&&item.nullToggle.checked)return null;if(item.rows.length<field.minItems||item.rows.length>field.maxItems)throw Error('Enter between '+field.minItems+' and '+field.maxItems+' items.');const values=item.rows.map(row=>{if(row.item)return readField(row.item);if(row.nullToggle?.checked)return null;const value=JSON.parse(JSON.stringify(row.original));for(const group of row.groups){if(!pathActive(row.groups,group.path))continue;const owner=pathParent(value,group.path),key=group.path.at(-1);if(group.control.checked){if(group.nullToggle?.checked)owner[key]=null;else if(!Object.hasOwn(owner,key)||owner[key]===null)owner[key]={};}else delete owner[key];}for(const child of row.items){const path=child.field.path;if(!pathActive(row.groups,path))continue;const next=readField(child),owner=pathParent(value,path),key=path.at(-1);if(next===undefined){if(child.dirty||pathValue(row.original,path)===undefined)delete owner[key];}else owner[key]=next;}validateFormDependencies(row.itemFields.dependencies,value);validateFormConditions(row.itemFields.conditions,value);validateFormObjectRules(row.itemFields.objectRules,value);validateFormPropertyCounts(row.itemFields.propertyCounts,value);validateFormPropertyNames(row.itemFields.propertyNames,value);return value;});if(field.uniqueItems&&new Set(values.map(canonicalFormValue)).size!==values.length)throw Error('Items must be unique.');if(field.contains){const count=values.filter(value=>matchesContains(field.contains,value)).length;if(count<field.contains.min||(field.contains.max!==undefined&&count>field.contains.max))throw Error('Array must contain the required number of matching items.');}return values;}if(item.include&&field.jsonString&&!item.include.checked)return undefined;if(item.nullToggle&&item.nullToggle.checked)return null;if(field.jsonChoices&&control.value===''){if(field.required||field.jsonString&&item.include?.checked)throw Error('Choose a valid option.');return undefined;}const selected=field.jsonChoices?field.jsonChoices[Number(control.value)-1]:undefined;if(field.jsonChoices&&selected===undefined)throw Error('Choose a valid option.');if(field.type==='mixed')return selected;if(field.jsonString){const text=field.jsonChoices?selected:control.value;if(field.options&&!field.options.includes(text))throw Error('Choose a valid option.');const length=Array.from(text).length;if(field.jsonMinLength!==undefined&&length<field.jsonMinLength)throw Error('Enter at least '+field.jsonMinLength+' characters.');if(field.jsonMaxLength!==undefined&&length>field.jsonMaxLength)throw Error('Enter no more than '+field.jsonMaxLength+' characters.');if(field.jsonPattern&&!field.jsonPattern.test(text))throw Error('Enter a value matching the required pattern.');return text;}const raw=control.value;if(control.validity.badInput)throw Error('Enter a valid number.');if(raw===''){if(field.required)throw Error('This field is required.');return undefined;}if(field.type==='boolean')return field.jsonChoices?selected:raw==='true';if(field.type==='string'){if(field.maxLength!==undefined&&raw.length>field.maxLength)throw Error('Enter no more than '+field.maxLength+' characters.');if(field.options&&!field.options.includes(raw))throw Error('Choose a valid option.');return raw;}const parsed=field.jsonChoices?selected:Number(raw);if(!Number.isFinite(parsed)||(field.type==='integer'&&!Number.isSafeInteger(parsed)))throw Error(field.type==='integer'?'Enter a whole number.':'Enter a valid number.');if(field.min!==undefined&&parsed<field.min)throw Error('Enter a value of at least '+field.min+'.');if(field.max!==undefined&&parsed>field.max)throw Error('Enter a value of at most '+field.max+'.');if(field.exclusiveMin!==undefined&&parsed<=field.exclusiveMin)throw Error('Enter a value greater than '+field.exclusiveMin+'.');if(field.exclusiveMax!==undefined&&parsed>=field.exclusiveMax)throw Error('Enter a value less than '+field.exclusiveMax+'.');if(field.multipleOf!==undefined&&!decimalMultiple(parsed,field.multipleOf))throw Error('Enter a multiple of '+field.multipleOf+'.');return parsed;};
-    const checkField=item=>{try{readField(item);item.error.textContent='';item.control.removeAttribute('aria-invalid');return true}catch(error){item.error.textContent=error.message;item.control.setAttribute('aria-invalid','true');return false;}};
-    for(const group of groups){disableGroup(group,true);for(const toggle of [group.control,group.nullToggle])toggle?.addEventListener('change',()=>{group.dirty=true;setBusy(false);});}
-    for(const item of controls){item.control.disabled=true;item.setDisabled?.(true);item.control.addEventListener('input',()=>{item.dirty=true});item.control.addEventListener('change',()=>{item.dirty=true});item.control.addEventListener('blur',()=>checkField(item));}
-
-    id.addEventListener('input',()=>{loadedId='';preserveEdits=false;save.disabled=true;for(const item of controls){item.control.disabled=true;item.setDisabled?.(true);}for(const group of groups)disableGroup(group,true);status.textContent='Load this record before saving.';});
-    load.addEventListener('click',async()=>{
-      const recordId=id.value;if(busy||!recordId.trim()){status.textContent='Enter a record ID.';return;}
-      const hadEditorData=!!loadedId||preserveEdits;preserveEdits=false;setBusy(true);loadedId='';
+    const readField = item => {
+      const { field, control } = item;
+      if (field.type === 'null') return field.required || control.checked ? null : undefined;
+      if (field.type === 'array' || field.type === 'objectArray') {
+        if (item.include && !item.include.checked) return undefined;
+        if (item.nullToggle && item.nullToggle.checked) return null;
+        if (item.rows.length < field.minItems || item.rows.length > field.maxItems) throw Error('Enter between ' + field.minItems + ' and ' + field.maxItems + ' items.');
+        const values = item.rows.map(row => {
+          if (row.item) return readField(row.item);
+          if (row.nullToggle?.checked) return null;
+          const value = JSON.parse(JSON.stringify(row.original));
+          for (const group of row.groups) {
+            if (!pathActive(row.groups, group.path)) continue;
+            const owner = pathParent(value, group.path),
+              key = group.path.at(-1);
+            if (group.control.checked) {
+              if (group.nullToggle?.checked) owner[key] = null;
+              else if (!Object.hasOwn(owner, key) || owner[key] === null) owner[key] = {};
+            } else delete owner[key];
+          }
+          for (const child of row.items) {
+            const path = child.field.path;
+            if (!pathActive(row.groups, path)) continue;
+            const next = readField(child),
+              owner = pathParent(value, path),
+              key = path.at(-1);
+            if (next === undefined) {
+              if (child.dirty || pathValue(row.original, path) === undefined) delete owner[key];
+            } else owner[key] = next;
+          }
+          validateFormDependencies(row.itemFields.dependencies, value);
+          validateFormConditions(row.itemFields.conditions, value);
+          validateFormObjectRules(row.itemFields.objectRules, value);
+          validateFormPropertyCounts(row.itemFields.propertyCounts, value);
+          validateFormPropertyNames(row.itemFields.propertyNames, value);
+          return value;
+        });
+        if (field.uniqueItems && new Set(values.map(canonicalFormValue)).size !== values.length) throw Error('Items must be unique.');
+        if (field.contains) {
+          const count = values.filter(value => matchesContains(field.contains, value)).length;
+          if (count < field.contains.min || (field.contains.max !== undefined && count > field.contains.max)) throw Error('Array must contain the required number of matching items.');
+        }
+        return values;
+      }
+      if (item.include && field.jsonString && !item.include.checked) return undefined;
+      if (item.nullToggle && item.nullToggle.checked) return null;
+      if (field.jsonChoices && control.value === '') {
+        if (field.required || (field.jsonString && item.include?.checked)) throw Error('Choose a valid option.');
+        return undefined;
+      }
+      const selected = field.jsonChoices ? field.jsonChoices[Number(control.value) - 1] : undefined;
+      if (field.jsonChoices && selected === undefined) throw Error('Choose a valid option.');
+      if (field.type === 'mixed') return selected;
+      if (field.jsonString) {
+        const text = field.jsonChoices ? selected : control.value;
+        if (field.options && !field.options.includes(text)) throw Error('Choose a valid option.');
+        const length = Array.from(text).length;
+        if (field.jsonMinLength !== undefined && length < field.jsonMinLength) throw Error('Enter at least ' + field.jsonMinLength + ' characters.');
+        if (field.jsonMaxLength !== undefined && length > field.jsonMaxLength) throw Error('Enter no more than ' + field.jsonMaxLength + ' characters.');
+        if (field.jsonPattern && !field.jsonPattern.test(text)) throw Error('Enter a value matching the required pattern.');
+        return text;
+      }
+      const raw = control.value;
+      if (control.validity.badInput) throw Error('Enter a valid number.');
+      if (raw === '') {
+        if (field.required) throw Error('This field is required.');
+        return undefined;
+      }
+      if (field.type === 'boolean') return field.jsonChoices ? selected : raw === 'true';
+      if (field.type === 'string') {
+        if (field.maxLength !== undefined && raw.length > field.maxLength) throw Error('Enter no more than ' + field.maxLength + ' characters.');
+        if (field.options && !field.options.includes(raw)) throw Error('Choose a valid option.');
+        return raw;
+      }
+      const parsed = field.jsonChoices ? selected : Number(raw);
+      if (!Number.isFinite(parsed) || (field.type === 'integer' && !Number.isSafeInteger(parsed))) throw Error(field.type === 'integer' ? 'Enter a whole number.' : 'Enter a valid number.');
+      if (field.min !== undefined && parsed < field.min) throw Error('Enter a value of at least ' + field.min + '.');
+      if (field.max !== undefined && parsed > field.max) throw Error('Enter a value of at most ' + field.max + '.');
+      if (field.exclusiveMin !== undefined && parsed <= field.exclusiveMin) throw Error('Enter a value greater than ' + field.exclusiveMin + '.');
+      if (field.exclusiveMax !== undefined && parsed >= field.exclusiveMax) throw Error('Enter a value less than ' + field.exclusiveMax + '.');
+      if (field.multipleOf !== undefined && !decimalMultiple(parsed, field.multipleOf)) throw Error('Enter a multiple of ' + field.multipleOf + '.');
+      return parsed;
+    };
+    const checkField = item => {
       try {
-        const result=await invokeCapability(getOperation,{id:recordId,...(expectedSchemaVersion===undefined?{}:{expectedSchemaVersion})});
-        if(result!==null&&(!result||typeof result!=='object'||result.id!==recordId||!Number.isSafeInteger(result.revision)||result.revision<1||!result.value||typeof result.value!=='object'||Array.isArray(result.value)))throw Error('Invalid record response');
-        const data=result===null?{}:result.value;
-        if(schema){const budget={count:0};for(const group of groups){const current=at(data,group.path);if(current!==undefined&&!(current===null&&group.nullable)&&(!current||typeof current!=='object'||Array.isArray(current)))throw Error('Record contains values this form cannot edit.');}for(const item of controls){const current=at(data,item.field.path??[item.field.key]);if(current!==undefined&&!compatible(item.field,current,budget))throw Error('Record contains values this form cannot edit.');}}
-        revision=result===null?null:result.revision;original=JSON.parse(JSON.stringify(data));value.value=JSON.stringify(data,null,2);lastSavedJSON=value.value;for(const group of groups){group.control.checked=group.required||at(data,group.path)!==undefined;if(group.nullToggle)group.nullToggle.checked=at(data,group.path)===null;group.dirty=false;}for(const item of controls){const current=at(data,item.field.path??[item.field.key]);if(item.setValue)item.setValue(current);else item.control.value=current===undefined?'':String(current);item.dirty=false;item.error.textContent='';item.control.removeAttribute('aria-invalid');}loadedId=recordId;
-        status.textContent=result===null?'New record. Enter data and save.':'Record loaded.';
-      } catch(error){if(error.message==='Data schema version conflict'){preserveEdits=hadEditorData;status.textContent='Data schema changed. Copy any edits and update the editor configuration before loading.';}else status.textContent=error.message||'Could not load record.';}
-      finally {setBusy(false);}
+        readField(item);
+        item.error.textContent = '';
+        item.control.removeAttribute('aria-invalid');
+        return true;
+      } catch (error) {
+        item.error.textContent = error.message;
+        item.control.setAttribute('aria-invalid', 'true');
+        return false;
+      }
+    };
+    for (const group of groups) {
+      disableGroup(group, true);
+      for (const toggle of [group.control, group.nullToggle])
+        toggle?.addEventListener('change', () => {
+          group.dirty = true;
+          setBusy(false);
+        });
+    }
+    for (const item of controls) {
+      item.control.disabled = true;
+      item.setDisabled?.(true);
+      item.control.addEventListener('input', () => {
+        item.dirty = true;
+      });
+      item.control.addEventListener('change', () => {
+        item.dirty = true;
+      });
+      item.control.addEventListener('blur', () => checkField(item));
+    }
+
+    id.addEventListener('input', () => {
+      loadedId = '';
+      preserveEdits = false;
+      save.disabled = true;
+      for (const item of controls) {
+        item.control.disabled = true;
+        item.setDisabled?.(true);
+      }
+      for (const group of groups) disableGroup(group, true);
+      status.textContent = 'Load this record before saving.';
     });
-    save.addEventListener('click',async()=>{
-      if(busy||!loadedId||id.value!==loadedId)return;
-      let parsed;if(schema){let valid=true;for(const item of controls)if(groupActive(item.field.path??[item.field.key])&&!checkField(item))valid=false;if(!valid){status.textContent='Check the fields marked above.';return;}parsed=JSON.parse(JSON.stringify(original));for(const group of groups){if(!parentActive(group.path))continue;const owner=parent(parsed,group.path),key=group.path.at(-1);if(group.control.checked){if(group.nullToggle?.checked)owner[key]=null;else if(!Object.hasOwn(owner,key)||owner[key]===null)owner[key]={};}else delete owner[key];}for(const item of controls){const path=item.field.path??[item.field.key];if(!groupActive(path))continue;const owner=parent(parsed,path),key=path.at(-1),next=readField(item);if(next===undefined){if(item.dirty||at(original,path)===undefined)delete owner[key];}else owner[key]=next;}try{validateFormDependencies(schema.dependencies,parsed);validateFormConditions(schema.conditions,parsed);validateFormObjectRules(schema.objectRules,parsed);validateFormPropertyCounts(schema.propertyCounts,parsed);validateFormPropertyNames(schema.propertyNames,parsed);}catch(error){status.textContent=error.message;return;}}else try{parsed=JSON.parse(value.value);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('Expected an object');}catch{status.textContent='Enter a valid JSON object.';return;}
+    load.addEventListener('click', async () => {
+      const recordId = id.value;
+      if (busy || !recordId.trim()) {
+        status.textContent = 'Enter a record ID.';
+        return;
+      }
+      const hadEditorData = !!loadedId || preserveEdits;
+      preserveEdits = false;
+      setBusy(true);
+      loadedId = '';
+      try {
+        const result = await invokeCapability(getOperation, { id: recordId, ...(expectedSchemaVersion === undefined ? {} : { expectedSchemaVersion }) });
+        if (
+          result !== null &&
+          (!result ||
+            typeof result !== 'object' ||
+            result.id !== recordId ||
+            !Number.isSafeInteger(result.revision) ||
+            result.revision < 1 ||
+            !result.value ||
+            typeof result.value !== 'object' ||
+            Array.isArray(result.value))
+        )
+          throw Error('Invalid record response');
+        const data = result === null ? {} : result.value;
+        if (schema) {
+          const budget = { count: 0 };
+          for (const group of groups) {
+            const current = at(data, group.path);
+            if (current !== undefined && !(current === null && group.nullable) && (!current || typeof current !== 'object' || Array.isArray(current)))
+              throw Error('Record contains values this form cannot edit.');
+          }
+          for (const item of controls) {
+            const current = at(data, item.field.path ?? [item.field.key]);
+            if (current !== undefined && !compatible(item.field, current, budget)) throw Error('Record contains values this form cannot edit.');
+          }
+        }
+        revision = result === null ? null : result.revision;
+        original = JSON.parse(JSON.stringify(data));
+        value.value = JSON.stringify(data, null, 2);
+        lastSavedJSON = value.value;
+        for (const group of groups) {
+          group.control.checked = group.required || at(data, group.path) !== undefined;
+          if (group.nullToggle) group.nullToggle.checked = at(data, group.path) === null;
+          group.dirty = false;
+        }
+        for (const item of controls) {
+          const current = at(data, item.field.path ?? [item.field.key]);
+          if (item.setValue) item.setValue(current);
+          else item.control.value = current === undefined ? '' : String(current);
+          item.dirty = false;
+          item.error.textContent = '';
+          item.control.removeAttribute('aria-invalid');
+        }
+        loadedId = recordId;
+        status.textContent = result === null ? 'New record. Enter data and save.' : 'Record loaded.';
+      } catch (error) {
+        if (error.message === 'Data schema version conflict') {
+          preserveEdits = hadEditorData;
+          status.textContent = 'Data schema changed. Copy any edits and update the editor configuration before loading.';
+        } else status.textContent = error.message || 'Could not load record.';
+      } finally {
+        setBusy(false);
+      }
+    });
+    save.addEventListener('click', async () => {
+      if (busy || !loadedId || id.value !== loadedId) return;
+      let parsed;
+      if (schema) {
+        let valid = true;
+        for (const item of controls) if (groupActive(item.field.path ?? [item.field.key]) && !checkField(item)) valid = false;
+        if (!valid) {
+          status.textContent = 'Check the fields marked above.';
+          return;
+        }
+        parsed = JSON.parse(JSON.stringify(original));
+        for (const group of groups) {
+          if (!parentActive(group.path)) continue;
+          const owner = parent(parsed, group.path),
+            key = group.path.at(-1);
+          if (group.control.checked) {
+            if (group.nullToggle?.checked) owner[key] = null;
+            else if (!Object.hasOwn(owner, key) || owner[key] === null) owner[key] = {};
+          } else delete owner[key];
+        }
+        for (const item of controls) {
+          const path = item.field.path ?? [item.field.key];
+          if (!groupActive(path)) continue;
+          const owner = parent(parsed, path),
+            key = path.at(-1),
+            next = readField(item);
+          if (next === undefined) {
+            if (item.dirty || at(original, path) === undefined) delete owner[key];
+          } else owner[key] = next;
+        }
+        try {
+          validateFormDependencies(schema.dependencies, parsed);
+          validateFormConditions(schema.conditions, parsed);
+          validateFormObjectRules(schema.objectRules, parsed);
+          validateFormPropertyCounts(schema.propertyCounts, parsed);
+          validateFormPropertyNames(schema.propertyNames, parsed);
+        } catch (error) {
+          status.textContent = error.message;
+          return;
+        }
+      } else
+        try {
+          parsed = JSON.parse(value.value);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('Expected an object');
+        } catch {
+          status.textContent = 'Enter a valid JSON object.';
+          return;
+        }
       setBusy(true);
       try {
-        const result=await invokeCapability(putOperation,{id:loadedId,expectedRevision:revision,value:parsed,...(expectedSchemaVersion===undefined?{}:{expectedSchemaVersion})});
-        if(!result||result.id!==loadedId||!Number.isSafeInteger(result.revision)||result.revision<1)throw Error('Invalid save response');
-        revision=result.revision;original=JSON.parse(JSON.stringify(parsed));lastSavedJSON=value.value;if(schema){for(const item of controls)syncItem(item,at(parsed,item.field.path??[item.field.key]));for(const group of groups)group.dirty=false;}status.textContent='Record saved.';
-      } catch(error){
-        if(error.status===409){loadedId='';preserveEdits=true;status.textContent=error.message==='Data schema version conflict'?'Data schema changed. Copy your edits and update the editor configuration before reloading.':'Record changed elsewhere. Copy your edits, then load the latest version.';}
-        else status.textContent=error.message||'Could not save record.';
-      } finally {setBusy(false);}
+        const result = await invokeCapability(putOperation, { id: loadedId, expectedRevision: revision, value: parsed, ...(expectedSchemaVersion === undefined ? {} : { expectedSchemaVersion }) });
+        if (!result || result.id !== loadedId || !Number.isSafeInteger(result.revision) || result.revision < 1) throw Error('Invalid save response');
+        revision = result.revision;
+        original = JSON.parse(JSON.stringify(parsed));
+        lastSavedJSON = value.value;
+        if (schema) {
+          for (const item of controls) syncItem(item, at(parsed, item.field.path ?? [item.field.key]));
+          for (const group of groups) group.dirty = false;
+        }
+        status.textContent = 'Record saved.';
+      } catch (error) {
+        if (error.status === 409) {
+          loadedId = '';
+          preserveEdits = true;
+          status.textContent =
+            error.message === 'Data schema version conflict'
+              ? 'Data schema changed. Copy your edits and update the editor configuration before reloading.'
+              : 'Record changed elsewhere. Copy your edits, then load the latest version.';
+        } else status.textContent = error.message || 'Could not save record.';
+      } finally {
+        setBusy(false);
+      }
     });
-    if(browse){
-      const hasEdits=()=>preserveEdits||!!loadedId&&(schema?(controls.some(item=>item.dirty)||groups.some(group=>group.dirty)):value.value!==lastSavedJSON);
-      const getPage=async(pageCursor)=>{if(busy)return;const selectedFilters=[];for(const row of filters?[{field:filterField,value:filterValue,nullInput:filterNull,operator:filterOperator},...extraFilters]:[]){if(!row.field.value){if(extraFilters.includes(row)){listStatus.textContent='Choose a field for each additional filter.';return;}continue;}const selected=filters.find(f=>filterValueOf(f.field)===row.field.value),raw=row.value.value;if(!selected){listStatus.textContent='Choose a valid filter field.';return;}const choice=row.operator?.value??'eq';let value;if(choice==='exists'||choice==='missing')value=choice==='exists';else if(row.nullInput.checked)value=null;else if(selected.type==='string')value=raw;else if(selected.type==='number'){if(!raw.trim()||!Number.isFinite(Number(raw))){listStatus.textContent='Enter a valid filter number.';return;}value=Number(raw);}else{if(raw!=='true'&&raw!=='false'){listStatus.textContent='Enter true or false for the filter.';return;}value=raw==='true';}const operator=choice==='missing'?'exists':choice;if(operator!=='eq'&&(operator==='neq'?!notEqualFields.has(filterValueOf(selected.field)):operator==='prefix'?!prefixFields.has(filterValueOf(selected.field)):operator==='contains'?!containsFields.has(filterValueOf(selected.field)):operator==='arrayContains'?!arrayContainsFields.has(filterValueOf(selected.field)):operator==='exists'?!existsFields.has(filterValueOf(selected.field)):!rangeFields.has(filterValueOf(selected.field))||!['gt','gte','lt','lte'].includes(operator))){listStatus.textContent='Choose a valid comparison.';return;}if(selectedFilters.some(item=>item.field===selected.field&&(item.operator??'eq')===operator&&((filterMode?.value!=='any'&&operator!=='arrayContains'&&operator!=='neq')||item.value===value))){listStatus.textContent=filterMode?.value==='any'?'Choose each filter condition only once.':operator==='arrayContains'?'Choose each array membership value only once.':operator==='neq'?'Choose each excluded value only once.':'Choose each filter field and comparison only once.';return;}selectedFilters.push({field:selected.field,value,...(operator==='eq'?{}:{operator})});}const generation=filterGeneration;setBusy(true);listStatus.textContent='Loading records...';try{const page=await invokeCapability(listOperation,{limit:50,...(prefixInput?.value?{idPrefix:prefixInput.value}:{}),...(orderSelect?.value==='desc'?{order:'desc'}:{}),...(pageCursor?{cursor:pageCursor}:{}),...(selectedFilters.length?(filterMode?.value==='any'?{filters:selectedFilters,filterMode:'any'}:selectedFilters.length===1?{filter:selectedFilters[0]}:{filters:selectedFilters}):{}),...(expectedSchemaVersion===undefined?{}:{expectedSchemaVersion})});if(generation!==filterGeneration)return;if(!page||typeof page!=='object'||!Array.isArray(page.items)||page.items.length>50||(page.nextCursor!==undefined&&(typeof page.nextCursor!=='string'||!page.nextCursor||page.nextCursor.length>3000))||page.items.some(item=>!item||typeof item!=='object'||typeof item.id!=='string'||!item.id.trim()||item.id.length>256||/[\u0000-\u001f]/.test(item.id)||!Number.isSafeInteger(item.revision)||item.revision<1))throw Error('Invalid record list');results.replaceChildren();for(const item of page.items){const row=document.createElement('li'),button=document.createElement('button');button.type='button';button.textContent=item.id;button.addEventListener('click',()=>{if(busy||!button.isConnected||!root.contains(button))return;if(hasEdits()){listStatus.textContent='Save or copy your edits before selecting another record.';return;}id.value=item.id;id.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));load.click();});row.appendChild(button);results.appendChild(row);}cursor=page.nextCursor;listStatus.textContent=page.items.length?String(page.items.length)+' record(s) on this page.':cursor?'No visible records on this page. More may be available.':'No records on this page.';}catch(error){if(generation!==filterGeneration)return;if(error.message==='Data schema version conflict'){results.replaceChildren();cursor=undefined;listStatus.textContent='Data schema changed. Update the editor configuration before browsing.';}else listStatus.textContent=error.message||'Could not load records.';}finally{setBusy(false);}};
-      browse.addEventListener('click',()=>getPage(undefined));next.addEventListener('click',()=>{if(cursor)getPage(cursor);});
+    if (browse) {
+      const hasEdits = () => preserveEdits || (!!loadedId && (schema ? controls.some(item => item.dirty) || groups.some(group => group.dirty) : value.value !== lastSavedJSON));
+      const getPage = async pageCursor => {
+        if (busy) return;
+        const selectedFilters = [];
+        for (const row of filters ? [{ field: filterField, value: filterValue, nullInput: filterNull, operator: filterOperator }, ...extraFilters] : []) {
+          if (!row.field.value) {
+            if (extraFilters.includes(row)) {
+              listStatus.textContent = 'Choose a field for each additional filter.';
+              return;
+            }
+            continue;
+          }
+          const selected = filters.find(f => filterValueOf(f.field) === row.field.value),
+            raw = row.value.value;
+          if (!selected) {
+            listStatus.textContent = 'Choose a valid filter field.';
+            return;
+          }
+          const choice = row.operator?.value ?? 'eq';
+          let value;
+          if (choice === 'exists' || choice === 'missing') value = choice === 'exists';
+          else if (row.nullInput.checked) value = null;
+          else if (selected.type === 'string') value = raw;
+          else if (selected.type === 'number') {
+            if (!raw.trim() || !Number.isFinite(Number(raw))) {
+              listStatus.textContent = 'Enter a valid filter number.';
+              return;
+            }
+            value = Number(raw);
+          } else {
+            if (raw !== 'true' && raw !== 'false') {
+              listStatus.textContent = 'Enter true or false for the filter.';
+              return;
+            }
+            value = raw === 'true';
+          }
+          const operator = choice === 'missing' ? 'exists' : choice;
+          if (
+            operator !== 'eq' &&
+            (operator === 'neq'
+              ? !notEqualFields.has(filterValueOf(selected.field))
+              : operator === 'prefix'
+                ? !prefixFields.has(filterValueOf(selected.field))
+                : operator === 'contains'
+                  ? !containsFields.has(filterValueOf(selected.field))
+                  : operator === 'arrayContains'
+                    ? !arrayContainsFields.has(filterValueOf(selected.field))
+                    : operator === 'exists'
+                      ? !existsFields.has(filterValueOf(selected.field))
+                      : !rangeFields.has(filterValueOf(selected.field)) || !['gt', 'gte', 'lt', 'lte'].includes(operator))
+          ) {
+            listStatus.textContent = 'Choose a valid comparison.';
+            return;
+          }
+          if (
+            selectedFilters.some(
+              item =>
+                item.field === selected.field && (item.operator ?? 'eq') === operator && ((filterMode?.value !== 'any' && operator !== 'arrayContains' && operator !== 'neq') || item.value === value)
+            )
+          ) {
+            listStatus.textContent =
+              filterMode?.value === 'any'
+                ? 'Choose each filter condition only once.'
+                : operator === 'arrayContains'
+                  ? 'Choose each array membership value only once.'
+                  : operator === 'neq'
+                    ? 'Choose each excluded value only once.'
+                    : 'Choose each filter field and comparison only once.';
+            return;
+          }
+          selectedFilters.push({ field: selected.field, value, ...(operator === 'eq' ? {} : { operator }) });
+        }
+        const generation = filterGeneration;
+        setBusy(true);
+        listStatus.textContent = 'Loading records...';
+        try {
+          const page = await invokeCapability(listOperation, {
+            limit: 50,
+            ...(prefixInput?.value ? { idPrefix: prefixInput.value } : {}),
+            ...(orderSelect?.value === 'desc' ? { order: 'desc' } : {}),
+            ...(pageCursor ? { cursor: pageCursor } : {}),
+            ...(selectedFilters.length
+              ? filterMode?.value === 'any'
+                ? { filters: selectedFilters, filterMode: 'any' }
+                : selectedFilters.length === 1
+                  ? { filter: selectedFilters[0] }
+                  : { filters: selectedFilters }
+              : {}),
+            ...(expectedSchemaVersion === undefined ? {} : { expectedSchemaVersion })
+          });
+          if (generation !== filterGeneration) return;
+          if (
+            !page ||
+            typeof page !== 'object' ||
+            !Array.isArray(page.items) ||
+            page.items.length > 50 ||
+            (page.nextCursor !== undefined && (typeof page.nextCursor !== 'string' || !page.nextCursor || page.nextCursor.length > 3000)) ||
+            page.items.some(
+              item =>
+                !item ||
+                typeof item !== 'object' ||
+                typeof item.id !== 'string' ||
+                !item.id.trim() ||
+                item.id.length > 256 ||
+                /[\u0000-\u001f]/.test(item.id) ||
+                !Number.isSafeInteger(item.revision) ||
+                item.revision < 1
+            )
+          )
+            throw Error('Invalid record list');
+          results.replaceChildren();
+          for (const item of page.items) {
+            const row = document.createElement('li'),
+              button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = item.id;
+            button.addEventListener('click', () => {
+              if (busy || !button.isConnected || !root.contains(button)) return;
+              if (hasEdits()) {
+                listStatus.textContent = 'Save or copy your edits before selecting another record.';
+                return;
+              }
+              id.value = item.id;
+              id.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+              load.click();
+            });
+            row.appendChild(button);
+            results.appendChild(row);
+          }
+          cursor = page.nextCursor;
+          listStatus.textContent = page.items.length
+            ? String(page.items.length) + ' record(s) on this page.'
+            : cursor
+              ? 'No visible records on this page. More may be available.'
+              : 'No records on this page.';
+        } catch (error) {
+          if (generation !== filterGeneration) return;
+          if (error.message === 'Data schema version conflict') {
+            results.replaceChildren();
+            cursor = undefined;
+            listStatus.textContent = 'Data schema changed. Update the editor configuration before browsing.';
+          } else listStatus.textContent = error.message || 'Could not load records.';
+        } finally {
+          setBusy(false);
+        }
+      };
+      browse.addEventListener('click', () => getPage(undefined));
+      next.addEventListener('click', () => {
+        if (cursor) getPage(cursor);
+      });
     }
     return root;
   };
-  return {render,validate};
+  return { render, validate };
 }

@@ -4,7 +4,7 @@ metadata:
   name: app-mixer-data-plane-security
 spec:
   failurePolicy: Fail
-  paramKind: {apiVersion: v1, kind: ConfigMap}
+  paramKind: { apiVersion: v1, kind: ConfigMap }
   matchConstraints:
     resourceRules:
       - apiGroups: [apps]
@@ -167,7 +167,7 @@ spec:
       expression: "object.metadata.name == 'app-mixer-data-plane'"
   validations:
     - message: Keep at least two Data Plane replicas when scaling.
-      expression: "object.spec.replicas >= 2"
+      expression: 'object.spec.replicas >= 2'
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -211,7 +211,7 @@ spec:
       expression: "oldObject.metadata.name == 'app-mixer-data-plane'"
   validations:
     - message: Preserve the Data Plane Deployment while the guard is enforced.
-      expression: "false"
+      expression: 'false'
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -221,7 +221,7 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     resourceRules:
-      - apiGroups: [""]
+      - apiGroups: ['']
         apiVersions: [v1]
         operations: [CREATE, UPDATE, DELETE]
         resources: [services]

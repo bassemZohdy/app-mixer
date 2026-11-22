@@ -1,95 +1,994 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {SqliteDataProvider,CapabilityRegistry,createCapabilityServer,registerDataMigrationPreview,registerDataMigrationStatus,registerDataMigrationRehearsal,registerDataMigrationApply,registerDataMigrationAudit} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'},plan={kind:'forward',fromVersion:0,toVersion:1,transform:value=>({fullName:value.name}),validate:value=>typeof value.fullName==='string'};
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  SqliteDataProvider,
+  CapabilityRegistry,
+  createCapabilityServer,
+  registerDataMigrationPreview,
+  registerDataMigrationStatus,
+  registerDataMigrationRehearsal,
+  registerDataMigrationApply,
+  registerDataMigrationAudit
+} from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' },
+  plan = { kind: 'forward', fromVersion: 0, toVersion: 1, transform: value => ({ fullName: value.name }), validate: value => typeof value.fullName === 'string' };
 
-test('migration audit is actor attributed, snapshotted, scoped and atomic',()=>{
- const dir=mkdtempSync(join(tmpdir(),'migration-evidence-')),path=join(dir,'data.sqlite');let provider,db;try{provider=new SqliteDataProvider(path);provider.put(scope,'people','a',{name:'Ada'},null);let preview=provider.previewMigration(scope,'people'),evidence={principalId:'admin',reference:'ticket-1',observedAt:100};provider.migrateCollection(scope,'people',{...plan,digest:preview.digest,evidence,transform:value=>{evidence.principalId='forged';evidence.reference='forged';return {fullName:value.name};}});assert.deepEqual(provider.migrationAudit(scope,'people').items.map(x=>[x.principalId,x.reference,x.targetVersion]),[['admin','ticket-1',null]]);preview=provider.previewMigration(scope,'people');db=new DatabaseSync(path);db.exec("CREATE TRIGGER reject_evidence BEFORE INSERT ON business_schema_migration_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");const rollback={fromVersion:1,targetVersion:0,digest:preview.digest,transform:value=>({name:value.fullName}),validate:value=>typeof value.name==='string',evidence:{principalId:'operator',reference:'ticket-2',observedAt:200}};assert.throws(()=>provider.rollbackCollection(scope,'people',rollback),/audit unavailable/);assert.deepEqual(provider.previewMigration(scope,'people'),preview);assert.equal(provider.get(scope,'people','a',1).value.fullName,'Ada');db.exec('DROP TRIGGER reject_evidence');provider.rollbackCollection(scope,'people',rollback);const page=provider.migrationAudit(scope,'people',{limit:1});assert.equal(page.nextAfter,1);assert.deepEqual(provider.migrationAudit(scope,'people',{after:page.nextAfter}).items.map(x=>[x.principalId,x.reference,x.targetVersion]),[['operator','ticket-2',0]]);assert.deepEqual(provider.migrationAudit({...scope,tenantId:'other'},'people').items,[]);assert.throws(()=>db.exec('UPDATE business_schema_migration_audit SET actor_id=\'forged\''),/immutable/);assert.throws(()=>db.exec('DELETE FROM business_schema_migration_audit'),/immutable/);provider.close();provider=undefined;provider=new SqliteDataProvider(path);assert.equal(provider.migrationAudit(scope,'people').items.length,2);
- }finally{db?.close();provider?.close();rmSync(dir,{recursive:true,force:true});}
+test('migration audit is actor attributed, snapshotted, scoped and atomic', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'migration-evidence-')),
+    path = join(dir, 'data.sqlite');
+  let provider, db;
+  try {
+    provider = new SqliteDataProvider(path);
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    let preview = provider.previewMigration(scope, 'people'),
+      evidence = { principalId: 'admin', reference: 'ticket-1', observedAt: 100 };
+    provider.migrateCollection(scope, 'people', {
+      ...plan,
+      digest: preview.digest,
+      evidence,
+      transform: value => {
+        evidence.principalId = 'forged';
+        evidence.reference = 'forged';
+        return { fullName: value.name };
+      }
+    });
+    assert.deepEqual(
+      provider.migrationAudit(scope, 'people').items.map(x => [x.principalId, x.reference, x.targetVersion]),
+      [['admin', 'ticket-1', null]]
+    );
+    preview = provider.previewMigration(scope, 'people');
+    db = new DatabaseSync(path);
+    db.exec("CREATE TRIGGER reject_evidence BEFORE INSERT ON business_schema_migration_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+    const rollback = {
+      fromVersion: 1,
+      targetVersion: 0,
+      digest: preview.digest,
+      transform: value => ({ name: value.fullName }),
+      validate: value => typeof value.name === 'string',
+      evidence: { principalId: 'operator', reference: 'ticket-2', observedAt: 200 }
+    };
+    assert.throws(() => provider.rollbackCollection(scope, 'people', rollback), /audit unavailable/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+    assert.equal(provider.get(scope, 'people', 'a', 1).value.fullName, 'Ada');
+    db.exec('DROP TRIGGER reject_evidence');
+    provider.rollbackCollection(scope, 'people', rollback);
+    const page = provider.migrationAudit(scope, 'people', { limit: 1 });
+    assert.equal(page.nextAfter, 1);
+    assert.deepEqual(
+      provider.migrationAudit(scope, 'people', { after: page.nextAfter }).items.map(x => [x.principalId, x.reference, x.targetVersion]),
+      [['operator', 'ticket-2', 0]]
+    );
+    assert.deepEqual(provider.migrationAudit({ ...scope, tenantId: 'other' }, 'people').items, []);
+    assert.throws(() => db.exec("UPDATE business_schema_migration_audit SET actor_id='forged'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM business_schema_migration_audit'), /immutable/);
+    provider.close();
+    provider = undefined;
+    provider = new SqliteDataProvider(path);
+    assert.equal(provider.migrationAudit(scope, 'people').items.length, 2);
+  } finally {
+    db?.close();
+    provider?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('authenticated migration capabilities execute fixed plans and audit the actual operator',async()=>{
- const provider=new SqliteDataProvider(':memory:'),events=[],registry=new CapabilityRegistry(event=>events.push(event.outcome));provider.put(scope,'people','a',{name:'Ada'},null);const base={provider,scope:structuredClone(scope),collection:'people',authorize:actor=>actor.principalId==='admin'},config={...base,candidate:{operationId:'migrate.apply',method:'POST',path:'/apply'},plan:{...plan},authorizeApply:(_actor,input)=>{const allowed=input.reference==='change-1';input.reference='forged';input.digest='0'.repeat(64);return allowed;},clock:()=>100};registerDataMigrationPreview(registry,{...base,candidate:{operationId:'migrate.preview',method:'GET',path:'/preview'}});registerDataMigrationApply(registry,config);registerDataMigrationAudit(registry,{...base,candidate:{operationId:'migrate.audit',method:'GET',path:'/audit'}});base.scope.tenantId='forged';config.plan.toVersion=99;const server=createCapabilityServer(registry,req=>req.headers.authorization==='Bearer admin'?{tenantId:'tenant',principalId:'admin'}:req.headers.authorization==='Bearer viewer'?{tenantId:'tenant',principalId:'viewer'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(operation,input,token='admin')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});try{assert.equal((await call('migrate.preview',{query:{}},'bad')).status,401);assert.equal((await call('migrate.preview',{query:{}},'viewer')).status,403);const response=await (await call('migrate.preview',{query:{}})).json(),preview=response.result;assert.equal(preview.schemaVersion,0);assert.equal(JSON.stringify(preview).includes('Ada'),false);assert.equal((await call('migrate.apply',{query:{digest:preview.digest,reference:'no'}})).status,403);assert.equal((await call('migrate.apply',{query:{digest:preview.digest,reference:'change-1',principalId:'forged'}})).status,400);const result=await (await call('migrate.apply',{query:{digest:preview.digest,reference:'change-1'}})).json();assert.equal(result.result.schemaVersion,1);assert.equal(provider.get(scope,'people','a',1).value.fullName,'Ada');const history=await (await call('migrate.audit',{query:{limit:1}})).json();assert.deepEqual(history.result.items.map(x=>[x.principalId,x.reference,x.observedAt]),[['admin','change-1',100]]);registerDataMigrationApply(registry,{provider,scope,collection:'people',candidate:{operationId:'migrate.rollback',method:'POST',path:'/rollback'},plan:{kind:'rollback',fromVersion:1,targetVersion:0,transform:value=>({name:value.fullName}),validate:value=>typeof value.name==='string'},authorize:actor=>actor.principalId==='admin',authorizeApply:()=>true,clock:()=>200});const next=(await (await call('migrate.preview',{query:{}})).json()).result,rolled=await (await call('migrate.rollback',{query:{digest:next.digest,reference:'change-2'}})).json();assert.equal(rolled.result.schemaVersion,2);assert.equal(provider.get(scope,'people','a',2).value.name,'Ada');const all=(await (await call('migrate.audit',{query:{}})).json()).result;assert.deepEqual(all.items.map(item=>[item.principalId,item.reference,item.targetVersion]),[['admin','change-1',null],['admin','change-2',0]]);assert.ok(events.includes('denied'));assert.ok(events.includes('succeeded'));
- }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));provider.close();}
+test('authenticated migration capabilities execute fixed plans and audit the actual operator', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    events = [],
+    registry = new CapabilityRegistry(event => events.push(event.outcome));
+  provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+  const base = { provider, scope: structuredClone(scope), collection: 'people', authorize: actor => actor.principalId === 'admin' },
+    config = {
+      ...base,
+      candidate: { operationId: 'migrate.apply', method: 'POST', path: '/apply' },
+      plan: { ...plan },
+      authorizeApply: (_actor, input) => {
+        const allowed = input.reference === 'change-1';
+        input.reference = 'forged';
+        input.digest = '0'.repeat(64);
+        return allowed;
+      },
+      clock: () => 100
+    };
+  registerDataMigrationPreview(registry, { ...base, candidate: { operationId: 'migrate.preview', method: 'GET', path: '/preview' } });
+  registerDataMigrationApply(registry, config);
+  registerDataMigrationAudit(registry, { ...base, candidate: { operationId: 'migrate.audit', method: 'GET', path: '/audit' } });
+  base.scope.tenantId = 'forged';
+  config.plan.toVersion = 99;
+  const server = createCapabilityServer(
+    registry,
+    req =>
+      req.headers.authorization === 'Bearer admin'
+        ? { tenantId: 'tenant', principalId: 'admin' }
+        : req.headers.authorization === 'Bearer viewer'
+          ? { tenantId: 'tenant', principalId: 'viewer' }
+          : undefined,
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const call = (operation, input, token = 'admin') =>
+    fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input })
+    });
+  try {
+    assert.equal((await call('migrate.preview', { query: {} }, 'bad')).status, 401);
+    assert.equal((await call('migrate.preview', { query: {} }, 'viewer')).status, 403);
+    const response = await (await call('migrate.preview', { query: {} })).json(),
+      preview = response.result;
+    assert.equal(preview.schemaVersion, 0);
+    assert.equal(JSON.stringify(preview).includes('Ada'), false);
+    assert.equal((await call('migrate.apply', { query: { digest: preview.digest, reference: 'no' } })).status, 403);
+    assert.equal((await call('migrate.apply', { query: { digest: preview.digest, reference: 'change-1', principalId: 'forged' } })).status, 400);
+    const result = await (await call('migrate.apply', { query: { digest: preview.digest, reference: 'change-1' } })).json();
+    assert.equal(result.result.schemaVersion, 1);
+    assert.equal(provider.get(scope, 'people', 'a', 1).value.fullName, 'Ada');
+    const history = await (await call('migrate.audit', { query: { limit: 1 } })).json();
+    assert.deepEqual(
+      history.result.items.map(x => [x.principalId, x.reference, x.observedAt]),
+      [['admin', 'change-1', 100]]
+    );
+    registerDataMigrationApply(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'migrate.rollback', method: 'POST', path: '/rollback' },
+      plan: { kind: 'rollback', fromVersion: 1, targetVersion: 0, transform: value => ({ name: value.fullName }), validate: value => typeof value.name === 'string' },
+      authorize: actor => actor.principalId === 'admin',
+      authorizeApply: () => true,
+      clock: () => 200
+    });
+    const next = (await (await call('migrate.preview', { query: {} })).json()).result,
+      rolled = await (await call('migrate.rollback', { query: { digest: next.digest, reference: 'change-2' } })).json();
+    assert.equal(rolled.result.schemaVersion, 2);
+    assert.equal(provider.get(scope, 'people', 'a', 2).value.name, 'Ada');
+    const all = (await (await call('migrate.audit', { query: {} })).json()).result;
+    assert.deepEqual(
+      all.items.map(item => [item.principalId, item.reference, item.targetVersion]),
+      [
+        ['admin', 'change-1', null],
+        ['admin', 'change-2', 0]
+      ]
+    );
+    assert.ok(events.includes('denied'));
+    assert.ok(events.includes('succeeded'));
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    provider.close();
+  }
 });
 
-test('migration apply capability rechecks host policy after asynchronous approval',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let allowed=true,started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);try{provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.previewMigration(scope,'people');registerDataMigrationApply(registry,{provider,scope,collection:'people',candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorize:()=>allowed,authorizeApply:async()=>{started();await gate;return true;},clock:()=>100});const pending=registry.invoke('apply',{query:{digest:preview.digest,reference:'case'}},{tenantId:'tenant',principalId:'admin',origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(provider.previewMigration(scope,'people'),preview);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);}finally{provider.close();}
+test('migration apply capability rechecks host policy after asynchronous approval', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let allowed = true,
+    started,
+    release;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r));
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.previewMigration(scope, 'people');
+    registerDataMigrationApply(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+      plan,
+      authorize: () => allowed,
+      authorizeApply: async () => {
+        started();
+        await gate;
+        return true;
+      },
+      clock: () => 100
+    });
+    const pending = registry.invoke('apply', { query: { digest: preview.digest, reference: 'case' } }, { tenantId: 'tenant', principalId: 'admin', origin: 'ui' });
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration apply rechecks plan permission after asynchronous scope authorization',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let scopeChecks=0,allowed=true,started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);
- try{provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.previewMigration(scope,'people');registerDataMigrationApply(registry,{provider,scope,collection:'people',candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorize:async()=>{if(++scopeChecks===3){started();await gate;}return true;},authorizeApply:()=>allowed,clock:()=>100});const pending=registry.invoke('apply',{query:{digest:preview.digest,reference:'case'}},{tenantId:'tenant',principalId:'admin',origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(provider.previewMigration(scope,'people'),preview);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);}finally{release();provider.close();}
+test('migration apply rechecks plan permission after asynchronous scope authorization', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let scopeChecks = 0,
+    allowed = true,
+    started,
+    release;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.previewMigration(scope, 'people');
+    registerDataMigrationApply(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+      plan,
+      authorize: async () => {
+        if (++scopeChecks === 3) {
+          started();
+          await gate;
+        }
+        return true;
+      },
+      authorizeApply: () => allowed,
+      clock: () => 100
+    });
+    const pending = registry.invoke('apply', { query: { digest: preview.digest, reference: 'case' } }, { tenantId: 'tenant', principalId: 'admin', origin: 'ui' });
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+  } finally {
+    release();
+    provider.close();
+  }
 });
 
-test('migration rehearsal validates transformed snapshots without applying data or evidence',()=>{
- const provider=new SqliteDataProvider(':memory:');try{provider.put(scope,'people','a',{name:'Ada'},null);provider.put(scope,'people','b',{name:'Lin'},null);const preview=provider.previewMigration(scope,'people'),rehearsal={fromVersion:0,transform:plan.transform,validate:plan.validate};const first=provider.rehearseMigration(scope,'people',rehearsal);assert.deepEqual({...preview,outputDigest:first.outputDigest},first);assert.deepEqual(provider.get(scope,'people','a').value,{name:'Ada'});assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);assert.throws(()=>provider.rehearseMigration(scope,'people',{...rehearsal,validate:(_value,id)=>id!=='b'}),/validation failed/);assert.throws(()=>provider.rehearseMigration(scope,'people',{...rehearsal,fromVersion:1}),/snapshot conflict/);assert.deepEqual(provider.previewMigration(scope,'people'),preview);provider.put(scope,'people','a',{name:'Changed'},1);assert.throws(()=>provider.migrateCollection(scope,'people',{...plan,digest:preview.digest}),/snapshot conflict/);const fresh=provider.rehearseMigration(scope,'people',rehearsal);assert.throws(()=>provider.migrateCollection(scope,'people',{...plan,digest:fresh.digest,outputDigest:'0'.repeat(64)}),/output conflict/);assert.deepEqual(provider.previewMigration(scope,'people'),{schemaVersion:fresh.schemaVersion,count:fresh.count,digest:fresh.digest});provider.migrateCollection(scope,'people',{...plan,digest:fresh.digest,outputDigest:fresh.outputDigest});assert.deepEqual(provider.get(scope,'people','a',1).value,{fullName:'Changed'});}finally{provider.close();}
+test('migration rehearsal validates transformed snapshots without applying data or evidence', () => {
+  const provider = new SqliteDataProvider(':memory:');
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    provider.put(scope, 'people', 'b', { name: 'Lin' }, null);
+    const preview = provider.previewMigration(scope, 'people'),
+      rehearsal = { fromVersion: 0, transform: plan.transform, validate: plan.validate };
+    const first = provider.rehearseMigration(scope, 'people', rehearsal);
+    assert.deepEqual({ ...preview, outputDigest: first.outputDigest }, first);
+    assert.deepEqual(provider.get(scope, 'people', 'a').value, { name: 'Ada' });
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+    assert.throws(() => provider.rehearseMigration(scope, 'people', { ...rehearsal, validate: (_value, id) => id !== 'b' }), /validation failed/);
+    assert.throws(() => provider.rehearseMigration(scope, 'people', { ...rehearsal, fromVersion: 1 }), /snapshot conflict/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+    provider.put(scope, 'people', 'a', { name: 'Changed' }, 1);
+    assert.throws(() => provider.migrateCollection(scope, 'people', { ...plan, digest: preview.digest }), /snapshot conflict/);
+    const fresh = provider.rehearseMigration(scope, 'people', rehearsal);
+    assert.throws(() => provider.migrateCollection(scope, 'people', { ...plan, digest: fresh.digest, outputDigest: '0'.repeat(64) }), /output conflict/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), { schemaVersion: fresh.schemaVersion, count: fresh.count, digest: fresh.digest });
+    provider.migrateCollection(scope, 'people', { ...plan, digest: fresh.digest, outputDigest: fresh.outputDigest });
+    assert.deepEqual(provider.get(scope, 'people', 'a', 1).value, { fullName: 'Changed' });
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration rehearsal capability fixes its plan and rechecks permission before returning',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let checks=0,allowed=true;try{provider.put(scope,'people','a',{name:'Ada'},null);const fixed={fromVersion:0,transform:plan.transform,validate:plan.validate};registerDataMigrationRehearsal(registry,{provider,scope,collection:'people',candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan:fixed,authorize:()=>true,authorizeRehearsal:()=>{checks++;return allowed;}});fixed.fromVersion=5;fixed.validate=()=>false;const actor={tenantId:'tenant',principalId:'admin',origin:'ui'},preview=provider.previewMigration(scope,'people');const result=await registry.invoke('rehearse',{query:{}},actor);assert.deepEqual(result,{...preview,outputDigest:result.outputDigest});assert.match(result.outputDigest,/^[a-f0-9]{64}$/);assert.equal(checks,4);await assert.rejects(registry.invoke('rehearse',{query:{code:'untrusted'}},actor),/Invalid capability input/);await assert.rejects(registry.invoke('rehearse',{query:{}},{...actor,tenantId:'other'}),/forbidden/);checks=0;allowed=true;const revoked=new CapabilityRegistry(()=>{});registerDataMigrationRehearsal(revoked,{provider,scope,collection:'people',candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan:{fromVersion:0,transform:plan.transform,validate:plan.validate},authorize:()=>true,authorizeRehearsal:()=>++checks<4});await assert.rejects(revoked.invoke('rehearse',{query:{}},actor),/forbidden/);assert.deepEqual(provider.previewMigration(scope,'people'),preview);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);}finally{provider.close();}
+test('migration rehearsal capability fixes its plan and rechecks permission before returning', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let checks = 0,
+    allowed = true;
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const fixed = { fromVersion: 0, transform: plan.transform, validate: plan.validate };
+    registerDataMigrationRehearsal(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' },
+      plan: fixed,
+      authorize: () => true,
+      authorizeRehearsal: () => {
+        checks++;
+        return allowed;
+      }
+    });
+    fixed.fromVersion = 5;
+    fixed.validate = () => false;
+    const actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' },
+      preview = provider.previewMigration(scope, 'people');
+    const result = await registry.invoke('rehearse', { query: {} }, actor);
+    assert.deepEqual(result, { ...preview, outputDigest: result.outputDigest });
+    assert.match(result.outputDigest, /^[a-f0-9]{64}$/);
+    assert.equal(checks, 4);
+    await assert.rejects(registry.invoke('rehearse', { query: { code: 'untrusted' } }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('rehearse', { query: {} }, { ...actor, tenantId: 'other' }), /forbidden/);
+    checks = 0;
+    allowed = true;
+    const revoked = new CapabilityRegistry(() => {});
+    registerDataMigrationRehearsal(revoked, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' },
+      plan: { fromVersion: 0, transform: plan.transform, validate: plan.validate },
+      authorize: () => true,
+      authorizeRehearsal: () => ++checks < 4
+    });
+    await assert.rejects(revoked.invoke('rehearse', { query: {} }, actor), /forbidden/);
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+  } finally {
+    provider.close();
+  }
 });
 
-test('authenticated migration rehearsal returns only a scoped snapshot preview',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});provider.put(scope,'people','a',{name:'private'},null);registerDataMigrationRehearsal(registry,{provider,scope,collection:'people',candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan:{fromVersion:0,transform:plan.transform,validate:plan.validate},authorize:actor=>actor.principalId==='admin',authorizeRehearsal:()=>true});const server=createCapabilityServer(registry,req=>req.headers.authorization==='Bearer admin'?{tenantId:'tenant',principalId:'admin'}:req.headers.authorization==='Bearer outsider'?{tenantId:'other',principalId:'admin'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=token=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/rehearse/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{}}})});try{assert.equal((await call('bad')).status,401);assert.equal((await call('outsider')).status,403);const response=await call('admin'),body=await response.json();assert.equal(response.status,200);assert.deepEqual(body.result,{...provider.previewMigration(scope,'people'),outputDigest:body.result.outputDigest});assert.match(body.result.outputDigest,/^[a-f0-9]{64}$/);assert.equal(JSON.stringify(body).includes('private'),false);assert.deepEqual(provider.get(scope,'people','a').value,{name:'private'});}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));provider.close();}
+test('authenticated migration rehearsal returns only a scoped snapshot preview', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  provider.put(scope, 'people', 'a', { name: 'private' }, null);
+  registerDataMigrationRehearsal(registry, {
+    provider,
+    scope,
+    collection: 'people',
+    candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' },
+    plan: { fromVersion: 0, transform: plan.transform, validate: plan.validate },
+    authorize: actor => actor.principalId === 'admin',
+    authorizeRehearsal: () => true
+  });
+  const server = createCapabilityServer(
+    registry,
+    req =>
+      req.headers.authorization === 'Bearer admin'
+        ? { tenantId: 'tenant', principalId: 'admin' }
+        : req.headers.authorization === 'Bearer outsider'
+          ? { tenantId: 'other', principalId: 'admin' }
+          : undefined,
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const call = token =>
+    fetch(`http://127.0.0.1:${server.address().port}/capabilities/rehearse/invoke`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { query: {} } })
+    });
+  try {
+    assert.equal((await call('bad')).status, 401);
+    assert.equal((await call('outsider')).status, 403);
+    const response = await call('admin'),
+      body = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.result, { ...provider.previewMigration(scope, 'people'), outputDigest: body.result.outputDigest });
+    assert.match(body.result.outputDigest, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(body).includes('private'), false);
+    assert.deepEqual(provider.get(scope, 'people', 'a').value, { name: 'private' });
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    provider.close();
+  }
 });
 
-test('authorized apply and rollback reject changed transformed output before writing',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let suffix='';try{provider.put(scope,'people','a',{name:'Ada'},null);const forward={kind:'forward',fromVersion:0,toVersion:1,transform:value=>({fullName:value.name+suffix}),validate:value=>typeof value.fullName==='string'},base={provider,scope,collection:'people',authorize:()=>true};registerDataMigrationRehearsal(registry,{...base,candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan:forward,authorizeRehearsal:()=>true});let seen;registerDataMigrationApply(registry,{...base,candidate:{operationId:'apply',method:'POST',path:'/apply'},plan:forward,authorizeApply:(_actor,input)=>{seen=input.outputDigest;return true;},clock:()=>100});const preview=await registry.invoke('rehearse',{query:{}},actor),input={query:{digest:preview.digest,outputDigest:preview.outputDigest,reference:'case'}};suffix=' changed';await assert.rejects(registry.invoke('apply',input,actor),/output conflict/);assert.equal(seen,preview.outputDigest);assert.equal(provider.get(scope,'people','a').value.name,'Ada');assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);suffix='';await registry.invoke('apply',input,actor);assert.equal(provider.migrationAudit(scope,'people').items[0].outputDigest,preview.outputDigest);const rollback={fromVersion:1,targetVersion:0,transform:value=>({name:value.fullName+suffix}),validate:value=>typeof value.name==='string'},back=provider.rehearseMigration(scope,'people',rollback);suffix=' changed';assert.throws(()=>provider.rollbackCollection(scope,'people',{...rollback,digest:back.digest,outputDigest:back.outputDigest}),/output conflict/);assert.equal(provider.get(scope,'people','a',1).value.fullName,'Ada');suffix='';provider.rollbackCollection(scope,'people',{...rollback,digest:back.digest,outputDigest:back.outputDigest});assert.equal(provider.get(scope,'people','a',2).value.name,'Ada');}finally{provider.close();}
+test('authorized apply and rollback reject changed transformed output before writing', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let suffix = '';
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const forward = { kind: 'forward', fromVersion: 0, toVersion: 1, transform: value => ({ fullName: value.name + suffix }), validate: value => typeof value.fullName === 'string' },
+      base = { provider, scope, collection: 'people', authorize: () => true };
+    registerDataMigrationRehearsal(registry, { ...base, candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' }, plan: forward, authorizeRehearsal: () => true });
+    let seen;
+    registerDataMigrationApply(registry, {
+      ...base,
+      candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+      plan: forward,
+      authorizeApply: (_actor, input) => {
+        seen = input.outputDigest;
+        return true;
+      },
+      clock: () => 100
+    });
+    const preview = await registry.invoke('rehearse', { query: {} }, actor),
+      input = { query: { digest: preview.digest, outputDigest: preview.outputDigest, reference: 'case' } };
+    suffix = ' changed';
+    await assert.rejects(registry.invoke('apply', input, actor), /output conflict/);
+    assert.equal(seen, preview.outputDigest);
+    assert.equal(provider.get(scope, 'people', 'a').value.name, 'Ada');
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+    suffix = '';
+    await registry.invoke('apply', input, actor);
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].outputDigest, preview.outputDigest);
+    const rollback = { fromVersion: 1, targetVersion: 0, transform: value => ({ name: value.fullName + suffix }), validate: value => typeof value.name === 'string' },
+      back = provider.rehearseMigration(scope, 'people', rollback);
+    suffix = ' changed';
+    assert.throws(() => provider.rollbackCollection(scope, 'people', { ...rollback, digest: back.digest, outputDigest: back.outputDigest }), /output conflict/);
+    assert.equal(provider.get(scope, 'people', 'a', 1).value.fullName, 'Ada');
+    suffix = '';
+    provider.rollbackCollection(scope, 'people', { ...rollback, digest: back.digest, outputDigest: back.outputDigest });
+    assert.equal(provider.get(scope, 'people', 'a', 2).value.name, 'Ada');
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration output conflicts return HTTP 409',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});provider.put(scope,'people','a',{name:'Ada'},null);registerDataMigrationApply(registry,{provider,scope,collection:'people',candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorize:()=>true,authorizeApply:()=>true});const preview=provider.previewMigration(scope,'people'),server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'admin'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/apply/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{digest:preview.digest,outputDigest:'0'.repeat(64),reference:'case'}}})});assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:'Migration output conflict'});assert.deepEqual(provider.previewMigration(scope,'people'),preview);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));provider.close();}
+test('migration output conflicts return HTTP 409', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+  registerDataMigrationApply(registry, {
+    provider,
+    scope,
+    collection: 'people',
+    candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+    plan,
+    authorize: () => true,
+    authorizeApply: () => true
+  });
+  const preview = provider.previewMigration(scope, 'people'),
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'admin' }),
+      () => {}
+    );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/apply/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { query: { digest: preview.digest, outputDigest: '0'.repeat(64), reference: 'case' } } })
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'Migration output conflict' });
+    assert.deepEqual(provider.previewMigration(scope, 'people'), preview);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    provider.close();
+  }
 });
 
-test('migration output evidence survives reopening and upgrades legacy audit storage',()=>{
- const dir=mkdtempSync(join(tmpdir(),'migration-output-evidence-')),path=join(dir,'data.sqlite');let provider,db=new DatabaseSync(path);try{db.exec(`CREATE TABLE business_schema_migration_audit (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,collection_id TEXT NOT NULL,from_version INTEGER NOT NULL,to_version INTEGER NOT NULL,target_version INTEGER,snapshot_digest TEXT NOT NULL,record_count INTEGER NOT NULL,actor_id TEXT NOT NULL,evidence TEXT NOT NULL,observed_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,collection_id,to_version)); INSERT INTO business_schema_migration_audit VALUES ('tenant','app','legacy',0,1,NULL,'old',0,'admin','old-case',10);`);db.close();db=undefined;provider=new SqliteDataProvider(path);assert.equal(Object.hasOwn(provider.migrationAudit(scope,'legacy').items[0],'outputDigest'),false);provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.rehearseMigration(scope,'people',plan);provider.migrateCollection(scope,'people',{...plan,digest:preview.digest,outputDigest:preview.outputDigest,evidence:{principalId:'admin',reference:'case',observedAt:100}});assert.equal(provider.migrationAudit(scope,'people').items[0].outputDigest,preview.outputDigest);db=new DatabaseSync(path);assert.throws(()=>db.exec("UPDATE business_schema_migration_audit SET output_digest='forged'"),/immutable/);db.close();db=undefined;provider.close();provider=new SqliteDataProvider(path);assert.equal(provider.migrationAudit(scope,'people').items[0].outputDigest,preview.outputDigest);assert.equal(Object.hasOwn(provider.migrationAudit(scope,'legacy').items[0],'outputDigest'),false);}finally{db?.close();provider?.close();rmSync(dir,{recursive:true,force:true});}
+test('migration output evidence survives reopening and upgrades legacy audit storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'migration-output-evidence-')),
+    path = join(dir, 'data.sqlite');
+  let provider,
+    db = new DatabaseSync(path);
+  try {
+    db.exec(
+      `CREATE TABLE business_schema_migration_audit (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,collection_id TEXT NOT NULL,from_version INTEGER NOT NULL,to_version INTEGER NOT NULL,target_version INTEGER,snapshot_digest TEXT NOT NULL,record_count INTEGER NOT NULL,actor_id TEXT NOT NULL,evidence TEXT NOT NULL,observed_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,collection_id,to_version)); INSERT INTO business_schema_migration_audit VALUES ('tenant','app','legacy',0,1,NULL,'old',0,'admin','old-case',10);`
+    );
+    db.close();
+    db = undefined;
+    provider = new SqliteDataProvider(path);
+    assert.equal(Object.hasOwn(provider.migrationAudit(scope, 'legacy').items[0], 'outputDigest'), false);
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.rehearseMigration(scope, 'people', plan);
+    provider.migrateCollection(scope, 'people', { ...plan, digest: preview.digest, outputDigest: preview.outputDigest, evidence: { principalId: 'admin', reference: 'case', observedAt: 100 } });
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].outputDigest, preview.outputDigest);
+    db = new DatabaseSync(path);
+    assert.throws(() => db.exec("UPDATE business_schema_migration_audit SET output_digest='forged'"), /immutable/);
+    db.close();
+    db = undefined;
+    provider.close();
+    provider = new SqliteDataProvider(path);
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].outputDigest, preview.outputDigest);
+    assert.equal(Object.hasOwn(provider.migrationAudit(scope, 'legacy').items[0], 'outputDigest'), false);
+  } finally {
+    db?.close();
+    provider?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('migration capability can require a rehearsed output digest',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};try{provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.rehearseMigration(scope,'people',plan),options={provider,scope,collection:'people',candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorize:()=>true,authorizeApply:()=>true,requireOutputDigest:true};registerDataMigrationApply(registry,options);options.requireOutputDigest=false;await assert.rejects(registry.invoke('apply',{query:{digest:preview.digest,reference:'case'}},actor),/Invalid capability input/);await assert.rejects(registry.invoke('apply',{query:{digest:preview.digest,outputDigest:'invalid',reference:'case'}},actor),/Invalid capability input/);await assert.rejects(registry.invoke('apply',{query:{digest:preview.digest,outputDigest:'0'.repeat(64),reference:'case'}},actor),/output conflict/);assert.equal(provider.getSchemaVersion(scope,'people'),0);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);await registry.invoke('apply',{query:{digest:preview.digest,outputDigest:preview.outputDigest,reference:'case'}},actor);assert.equal(provider.migrationAudit(scope,'people').items[0].outputDigest,preview.outputDigest);assert.throws(()=>registerDataMigrationApply(new CapabilityRegistry(()=>{}),{...options,requireOutputDigest:'true'}),/Invalid migration capability/);}finally{provider.close();}
+test('migration capability can require a rehearsed output digest', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.rehearseMigration(scope, 'people', plan),
+      options = {
+        provider,
+        scope,
+        collection: 'people',
+        candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+        plan,
+        authorize: () => true,
+        authorizeApply: () => true,
+        requireOutputDigest: true
+      };
+    registerDataMigrationApply(registry, options);
+    options.requireOutputDigest = false;
+    await assert.rejects(registry.invoke('apply', { query: { digest: preview.digest, reference: 'case' } }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('apply', { query: { digest: preview.digest, outputDigest: 'invalid', reference: 'case' } }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('apply', { query: { digest: preview.digest, outputDigest: '0'.repeat(64), reference: 'case' } }, actor), /output conflict/);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 0);
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+    await registry.invoke('apply', { query: { digest: preview.digest, outputDigest: preview.outputDigest, reference: 'case' } }, actor);
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].outputDigest, preview.outputDigest);
+    assert.throws(() => registerDataMigrationApply(new CapabilityRegistry(() => {}), { ...options, requireOutputDigest: 'true' }), /Invalid migration capability/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('bounded migration policy cannot apply a late approval or exceed pending capacity',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let release,signal,blocked=true,calls=0;const gate=new Promise(resolve=>release=resolve);try{provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.rehearseMigration(scope,'people',plan);registerDataMigrationApply(registry,{provider,scope,collection:'people',candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorize:()=>{throw Error('legacy scope called');},authorizeApply:()=>{throw Error('legacy action called');},authorizeWithSignal:()=>true,authorizeApplyWithSignal:async(_actor,_input,current)=>{calls++;if(blocked){signal=current;await gate;}return true;},policyTimeoutMs:100,maxPendingPolicies:1,requireOutputDigest:true});const input={query:{digest:preview.digest,outputDigest:preview.outputDigest,reference:'case'}};await assert.rejects(registry.invoke('apply',input,actor),/Migration policy unavailable/);assert.equal(signal.aborted,true);await assert.rejects(registry.invoke('apply',input,actor),/Migration policy unavailable/);assert.equal(calls,1);assert.equal(provider.getSchemaVersion(scope,'people'),0);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(provider.getSchemaVersion(scope,'people'),0);await registry.invoke('apply',input,actor);assert.equal(provider.getSchemaVersion(scope,'people'),1);assert.equal(provider.migrationAudit(scope,'people').items[0].outputDigest,preview.outputDigest);assert.throws(()=>registerDataMigrationApply(new CapabilityRegistry(()=>{}),{provider,scope,collection:'people',candidate:{operationId:'bad',method:'POST',path:'/apply'},plan,authorize:()=>true,authorizeApply:()=>true,policyTimeoutMs:100}),/Invalid migration capability/);}finally{release();provider.close();}
+test('bounded migration policy cannot apply a late approval or exceed pending capacity', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let release,
+    signal,
+    blocked = true,
+    calls = 0;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.rehearseMigration(scope, 'people', plan);
+    registerDataMigrationApply(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+      plan,
+      authorize: () => {
+        throw Error('legacy scope called');
+      },
+      authorizeApply: () => {
+        throw Error('legacy action called');
+      },
+      authorizeWithSignal: () => true,
+      authorizeApplyWithSignal: async (_actor, _input, current) => {
+        calls++;
+        if (blocked) {
+          signal = current;
+          await gate;
+        }
+        return true;
+      },
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1,
+      requireOutputDigest: true
+    });
+    const input = { query: { digest: preview.digest, outputDigest: preview.outputDigest, reference: 'case' } };
+    await assert.rejects(registry.invoke('apply', input, actor), /Migration policy unavailable/);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(registry.invoke('apply', input, actor), /Migration policy unavailable/);
+    assert.equal(calls, 1);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 0);
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 0);
+    await registry.invoke('apply', input, actor);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 1);
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].outputDigest, preview.outputDigest);
+    assert.throws(
+      () =>
+        registerDataMigrationApply(new CapabilityRegistry(() => {}), {
+          provider,
+          scope,
+          collection: 'people',
+          candidate: { operationId: 'bad', method: 'POST', path: '/apply' },
+          plan,
+          authorize: () => true,
+          authorizeApply: () => true,
+          policyTimeoutMs: 100
+        }),
+      /Invalid migration capability/
+    );
+  } finally {
+    release();
+    provider.close();
+  }
 });
 
-test('migration policy timeout returns HTTP 503 before any write',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{});let release;const gate=new Promise(resolve=>release=resolve);try{provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.previewMigration(scope,'people');registerDataMigrationApply(registry,{provider,scope,collection:'people',candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorize:()=>true,authorizeApply:()=>gate,policyTimeoutMs:100,maxPendingPolicies:1});const server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'admin'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/apply/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{digest:preview.digest,reference:'case'}}})});assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Migration policy unavailable'});assert.equal(provider.getSchemaVersion(scope,'people'),0);}finally{release(true);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}}finally{release?.(true);provider.close();}
+test('migration policy timeout returns HTTP 503 before any write', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let release;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.previewMigration(scope, 'people');
+    registerDataMigrationApply(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'apply', method: 'POST', path: '/apply' },
+      plan,
+      authorize: () => true,
+      authorizeApply: () => gate,
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1
+    });
+    const server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'admin' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/apply/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: { query: { digest: preview.digest, reference: 'case' } } })
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { error: 'Migration policy unavailable' });
+      assert.equal(provider.getSchemaVersion(scope, 'people'), 0);
+    } finally {
+      release(true);
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  } finally {
+    release?.(true);
+    provider.close();
+  }
 });
 
-test('rollback rehearsal checks target history for the fixed scope',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let calls=0;try{provider.put(scope,'people','a',{name:'Ada'},null);provider.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?)').run(scope.tenantId,scope.applicationId,'people',2);const plan={kind:'rollback',fromVersion:2,targetVersion:1,transform:value=>{calls++;return value;},validate:()=>true};assert.throws(()=>provider.rehearseRollback(scope,'people',plan),/target not found/);assert.equal(calls,0);registerDataMigrationRehearsal(registry,{provider,scope,collection:'people',candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan,authorize:()=>true,authorizeRehearsal:()=>true});await assert.rejects(registry.invoke('rehearse',{query:{}},actor),/target not found/);assert.equal(calls,0);provider.db.prepare('INSERT INTO business_schema_migrations VALUES (?,?,?,?,?,?,?)').run(scope.tenantId,scope.applicationId,'people',0,1,'old',1);const preview=await registry.invoke('rehearse',{query:{}},actor);assert.equal(preview.schemaVersion,2);assert.equal(calls,1);assert.equal(provider.getSchemaVersion(scope,'people'),2);const committed=provider.rollbackCollection(scope,'people',{...plan,digest:preview.digest,outputDigest:preview.outputDigest});assert.equal(committed.schemaVersion,3);assert.equal(provider.get(scope,'people','a',3).value.name,'Ada');assert.throws(()=>provider.rehearseRollback(scope,'people',{...plan,targetVersion:2}),/Invalid data rollback/);}finally{provider.close();}
+test('rollback rehearsal checks target history for the fixed scope', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let calls = 0;
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    provider.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?)').run(scope.tenantId, scope.applicationId, 'people', 2);
+    const plan = {
+      kind: 'rollback',
+      fromVersion: 2,
+      targetVersion: 1,
+      transform: value => {
+        calls++;
+        return value;
+      },
+      validate: () => true
+    };
+    assert.throws(() => provider.rehearseRollback(scope, 'people', plan), /target not found/);
+    assert.equal(calls, 0);
+    registerDataMigrationRehearsal(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' },
+      plan,
+      authorize: () => true,
+      authorizeRehearsal: () => true
+    });
+    await assert.rejects(registry.invoke('rehearse', { query: {} }, actor), /target not found/);
+    assert.equal(calls, 0);
+    provider.db.prepare('INSERT INTO business_schema_migrations VALUES (?,?,?,?,?,?,?)').run(scope.tenantId, scope.applicationId, 'people', 0, 1, 'old', 1);
+    const preview = await registry.invoke('rehearse', { query: {} }, actor);
+    assert.equal(preview.schemaVersion, 2);
+    assert.equal(calls, 1);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 2);
+    const committed = provider.rollbackCollection(scope, 'people', { ...plan, digest: preview.digest, outputDigest: preview.outputDigest });
+    assert.equal(committed.schemaVersion, 3);
+    assert.equal(provider.get(scope, 'people', 'a', 3).value.name, 'Ada');
+    assert.throws(() => provider.rehearseRollback(scope, 'people', { ...plan, targetVersion: 2 }), /Invalid data rollback/);
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration status is scoped, permission-rechecked and rejects a changing generation',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let checks=0,change=false,allowed=true;try{provider.put(scope,'people','a',{name:'Ada'},null);registerDataMigrationStatus(registry,{provider,scope,collection:'people',candidate:{operationId:'status',method:'GET',path:'/status'},authorize:()=>true,authorizeStatus:()=>{checks++;if(change&&checks===4)provider.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?)').run(scope.tenantId,scope.applicationId,'people',1);return allowed;}});assert.deepEqual(await registry.invoke('status',{query:{}},actor),{schemaVersion:0});await assert.rejects(registry.invoke('status',{query:{collection:'other'}},actor),/Invalid capability input/);await assert.rejects(registry.invoke('status',{query:{}},{...actor,tenantId:'other'}),/forbidden/);allowed=false;await assert.rejects(registry.invoke('status',{query:{}},actor),/forbidden/);allowed=true;checks=0;change=true;await assert.rejects(registry.invoke('status',{query:{}},actor),/status unavailable/);assert.equal(provider.getSchemaVersion(scope,'people'),1);assert.deepEqual(provider.get({...scope,tenantId:'other'},'people','a'),undefined);}finally{provider.close();}
+test('migration status is scoped, permission-rechecked and rejects a changing generation', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let checks = 0,
+    change = false,
+    allowed = true;
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    registerDataMigrationStatus(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'status', method: 'GET', path: '/status' },
+      authorize: () => true,
+      authorizeStatus: () => {
+        checks++;
+        if (change && checks === 4) provider.db.prepare('INSERT INTO business_collection_schema VALUES (?,?,?,?)').run(scope.tenantId, scope.applicationId, 'people', 1);
+        return allowed;
+      }
+    });
+    assert.deepEqual(await registry.invoke('status', { query: {} }, actor), { schemaVersion: 0 });
+    await assert.rejects(registry.invoke('status', { query: { collection: 'other' } }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('status', { query: {} }, { ...actor, tenantId: 'other' }), /forbidden/);
+    allowed = false;
+    await assert.rejects(registry.invoke('status', { query: {} }, actor), /forbidden/);
+    allowed = true;
+    checks = 0;
+    change = true;
+    await assert.rejects(registry.invoke('status', { query: {} }, actor), /status unavailable/);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 1);
+    assert.deepEqual(provider.get({ ...scope, tenantId: 'other' }, 'people', 'a'), undefined);
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration status timeout fences late results and bounds pending checks',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let release,signal,blocked=true,calls=0;const gate=new Promise(resolve=>release=resolve);try{registerDataMigrationStatus(registry,{provider,scope,collection:'people',candidate:{operationId:'status',method:'GET',path:'/status'},authorize:()=>true,authorizeStatus:async(_actor,current)=>{calls++;if(blocked){signal=current;await gate;}return true;},policyTimeoutMs:100,maxPendingPolicies:1});await assert.rejects(registry.invoke('status',{query:{}},actor),/status unavailable/);assert.equal(signal.aborted,true);await assert.rejects(registry.invoke('status',{query:{}},actor),/status unavailable/);assert.equal(calls,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(await registry.invoke('status',{query:{}},actor),{schemaVersion:0});}finally{release();provider.close();}
+test('migration status timeout fences late results and bounds pending checks', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let release,
+    signal,
+    blocked = true,
+    calls = 0;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    registerDataMigrationStatus(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'status', method: 'GET', path: '/status' },
+      authorize: () => true,
+      authorizeStatus: async (_actor, current) => {
+        calls++;
+        if (blocked) {
+          signal = current;
+          await gate;
+        }
+        return true;
+      },
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1
+    });
+    await assert.rejects(registry.invoke('status', { query: {} }, actor), /status unavailable/);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(registry.invoke('status', { query: {} }, actor), /status unavailable/);
+    assert.equal(calls, 1);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(await registry.invoke('status', { query: {} }, actor), { schemaVersion: 0 });
+  } finally {
+    release();
+    provider.close();
+  }
 });
 
-test('migration audit rechecks access after reading and fences timed-out policies',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let checks=0,mode='deny',release,signal;const gate=new Promise(resolve=>release=resolve);try{provider.put(scope,'people','a',{name:'Ada'},null);const preview=provider.previewMigration(scope,'people');provider.migrateCollection(scope,'people',{...plan,digest:preview.digest,evidence:{principalId:'admin',reference:'case',observedAt:1}});registerDataMigrationAudit(registry,{provider,scope,collection:'people',candidate:{operationId:'audit',method:'GET',path:'/audit'},authorize:()=>true,authorizeAudit:async(_actor,current)=>{checks++;if(checks===4){if(mode==='deny')return false;if(mode==='wait'){signal=current;await gate;}}return true;},policyTimeoutMs:100,maxPendingPolicies:1});await assert.rejects(registry.invoke('audit',{query:{}},actor),/forbidden/);checks=0;mode='wait';await assert.rejects(registry.invoke('audit',{query:{}},actor),/audit unavailable/);assert.equal(signal.aborted,true);await assert.rejects(registry.invoke('audit',{query:{}},actor),/audit unavailable/);assert.equal(checks,4);mode='allow';release();await new Promise(resolve=>setImmediate(resolve));const page=await registry.invoke('audit',{query:{}},actor);assert.equal(page.items[0].reference,'case');await assert.rejects(registry.invoke('audit',{query:{}},{...actor,tenantId:'other'}),/forbidden/);}finally{release();provider.close();}
+test('migration audit rechecks access after reading and fences timed-out policies', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let checks = 0,
+    mode = 'deny',
+    release,
+    signal;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const preview = provider.previewMigration(scope, 'people');
+    provider.migrateCollection(scope, 'people', { ...plan, digest: preview.digest, evidence: { principalId: 'admin', reference: 'case', observedAt: 1 } });
+    registerDataMigrationAudit(registry, {
+      provider,
+      scope,
+      collection: 'people',
+      candidate: { operationId: 'audit', method: 'GET', path: '/audit' },
+      authorize: () => true,
+      authorizeAudit: async (_actor, current) => {
+        checks++;
+        if (checks === 4) {
+          if (mode === 'deny') return false;
+          if (mode === 'wait') {
+            signal = current;
+            await gate;
+          }
+        }
+        return true;
+      },
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1
+    });
+    await assert.rejects(registry.invoke('audit', { query: {} }, actor), /forbidden/);
+    checks = 0;
+    mode = 'wait';
+    await assert.rejects(registry.invoke('audit', { query: {} }, actor), /audit unavailable/);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(registry.invoke('audit', { query: {} }, actor), /audit unavailable/);
+    assert.equal(checks, 4);
+    mode = 'allow';
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    const page = await registry.invoke('audit', { query: {} }, actor);
+    assert.equal(page.items[0].reference, 'case');
+    await assert.rejects(registry.invoke('audit', { query: {} }, { ...actor, tenantId: 'other' }), /forbidden/);
+  } finally {
+    release();
+    provider.close();
+  }
 });
 
-for(const blockedCheck of [3,4])test(`rehearsal policy timeout at check ${blockedCheck} fences late work`,async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let release,signal,blocked=true,checks=0,transforms=0;const gate=new Promise(resolve=>release=resolve);try{provider.put(scope,'people','a',{name:'Ada'},null);registerDataMigrationRehearsal(registry,{provider,scope,collection:'people',candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan:{fromVersion:0,transform:value=>{transforms++;return {fullName:value.name};},validate:()=>true},authorize:()=>{throw Error('legacy scope called');},authorizeRehearsal:()=>{throw Error('legacy rehearsal called');},authorizeWithSignal:()=>true,authorizeRehearsalWithSignal:async(_actor,current)=>{checks++;if(blocked&&checks===blockedCheck){signal=current;await gate;}return true;},policyTimeoutMs:100,maxPendingPolicies:1});await assert.rejects(registry.invoke('rehearse',{query:{}},actor),/rehearsal unavailable/);assert.equal(signal.aborted,true);await assert.rejects(registry.invoke('rehearse',{query:{}},actor),/rehearsal unavailable/);assert.equal(transforms,blockedCheck===3?0:1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(transforms,blockedCheck===3?0:1);const result=await registry.invoke('rehearse',{query:{}},actor);assert.equal(result.count,1);assert.equal(provider.getSchemaVersion(scope,'people'),0);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);}finally{release();provider.close();}
+for (const blockedCheck of [3, 4])
+  test(`rehearsal policy timeout at check ${blockedCheck} fences late work`, async () => {
+    const provider = new SqliteDataProvider(':memory:'),
+      registry = new CapabilityRegistry(() => {}),
+      actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+    let release,
+      signal,
+      blocked = true,
+      checks = 0,
+      transforms = 0;
+    const gate = new Promise(resolve => (release = resolve));
+    try {
+      provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+      registerDataMigrationRehearsal(registry, {
+        provider,
+        scope,
+        collection: 'people',
+        candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' },
+        plan: {
+          fromVersion: 0,
+          transform: value => {
+            transforms++;
+            return { fullName: value.name };
+          },
+          validate: () => true
+        },
+        authorize: () => {
+          throw Error('legacy scope called');
+        },
+        authorizeRehearsal: () => {
+          throw Error('legacy rehearsal called');
+        },
+        authorizeWithSignal: () => true,
+        authorizeRehearsalWithSignal: async (_actor, current) => {
+          checks++;
+          if (blocked && checks === blockedCheck) {
+            signal = current;
+            await gate;
+          }
+          return true;
+        },
+        policyTimeoutMs: 100,
+        maxPendingPolicies: 1
+      });
+      await assert.rejects(registry.invoke('rehearse', { query: {} }, actor), /rehearsal unavailable/);
+      assert.equal(signal.aborted, true);
+      await assert.rejects(registry.invoke('rehearse', { query: {} }, actor), /rehearsal unavailable/);
+      assert.equal(transforms, blockedCheck === 3 ? 0 : 1);
+      blocked = false;
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(transforms, blockedCheck === 3 ? 0 : 1);
+      const result = await registry.invoke('rehearse', { query: {} }, actor);
+      assert.equal(result.count, 1);
+      assert.equal(provider.getSchemaVersion(scope, 'people'), 0);
+      assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+    } finally {
+      release();
+      provider.close();
+    }
+  });
+
+test('migration plan digests bind rollback target and reject mismatched approvals', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' },
+    candidate = operationId => ({ operationId, method: 'POST', path: '/migration' });
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const identity = value => value,
+      validate = () => true;
+    for (let version = 0; version < 2; version++) {
+      const preview = provider.previewMigration(scope, 'people');
+      provider.migrateCollection(scope, 'people', { fromVersion: version, toVersion: version + 1, digest: preview.digest, transform: identity, validate });
+    }
+    const base = { provider, scope, collection: 'people', authorize: () => true },
+      target0 = { kind: 'rollback', fromVersion: 2, targetVersion: 0, transform: identity, validate },
+      target1 = { ...target0, targetVersion: 1 };
+    registerDataMigrationRehearsal(registry, { ...base, candidate: candidate('zero'), plan: target0, authorizeRehearsal: () => true });
+    registerDataMigrationRehearsal(registry, { ...base, candidate: candidate('one'), plan: target1, authorizeRehearsal: () => true });
+    let seen;
+    registerDataMigrationApply(registry, {
+      ...base,
+      candidate: candidate('apply'),
+      plan: target1,
+      authorizeApply: (_actor, input) => {
+        seen = input.planDigest;
+        return true;
+      },
+      requirePlanDigest: true,
+      clock: () => 100
+    });
+    target1.targetVersion = 0;
+    const zero = await registry.invoke('zero', { query: {} }, actor),
+      one = await registry.invoke('one', { query: {} }, actor);
+    assert.equal(zero.outputDigest, one.outputDigest);
+    assert.notEqual(zero.planDigest, one.planDigest);
+    assert.deepEqual(one.plan, { kind: 'rollback', fromVersion: 2, toVersion: 3, targetVersion: 1 });
+    const query = { digest: one.digest, outputDigest: one.outputDigest, reference: 'case' };
+    await assert.rejects(registry.invoke('apply', { query }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('apply', { query: { ...query, planDigest: zero.planDigest } }, actor), /plan conflict/);
+    assert.equal(seen, zero.planDigest);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 2);
+    assert.deepEqual(provider.migrationAudit(scope, 'people').items, []);
+    assert.throws(
+      () => provider.rollbackCollection(scope, 'people', { ...target0, targetVersion: 1, digest: one.digest, outputDigest: one.outputDigest, planDigest: zero.planDigest }),
+      /plan conflict/
+    );
+    await registry.invoke('apply', { query: { ...query, planDigest: one.planDigest } }, actor);
+    assert.equal(provider.getSchemaVersion(scope, 'people'), 3);
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].targetVersion, 1);
+    assert.equal(provider.migrationAudit(scope, 'people').items[0].planDigest, one.planDigest);
+  } finally {
+    provider.close();
+  }
 });
 
-test('migration plan digests bind rollback target and reject mismatched approvals',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'},candidate=operationId=>({operationId,method:'POST',path:'/migration'});try{provider.put(scope,'people','a',{name:'Ada'},null);const identity=value=>value,validate=()=>true;for(let version=0;version<2;version++){const preview=provider.previewMigration(scope,'people');provider.migrateCollection(scope,'people',{fromVersion:version,toVersion:version+1,digest:preview.digest,transform:identity,validate});}const base={provider,scope,collection:'people',authorize:()=>true},target0={kind:'rollback',fromVersion:2,targetVersion:0,transform:identity,validate},target1={...target0,targetVersion:1};registerDataMigrationRehearsal(registry,{...base,candidate:candidate('zero'),plan:target0,authorizeRehearsal:()=>true});registerDataMigrationRehearsal(registry,{...base,candidate:candidate('one'),plan:target1,authorizeRehearsal:()=>true});let seen;registerDataMigrationApply(registry,{...base,candidate:candidate('apply'),plan:target1,authorizeApply:(_actor,input)=>{seen=input.planDigest;return true;},requirePlanDigest:true,clock:()=>100});target1.targetVersion=0;const zero=await registry.invoke('zero',{query:{}},actor),one=await registry.invoke('one',{query:{}},actor);assert.equal(zero.outputDigest,one.outputDigest);assert.notEqual(zero.planDigest,one.planDigest);assert.deepEqual(one.plan,{kind:'rollback',fromVersion:2,toVersion:3,targetVersion:1});const query={digest:one.digest,outputDigest:one.outputDigest,reference:'case'};await assert.rejects(registry.invoke('apply',{query},actor),/Invalid capability input/);await assert.rejects(registry.invoke('apply',{query:{...query,planDigest:zero.planDigest}},actor),/plan conflict/);assert.equal(seen,zero.planDigest);assert.equal(provider.getSchemaVersion(scope,'people'),2);assert.deepEqual(provider.migrationAudit(scope,'people').items,[]);assert.throws(()=>provider.rollbackCollection(scope,'people',{...target0,targetVersion:1,digest:one.digest,outputDigest:one.outputDigest,planDigest:zero.planDigest}),/plan conflict/);await registry.invoke('apply',{query:{...query,planDigest:one.planDigest}},actor);assert.equal(provider.getSchemaVersion(scope,'people'),3);assert.equal(provider.migrationAudit(scope,'people').items[0].targetVersion,1);assert.equal(provider.migrationAudit(scope,'people').items[0].planDigest,one.planDigest);}finally{provider.close();}
+test('migration plan digest evidence survives reopening', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'migration-plan-evidence-')),
+    path = join(dir, 'data.sqlite'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' };
+  let provider = new SqliteDataProvider(path);
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    const base = { provider, scope, collection: 'people', authorize: () => true };
+    registerDataMigrationRehearsal(registry, { ...base, candidate: { operationId: 'rehearse', method: 'POST', path: '/rehearse' }, plan, authorizeRehearsal: () => true });
+    registerDataMigrationApply(registry, { ...base, candidate: { operationId: 'apply', method: 'POST', path: '/apply' }, plan, authorizeApply: () => true, requirePlanDigest: true, clock: () => 100 });
+    const preview = await registry.invoke('rehearse', { query: {} }, actor);
+    await registry.invoke('apply', { query: { digest: preview.digest, outputDigest: preview.outputDigest, planDigest: preview.planDigest, reference: 'case' } }, actor);
+    provider.close();
+    provider = new SqliteDataProvider(path);
+    const event = provider.migrationAudit(scope, 'people').items[0];
+    assert.equal(event.planDigest, preview.planDigest);
+    assert.equal(event.outputDigest, preview.outputDigest);
+    assert.equal(event.reference, 'case');
+    assert.throws(() => provider.db.exec("UPDATE business_schema_migration_audit SET plan_digest='forged'"), /immutable/);
+  } finally {
+    provider.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('migration plan digest evidence survives reopening',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'migration-plan-evidence-')),path=join(dir,'data.sqlite'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'};let provider=new SqliteDataProvider(path);try{provider.put(scope,'people','a',{name:'Ada'},null);const base={provider,scope,collection:'people',authorize:()=>true};registerDataMigrationRehearsal(registry,{...base,candidate:{operationId:'rehearse',method:'POST',path:'/rehearse'},plan,authorizeRehearsal:()=>true});registerDataMigrationApply(registry,{...base,candidate:{operationId:'apply',method:'POST',path:'/apply'},plan,authorizeApply:()=>true,requirePlanDigest:true,clock:()=>100});const preview=await registry.invoke('rehearse',{query:{}},actor);await registry.invoke('apply',{query:{digest:preview.digest,outputDigest:preview.outputDigest,planDigest:preview.planDigest,reference:'case'}},actor);provider.close();provider=new SqliteDataProvider(path);const event=provider.migrationAudit(scope,'people').items[0];assert.equal(event.planDigest,preview.planDigest);assert.equal(event.outputDigest,preview.outputDigest);assert.equal(event.reference,'case');assert.throws(()=>provider.db.exec("UPDATE business_schema_migration_audit SET plan_digest='forged'"),/immutable/);}finally{provider.close();rmSync(dir,{recursive:true,force:true});}
-});
-
-test('migration audit pages newest first without crossing scopes or repeating later writes',async()=>{
- const provider=new SqliteDataProvider(':memory:'),registry=new CapabilityRegistry(()=>{}),actor={tenantId:'tenant',principalId:'admin',origin:'ui'},identity=value=>value;try{provider.put(scope,'people','a',{name:'Ada'},null);for(let version=0;version<3;version++){const preview=provider.previewMigration(scope,'people');provider.migrateCollection(scope,'people',{fromVersion:version,toVersion:version+1,digest:preview.digest,transform:identity,validate:()=>true,evidence:{principalId:'admin',reference:'case-'+version,observedAt:version}});}registerDataMigrationAudit(registry,{provider,scope,collection:'people',candidate:{operationId:'audit',method:'GET',path:'/audit'},authorize:()=>true});const first=await registry.invoke('audit',{query:{order:'desc',limit:2}},actor);assert.deepEqual(first.items.map(item=>item.toVersion),[3,2]);assert.equal(first.nextBefore,2);const latest=provider.previewMigration(scope,'people');provider.migrateCollection(scope,'people',{fromVersion:3,toVersion:4,digest:latest.digest,transform:identity,validate:()=>true,evidence:{principalId:'admin',reference:'new',observedAt:4}});const second=await registry.invoke('audit',{query:{order:'desc',before:first.nextBefore,limit:2}},actor);assert.deepEqual(second.items.map(item=>item.toVersion),[1]);assert.equal(second.nextBefore,undefined);assert.equal((await registry.invoke('audit',{query:{order:'desc',limit:1}},actor)).items[0].toVersion,4);await assert.rejects(registry.invoke('audit',{query:{before:2}},actor),/Invalid capability input/);await assert.rejects(registry.invoke('audit',{query:{order:'desc',after:1}},actor),/Invalid capability input/);await assert.rejects(registry.invoke('audit',{query:{order:'desc'}},{...actor,tenantId:'other'}),/forbidden/);assert.throws(()=>provider.migrationAudit(scope,'people',{order:'asc',before:2}),/Invalid migration audit/);}finally{provider.close();}
+test('migration audit pages newest first without crossing scopes or repeating later writes', async () => {
+  const provider = new SqliteDataProvider(':memory:'),
+    registry = new CapabilityRegistry(() => {}),
+    actor = { tenantId: 'tenant', principalId: 'admin', origin: 'ui' },
+    identity = value => value;
+  try {
+    provider.put(scope, 'people', 'a', { name: 'Ada' }, null);
+    for (let version = 0; version < 3; version++) {
+      const preview = provider.previewMigration(scope, 'people');
+      provider.migrateCollection(scope, 'people', {
+        fromVersion: version,
+        toVersion: version + 1,
+        digest: preview.digest,
+        transform: identity,
+        validate: () => true,
+        evidence: { principalId: 'admin', reference: 'case-' + version, observedAt: version }
+      });
+    }
+    registerDataMigrationAudit(registry, { provider, scope, collection: 'people', candidate: { operationId: 'audit', method: 'GET', path: '/audit' }, authorize: () => true });
+    const first = await registry.invoke('audit', { query: { order: 'desc', limit: 2 } }, actor);
+    assert.deepEqual(
+      first.items.map(item => item.toVersion),
+      [3, 2]
+    );
+    assert.equal(first.nextBefore, 2);
+    const latest = provider.previewMigration(scope, 'people');
+    provider.migrateCollection(scope, 'people', {
+      fromVersion: 3,
+      toVersion: 4,
+      digest: latest.digest,
+      transform: identity,
+      validate: () => true,
+      evidence: { principalId: 'admin', reference: 'new', observedAt: 4 }
+    });
+    const second = await registry.invoke('audit', { query: { order: 'desc', before: first.nextBefore, limit: 2 } }, actor);
+    assert.deepEqual(
+      second.items.map(item => item.toVersion),
+      [1]
+    );
+    assert.equal(second.nextBefore, undefined);
+    assert.equal((await registry.invoke('audit', { query: { order: 'desc', limit: 1 } }, actor)).items[0].toVersion, 4);
+    await assert.rejects(registry.invoke('audit', { query: { before: 2 } }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('audit', { query: { order: 'desc', after: 1 } }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('audit', { query: { order: 'desc' } }, { ...actor, tenantId: 'other' }), /forbidden/);
+    assert.throws(() => provider.migrationAudit(scope, 'people', { order: 'asc', before: 2 }), /Invalid migration audit/);
+  } finally {
+    provider.close();
+  }
 });

@@ -1,97 +1,771 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {once} from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { once } from 'node:events';
 import pg from 'pg';
-import {AIMessage} from '@langchain/core/messages';
-import {PostgresAgentDefinitions,createConfiguredAgentRun,SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentSchedules,AgentScheduleWorker,DurableAgentWorker,createAgentEventIngress} from '../dist/index.js';
+import { AIMessage } from '@langchain/core/messages';
+import {
+  PostgresAgentDefinitions,
+  createConfiguredAgentRun,
+  SqliteAgentRuns,
+  SqliteAgentTriggers,
+  SqliteAgentSchedules,
+  AgentScheduleWorker,
+  DurableAgentWorker,
+  createAgentEventIngress
+} from '../dist/index.js';
 
-const actor={tenantId:'tenant',principalId:'admin'},manifest=(tenantId='tenant',agentId='agent')=>({manifestVersion:1,tenantId,agentId,name:'Operations',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'svc',model:{provider:'local',model:'test'},allowedCapabilities:['lookup'],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:2,maxTokensPerRun:100,maxRunsPerDay:10}});
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
+const actor = { tenantId: 'tenant', principalId: 'admin' },
+  manifest = (tenantId = 'tenant', agentId = 'agent') => ({
+    manifestVersion: 1,
+    tenantId,
+    agentId,
+    name: 'Operations',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'svc',
+    model: { provider: 'local', model: 'test' },
+    allowedCapabilities: ['lookup'],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 60000 },
+    quotas: { maxConcurrentRuns: 2, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  });
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
 
-test('PostgreSQL definitions drive event and schedule activation',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_activation_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),dir=mkdtempSync(join(tmpdir(),'agent-activation-')),path=join(dir,'runs.sqlite'),scope={tenantId:'tenant',agentId:'agent'};let runs,triggers,schedules,server;
- try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest(),0);
-  runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);schedules=new SqliteAgentSchedules(path);
-  server=createAgentEventIngress({triggers,definitions:definitions.view(actor),maxPending:5,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true,clock:()=>1000});server.listen(0,'127.0.0.1');await once(server,'listening');
-  const response=await fetch(`http://127.0.0.1:${server.address().port}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId:'event',eventType:'message',payload:{}})});assert.equal(response.status,202);const {runId}=await response.json();
-  schedules.save(scope,'timer',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,0);const worker=new AgentScheduleWorker({schedules,scope,definitions:definitions.view(actor),authorize:()=>true,maxPending:5,maxPerPass:2,pollMs:100,onError:error=>{throw error},clock:()=>1000});assert.equal(await worker.runOnce(),1);assert.deepEqual(runs.list(scope).map(run=>run.definitionVersion),[1,1]);
-  const durable=new DurableAgentWorker({runs,definitions:definitions.view(actor),asyncDefinitions:true,workerId:'worker',leaseMs:600,pollMs:25,clock:()=>1000,authorizeStart:()=>true,execute:async(_run,{assertLeaseAsync})=>{await assertLeaseAsync();return 'succeeded'}});assert.equal((await durable.runOnce(scope,runId)).status,'succeeded');
- }finally{if(server?.listening)await new Promise(resolve=>server.close(resolve));schedules?.close();triggers?.close();runs?.close();rmSync(dir,{recursive:true,force:true});await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL definitions drive event and schedule activation', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_activation_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    dir = mkdtempSync(join(tmpdir(), 'agent-activation-')),
+    path = join(dir, 'runs.sqlite'),
+    scope = { tenantId: 'tenant', agentId: 'agent' };
+  let runs, triggers, schedules, server;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+    await definitions.initialize();
+    await definitions.save(actor, manifest(), 0);
+    runs = new SqliteAgentRuns(path);
+    triggers = new SqliteAgentTriggers(path);
+    schedules = new SqliteAgentSchedules(path);
+    server = createAgentEventIngress({
+      triggers,
+      definitions: definitions.view(actor),
+      maxPending: 5,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: () => true,
+      clock: () => 1000
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent', eventId: 'event', eventType: 'message', payload: {} })
+    });
+    assert.equal(response.status, 202);
+    const { runId } = await response.json();
+    schedules.save(scope, 'timer', { enabled: true, principalId: 'scheduler', rule: { kind: 'interval', intervalMs: 1000 } }, 0, 0);
+    const worker = new AgentScheduleWorker({
+      schedules,
+      scope,
+      definitions: definitions.view(actor),
+      authorize: () => true,
+      maxPending: 5,
+      maxPerPass: 2,
+      pollMs: 100,
+      onError: error => {
+        throw error;
+      },
+      clock: () => 1000
+    });
+    assert.equal(await worker.runOnce(), 1);
+    assert.deepEqual(
+      runs.list(scope).map(run => run.definitionVersion),
+      [1, 1]
+    );
+    const durable = new DurableAgentWorker({
+      runs,
+      definitions: definitions.view(actor),
+      asyncDefinitions: true,
+      workerId: 'worker',
+      leaseMs: 600,
+      pollMs: 25,
+      clock: () => 1000,
+      authorizeStart: () => true,
+      execute: async (_run, { assertLeaseAsync }) => {
+        await assertLeaseAsync();
+        return 'succeeded';
+      }
+    });
+    assert.equal((await durable.runOnce(scope, runId)).status, 'succeeded');
+  } finally {
+    if (server?.listening) await new Promise(resolve => server.close(resolve));
+    schedules?.close();
+    triggers?.close();
+    runs?.close();
+    rmSync(dir, { recursive: true, force: true });
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('PostgreSQL definitions reject invalid configuration and denied operations before querying',async()=>{assert.throws(()=>new PostgresAgentDefinitions({}),/configuration/);const store=new PostgresAgentDefinitions({enabled:true,query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')},authorize:()=>false});await assert.rejects(store.get(actor,'agent'),/access denied/);await assert.rejects(store.save(actor,manifest(),0),/access denied/);await assert.rejects(store.list(actor),/access denied/);await assert.rejects(store.history(actor,'agent'),/access denied/);assert.throws(()=>store.view({tenantId:'',principalId:'admin'}),/actor/);assert.throws(()=>store.view(actor).get('other','agent'),/scope mismatch/);});
-
-test('PostgreSQL definitions coordinate concurrent versions, isolate tenants and audit changes',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{const schema='agent_def_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let allowed=true;try{
- await admin.query(`CREATE SCHEMA "${schema}"`);const config=pool=>({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),clock:()=>100,authorize:(_actor,action,id)=>allowed&&!(action==='read'&&id==='hidden')}),first=new PostgresAgentDefinitions(config(a)),second=new PostgresAgentDefinitions(config(b));await first.initialize();await second.initialize();
- const attempts=await Promise.allSettled([first.save(actor,manifest(),0),second.save(actor,{...manifest(),name:'Concurrent'},0)]);assert.equal(attempts.filter(x=>x.status==='fulfilled').length,1);assert.match(attempts.find(x=>x.status==='rejected').reason.message,/version conflict/);const current=await first.get(actor,'agent');assert.equal(current.version,1);const input={...manifest(),name:'Updated',instructions:'Follow the inventory process.',lifecycle:{...manifest().lifecycle,maxTurns:1}};const updated=await second.save(actor,input,1);input.name='tampered';updated.manifest.name='tampered';assert.equal((await first.get(actor,'agent')).manifest.name,'Updated');assert.equal((await first.get(actor,'agent')).manifest.instructions,'Follow the inventory process.');assert.equal((await first.get(actor,'agent')).manifest.lifecycle.maxTurns,1);assert.equal((await first.get(actor,'agent',1)).version,1);assert.equal(await first.get({...actor,tenantId:'other'},'agent'),undefined);
- await first.save(actor,manifest('tenant','hidden'),0);await first.save(actor,manifest('tenant','visible'),0);const page1=await first.list(actor,{limit:1});assert.equal(page1.items[0].manifest.agentId,'agent');const page2=await first.list(actor,{after:page1.nextAfter,limit:1});assert.deepEqual(page2.items,[]);const page3=await first.list(actor,{after:page2.nextAfter,limit:1});assert.equal(page3.items[0].manifest.agentId,'visible');assert.equal((await first.history(actor,'agent')).items.length,2);assert.deepEqual((await first.history(actor,'agent')).items.map(x=>x.principalId),['admin','admin']);
- assert.equal((await first.view(actor).get('tenant','agent')).version,2);await assert.rejects(async()=>first.view(actor).get('other','agent'),/scope mismatch/);await assert.rejects(a.query("UPDATE app_mixer_agent_definitions SET manifest='{}'"),/immutable/);await assert.rejects(a.query('DELETE FROM app_mixer_agent_definition_audit'),/immutable/);await assert.rejects(a.query('TRUNCATE app_mixer_agent_definitions'),/immutable/);
- const runOptions={definitions:first.view(actor),tenantId:'tenant',agentId:'agent',expectedVersion:2,bindings:[{operationId:'lookup',toolName:'lookup',description:'Lookup'}],registry:{invoke:async()=>({})},authorizeRun:()=>true,authorizeCapability:()=>true,createModel:()=>({invoke:async history=>{assert.equal(history[0]._getType(),'system');assert.equal(history[0].content,'Follow the inventory process.');return new AIMessage('Ready');}})},request={threadId:'thread',runId:'run',messages:[{role:'user',content:'Hello'}]},collect=async stream=>{const events=[];for await(const event of stream)events.push(event);return events;},run=await createConfiguredAgentRun(runOptions);assert.equal((await collect(run.run(request))).at(-1).type,'RUN_FINISHED');const stale=await createConfiguredAgentRun(runOptions);
- let started,release,checks=0;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),changing=new PostgresAgentDefinitions({...config(a),authorize:async(_actor,action)=>{if(action==='write'&&++checks===2){started();await gate;}return allowed;}}),pendingWrite=changing.save(actor,manifest('tenant','policy'),0);await ready;allowed=false;release();await assert.rejects(pendingWrite,/denied/);allowed=true;assert.equal(await first.get(actor,'policy'),undefined);
- let readStarted,readRelease,reads=0;const readReady=new Promise(r=>readStarted=r),readGate=new Promise(r=>readRelease=r),reader=new PostgresAgentDefinitions({...config(a),authorize:async(_actor,action)=>{if(action==='read'&&++reads===2){readStarted();await readGate;}return true;}}),pendingRead=reader.get(actor,'agent');await readReady;await second.save(actor,{...manifest(),name:'Third'},2);readRelease();await assert.rejects(pendingRead,/changed during read/);await assert.rejects(collect(stale.run(request)),/definition changed/);
- let finalStarted,finalRelease,finalChecks=0;const finalReady=new Promise(r=>finalStarted=r),finalGate=new Promise(r=>finalRelease=r),finalReader=new PostgresAgentDefinitions({...config(a),authorize:async(_actor,action)=>{if(action==='read'&&++finalChecks===3){finalStarted();await finalGate;}return true;}}),finalRead=finalReader.get(actor,'agent');await finalReady;await second.save(actor,{...manifest(),name:'Fourth'},3);finalRelease();await assert.rejects(finalRead,/changed during read/);
- await a.query("CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");await a.query('CREATE TRIGGER reject_agent_audit BEFORE INSERT ON app_mixer_agent_definition_audit FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()');await assert.rejects(first.save(actor,{...manifest(),name:'Rejected'},4),/audit unavailable/);assert.equal((await first.get(actor,'agent')).version,4);allowed=false;await assert.rejects(first.get(actor,'agent'),/denied/);await assert.rejects(first.save(actor,manifest(),4),/denied/);
- }finally{await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}});
-
-test('PostgreSQL definitions enforce host tenant limits under concurrent creation',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_limits_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,max:12,options:`-c search_path=${schema}`});
- const limits={tenant:{maxAgents:3,maxVersionsPerAgent:2,maxConcurrentRuns:2,maxTokensPerRun:500},other:{}};
- try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);
-  for(const bad of [()=>({maxAgents:0}),()=>({unknown:1}),()=>[],()=>({maxRunsPerDay:1.5})]){const store=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:bad});await store.initialize();await assert.rejects(store.save(actor,manifest('tenant','bad'),0),/Invalid agent definition tenant limits/);}
-  assert.throws(()=>new PostgresAgentDefinitions({enabled:true,query:()=>{},transaction:()=>{},authorize:()=>true,tenantLimits:{}}),/Invalid agent definition configuration/);
-  const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:async tenantId=>limits[tenantId]});await definitions.initialize();
-  const over={...manifest('tenant','greedy'),quotas:{maxConcurrentRuns:3,maxTokensPerRun:100,maxRunsPerDay:10}};await assert.rejects(definitions.save(actor,over,0),/quota exceeds tenant limit/);
-  const results=await Promise.allSettled(Array.from({length:8},(_,i)=>definitions.save(actor,manifest('tenant','agent-'+i),0)));
-  assert.equal(results.filter(result=>result.status==='fulfilled').length,3);assert.ok(results.filter(result=>result.status==='rejected').every(result=>/Agent limit reached/.test(result.reason.message)));
-  const created=results.find(result=>result.status==='fulfilled').value.manifest.agentId;
-  assert.equal((await definitions.save(actor,{...manifest('tenant',created),name:'Second'},1)).version,2);await assert.rejects(definitions.save(actor,{...manifest('tenant',created),name:'Third'},2),/version limit reached/);
-  assert.equal((await definitions.list(actor)).items.length,3);
-  for(let i=0;i<5;i++)await definitions.save({tenantId:'other',principalId:'admin'},{...manifest('other','agent-'+i),quotas:{maxConcurrentRuns:100,maxTokensPerRun:10000000,maxRunsPerDay:1000000}},0);
-  limits.tenant.maxAgents=4;assert.equal((await definitions.save(actor,manifest('tenant','late'),0)).version,1);
-  limits.tenant.maxConcurrentRuns=1;await assert.rejects(definitions.save(actor,{...manifest('tenant','late'),name:'Updated'},1),/quota exceeds tenant limit/);assert.equal((await definitions.get(actor,'late')).version,1);
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL definitions reject invalid configuration and denied operations before querying', async () => {
+  assert.throws(() => new PostgresAgentDefinitions({}), /configuration/);
+  const store = new PostgresAgentDefinitions({
+    enabled: true,
+    query: async () => {
+      throw Error('unexpected query');
+    },
+    transaction: async () => {
+      throw Error('unexpected transaction');
+    },
+    authorize: () => false
+  });
+  await assert.rejects(store.get(actor, 'agent'), /access denied/);
+  await assert.rejects(store.save(actor, manifest(), 0), /access denied/);
+  await assert.rejects(store.list(actor), /access denied/);
+  await assert.rejects(store.history(actor, 'agent'), /access denied/);
+  assert.throws(() => store.view({ tenantId: '', principalId: 'admin' }), /actor/);
+  assert.throws(() => store.view(actor).get('other', 'agent'), /scope mismatch/);
 });
 
-test('PostgreSQL definition views propagate cancellation and fence later authorization checks',async()=>{
- for(const mode of ['query','policy','fallback']){let started,release,checks=0,queries=0,legacy=0,seen;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),row={version:'1',manifest:JSON.stringify(manifest())},query=async()=>{legacy++;if(mode==='fallback'){started();await gate;}return {rows:[row]};},store=new PostgresAgentDefinitions({enabled:true,query,...(mode==='query'?{queryWithSignal:async(_sql,_args,signal)=>{queries++;seen=signal;started();await gate;return {rows:[row]};}}:{}),transaction:async()=>{throw Error('unexpected');},authorize:async(_actor,action,_agent,_manifest,signal)=>{assert.equal(action,'read');checks++;seen=signal;if(mode==='policy'&&checks===2){started();await gate;}return true;}}),controller=new AbortController(),view=store.view(actor);try{assert.throws(()=>view.getWithSignal('other','agent',controller.signal),/scope mismatch/);const pending=view.getWithSignal('tenant','agent',controller.signal);await ready;controller.abort();release();await assert.rejects(pending,error=>error.name==='AbortError');assert.equal(seen,controller.signal);if(mode==='query'){assert.equal(queries,1);assert.equal(legacy,0);assert.equal(checks,1);}if(mode==='fallback'){assert.equal(legacy,1);assert.equal(checks,1);}if(mode==='policy'){assert.equal(legacy,1);assert.equal(checks,2);}await assert.rejects(view.getWithSignal('tenant','agent',controller.signal),error=>error.name==='AbortError');
- }finally{release?.();}}
+test('PostgreSQL definitions coordinate concurrent versions, isolate tenants and audit changes', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_def_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    a = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    b = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let allowed = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = pool => ({
+        enabled: true,
+        query: (sql, args) => pool.query(sql, args),
+        transaction: transaction(pool),
+        clock: () => 100,
+        authorize: (_actor, action, id) => allowed && !(action === 'read' && id === 'hidden')
+      }),
+      first = new PostgresAgentDefinitions(config(a)),
+      second = new PostgresAgentDefinitions(config(b));
+    await first.initialize();
+    await second.initialize();
+    const attempts = await Promise.allSettled([first.save(actor, manifest(), 0), second.save(actor, { ...manifest(), name: 'Concurrent' }, 0)]);
+    assert.equal(attempts.filter(x => x.status === 'fulfilled').length, 1);
+    assert.match(attempts.find(x => x.status === 'rejected').reason.message, /version conflict/);
+    const current = await first.get(actor, 'agent');
+    assert.equal(current.version, 1);
+    const input = { ...manifest(), name: 'Updated', instructions: 'Follow the inventory process.', lifecycle: { ...manifest().lifecycle, maxTurns: 1 } };
+    const updated = await second.save(actor, input, 1);
+    input.name = 'tampered';
+    updated.manifest.name = 'tampered';
+    assert.equal((await first.get(actor, 'agent')).manifest.name, 'Updated');
+    assert.equal((await first.get(actor, 'agent')).manifest.instructions, 'Follow the inventory process.');
+    assert.equal((await first.get(actor, 'agent')).manifest.lifecycle.maxTurns, 1);
+    assert.equal((await first.get(actor, 'agent', 1)).version, 1);
+    assert.equal(await first.get({ ...actor, tenantId: 'other' }, 'agent'), undefined);
+    await first.save(actor, manifest('tenant', 'hidden'), 0);
+    await first.save(actor, manifest('tenant', 'visible'), 0);
+    const page1 = await first.list(actor, { limit: 1 });
+    assert.equal(page1.items[0].manifest.agentId, 'agent');
+    const page2 = await first.list(actor, { after: page1.nextAfter, limit: 1 });
+    assert.deepEqual(page2.items, []);
+    const page3 = await first.list(actor, { after: page2.nextAfter, limit: 1 });
+    assert.equal(page3.items[0].manifest.agentId, 'visible');
+    assert.equal((await first.history(actor, 'agent')).items.length, 2);
+    assert.deepEqual(
+      (await first.history(actor, 'agent')).items.map(x => x.principalId),
+      ['admin', 'admin']
+    );
+    assert.equal((await first.view(actor).get('tenant', 'agent')).version, 2);
+    await assert.rejects(async () => first.view(actor).get('other', 'agent'), /scope mismatch/);
+    await assert.rejects(a.query("UPDATE app_mixer_agent_definitions SET manifest='{}'"), /immutable/);
+    await assert.rejects(a.query('DELETE FROM app_mixer_agent_definition_audit'), /immutable/);
+    await assert.rejects(a.query('TRUNCATE app_mixer_agent_definitions'), /immutable/);
+    const runOptions = {
+        definitions: first.view(actor),
+        tenantId: 'tenant',
+        agentId: 'agent',
+        expectedVersion: 2,
+        bindings: [{ operationId: 'lookup', toolName: 'lookup', description: 'Lookup' }],
+        registry: { invoke: async () => ({}) },
+        authorizeRun: () => true,
+        authorizeCapability: () => true,
+        createModel: () => ({
+          invoke: async history => {
+            assert.equal(history[0]._getType(), 'system');
+            assert.equal(history[0].content, 'Follow the inventory process.');
+            return new AIMessage('Ready');
+          }
+        })
+      },
+      request = { threadId: 'thread', runId: 'run', messages: [{ role: 'user', content: 'Hello' }] },
+      collect = async stream => {
+        const events = [];
+        for await (const event of stream) events.push(event);
+        return events;
+      },
+      run = await createConfiguredAgentRun(runOptions);
+    assert.equal((await collect(run.run(request))).at(-1).type, 'RUN_FINISHED');
+    const stale = await createConfiguredAgentRun(runOptions);
+    let started,
+      release,
+      checks = 0;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (release = r)),
+      changing = new PostgresAgentDefinitions({
+        ...config(a),
+        authorize: async (_actor, action) => {
+          if (action === 'write' && ++checks === 2) {
+            started();
+            await gate;
+          }
+          return allowed;
+        }
+      }),
+      pendingWrite = changing.save(actor, manifest('tenant', 'policy'), 0);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pendingWrite, /denied/);
+    allowed = true;
+    assert.equal(await first.get(actor, 'policy'), undefined);
+    let readStarted,
+      readRelease,
+      reads = 0;
+    const readReady = new Promise(r => (readStarted = r)),
+      readGate = new Promise(r => (readRelease = r)),
+      reader = new PostgresAgentDefinitions({
+        ...config(a),
+        authorize: async (_actor, action) => {
+          if (action === 'read' && ++reads === 2) {
+            readStarted();
+            await readGate;
+          }
+          return true;
+        }
+      }),
+      pendingRead = reader.get(actor, 'agent');
+    await readReady;
+    await second.save(actor, { ...manifest(), name: 'Third' }, 2);
+    readRelease();
+    await assert.rejects(pendingRead, /changed during read/);
+    await assert.rejects(collect(stale.run(request)), /definition changed/);
+    let finalStarted,
+      finalRelease,
+      finalChecks = 0;
+    const finalReady = new Promise(r => (finalStarted = r)),
+      finalGate = new Promise(r => (finalRelease = r)),
+      finalReader = new PostgresAgentDefinitions({
+        ...config(a),
+        authorize: async (_actor, action) => {
+          if (action === 'read' && ++finalChecks === 3) {
+            finalStarted();
+            await finalGate;
+          }
+          return true;
+        }
+      }),
+      finalRead = finalReader.get(actor, 'agent');
+    await finalReady;
+    await second.save(actor, { ...manifest(), name: 'Fourth' }, 3);
+    finalRelease();
+    await assert.rejects(finalRead, /changed during read/);
+    await a.query("CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");
+    await a.query('CREATE TRIGGER reject_agent_audit BEFORE INSERT ON app_mixer_agent_definition_audit FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()');
+    await assert.rejects(first.save(actor, { ...manifest(), name: 'Rejected' }, 4), /audit unavailable/);
+    assert.equal((await first.get(actor, 'agent')).version, 4);
+    allowed = false;
+    await assert.rejects(first.get(actor, 'agent'), /denied/);
+    await assert.rejects(first.save(actor, manifest(), 4), /denied/);
+  } finally {
+    await Promise.allSettled([a.end(), b.end()]);
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('signal-aware PostgreSQL view preserves policy and rejects changing versions',async()=>{
- let version=0,checks=0;const store=new PostgresAgentDefinitions({enabled:true,query:async()=>({rows:[]}),queryWithSignal:async(_sql,_args,signal)=>{assert.equal(signal.aborted,false);return {rows:[{version:String(++version),manifest:JSON.stringify(manifest())}]};},transaction:async()=>{},authorize:async(_actor,_action,_agent,_manifest,signal)=>{checks++;assert.ok(signal instanceof AbortSignal);return true;}});await assert.rejects(store.view(actor).getWithSignal('tenant','agent',new AbortController().signal),/changed during read/);assert.equal(checks,3);assert.throws(()=>new PostgresAgentDefinitions({enabled:true,query:()=>{},queryWithSignal:true,transaction:()=>{},authorize:()=>true}),/configuration/);
+test('PostgreSQL definitions enforce host tenant limits under concurrent creation', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_limits_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, max: 12, options: `-c search_path=${schema}` });
+  const limits = { tenant: { maxAgents: 3, maxVersionsPerAgent: 2, maxConcurrentRuns: 2, maxTokensPerRun: 500 }, other: {} };
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    for (const bad of [() => ({ maxAgents: 0 }), () => ({ unknown: 1 }), () => [], () => ({ maxRunsPerDay: 1.5 })]) {
+      const store = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true, tenantLimits: bad });
+      await store.initialize();
+      await assert.rejects(store.save(actor, manifest('tenant', 'bad'), 0), /Invalid agent definition tenant limits/);
+    }
+    assert.throws(() => new PostgresAgentDefinitions({ enabled: true, query: () => {}, transaction: () => {}, authorize: () => true, tenantLimits: {} }), /Invalid agent definition configuration/);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: () => true,
+      tenantLimits: async tenantId => limits[tenantId]
+    });
+    await definitions.initialize();
+    const over = { ...manifest('tenant', 'greedy'), quotas: { maxConcurrentRuns: 3, maxTokensPerRun: 100, maxRunsPerDay: 10 } };
+    await assert.rejects(definitions.save(actor, over, 0), /quota exceeds tenant limit/);
+    const results = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => definitions.save(actor, manifest('tenant', 'agent-' + i), 0)));
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 3);
+    assert.ok(results.filter(result => result.status === 'rejected').every(result => /Agent limit reached/.test(result.reason.message)));
+    const created = results.find(result => result.status === 'fulfilled').value.manifest.agentId;
+    assert.equal((await definitions.save(actor, { ...manifest('tenant', created), name: 'Second' }, 1)).version, 2);
+    await assert.rejects(definitions.save(actor, { ...manifest('tenant', created), name: 'Third' }, 2), /version limit reached/);
+    assert.equal((await definitions.list(actor)).items.length, 3);
+    for (let i = 0; i < 5; i++)
+      await definitions.save(
+        { tenantId: 'other', principalId: 'admin' },
+        { ...manifest('other', 'agent-' + i), quotas: { maxConcurrentRuns: 100, maxTokensPerRun: 10000000, maxRunsPerDay: 1000000 } },
+        0
+      );
+    limits.tenant.maxAgents = 4;
+    assert.equal((await definitions.save(actor, manifest('tenant', 'late'), 0)).version, 1);
+    limits.tenant.maxConcurrentRuns = 1;
+    await assert.rejects(definitions.save(actor, { ...manifest('tenant', 'late'), name: 'Updated' }, 1), /quota exceeds tenant limit/);
+    assert.equal((await definitions.get(actor, 'late')).version, 1);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('event ingress aborts a cooperative PostgreSQL definition view and accepts a later event',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'pg-def-cancel-')),path=join(dir,'runs.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),row={version:'1',manifest:JSON.stringify(manifest())};let entered,blocked=true,seen;const ready=new Promise(resolve=>entered=resolve),store=new PostgresAgentDefinitions({enabled:true,query:async()=>{throw Error('signal-aware query expected');},queryWithSignal:async(_sql,_args,signal)=>{if(blocked){seen=signal;entered();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return {rows:[row]};},transaction:async()=>{},authorize:()=>true}),server=createAgentEventIngress({triggers,definitions:store.view(actor),maxPending:5,maxInFlight:1,requestTimeoutMs:100,authenticate:()=>({tenantId:'tenant',principalId:'sender',sourceId:'source'}),authorize:()=>true});server.listen(0,'127.0.0.1');await once(server,'listening');try{const url=`http://127.0.0.1:${server.address().port}/events`,post=eventId=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:'agent',eventId,eventType:'event',payload:{}})}),pending=post('timed');await ready;assert.equal((await pending).status,503);assert.equal(seen.aborted,true);assert.equal(runs.list({tenantId:'tenant',agentId:'agent'}).length,0);blocked=false;let result;for(let i=0;i<100;i++){result=await post('accepted');if(result.status!==503)break;await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(result.status,202);assert.equal(runs.list({tenantId:'tenant',agentId:'agent'}).length,1);
- }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));triggers.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('PostgreSQL definition views propagate cancellation and fence later authorization checks', async () => {
+  for (const mode of ['query', 'policy', 'fallback']) {
+    let started,
+      release,
+      checks = 0,
+      queries = 0,
+      legacy = 0,
+      seen;
+    const ready = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      row = { version: '1', manifest: JSON.stringify(manifest()) },
+      query = async () => {
+        legacy++;
+        if (mode === 'fallback') {
+          started();
+          await gate;
+        }
+        return { rows: [row] };
+      },
+      store = new PostgresAgentDefinitions({
+        enabled: true,
+        query,
+        ...(mode === 'query'
+          ? {
+              queryWithSignal: async (_sql, _args, signal) => {
+                queries++;
+                seen = signal;
+                started();
+                await gate;
+                return { rows: [row] };
+              }
+            }
+          : {}),
+        transaction: async () => {
+          throw Error('unexpected');
+        },
+        authorize: async (_actor, action, _agent, _manifest, signal) => {
+          assert.equal(action, 'read');
+          checks++;
+          seen = signal;
+          if (mode === 'policy' && checks === 2) {
+            started();
+            await gate;
+          }
+          return true;
+        }
+      }),
+      controller = new AbortController(),
+      view = store.view(actor);
+    try {
+      assert.throws(() => view.getWithSignal('other', 'agent', controller.signal), /scope mismatch/);
+      const pending = view.getWithSignal('tenant', 'agent', controller.signal);
+      await ready;
+      controller.abort();
+      release();
+      await assert.rejects(pending, error => error.name === 'AbortError');
+      assert.equal(seen, controller.signal);
+      if (mode === 'query') {
+        assert.equal(queries, 1);
+        assert.equal(legacy, 0);
+        assert.equal(checks, 1);
+      }
+      if (mode === 'fallback') {
+        assert.equal(legacy, 1);
+        assert.equal(checks, 1);
+      }
+      if (mode === 'policy') {
+        assert.equal(legacy, 1);
+        assert.equal(checks, 2);
+      }
+      await assert.rejects(view.getWithSignal('tenant', 'agent', controller.signal), error => error.name === 'AbortError');
+    } finally {
+      release?.();
+    }
+  }
 });
 
-
-test('PostgreSQL tenant model-turn ceiling requires an explicit compliant definition',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_turn_limit_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let ceiling=2;
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:tenantId=>tenantId==='tenant'?{maxTurns:ceiling}:{}});await definitions.initialize();const withTurns=turns=>({...manifest(),lifecycle:{...manifest().lifecycle,maxTurns:turns}});await assert.rejects(definitions.save(actor,manifest(),0),/turn limit required/);await assert.rejects(definitions.save(actor,withTurns(3),0),/turn limit required/);assert.equal(await definitions.get(actor,'agent'),undefined);assert.deepEqual((await definitions.history(actor,'agent')).items,[]);assert.equal((await definitions.save(actor,withTurns(2),0)).version,1);assert.equal((await definitions.get(actor,'agent')).manifest.lifecycle.maxTurns,2);
-  ceiling=1;assert.equal((await definitions.get(actor,'agent')).manifest.lifecycle.maxTurns,2);await assert.rejects(definitions.save(actor,withTurns(2),1),/turn limit required/);await assert.rejects(definitions.save(actor,manifest(),1),/turn limit required/);assert.equal((await definitions.get(actor,'agent')).version,1);assert.equal((await definitions.save(actor,withTurns(1),1)).version,2);assert.equal((await definitions.history(actor,'agent')).items.length,2);await definitions.save({tenantId:'other',principalId:'admin'},manifest('other','agent'),0);
-  let calls=0;const agent=await createConfiguredAgentRun({definitions:definitions.view(actor),tenantId:'tenant',agentId:'agent',expectedVersion:2,maxTurns:10,bindings:[{operationId:'lookup',toolName:'lookup',description:'Lookup'}],registry:{invoke:async()=>{calls++;return {}; }},authorizeRun:()=>true,authorizeCapability:()=>true,createModel:()=>({invoke:async()=>new AIMessage({content:'',tool_calls:[{id:'call',name:'lookup',args:{}}]})})}),events=[];for await(const event of agent.run({threadId:'thread',runId:'run',messages:[{role:'user',content:'Hello'}]}))events.push(event);assert.equal(events.at(-1).type,'RUN_ERROR');assert.equal(calls,0);
-  ceiling=0;await assert.rejects(definitions.save(actor,withTurns(1),2),/Invalid agent definition tenant limits/);assert.equal((await definitions.get(actor,'agent')).version,2);
- }finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('signal-aware PostgreSQL view preserves policy and rejects changing versions', async () => {
+  let version = 0,
+    checks = 0;
+  const store = new PostgresAgentDefinitions({
+    enabled: true,
+    query: async () => ({ rows: [] }),
+    queryWithSignal: async (_sql, _args, signal) => {
+      assert.equal(signal.aborted, false);
+      return { rows: [{ version: String(++version), manifest: JSON.stringify(manifest()) }] };
+    },
+    transaction: async () => {},
+    authorize: async (_actor, _action, _agent, _manifest, signal) => {
+      checks++;
+      assert.ok(signal instanceof AbortSignal);
+      return true;
+    }
+  });
+  await assert.rejects(store.view(actor).getWithSignal('tenant', 'agent', new AbortController().signal), /changed during read/);
+  assert.equal(checks, 3);
+  assert.throws(() => new PostgresAgentDefinitions({ enabled: true, query: () => {}, queryWithSignal: true, transaction: () => {}, authorize: () => true }), /configuration/);
 });
 
+test('event ingress aborts a cooperative PostgreSQL definition view and accepts a later event', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pg-def-cancel-')),
+    path = join(dir, 'runs.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    row = { version: '1', manifest: JSON.stringify(manifest()) };
+  let entered,
+    blocked = true,
+    seen;
+  const ready = new Promise(resolve => (entered = resolve)),
+    store = new PostgresAgentDefinitions({
+      enabled: true,
+      query: async () => {
+        throw Error('signal-aware query expected');
+      },
+      queryWithSignal: async (_sql, _args, signal) => {
+        if (blocked) {
+          seen = signal;
+          entered();
+          await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+        }
+        return { rows: [row] };
+      },
+      transaction: async () => {},
+      authorize: () => true
+    }),
+    server = createAgentEventIngress({
+      triggers,
+      definitions: store.view(actor),
+      maxPending: 5,
+      maxInFlight: 1,
+      requestTimeoutMs: 100,
+      authenticate: () => ({ tenantId: 'tenant', principalId: 'sender', sourceId: 'source' }),
+      authorize: () => true
+    });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/events`,
+      post = eventId => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent', eventId, eventType: 'event', payload: {} }) }),
+      pending = post('timed');
+    await ready;
+    assert.equal((await pending).status, 503);
+    assert.equal(seen.aborted, true);
+    assert.equal(runs.list({ tenantId: 'tenant', agentId: 'agent' }).length, 0);
+    blocked = false;
+    let result;
+    for (let i = 0; i < 100; i++) {
+      result = await post('accepted');
+      if (result.status !== 503) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(result.status, 202);
+    assert.equal(runs.list({ tenantId: 'tenant', agentId: 'agent' }).length, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    triggers.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
-test('enforced definition views recheck current tenant ceilings for configured runs',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='agent_live_limits_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let ceiling=2,extraLimits={},paused=false,skipOnce=false,entered,release,seenSignal;const scope={tenantId:'tenant',agentId:'agent'};
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,tenantLimits:async(tenantId,signal)=>{assert.equal(tenantId,'tenant');if(paused){if(skipOnce)skipOnce=false;else{paused=false;seenSignal=signal;entered();await new Promise(resolve=>release=resolve);}}return {maxTurns:ceiling,...extraLimits};}});await definitions.initialize();const definition={...manifest(),lifecycle:{...manifest().lifecycle,maxTurns:2}};await definitions.save(actor,definition,0);const viewOptions={enforceTenantLimits:true},view=definitions.view(actor,viewOptions);viewOptions.enforceTenantLimits=false;assert.equal((await view.get('tenant','agent')).version,1);for(const [key,value] of [['maxConcurrentRuns',1],['maxTokensPerRun',99],['maxRunsPerDay',9]]){extraLimits={[key]:value};await assert.rejects(view.get('tenant','agent'),/quota exceeds/);assert.equal((await definitions.get(actor,'agent')).version,1);}extraLimits={};assert.throws(()=>definitions.view(actor,{enforceTenantLimits:'yes'}),/view/);assert.throws(()=>definitions.view(actor,{extra:true}),/view/);
-  const base={definitions:view,tenantId:'tenant',agentId:'agent',expectedVersion:1,bindings:[{operationId:'lookup',toolName:'lookup',description:'Lookup'}],registry:{invoke:async()=>{throw Error('must not dispatch');}},authorizeRun:()=>true,authorizeCapability:()=>true},input={threadId:'thread',runId:'run',messages:[{role:'user',content:'Hello'}]},collect=async stream=>{const events=[];for await(const event of stream)events.push(event);return events;},prepared=await createConfiguredAgentRun({...base,createModel:()=>({invoke:async()=>new AIMessage('Ready')})});ceiling=1;assert.equal((await definitions.get(actor,'agent')).version,1);await assert.rejects(view.get('tenant','agent'),/turn limit/);await assert.rejects(collect(prepared.run(input)),/turn limit/);await assert.rejects(createConfiguredAgentRun({...base,createModel:()=>({invoke:async()=>new AIMessage('Ready')})}),/turn limit/);
-  ceiling=2;let modelStarted,modelRelease,calls=0;const modelReady=new Promise(resolve=>modelStarted=resolve),modelGate=new Promise(resolve=>modelRelease=resolve),agent=await createConfiguredAgentRun({...base,registry:{invoke:async()=>{calls++;return {};}},createModel:()=>({invoke:async()=>{modelStarted();await modelGate;return new AIMessage({content:'',tool_calls:[{id:'call',name:'lookup',args:{}}]});}})}),running=collect(agent.run(input));await modelReady;ceiling=1;modelRelease();assert.equal((await running).at(-1).type,'RUN_ERROR');assert.equal(calls,0);
-  ceiling=2;let outputStarted,outputRelease;const outputReady=new Promise(resolve=>outputStarted=resolve),outputGate=new Promise(resolve=>outputRelease=resolve),guarded=await createConfiguredAgentRun({...base,recheckModelAuthority:true,createModel:()=>({invoke:async()=>{outputStarted();await outputGate;return new AIMessage('Private answer');}})}),output=collect(guarded.run(input));await outputReady;ceiling=1;outputRelease();const outputEvents=await output;assert.equal(outputEvents.at(-1).type,'RUN_ERROR');assert.equal(outputEvents.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);
-  ceiling=2;const runController=new AbortController();let runReady=new Promise(resolve=>entered=resolve);const cancellable=await createConfiguredAgentRun({...base,recheckModelAuthority:true,createModel:()=>({invoke:async()=>{paused=true;return new AIMessage('Late answer');}})}),cancelledRun=collect(cancellable.run(input,{signal:runController.signal}));await runReady;assert.ok(seenSignal);runController.abort();assert.equal(seenSignal.aborted,true);release();const cancelledEvents=await cancelledRun;assert.equal(cancelledEvents.at(-1).type,'RUN_ERROR');assert.equal(cancelledEvents.some(event=>event.type==='TEXT_MESSAGE_CONTENT'),false);
-  ceiling=2;let ready=new Promise(resolve=>entered=resolve);paused=true;skipOnce=true;const restricted=view.get('tenant','agent');await ready;ceiling=1;release();await assert.rejects(restricted,/turn limit/);ceiling=2;ready=new Promise(resolve=>entered=resolve);paused=true;const changing=view.get('tenant','agent');await ready;await definitions.save(actor,{...definition,name:'Updated'},1);release();await assert.rejects(changing,/changed during read/);
-  ready=new Promise(resolve=>entered=resolve);paused=true;const controller=new AbortController(),cancelled=view.getWithSignal('tenant','agent',controller.signal);await ready;assert.equal(seenSignal,controller.signal);controller.abort();release();await assert.rejects(cancelled,/abort/i);
-  const noLimits=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});assert.throws(()=>noLimits.view(actor,{enforceTenantLimits:true}),/view/);assert.equal((await definitions.get(actor,'agent')).version,2);
- }finally{release?.();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL tenant model-turn ceiling requires an explicit compliant definition', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_turn_limit_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let ceiling = 2;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: () => true,
+      tenantLimits: tenantId => (tenantId === 'tenant' ? { maxTurns: ceiling } : {})
+    });
+    await definitions.initialize();
+    const withTurns = turns => ({ ...manifest(), lifecycle: { ...manifest().lifecycle, maxTurns: turns } });
+    await assert.rejects(definitions.save(actor, manifest(), 0), /turn limit required/);
+    await assert.rejects(definitions.save(actor, withTurns(3), 0), /turn limit required/);
+    assert.equal(await definitions.get(actor, 'agent'), undefined);
+    assert.deepEqual((await definitions.history(actor, 'agent')).items, []);
+    assert.equal((await definitions.save(actor, withTurns(2), 0)).version, 1);
+    assert.equal((await definitions.get(actor, 'agent')).manifest.lifecycle.maxTurns, 2);
+    ceiling = 1;
+    assert.equal((await definitions.get(actor, 'agent')).manifest.lifecycle.maxTurns, 2);
+    await assert.rejects(definitions.save(actor, withTurns(2), 1), /turn limit required/);
+    await assert.rejects(definitions.save(actor, manifest(), 1), /turn limit required/);
+    assert.equal((await definitions.get(actor, 'agent')).version, 1);
+    assert.equal((await definitions.save(actor, withTurns(1), 1)).version, 2);
+    assert.equal((await definitions.history(actor, 'agent')).items.length, 2);
+    await definitions.save({ tenantId: 'other', principalId: 'admin' }, manifest('other', 'agent'), 0);
+    let calls = 0;
+    const agent = await createConfiguredAgentRun({
+        definitions: definitions.view(actor),
+        tenantId: 'tenant',
+        agentId: 'agent',
+        expectedVersion: 2,
+        maxTurns: 10,
+        bindings: [{ operationId: 'lookup', toolName: 'lookup', description: 'Lookup' }],
+        registry: {
+          invoke: async () => {
+            calls++;
+            return {};
+          }
+        },
+        authorizeRun: () => true,
+        authorizeCapability: () => true,
+        createModel: () => ({ invoke: async () => new AIMessage({ content: '', tool_calls: [{ id: 'call', name: 'lookup', args: {} }] }) })
+      }),
+      events = [];
+    for await (const event of agent.run({ threadId: 'thread', runId: 'run', messages: [{ role: 'user', content: 'Hello' }] })) events.push(event);
+    assert.equal(events.at(-1).type, 'RUN_ERROR');
+    assert.equal(calls, 0);
+    ceiling = 0;
+    await assert.rejects(definitions.save(actor, withTurns(1), 2), /Invalid agent definition tenant limits/);
+    assert.equal((await definitions.get(actor, 'agent')).version, 2);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
+});
+
+test('enforced definition views recheck current tenant ceilings for configured runs', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'agent_live_limits_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let ceiling = 2,
+    extraLimits = {},
+    paused = false,
+    skipOnce = false,
+    entered,
+    release,
+    seenSignal;
+  const scope = { tenantId: 'tenant', agentId: 'agent' };
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({
+      enabled: true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: () => true,
+      tenantLimits: async (tenantId, signal) => {
+        assert.equal(tenantId, 'tenant');
+        if (paused) {
+          if (skipOnce) skipOnce = false;
+          else {
+            paused = false;
+            seenSignal = signal;
+            entered();
+            await new Promise(resolve => (release = resolve));
+          }
+        }
+        return { maxTurns: ceiling, ...extraLimits };
+      }
+    });
+    await definitions.initialize();
+    const definition = { ...manifest(), lifecycle: { ...manifest().lifecycle, maxTurns: 2 } };
+    await definitions.save(actor, definition, 0);
+    const viewOptions = { enforceTenantLimits: true },
+      view = definitions.view(actor, viewOptions);
+    viewOptions.enforceTenantLimits = false;
+    assert.equal((await view.get('tenant', 'agent')).version, 1);
+    for (const [key, value] of [
+      ['maxConcurrentRuns', 1],
+      ['maxTokensPerRun', 99],
+      ['maxRunsPerDay', 9]
+    ]) {
+      extraLimits = { [key]: value };
+      await assert.rejects(view.get('tenant', 'agent'), /quota exceeds/);
+      assert.equal((await definitions.get(actor, 'agent')).version, 1);
+    }
+    extraLimits = {};
+    assert.throws(() => definitions.view(actor, { enforceTenantLimits: 'yes' }), /view/);
+    assert.throws(() => definitions.view(actor, { extra: true }), /view/);
+    const base = {
+        definitions: view,
+        tenantId: 'tenant',
+        agentId: 'agent',
+        expectedVersion: 1,
+        bindings: [{ operationId: 'lookup', toolName: 'lookup', description: 'Lookup' }],
+        registry: {
+          invoke: async () => {
+            throw Error('must not dispatch');
+          }
+        },
+        authorizeRun: () => true,
+        authorizeCapability: () => true
+      },
+      input = { threadId: 'thread', runId: 'run', messages: [{ role: 'user', content: 'Hello' }] },
+      collect = async stream => {
+        const events = [];
+        for await (const event of stream) events.push(event);
+        return events;
+      },
+      prepared = await createConfiguredAgentRun({ ...base, createModel: () => ({ invoke: async () => new AIMessage('Ready') }) });
+    ceiling = 1;
+    assert.equal((await definitions.get(actor, 'agent')).version, 1);
+    await assert.rejects(view.get('tenant', 'agent'), /turn limit/);
+    await assert.rejects(collect(prepared.run(input)), /turn limit/);
+    await assert.rejects(createConfiguredAgentRun({ ...base, createModel: () => ({ invoke: async () => new AIMessage('Ready') }) }), /turn limit/);
+    ceiling = 2;
+    let modelStarted,
+      modelRelease,
+      calls = 0;
+    const modelReady = new Promise(resolve => (modelStarted = resolve)),
+      modelGate = new Promise(resolve => (modelRelease = resolve)),
+      agent = await createConfiguredAgentRun({
+        ...base,
+        registry: {
+          invoke: async () => {
+            calls++;
+            return {};
+          }
+        },
+        createModel: () => ({
+          invoke: async () => {
+            modelStarted();
+            await modelGate;
+            return new AIMessage({ content: '', tool_calls: [{ id: 'call', name: 'lookup', args: {} }] });
+          }
+        })
+      }),
+      running = collect(agent.run(input));
+    await modelReady;
+    ceiling = 1;
+    modelRelease();
+    assert.equal((await running).at(-1).type, 'RUN_ERROR');
+    assert.equal(calls, 0);
+    ceiling = 2;
+    let outputStarted, outputRelease;
+    const outputReady = new Promise(resolve => (outputStarted = resolve)),
+      outputGate = new Promise(resolve => (outputRelease = resolve)),
+      guarded = await createConfiguredAgentRun({
+        ...base,
+        recheckModelAuthority: true,
+        createModel: () => ({
+          invoke: async () => {
+            outputStarted();
+            await outputGate;
+            return new AIMessage('Private answer');
+          }
+        })
+      }),
+      output = collect(guarded.run(input));
+    await outputReady;
+    ceiling = 1;
+    outputRelease();
+    const outputEvents = await output;
+    assert.equal(outputEvents.at(-1).type, 'RUN_ERROR');
+    assert.equal(
+      outputEvents.some(event => event.type === 'TEXT_MESSAGE_CONTENT'),
+      false
+    );
+    ceiling = 2;
+    const runController = new AbortController();
+    let runReady = new Promise(resolve => (entered = resolve));
+    const cancellable = await createConfiguredAgentRun({
+        ...base,
+        recheckModelAuthority: true,
+        createModel: () => ({
+          invoke: async () => {
+            paused = true;
+            return new AIMessage('Late answer');
+          }
+        })
+      }),
+      cancelledRun = collect(cancellable.run(input, { signal: runController.signal }));
+    await runReady;
+    assert.ok(seenSignal);
+    runController.abort();
+    assert.equal(seenSignal.aborted, true);
+    release();
+    const cancelledEvents = await cancelledRun;
+    assert.equal(cancelledEvents.at(-1).type, 'RUN_ERROR');
+    assert.equal(
+      cancelledEvents.some(event => event.type === 'TEXT_MESSAGE_CONTENT'),
+      false
+    );
+    ceiling = 2;
+    let ready = new Promise(resolve => (entered = resolve));
+    paused = true;
+    skipOnce = true;
+    const restricted = view.get('tenant', 'agent');
+    await ready;
+    ceiling = 1;
+    release();
+    await assert.rejects(restricted, /turn limit/);
+    ceiling = 2;
+    ready = new Promise(resolve => (entered = resolve));
+    paused = true;
+    const changing = view.get('tenant', 'agent');
+    await ready;
+    await definitions.save(actor, { ...definition, name: 'Updated' }, 1);
+    release();
+    await assert.rejects(changing, /changed during read/);
+    ready = new Promise(resolve => (entered = resolve));
+    paused = true;
+    const controller = new AbortController(),
+      cancelled = view.getWithSignal('tenant', 'agent', controller.signal);
+    await ready;
+    assert.equal(seenSignal, controller.signal);
+    controller.abort();
+    release();
+    await assert.rejects(cancelled, /abort/i);
+    const noLimits = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+    assert.throws(() => noLimits.view(actor, { enforceTenantLimits: true }), /view/);
+    assert.equal((await definitions.get(actor, 'agent')).version, 2);
+  } finally {
+    release?.();
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });

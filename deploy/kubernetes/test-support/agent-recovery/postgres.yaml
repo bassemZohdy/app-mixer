@@ -2,18 +2,18 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: agent-memory-postgres
-  labels: {app: agent-memory-postgres}
+  labels: { app: agent-memory-postgres }
 spec:
   restartPolicy: Never
   containers:
     - name: postgres
       image: pgvector/pgvector:0.8.7-pg16
       env:
-        - {name: POSTGRES_USER, value: appmixer}
-        - {name: POSTGRES_PASSWORD, value: test-only-password}
-        - {name: POSTGRES_DB, value: appmixer_test}
+        - { name: POSTGRES_USER, value: appmixer }
+        - { name: POSTGRES_PASSWORD, value: test-only-password }
+        - { name: POSTGRES_DB, value: appmixer_test }
       readinessProbe:
-        exec: {command: [pg_isready, -h, 127.0.0.1, -U, appmixer, -d, appmixer_test]}
+        exec: { command: [pg_isready, -h, 127.0.0.1, -U, appmixer, -d, appmixer_test] }
         periodSeconds: 2
 ---
 apiVersion: v1
@@ -21,5 +21,5 @@ kind: Service
 metadata:
   name: agent-memory-postgres
 spec:
-  selector: {app: agent-memory-postgres}
-  ports: [{port: 5432, targetPort: 5432}]
+  selector: { app: agent-memory-postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]

@@ -1,65 +1,571 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
-import {spawn} from 'node:child_process';
-import {once} from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import pg from 'pg';
-import {JSDOM} from 'jsdom';
-import {createProject} from '../dist/index.js';
-import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {PostgresAgentDefinitions,SqliteAgentRuns,SqliteAgentTriggers,registerAgentManualStart,registerAgentDefinitionStatus,registerAgentDefinitionControl,registerAgentDefinitionHistory,registerAgentDefinitionRead,registerAgentDefinitionWrite,registerAgentDefinitionControlHistory} from '../../agent/dist/index.js';
-const wait=async fn=>{for(let i=0;i<500;i++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,20));}assert.fail('Timed out waiting for definition control');};
-const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'},manifest=tenantId=>({manifestVersion:1,tenantId,agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',instructions:'private instructions',model:{provider:'local',model:'model'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}});
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
-test('definition control view reviews an uncertain response through PostgreSQL and the authenticated proxy',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:45000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-control-view-')),schema='definition_view_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{}),token='capability-secret-at-least-thirty-two-characters',originalFetch=globalThis.fetch;let upstream,server,dom,view;
- try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,clock:()=>100});await definitions.initialize();await definitions.save(actor,manifest('tenant'),0);await definitions.save({...actor,tenantId:'other'},manifest('other'),0);registerAgentDefinitionStatus(registry,{definitions,scope,operationId:'status',path:'/status',authorize:()=>true});registerAgentDefinitionControl(registry,{definitions,scope,operationId:'control',path:'/control',authorize:()=>true});registerAgentDefinitionHistory(registry,{definitions,scope,operationId:'history',path:'/history',limit:1,authorize:()=>true});registerAgentDefinitionControlHistory(registry,{definitions,scope,operationId:'control-history',path:'/control-history',limit:1,authorize:()=>true});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
-  const target=await createProject('definition-control',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});const appUrl=await new Promise((resolve,reject)=>{let output='',errors='';server.stderr.on('data',chunk=>errors+=chunk);server.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited ${code}: ${errors}`)));});let lose=true;globalThis.fetch=async(input,options)=>{const response=typeof input==='string'&&input.startsWith('/')?await originalFetch(new URL(input,appUrl),{...options,headers:{...options.headers,origin:appUrl}}):await originalFetch(input,options);if(lose&&typeof input==='string'&&input.endsWith('/control')){lose=false;assert.equal(response.status,200);throw Error('response lost');}return response;};
-  const {mountAgentDefinitionControl}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);view=mountAgentDefinitionControl(root,{statusOperation:'status',controlOperation:'control',historyOperation:'history',controlHistoryOperation:'control-history',agentId:'agent'});assert.equal(button('Suspend agent').disabled,true);button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent enabled, definition version 1'));button('Suspend agent').click();await wait(()=>root.textContent.includes('Control outcome unknown'));assert.equal((await definitions.get(actor,'agent')).manifest.lifecycle.enabled,false);assert.equal(button('Enable agent').disabled,true);assert.equal(button('I reviewed the status and history').disabled,true);button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent suspended, definition version 2'));button('View definition history').click();await wait(()=>root.textContent.includes('Continue to the last page'));assert.equal(button('I reviewed the status and history').disabled,true);button('Next history page').click();await wait(()=>root.textContent.includes('Version 2'));assert.equal(button('I reviewed the status and history').disabled,true);button('View control evidence').click();await wait(()=>root.textContent.includes('suspend — operator'));assert.equal(button('I reviewed the status and history').disabled,false);button('I reviewed the status and history').click();assert.equal(button('Enable agent').disabled,true);button('Inspect agent').click();await wait(()=>!button('Enable agent').disabled);button('Enable agent').click();await wait(()=>root.textContent.includes('Agent enabled. Inspect'));assert.equal((await definitions.get(actor,'agent')).version,3);assert.equal((await definitions.get({...actor,tenantId:'other'},'agent')).version,1);assert.deepEqual((await definitions.history(actor,'agent')).items.map(item=>item.principalId),['operator','operator','operator']);assert.doesNotMatch(root.textContent,/private instructions/);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}if(upstream){upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();await rm(dir,{recursive:true,force:true});}
-});
-test('definition view fails closed on malformed history and ignores late responses',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-view-invalid-')),originalFetch=globalThis.fetch;let dom,view,release;try{const target=await createProject('definition-control',dir),{mountAgentDefinitionControl}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);globalThis.fetch=async(url)=>{if(url.endsWith('/status'))return new Response(JSON.stringify({result:{agentId:'agent',version:1,enabled:true}}));if(url.endsWith('/control'))throw Error('unknown');return new Response(JSON.stringify({result:{items:[],nextAfter:0}}));};view=mountAgentDefinitionControl(root,{statusOperation:'status',controlOperation:'control',historyOperation:'history',agentId:'agent'});button('Inspect agent').click();await wait(()=>!button('Suspend agent').disabled);button('Suspend agent').click();await wait(()=>root.textContent.includes('Control outcome unknown'));button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent enabled'));button('View definition history').click();await wait(()=>root.textContent.includes('Unable to load information'));assert.equal(button('I reviewed the status and history').disabled,true);view.dispose();const gate=new Promise(resolve=>release=resolve);globalThis.fetch=async()=>{await gate;return new Response('{}');};view=mountAgentDefinitionControl(root,{statusOperation:'status',controlOperation:'control',historyOperation:'history',agentId:'agent'});button('Inspect agent').click();view.dispose();release();await new Promise(resolve=>setImmediate(resolve));assert.equal(root.children.length,0);}finally{release?.();view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
-});
-test('control view requires every evidence page after an uncertain response',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-evidence-view-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('definition-control',dir),{mountAgentDefinitionControl}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);let malformed=true;globalThis.fetch=async(url,request)=>{const input=JSON.parse(request.body);if(url.endsWith('/status'))return new Response(JSON.stringify({result:{agentId:'agent',version:1,enabled:true}}));if(url.endsWith('/control'))throw Error('unknown');if(url.endsWith('/history'))return new Response(JSON.stringify({result:{items:[]}}));if(input.query.after===undefined)return new Response(JSON.stringify({result:{items:[{agentId:'agent',version:2,action:'suspend',principalId:'operator',observedAt:100}],nextAfter:2}}));return new Response(JSON.stringify({result:{items:[],...(malformed?{nextAfter:2}:{})}}));};view=mountAgentDefinitionControl(root,{statusOperation:'status',controlOperation:'control',historyOperation:'history',controlHistoryOperation:'evidence',agentId:'agent'});button('Inspect agent').click();await wait(()=>!button('Suspend agent').disabled);button('Suspend agent').click();await wait(()=>root.textContent.includes('Control outcome unknown'));button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent enabled'));button('View definition history').click();await wait(()=>root.textContent.includes('History page loaded.'));button('View control evidence').click();await wait(()=>root.textContent.includes('Control evidence page loaded. Continue'));assert.equal(button('I reviewed the status and history').disabled,true);button('Next evidence page').click();await wait(()=>root.textContent.includes('Unable to load information'));assert.equal(button('I reviewed the status and history').disabled,true);malformed=false;button('Inspect agent').click();await wait(()=>root.textContent.includes('Agent enabled'));button('View definition history').click();await wait(()=>root.textContent.includes('History page loaded.'));button('View control evidence').click();await wait(()=>root.textContent.includes('Control evidence page loaded. Continue'));button('Next evidence page').click();await wait(()=>root.textContent.includes('Control evidence page loaded.')&&!button('View control evidence').disabled);assert.equal(button('I reviewed the status and history').disabled,false);}finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
-});
-test('definition review views reject cursors that skip or omit returned evidence',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-cursor-')),originalFetch=globalThis.fetch;let dom,view;
- try{
-  const target=await createProject('definition-cursor',dir),runtime=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);
-  for(const kind of ['control-history','control-evidence','editor-history'])for(const empty of [false,true]){
-   dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);
-   const entry={agentId:'agent',version:2,principalId:'operator',observedAt:100,...(kind==='control-evidence'?{action:'suspend'}:{})};
-   globalThis.fetch=async()=>new Response(JSON.stringify({result:{items:empty?[]:[entry],nextAfter:3}}));
-   view=kind==='editor-history'?runtime.mountAgentDefinitionEditor(root,{readOperation:'read',writeOperation:'write',historyOperation:'history',tenantId:'tenant',agentId:'agent'}):runtime.mountAgentDefinitionControl(root,{statusOperation:'status',controlOperation:'control',historyOperation:'history',controlHistoryOperation:'evidence',agentId:'agent'});
-   button(kind==='control-evidence'?'View control evidence':'View definition history').click();
-   await wait(()=>root.textContent.includes('Unable to load information'));
-   assert.equal(button(kind==='editor-history'?'Next history page':kind==='control-evidence'?'Next evidence page':'Next history page').disabled,true);
-   view.dispose();dom.window.close();view=undefined;dom=undefined;
+import { JSDOM } from 'jsdom';
+import { createProject } from '../dist/index.js';
+import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import {
+  PostgresAgentDefinitions,
+  SqliteAgentRuns,
+  SqliteAgentTriggers,
+  registerAgentManualStart,
+  registerAgentDefinitionStatus,
+  registerAgentDefinitionControl,
+  registerAgentDefinitionHistory,
+  registerAgentDefinitionRead,
+  registerAgentDefinitionWrite,
+  registerAgentDefinitionControlHistory
+} from '../../agent/dist/index.js';
+const wait = async fn => {
+  for (let i = 0; i < 500; i++) {
+    if (fn()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
   }
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+  assert.fail('Timed out waiting for definition control');
+};
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  manifest = tenantId => ({
+    manifestVersion: 1,
+    tenantId,
+    agentId: 'agent',
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    instructions: 'private instructions',
+    model: { provider: 'local', model: 'model' },
+    allowedCapabilities: [],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 1000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  });
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+test('definition control view reviews an uncertain response through PostgreSQL and the authenticated proxy', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 45000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-control-view-')),
+    schema = 'definition_view_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {}),
+    token = 'capability-secret-at-least-thirty-two-characters',
+    originalFetch = globalThis.fetch;
+  let upstream, server, dom, view;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true, clock: () => 100 });
+    await definitions.initialize();
+    await definitions.save(actor, manifest('tenant'), 0);
+    await definitions.save({ ...actor, tenantId: 'other' }, manifest('other'), 0);
+    registerAgentDefinitionStatus(registry, { definitions, scope, operationId: 'status', path: '/status', authorize: () => true });
+    registerAgentDefinitionControl(registry, { definitions, scope, operationId: 'control', path: '/control', authorize: () => true });
+    registerAgentDefinitionHistory(registry, { definitions, scope, operationId: 'history', path: '/history', limit: 1, authorize: () => true });
+    registerAgentDefinitionControlHistory(registry, { definitions, scope, operationId: 'control-history', path: '/control-history', limit: 1, authorize: () => true });
+    upstream = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
+      () => {}
+    );
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const target = await createProject('definition-control', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const appUrl = await new Promise((resolve, reject) => {
+      let output = '',
+        errors = '';
+      server.stderr.on('data', chunk => (errors += chunk));
+      server.stdout.on('data', chunk => {
+        output += chunk;
+        const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited ${code}: ${errors}`)));
+    });
+    let lose = true;
+    globalThis.fetch = async (input, options) => {
+      const response =
+        typeof input === 'string' && input.startsWith('/')
+          ? await originalFetch(new URL(input, appUrl), { ...options, headers: { ...options.headers, origin: appUrl } })
+          : await originalFetch(input, options);
+      if (lose && typeof input === 'string' && input.endsWith('/control')) {
+        lose = false;
+        assert.equal(response.status, 200);
+        throw Error('response lost');
+      }
+      return response;
+    };
+    const { mountAgentDefinitionControl } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    view = mountAgentDefinitionControl(root, { statusOperation: 'status', controlOperation: 'control', historyOperation: 'history', controlHistoryOperation: 'control-history', agentId: 'agent' });
+    assert.equal(button('Suspend agent').disabled, true);
+    button('Inspect agent').click();
+    await wait(() => root.textContent.includes('Agent enabled, definition version 1'));
+    button('Suspend agent').click();
+    await wait(() => root.textContent.includes('Control outcome unknown'));
+    assert.equal((await definitions.get(actor, 'agent')).manifest.lifecycle.enabled, false);
+    assert.equal(button('Enable agent').disabled, true);
+    assert.equal(button('I reviewed the status and history').disabled, true);
+    button('Inspect agent').click();
+    await wait(() => root.textContent.includes('Agent suspended, definition version 2'));
+    button('View definition history').click();
+    await wait(() => root.textContent.includes('Continue to the last page'));
+    assert.equal(button('I reviewed the status and history').disabled, true);
+    button('Next history page').click();
+    await wait(() => root.textContent.includes('Version 2'));
+    assert.equal(button('I reviewed the status and history').disabled, true);
+    button('View control evidence').click();
+    await wait(() => root.textContent.includes('suspend — operator'));
+    assert.equal(button('I reviewed the status and history').disabled, false);
+    button('I reviewed the status and history').click();
+    assert.equal(button('Enable agent').disabled, true);
+    button('Inspect agent').click();
+    await wait(() => !button('Enable agent').disabled);
+    button('Enable agent').click();
+    await wait(() => root.textContent.includes('Agent enabled. Inspect'));
+    assert.equal((await definitions.get(actor, 'agent')).version, 3);
+    assert.equal((await definitions.get({ ...actor, tenantId: 'other' }, 'agent')).version, 1);
+    assert.deepEqual(
+      (await definitions.history(actor, 'agent')).items.map(item => item.principalId),
+      ['operator', 'operator', 'operator']
+    );
+    assert.doesNotMatch(root.textContent, /private instructions/);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    if (upstream) {
+      upstream.closeAllConnections();
+      if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('definition editor reviews an uncertain create before updating through PostgreSQL',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:45000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-editor-')),schema='definition_editor_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{}),token='capability-secret-at-least-thirty-two-characters',originalFetch=globalThis.fetch;let upstream,server,dom,view;try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true,clock:()=>100});await definitions.initialize();await definitions.save({...actor,tenantId:'other'},manifest('other'),0);registerAgentDefinitionRead(registry,{definitions,scope,operationId:'read',path:'/read',authorize:()=>true});registerAgentDefinitionWrite(registry,{definitions,scope,operationId:'write',path:'/write',authorize:()=>true});registerAgentDefinitionHistory(registry,{definitions,scope,operationId:'history',path:'/history',limit:1,authorize:()=>true});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const target=await createProject('definition-editor',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});const appUrl=await new Promise((resolve,reject)=>{let output='',errors='';server.stderr.on('data',chunk=>errors+=chunk);server.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited ${code}: ${errors}`)));});let lose=true;globalThis.fetch=async(input,options)=>{const response=typeof input==='string'&&input.startsWith('/')?await originalFetch(new URL(input,appUrl),{...options,headers:{...options.headers,origin:appUrl}}):await originalFetch(input,options);if(lose&&typeof input==='string'&&input.endsWith('/write')){lose=false;assert.equal(response.status,200);throw Error('response lost');}return response;};
-  const {mountAgentDefinitionEditor}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);view=mountAgentDefinitionEditor(root,{readOperation:'read',writeOperation:'write',historyOperation:'history',tenantId:'tenant',agentId:'agent'});const areas=root.querySelectorAll('textarea');button('Load definition').click();await wait(()=>root.textContent.includes('No definition found.'));button('Prepare new definition').click();areas[1].value=JSON.stringify(manifest('tenant'));button('Save definition').click();await wait(()=>root.textContent.includes('Save outcome unknown'));assert.equal((await definitions.get(actor,'agent')).version,1);assert.equal(button('I reviewed the definition and history').disabled,true);button('Load definition').click();await wait(()=>root.textContent.includes('Current definition version 1'));assert.equal(JSON.parse(areas[1].value).instructions,'private instructions');button('View definition history').click();await wait(()=>root.textContent.includes('History page loaded.'));assert.equal(button('I reviewed the definition and history').disabled,false);button('I reviewed the definition and history').click();assert.equal(button('Save definition').disabled,true);button('Load definition').click();await wait(()=>!button('Save definition').disabled);const edit=JSON.parse(areas[1].value);edit.name='Updated';areas[1].value=JSON.stringify(edit);button('Save definition').click();await wait(()=>root.textContent.includes('Definition saved as version 2'));assert.equal((await definitions.get(actor,'agent')).manifest.name,'Updated');assert.equal((await definitions.get({...actor,tenantId:'other'},'agent')).version,1);assert.equal((await definitions.history(actor,'agent')).items.length,2);
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}if(upstream){upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));}await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();await rm(dir,{recursive:true,force:true});}
+test('definition view fails closed on malformed history and ignores late responses', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-view-invalid-')),
+    originalFetch = globalThis.fetch;
+  let dom, view, release;
+  try {
+    const target = await createProject('definition-control', dir),
+      { mountAgentDefinitionControl } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    globalThis.fetch = async url => {
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ result: { agentId: 'agent', version: 1, enabled: true } }));
+      if (url.endsWith('/control')) throw Error('unknown');
+      return new Response(JSON.stringify({ result: { items: [], nextAfter: 0 } }));
+    };
+    view = mountAgentDefinitionControl(root, { statusOperation: 'status', controlOperation: 'control', historyOperation: 'history', agentId: 'agent' });
+    button('Inspect agent').click();
+    await wait(() => !button('Suspend agent').disabled);
+    button('Suspend agent').click();
+    await wait(() => root.textContent.includes('Control outcome unknown'));
+    button('Inspect agent').click();
+    await wait(() => root.textContent.includes('Agent enabled'));
+    button('View definition history').click();
+    await wait(() => root.textContent.includes('Unable to load information'));
+    assert.equal(button('I reviewed the status and history').disabled, true);
+    view.dispose();
+    const gate = new Promise(resolve => (release = resolve));
+    globalThis.fetch = async () => {
+      await gate;
+      return new Response('{}');
+    };
+    view = mountAgentDefinitionControl(root, { statusOperation: 'status', controlOperation: 'control', historyOperation: 'history', agentId: 'agent' });
+    button('Inspect agent').click();
+    view.dispose();
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(root.children.length, 0);
+  } finally {
+    release?.();
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('definition editor rejects wrong scope and does not mistake a missing operation for an absent definition',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-editor-invalid-')),originalFetch=globalThis.fetch;let dom,view,calls=0;try{const target=await createProject('definition-editor',dir),{mountAgentDefinitionEditor}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);globalThis.fetch=async()=>{calls++;return new Response(JSON.stringify({error:'Capability not found'}),{status:404});};view=mountAgentDefinitionEditor(root,{readOperation:'read',writeOperation:'write',historyOperation:'history',tenantId:'tenant',agentId:'agent'});button('Load definition').click();await wait(()=>root.textContent.includes('Unable to load information'));assert.doesNotMatch(root.textContent,/No definition found/);button('Prepare new definition').click();const draft=root.querySelectorAll('textarea')[1];draft.value=JSON.stringify({...manifest('tenant'),agentId:'other'});button('Save definition').click();assert.match(root.textContent,/valid JSON for this tenant and agent/);assert.equal(calls,1);}finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('control view requires every evidence page after an uncertain response', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-evidence-view-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('definition-control', dir),
+      { mountAgentDefinitionControl } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    let malformed = true;
+    globalThis.fetch = async (url, request) => {
+      const input = JSON.parse(request.body);
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ result: { agentId: 'agent', version: 1, enabled: true } }));
+      if (url.endsWith('/control')) throw Error('unknown');
+      if (url.endsWith('/history')) return new Response(JSON.stringify({ result: { items: [] } }));
+      if (input.query.after === undefined)
+        return new Response(JSON.stringify({ result: { items: [{ agentId: 'agent', version: 2, action: 'suspend', principalId: 'operator', observedAt: 100 }], nextAfter: 2 } }));
+      return new Response(JSON.stringify({ result: { items: [], ...(malformed ? { nextAfter: 2 } : {}) } }));
+    };
+    view = mountAgentDefinitionControl(root, { statusOperation: 'status', controlOperation: 'control', historyOperation: 'history', controlHistoryOperation: 'evidence', agentId: 'agent' });
+    button('Inspect agent').click();
+    await wait(() => !button('Suspend agent').disabled);
+    button('Suspend agent').click();
+    await wait(() => root.textContent.includes('Control outcome unknown'));
+    button('Inspect agent').click();
+    await wait(() => root.textContent.includes('Agent enabled'));
+    button('View definition history').click();
+    await wait(() => root.textContent.includes('History page loaded.'));
+    button('View control evidence').click();
+    await wait(() => root.textContent.includes('Control evidence page loaded. Continue'));
+    assert.equal(button('I reviewed the status and history').disabled, true);
+    button('Next evidence page').click();
+    await wait(() => root.textContent.includes('Unable to load information'));
+    assert.equal(button('I reviewed the status and history').disabled, true);
+    malformed = false;
+    button('Inspect agent').click();
+    await wait(() => root.textContent.includes('Agent enabled'));
+    button('View definition history').click();
+    await wait(() => root.textContent.includes('History page loaded.'));
+    button('View control evidence').click();
+    await wait(() => root.textContent.includes('Control evidence page loaded. Continue'));
+    button('Next evidence page').click();
+    await wait(() => root.textContent.includes('Control evidence page loaded.') && !button('View control evidence').disabled);
+    assert.equal(button('I reviewed the status and history').disabled, false);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('definition editor keeps an unsaved draft when loading and replaces it only on request',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'definition-editor-draft-')),originalFetch=globalThis.fetch;let dom,view;try{const target=await createProject('definition-editor',dir),{mountAgentDefinitionEditor}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);globalThis.fetch=async()=>new Response(JSON.stringify({result:{version:1,manifest:manifest('tenant')}}));view=mountAgentDefinitionEditor(root,{readOperation:'read',writeOperation:'write',historyOperation:'history',tenantId:'tenant',agentId:'agent'});button('Load definition').click();await wait(()=>!button('Save definition').disabled);const areas=root.querySelectorAll('textarea'),draft=JSON.parse(areas[1].value);draft.name='Unsaved draft';areas[1].value=JSON.stringify(draft);button('Load definition').click();await wait(()=>root.textContent.includes('Your existing draft was retained'));assert.equal(JSON.parse(areas[1].value).name,'Unsaved draft');assert.equal(JSON.parse(areas[0].value).name,'Agent');button('Use current as draft').click();assert.equal(JSON.parse(areas[1].value).name,'Agent');}finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;await rm(dir,{recursive:true,force:true});}
+test('definition review views reject cursors that skip or omit returned evidence', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-cursor-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('definition-cursor', dir),
+      runtime = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    for (const kind of ['control-history', 'control-evidence', 'editor-history'])
+      for (const empty of [false, true]) {
+        dom = new JSDOM('<main></main>');
+        const root = dom.window.document.querySelector('main'),
+          button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+        const entry = { agentId: 'agent', version: 2, principalId: 'operator', observedAt: 100, ...(kind === 'control-evidence' ? { action: 'suspend' } : {}) };
+        globalThis.fetch = async () => new Response(JSON.stringify({ result: { items: empty ? [] : [entry], nextAfter: 3 } }));
+        view =
+          kind === 'editor-history'
+            ? runtime.mountAgentDefinitionEditor(root, { readOperation: 'read', writeOperation: 'write', historyOperation: 'history', tenantId: 'tenant', agentId: 'agent' })
+            : runtime.mountAgentDefinitionControl(root, { statusOperation: 'status', controlOperation: 'control', historyOperation: 'history', controlHistoryOperation: 'evidence', agentId: 'agent' });
+        button(kind === 'control-evidence' ? 'View control evidence' : 'View definition history').click();
+        await wait(() => root.textContent.includes('Unable to load information'));
+        assert.equal(button(kind === 'editor-history' ? 'Next history page' : kind === 'control-evidence' ? 'Next evidence page' : 'Next history page').disabled, true);
+        view.dispose();
+        dom.window.close();
+        view = undefined;
+        dom = undefined;
+      }
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-test('manual start panel uses authorized shared definition status through the generated proxy',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:45000},async()=>{
- const dir=await mkdtemp(join(tmpdir(),'manual-shared-status-')),schema='manual_status_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),registry=new CapabilityRegistry(()=>{}),token='capability-secret-at-least-thirty-two-characters',originalFetch=globalThis.fetch;let upstream,server,dom,view,runs,triggers;try{
-  await admin.query(`CREATE SCHEMA "${schema}"`);const definitions=new PostgresAgentDefinitions({enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true});await definitions.initialize();await definitions.save(actor,manifest('tenant'),0);await definitions.save(actor,{...manifest('tenant'),name:'Second'},1);runs=new SqliteAgentRuns(join(dir,'runs.sqlite'));triggers=new SqliteAgentTriggers(join(dir,'runs.sqlite'));registerAgentDefinitionStatus(registry,{definitions,scope,operationId:'status',path:'/status',authorize:()=>true});registerAgentManualStart(registry,{triggers,scope,sourceId:'manual',operationId:'start',path:'/start',maxPendingRuns:2,getDefinition:(tenant,agent)=>definitions.get({tenantId:tenant,principalId:'operator'},agent),authorize:()=>true});upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const target=await createProject('manual-shared',dir);server=spawn(process.execPath,['server.mjs'],{cwd:target,env:{...process.env,PORT:'0',CAPABILITY_URL:`http://127.0.0.1:${upstream.address().port}/capabilities/`,CAPABILITY_TOKEN:token},stdio:['ignore','pipe','pipe']});const appUrl=await new Promise((resolve,reject)=>{let output='',errors='';server.stderr.on('data',chunk=>errors+=chunk);server.stdout.on('data',chunk=>{output+=chunk;const match=output.match(/http:\/\/127\.0\.0\.1:\d+/);if(match)resolve(match[0]);});server.once('error',reject);server.once('exit',code=>reject(Error(`Server exited ${code}: ${errors}`)));});globalThis.fetch=async(input,options)=>typeof input==='string'&&input.startsWith('/')?originalFetch(new URL(input,appUrl),{...options,headers:{...options.headers,origin:appUrl}}):originalFetch(input,options);
-  const {mountAgentManualStart}=await import(pathToFileURL(join(target,'offline-runtime.mjs')).href);dom=new JSDOM('<main></main>');const root=dom.window.document.querySelector('main'),button=text=>[...root.querySelectorAll('button')].find(element=>element.textContent===text);view=mountAgentManualStart(root,{startOperation:'start',statusOperation:'status',agentId:'agent'});const fields=root.querySelectorAll('input');fields[0].value='request-1';fields[0].dispatchEvent(new dom.window.Event('input',{bubbles:true}));button('Check agent status').click();await wait(()=>root.textContent.includes('Agent enabled at definition version 2'));assert.equal(fields[1].value,'2');button('Start run').click();await wait(()=>root.textContent.includes('Run started:'));const ids=runs.queuedPage(scope).runIds;assert.equal(ids.length,1);assert.equal(runs.get(scope,ids[0]).definitionVersion,2);assert.equal(triggers.get(scope,ids[0]).principalId,'operator');
- }finally{view?.dispose();dom?.window.close();globalThis.fetch=originalFetch;if(server&&server.exitCode===null&&server.signalCode===null){const stopped=once(server,'exit');server.kill();await stopped;}if(upstream){upstream.closeAllConnections();if(upstream.listening)await new Promise(resolve=>upstream.close(resolve));}triggers?.close();runs?.close();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();await rm(dir,{recursive:true,force:true});}
+test('definition editor reviews an uncertain create before updating through PostgreSQL', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 45000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-editor-')),
+    schema = 'definition_editor_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {}),
+    token = 'capability-secret-at-least-thirty-two-characters',
+    originalFetch = globalThis.fetch;
+  let upstream, server, dom, view;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true, clock: () => 100 });
+    await definitions.initialize();
+    await definitions.save({ ...actor, tenantId: 'other' }, manifest('other'), 0);
+    registerAgentDefinitionRead(registry, { definitions, scope, operationId: 'read', path: '/read', authorize: () => true });
+    registerAgentDefinitionWrite(registry, { definitions, scope, operationId: 'write', path: '/write', authorize: () => true });
+    registerAgentDefinitionHistory(registry, { definitions, scope, operationId: 'history', path: '/history', limit: 1, authorize: () => true });
+    upstream = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
+      () => {}
+    );
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const target = await createProject('definition-editor', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const appUrl = await new Promise((resolve, reject) => {
+      let output = '',
+        errors = '';
+      server.stderr.on('data', chunk => (errors += chunk));
+      server.stdout.on('data', chunk => {
+        output += chunk;
+        const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited ${code}: ${errors}`)));
+    });
+    let lose = true;
+    globalThis.fetch = async (input, options) => {
+      const response =
+        typeof input === 'string' && input.startsWith('/')
+          ? await originalFetch(new URL(input, appUrl), { ...options, headers: { ...options.headers, origin: appUrl } })
+          : await originalFetch(input, options);
+      if (lose && typeof input === 'string' && input.endsWith('/write')) {
+        lose = false;
+        assert.equal(response.status, 200);
+        throw Error('response lost');
+      }
+      return response;
+    };
+    const { mountAgentDefinitionEditor } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    view = mountAgentDefinitionEditor(root, { readOperation: 'read', writeOperation: 'write', historyOperation: 'history', tenantId: 'tenant', agentId: 'agent' });
+    const areas = root.querySelectorAll('textarea');
+    button('Load definition').click();
+    await wait(() => root.textContent.includes('No definition found.'));
+    button('Prepare new definition').click();
+    areas[1].value = JSON.stringify(manifest('tenant'));
+    button('Save definition').click();
+    await wait(() => root.textContent.includes('Save outcome unknown'));
+    assert.equal((await definitions.get(actor, 'agent')).version, 1);
+    assert.equal(button('I reviewed the definition and history').disabled, true);
+    button('Load definition').click();
+    await wait(() => root.textContent.includes('Current definition version 1'));
+    assert.equal(JSON.parse(areas[1].value).instructions, 'private instructions');
+    button('View definition history').click();
+    await wait(() => root.textContent.includes('History page loaded.'));
+    assert.equal(button('I reviewed the definition and history').disabled, false);
+    button('I reviewed the definition and history').click();
+    assert.equal(button('Save definition').disabled, true);
+    button('Load definition').click();
+    await wait(() => !button('Save definition').disabled);
+    const edit = JSON.parse(areas[1].value);
+    edit.name = 'Updated';
+    areas[1].value = JSON.stringify(edit);
+    button('Save definition').click();
+    await wait(() => root.textContent.includes('Definition saved as version 2'));
+    assert.equal((await definitions.get(actor, 'agent')).manifest.name, 'Updated');
+    assert.equal((await definitions.get({ ...actor, tenantId: 'other' }, 'agent')).version, 1);
+    assert.equal((await definitions.history(actor, 'agent')).items.length, 2);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    if (upstream) {
+      upstream.closeAllConnections();
+      if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    }
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('definition editor rejects wrong scope and does not mistake a missing operation for an absent definition', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-editor-invalid-')),
+    originalFetch = globalThis.fetch;
+  let dom,
+    view,
+    calls = 0;
+  try {
+    const target = await createProject('definition-editor', dir),
+      { mountAgentDefinitionEditor } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(JSON.stringify({ error: 'Capability not found' }), { status: 404 });
+    };
+    view = mountAgentDefinitionEditor(root, { readOperation: 'read', writeOperation: 'write', historyOperation: 'history', tenantId: 'tenant', agentId: 'agent' });
+    button('Load definition').click();
+    await wait(() => root.textContent.includes('Unable to load information'));
+    assert.doesNotMatch(root.textContent, /No definition found/);
+    button('Prepare new definition').click();
+    const draft = root.querySelectorAll('textarea')[1];
+    draft.value = JSON.stringify({ ...manifest('tenant'), agentId: 'other' });
+    button('Save definition').click();
+    assert.match(root.textContent, /valid JSON for this tenant and agent/);
+    assert.equal(calls, 1);
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('definition editor keeps an unsaved draft when loading and replaces it only on request', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'definition-editor-draft-')),
+    originalFetch = globalThis.fetch;
+  let dom, view;
+  try {
+    const target = await createProject('definition-editor', dir),
+      { mountAgentDefinitionEditor } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    globalThis.fetch = async () => new Response(JSON.stringify({ result: { version: 1, manifest: manifest('tenant') } }));
+    view = mountAgentDefinitionEditor(root, { readOperation: 'read', writeOperation: 'write', historyOperation: 'history', tenantId: 'tenant', agentId: 'agent' });
+    button('Load definition').click();
+    await wait(() => !button('Save definition').disabled);
+    const areas = root.querySelectorAll('textarea'),
+      draft = JSON.parse(areas[1].value);
+    draft.name = 'Unsaved draft';
+    areas[1].value = JSON.stringify(draft);
+    button('Load definition').click();
+    await wait(() => root.textContent.includes('Your existing draft was retained'));
+    assert.equal(JSON.parse(areas[1].value).name, 'Unsaved draft');
+    assert.equal(JSON.parse(areas[0].value).name, 'Agent');
+    button('Use current as draft').click();
+    assert.equal(JSON.parse(areas[1].value).name, 'Agent');
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('manual start panel uses authorized shared definition status through the generated proxy', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 45000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'manual-shared-status-')),
+    schema = 'manual_status_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    registry = new CapabilityRegistry(() => {}),
+    token = 'capability-secret-at-least-thirty-two-characters',
+    originalFetch = globalThis.fetch;
+  let upstream, server, dom, view, runs, triggers;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const definitions = new PostgresAgentDefinitions({ enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true });
+    await definitions.initialize();
+    await definitions.save(actor, manifest('tenant'), 0);
+    await definitions.save(actor, { ...manifest('tenant'), name: 'Second' }, 1);
+    runs = new SqliteAgentRuns(join(dir, 'runs.sqlite'));
+    triggers = new SqliteAgentTriggers(join(dir, 'runs.sqlite'));
+    registerAgentDefinitionStatus(registry, { definitions, scope, operationId: 'status', path: '/status', authorize: () => true });
+    registerAgentManualStart(registry, {
+      triggers,
+      scope,
+      sourceId: 'manual',
+      operationId: 'start',
+      path: '/start',
+      maxPendingRuns: 2,
+      getDefinition: (tenant, agent) => definitions.get({ tenantId: tenant, principalId: 'operator' }, agent),
+      authorize: () => true
+    });
+    upstream = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
+      () => {}
+    );
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const target = await createProject('manual-shared', dir);
+    server = spawn(process.execPath, ['server.mjs'], {
+      cwd: target,
+      env: { ...process.env, PORT: '0', CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const appUrl = await new Promise((resolve, reject) => {
+      let output = '',
+        errors = '';
+      server.stderr.on('data', chunk => (errors += chunk));
+      server.stdout.on('data', chunk => {
+        output += chunk;
+        const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) resolve(match[0]);
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(Error(`Server exited ${code}: ${errors}`)));
+    });
+    globalThis.fetch = async (input, options) =>
+      typeof input === 'string' && input.startsWith('/') ? originalFetch(new URL(input, appUrl), { ...options, headers: { ...options.headers, origin: appUrl } }) : originalFetch(input, options);
+    const { mountAgentManualStart } = await import(pathToFileURL(join(target, 'offline-runtime.mjs')).href);
+    dom = new JSDOM('<main></main>');
+    const root = dom.window.document.querySelector('main'),
+      button = text => [...root.querySelectorAll('button')].find(element => element.textContent === text);
+    view = mountAgentManualStart(root, { startOperation: 'start', statusOperation: 'status', agentId: 'agent' });
+    const fields = root.querySelectorAll('input');
+    fields[0].value = 'request-1';
+    fields[0].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    button('Check agent status').click();
+    await wait(() => root.textContent.includes('Agent enabled at definition version 2'));
+    assert.equal(fields[1].value, '2');
+    button('Start run').click();
+    await wait(() => root.textContent.includes('Run started:'));
+    const ids = runs.queuedPage(scope).runIds;
+    assert.equal(ids.length, 1);
+    assert.equal(runs.get(scope, ids[0]).definitionVersion, 2);
+    assert.equal(triggers.get(scope, ids[0]).principalId, 'operator');
+  } finally {
+    view?.dispose();
+    dom?.window.close();
+    globalThis.fetch = originalFetch;
+    if (server && server.exitCode === null && server.signalCode === null) {
+      const stopped = once(server, 'exit');
+      server.kill();
+      await stopped;
+    }
+    if (upstream) {
+      upstream.closeAllConnections();
+      if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+    }
+    triggers?.close();
+    runs?.close();
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

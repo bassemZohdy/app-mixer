@@ -1,60 +1,467 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import {PostgresAgentSharedCost} from '../dist/index.js';
-const actor={tenantId:'tenant',principalId:'operator'},scope={tenantId:'tenant',budgetId:'cycle-1',currency:'USD',maxMicros:1000},call=(agentId,runId,callId)=>({agentId,runId,callId});
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const value=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
-test('shared cost rejects invalid configuration and denies access before database work',async()=>{
- const base={enabled:true,scope,query:async()=>{throw Error('unexpected query')},transaction:async()=>{throw Error('unexpected transaction')},authorize:()=>false};for(const bad of [{enabled:false},{scope:{...scope,currency:'usd'}},{scope:{...scope,maxMicros:0}},{authorize:null}])assert.throws(()=>new PostgresAgentSharedCost({...base,...bad}),/configuration/);const budget=new PostgresAgentSharedCost(base);await assert.rejects(budget.reserve(actor,call('agent','run','call'),1),/denied/);await assert.rejects(budget.get({...actor,tenantId:'other'},call('agent','run','call')),/actor/);
+import { PostgresAgentSharedCost } from '../dist/index.js';
+const actor = { tenantId: 'tenant', principalId: 'operator' },
+  scope = { tenantId: 'tenant', budgetId: 'cycle-1', currency: 'USD', maxMicros: 1000 },
+  call = (agentId, runId, callId) => ({ agentId, runId, callId });
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const value = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return value;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+test('shared cost rejects invalid configuration and denies access before database work', async () => {
+  const base = {
+    enabled: true,
+    scope,
+    query: async () => {
+      throw Error('unexpected query');
+    },
+    transaction: async () => {
+      throw Error('unexpected transaction');
+    },
+    authorize: () => false
+  };
+  for (const bad of [{ enabled: false }, { scope: { ...scope, currency: 'usd' } }, { scope: { ...scope, maxMicros: 0 } }, { authorize: null }])
+    assert.throws(() => new PostgresAgentSharedCost({ ...base, ...bad }), /configuration/);
+  const budget = new PostgresAgentSharedCost(base);
+  await assert.rejects(budget.reserve(actor, call('agent', 'run', 'call'), 1), /denied/);
+  await assert.rejects(budget.get({ ...actor, tenantId: 'other' }, call('agent', 'run', 'call')), /actor/);
 });
-test('shared PostgreSQL cost reservations serialize across workers and isolate budgets',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});try{await admin.query(`CREATE SCHEMA "${schema}"`);const config={enabled:true,scope:{...scope},query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true},a=new PostgresAgentSharedCost(config),b=new PostgresAgentSharedCost(config);await a.initialize();config.scope.maxMicros=1;const first=call('agent-a','run-a','call'),second=call('agent-b','run-b','call'),race=await Promise.allSettled([a.reserve(actor,first,600),b.reserve(actor,second,600)]);assert.equal(race.filter(item=>item.status==='fulfilled').length,1);assert.match(race.find(item=>item.status==='rejected').reason.message,/budget exhausted/);const winner=race[0].status==='fulfilled'?first:second,loser=winner===first?second:first;assert.deepEqual(await a.summary(actor),{currency:'USD',limitMicros:1000,reservedMicros:600,committedMicros:0,calls:1});await assert.rejects(a.reserve(actor,winner,600),/already exists/);const otherBudget=new PostgresAgentSharedCost({...config,scope:{...scope,budgetId:'cycle-2'}});await assert.rejects(otherBudget.reserve(actor,winner,100),/already exists/);await a.settle(actor,winner,200);await b.reserve(actor,loser,700);assert.deepEqual(await b.summary(actor),{currency:'USD',limitMicros:1000,reservedMicros:700,committedMicros:200,calls:2});await b.settle(actor,loser,800);await assert.rejects(a.reserve(actor,call('agent-c','run-c','call'),1),/provider limit violated/);const wrong=new PostgresAgentSharedCost({...config,scope:{...scope,maxMicros:999}});await assert.rejects(wrong.summary(actor),/conflict/);await assert.rejects(wrong.get(actor,winner),/conflict/);await assert.rejects(wrong.reserve(actor,call('a','b','c'),1),/conflict/);const other=new PostgresAgentSharedCost({...config,scope:{...scope,tenantId:'other'}}),otherActor={tenantId:'other',principalId:'operator'};await other.reserve(otherActor,winner,100);assert.equal((await other.get(otherActor,winner)).reservedMicros,100);assert.equal((await a.summary(actor)).calls,2);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('shared PostgreSQL cost reservations serialize across workers and isolate budgets', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = { enabled: true, scope: { ...scope }, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true },
+      a = new PostgresAgentSharedCost(config),
+      b = new PostgresAgentSharedCost(config);
+    await a.initialize();
+    config.scope.maxMicros = 1;
+    const first = call('agent-a', 'run-a', 'call'),
+      second = call('agent-b', 'run-b', 'call'),
+      race = await Promise.allSettled([a.reserve(actor, first, 600), b.reserve(actor, second, 600)]);
+    assert.equal(race.filter(item => item.status === 'fulfilled').length, 1);
+    assert.match(race.find(item => item.status === 'rejected').reason.message, /budget exhausted/);
+    const winner = race[0].status === 'fulfilled' ? first : second,
+      loser = winner === first ? second : first;
+    assert.deepEqual(await a.summary(actor), { currency: 'USD', limitMicros: 1000, reservedMicros: 600, committedMicros: 0, calls: 1 });
+    await assert.rejects(a.reserve(actor, winner, 600), /already exists/);
+    const otherBudget = new PostgresAgentSharedCost({ ...config, scope: { ...scope, budgetId: 'cycle-2' } });
+    await assert.rejects(otherBudget.reserve(actor, winner, 100), /already exists/);
+    await a.settle(actor, winner, 200);
+    await b.reserve(actor, loser, 700);
+    assert.deepEqual(await b.summary(actor), { currency: 'USD', limitMicros: 1000, reservedMicros: 700, committedMicros: 200, calls: 2 });
+    await b.settle(actor, loser, 800);
+    await assert.rejects(a.reserve(actor, call('agent-c', 'run-c', 'call'), 1), /provider limit violated/);
+    const wrong = new PostgresAgentSharedCost({ ...config, scope: { ...scope, maxMicros: 999 } });
+    await assert.rejects(wrong.summary(actor), /conflict/);
+    await assert.rejects(wrong.get(actor, winner), /conflict/);
+    await assert.rejects(wrong.reserve(actor, call('a', 'b', 'c'), 1), /conflict/);
+    const other = new PostgresAgentSharedCost({ ...config, scope: { ...scope, tenantId: 'other' } }),
+      otherActor = { tenantId: 'other', principalId: 'operator' };
+    await other.reserve(otherActor, winner, 100);
+    assert.equal((await other.get(otherActor, winner)).reservedMicros, 100);
+    assert.equal((await a.summary(actor)).calls, 2);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('shared cost reconciliation and evidence commit atomically and enforce authorization',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let allowed=true;try{await admin.query(`CREATE SCHEMA "${schema}"`);const budget=new PostgresAgentSharedCost({enabled:true,scope,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:(_actor,_scope,action)=>allowed&&action!=='settle'});await budget.initialize();const item=call('agent','run','call');await budget.reserve(actor,item,500);await assert.rejects(budget.settle(actor,item,100),/denied/);await pool.query("CREATE FUNCTION test_cost_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit failed'; END $$");await pool.query('CREATE TRIGGER test_cost_fail BEFORE INSERT ON app_mixer_shared_cost_reconciliations FOR EACH ROW EXECUTE FUNCTION test_cost_fail()');await assert.rejects(budget.reconcile(actor,item,125,'case-1'),/audit failed/);assert.equal((await budget.get(actor,item)).status,'reserved');assert.deepEqual((await budget.history(actor)).items,[]);await pool.query('DROP TRIGGER test_cost_fail ON app_mixer_shared_cost_reconciliations');await budget.reconcile(actor,item,125,'case-1');const history=await budget.history(actor);assert.equal(history.items.length,1);assert.equal(history.items[0].principalId,'operator');assert.equal(history.items[0].reference,'case-1');assert.equal(history.items[0].usedMicros,125);assert.equal((await budget.get(actor,item)).usedMicros,125);await assert.rejects(budget.reconcile(actor,item,125,'case-1'),/unavailable/);for(const sql of ["UPDATE app_mixer_shared_cost_reconciliations SET reference='changed'",'DELETE FROM app_mixer_shared_cost_reconciliations','TRUNCATE app_mixer_shared_cost_reconciliations'])await assert.rejects(pool.query(sql),/immutable/);allowed=false;await assert.rejects(budget.history(actor),/denied/);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('shared cost reconciliation and evidence commit atomically and enforce authorization', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let allowed = true;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const budget = new PostgresAgentSharedCost({
+      enabled: true,
+      scope,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool),
+      authorize: (_actor, _scope, action) => allowed && action !== 'settle'
+    });
+    await budget.initialize();
+    const item = call('agent', 'run', 'call');
+    await budget.reserve(actor, item, 500);
+    await assert.rejects(budget.settle(actor, item, 100), /denied/);
+    await pool.query("CREATE FUNCTION test_cost_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit failed'; END $$");
+    await pool.query('CREATE TRIGGER test_cost_fail BEFORE INSERT ON app_mixer_shared_cost_reconciliations FOR EACH ROW EXECUTE FUNCTION test_cost_fail()');
+    await assert.rejects(budget.reconcile(actor, item, 125, 'case-1'), /audit failed/);
+    assert.equal((await budget.get(actor, item)).status, 'reserved');
+    assert.deepEqual((await budget.history(actor)).items, []);
+    await pool.query('DROP TRIGGER test_cost_fail ON app_mixer_shared_cost_reconciliations');
+    await budget.reconcile(actor, item, 125, 'case-1');
+    const history = await budget.history(actor);
+    assert.equal(history.items.length, 1);
+    assert.equal(history.items[0].principalId, 'operator');
+    assert.equal(history.items[0].reference, 'case-1');
+    assert.equal(history.items[0].usedMicros, 125);
+    assert.equal((await budget.get(actor, item)).usedMicros, 125);
+    await assert.rejects(budget.reconcile(actor, item, 125, 'case-1'), /unavailable/);
+    for (const sql of ["UPDATE app_mixer_shared_cost_reconciliations SET reference='changed'", 'DELETE FROM app_mixer_shared_cost_reconciliations', 'TRUNCATE app_mixer_shared_cost_reconciliations'])
+      await assert.rejects(pool.query(sql), /immutable/);
+    allowed = false;
+    await assert.rejects(budget.history(actor), /denied/);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('shared cost reads recheck policy after asynchronous database work',async()=>{
- let allowed=true,entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),budget=new PostgresAgentSharedCost({enabled:true,scope,authorize:()=>allowed,transaction:async()=>{throw Error('unexpected')},query:async sql=>{if(sql.includes('SELECT currency,max_micros'))return {rows:[]};entered();await gate;return {rows:[]};}});const pending=budget.get(actor,call('agent','run','call'));await ready;allowed=false;release();await assert.rejects(pending,/denied/);
+test('shared cost reads recheck policy after asynchronous database work', async () => {
+  let allowed = true,
+    entered,
+    release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    budget = new PostgresAgentSharedCost({
+      enabled: true,
+      scope,
+      authorize: () => allowed,
+      transaction: async () => {
+        throw Error('unexpected');
+      },
+      query: async sql => {
+        if (sql.includes('SELECT currency,max_micros')) return { rows: [] };
+        entered();
+        await gate;
+        return { rows: [] };
+      }
+    });
+  const pending = budget.get(actor, call('agent', 'run', 'call'));
+  await ready;
+  allowed = false;
+  release();
+  await assert.rejects(pending, /denied/);
 });
 
-
-test('shared cost cross-budget duplicate reservations cannot both commit',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});try{await admin.query(`CREATE SCHEMA "${schema}"`);const config={enabled:true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:()=>true},a=new PostgresAgentSharedCost({...config,scope}),b=new PostgresAgentSharedCost({...config,scope:{...scope,budgetId:'cycle-2'}});await a.initialize();const selected=call('agent','run','call'),results=await Promise.allSettled([a.reserve(actor,selected,100),b.reserve(actor,selected,100)]);assert.equal(results.filter(result=>result.status==='fulfilled').length,1);assert.match(results.find(result=>result.status==='rejected').reason.message,/already exists/);assert.equal((await a.summary(actor)).calls+(await b.summary(actor)).calls,1);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('shared cost cross-budget duplicate reservations cannot both commit', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = { enabled: true, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: () => true },
+      a = new PostgresAgentSharedCost({ ...config, scope }),
+      b = new PostgresAgentSharedCost({ ...config, scope: { ...scope, budgetId: 'cycle-2' } });
+    await a.initialize();
+    const selected = call('agent', 'run', 'call'),
+      results = await Promise.allSettled([a.reserve(actor, selected, 100), b.reserve(actor, selected, 100)]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.match(results.find(result => result.status === 'rejected').reason.message, /already exists/);
+    assert.equal((await a.summary(actor)).calls + (await b.summary(actor)).calls, 1);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('shared cost reservation rechecks policy while holding its budget lock',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release;try{await admin.query(`CREATE SCHEMA "${schema}"`);let checks=0,allowed=true,entered;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),budget=new PostgresAgentSharedCost({enabled:true,scope,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:async(_actor,_scope,action)=>{if(action==='reserve'&&++checks===2){entered();await gate;}return allowed;}});await budget.initialize();const pending=budget.reserve(actor,call('agent','run','call'),100);await ready;allowed=false;release();await assert.rejects(pending,/denied/);allowed=true;assert.equal((await budget.summary(actor)).calls,0);
- }finally{release?.();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('shared cost reservation rechecks policy while holding its budget lock', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let release;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    let checks = 0,
+      allowed = true,
+      entered;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      budget = new PostgresAgentSharedCost({
+        enabled: true,
+        scope,
+        query: (sql, args) => pool.query(sql, args),
+        transaction: transaction(pool),
+        authorize: async (_actor, _scope, action) => {
+          if (action === 'reserve' && ++checks === 2) {
+            entered();
+            await gate;
+          }
+          return allowed;
+        }
+      });
+    await budget.initialize();
+    const pending = budget.reserve(actor, call('agent', 'run', 'call'), 100);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /denied/);
+    allowed = true;
+    assert.equal((await budget.summary(actor)).calls, 0);
+  } finally {
+    release?.();
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-
-test('shared cost reservation rechecks policy after the totals query',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release;try{await admin.query(`CREATE SCHEMA "${schema}"`);let allowed=true,entered;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),base=transaction(pool),budget=new PostgresAgentSharedCost({enabled:true,scope,query:(sql,args)=>pool.query(sql,args),transaction:operation=>base(query=>operation(async(sql,args)=>{const result=await query(sql,args);if(sql.includes('COUNT(*) AS calls')){entered();await gate;}return result;})),authorize:()=>allowed});await budget.initialize();const pending=budget.reserve(actor,call('agent','run','call'),100);await ready;allowed=false;release();await assert.rejects(pending,/denied/);allowed=true;assert.equal((await budget.summary(actor)).calls,0);
- }finally{release?.();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('shared cost reservation rechecks policy after the totals query', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let release;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    let allowed = true,
+      entered;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      base = transaction(pool),
+      budget = new PostgresAgentSharedCost({
+        enabled: true,
+        scope,
+        query: (sql, args) => pool.query(sql, args),
+        transaction: operation =>
+          base(query =>
+            operation(async (sql, args) => {
+              const result = await query(sql, args);
+              if (sql.includes('COUNT(*) AS calls')) {
+                entered();
+                await gate;
+              }
+              return result;
+            })
+          ),
+        authorize: () => allowed
+      });
+    await budget.initialize();
+    const pending = budget.reserve(actor, call('agent', 'run', 'call'), 100);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /denied/);
+    allowed = true;
+    assert.equal((await budget.summary(actor)).calls, 0);
+  } finally {
+    release?.();
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('shared cost pending listing is separately authorized, paginated and tenant isolated',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let pendingAllowed=false;try{await admin.query(`CREATE SCHEMA "${schema}"`);const config={enabled:true,scope,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool),authorize:(_actor,_scope,action)=>action!=='pending'||pendingAllowed},budget=new PostgresAgentSharedCost(config);await budget.initialize();for(const item of [call('a','run','one'),call('a','run','two'),call('b','run','one'),call('c','run','one')])await budget.reserve(actor,item,100);await budget.settle(actor,call('a','run','two'),50);const foreign=new PostgresAgentSharedCost({...config,scope:{...scope,tenantId:'other'}}),foreignActor={tenantId:'other',principalId:'operator'};await foreign.reserve(foreignActor,call('foreign','run','one'),100);const otherBudget=new PostgresAgentSharedCost({...config,scope:{...scope,budgetId:'different'}});await otherBudget.reserve(actor,call('other-budget','run','one'),100);await assert.rejects(budget.pending(actor),/denied/);pendingAllowed=true;const first=await budget.pending(actor,{limit:2});assert.deepEqual(first.items.map(item=>[item.agentId,item.runId,item.callId]),[['a','run','one'],['b','run','one']]);assert.deepEqual(first.nextAfter,call('b','run','one'));assert.deepEqual((await budget.pending(actor,{limit:2,after:first.nextAfter})).items.map(item=>item.agentId),['c']);assert.deepEqual((await foreign.pending(foreignActor)).items.map(item=>item.agentId),['foreign']);assert.deepEqual((await otherBudget.pending(actor)).items.map(item=>item.agentId),['other-budget']);await budget.reconcile(actor,call('a','run','one'),30,'case');assert.deepEqual((await budget.pending(actor)).items.map(item=>item.agentId),['b','c']);for(const options of [{limit:0},{limit:101},{after:{agentId:'a',runId:'run',callId:'bad id'}},{unexpected:true},null])await assert.rejects(budget.pending(actor,options),/listing|call/);await assert.rejects(budget.pending({...actor,tenantId:'other'}),/actor/);const wrong=new PostgresAgentSharedCost({...config,scope:{...scope,maxMicros:999}});await assert.rejects(wrong.pending(actor),/conflict/);
- }finally{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();}
+test('shared cost pending listing is separately authorized, paginated and tenant isolated', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let pendingAllowed = false;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const config = { enabled: true, scope, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool), authorize: (_actor, _scope, action) => action !== 'pending' || pendingAllowed },
+      budget = new PostgresAgentSharedCost(config);
+    await budget.initialize();
+    for (const item of [call('a', 'run', 'one'), call('a', 'run', 'two'), call('b', 'run', 'one'), call('c', 'run', 'one')]) await budget.reserve(actor, item, 100);
+    await budget.settle(actor, call('a', 'run', 'two'), 50);
+    const foreign = new PostgresAgentSharedCost({ ...config, scope: { ...scope, tenantId: 'other' } }),
+      foreignActor = { tenantId: 'other', principalId: 'operator' };
+    await foreign.reserve(foreignActor, call('foreign', 'run', 'one'), 100);
+    const otherBudget = new PostgresAgentSharedCost({ ...config, scope: { ...scope, budgetId: 'different' } });
+    await otherBudget.reserve(actor, call('other-budget', 'run', 'one'), 100);
+    await assert.rejects(budget.pending(actor), /denied/);
+    pendingAllowed = true;
+    const first = await budget.pending(actor, { limit: 2 });
+    assert.deepEqual(
+      first.items.map(item => [item.agentId, item.runId, item.callId]),
+      [
+        ['a', 'run', 'one'],
+        ['b', 'run', 'one']
+      ]
+    );
+    assert.deepEqual(first.nextAfter, call('b', 'run', 'one'));
+    assert.deepEqual(
+      (await budget.pending(actor, { limit: 2, after: first.nextAfter })).items.map(item => item.agentId),
+      ['c']
+    );
+    assert.deepEqual(
+      (await foreign.pending(foreignActor)).items.map(item => item.agentId),
+      ['foreign']
+    );
+    assert.deepEqual(
+      (await otherBudget.pending(actor)).items.map(item => item.agentId),
+      ['other-budget']
+    );
+    await budget.reconcile(actor, call('a', 'run', 'one'), 30, 'case');
+    assert.deepEqual(
+      (await budget.pending(actor)).items.map(item => item.agentId),
+      ['b', 'c']
+    );
+    for (const options of [{ limit: 0 }, { limit: 101 }, { after: { agentId: 'a', runId: 'run', callId: 'bad id' } }, { unexpected: true }, null])
+      await assert.rejects(budget.pending(actor, options), /listing|call/);
+    await assert.rejects(budget.pending({ ...actor, tenantId: 'other' }), /actor/);
+    const wrong = new PostgresAgentSharedCost({ ...config, scope: { ...scope, maxMicros: 999 } });
+    await assert.rejects(wrong.pending(actor), /conflict/);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('shared cost pending listing snapshots its cursor and rechecks permission after a slow read',async()=>{
- let allowed=true,entered,release,seen;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),budget=new PostgresAgentSharedCost({enabled:true,scope,authorize:()=>allowed,transaction:async()=>{throw Error('unexpected transaction')},query:async(sql,args)=>{if(sql.includes("status='reserved'")){seen=args;entered();await gate;}return {rows:[]};}}),after=call('agent','run','before'),pending=budget.pending(actor,{after,limit:5});await ready;after.agentId='changed';allowed=false;release();await assert.rejects(pending,/denied/);assert.deepEqual(seen.slice(2,5),['agent','run','before']);
+test('shared cost pending listing snapshots its cursor and rechecks permission after a slow read', async () => {
+  let allowed = true,
+    entered,
+    release,
+    seen;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    budget = new PostgresAgentSharedCost({
+      enabled: true,
+      scope,
+      authorize: () => allowed,
+      transaction: async () => {
+        throw Error('unexpected transaction');
+      },
+      query: async (sql, args) => {
+        if (sql.includes("status='reserved'")) {
+          seen = args;
+          entered();
+          await gate;
+        }
+        return { rows: [] };
+      }
+    }),
+    after = call('agent', 'run', 'before'),
+    pending = budget.pending(actor, { after, limit: 5 });
+  await ready;
+  after.agentId = 'changed';
+  allowed = false;
+  release();
+  await assert.rejects(pending, /denied/);
+  assert.deepEqual(seen.slice(2, 5), ['agent', 'run', 'before']);
 });
 
-test('pending listing refuses a budget pinned to a conflicting configuration during the read',async()=>{
- let configReads=0;const budget=new PostgresAgentSharedCost({enabled:true,scope,authorize:()=>true,transaction:async()=>{throw Error('unexpected')},query:async sql=>{if(sql.includes('SELECT currency,max_micros'))return {rows:++configReads===1?[]:[{currency:'USD',max_micros:'999'}]};return {rows:[{agent_id:'agent',run_id:'run',call_id:'call',reserved_micros:'10',used_micros:null,status:'reserved',created_at:'1'}]};}});await assert.rejects(budget.pending(actor),/budget conflict/);
+test('pending listing refuses a budget pinned to a conflicting configuration during the read', async () => {
+  let configReads = 0;
+  const budget = new PostgresAgentSharedCost({
+    enabled: true,
+    scope,
+    authorize: () => true,
+    transaction: async () => {
+      throw Error('unexpected');
+    },
+    query: async sql => {
+      if (sql.includes('SELECT currency,max_micros')) return { rows: ++configReads === 1 ? [] : [{ currency: 'USD', max_micros: '999' }] };
+      return { rows: [{ agent_id: 'agent', run_id: 'run', call_id: 'call', reserved_micros: '10', used_micros: null, status: 'reserved', created_at: '1' }] };
+    }
+  });
+  await assert.rejects(budget.pending(actor), /budget conflict/);
 });
 
-test('shared cost bounds stalled authorization and retains its slot until callback settles',async()=>{
- let entered,release,signal,slow=true,queries=0,transactions=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),base={enabled:true,scope,query:async()=>{queries++;return {rows:[]};},transaction:async()=>{transactions++;throw Error('unexpected');},authorize:async(_actor,_scope,_action,_call,received)=>{if(slow){signal=received;entered();await gate;}return true;}};for(const bad of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:100,maxPending:0}])assert.throws(()=>new PostgresAgentSharedCost({...base,...bad}),/configuration/);const options={...base,timeoutMs:100,maxPending:1},budget=new PostgresAgentSharedCost(options);options.timeoutMs=30000;const first=budget.reserve(actor,call('agent','run','first'),100);await ready;await assert.rejects(budget.summary(actor),/unavailable/);await assert.rejects(first,/unavailable/);assert.equal(signal.aborted,true);await assert.rejects(budget.pending(actor),/unavailable/);assert.equal(queries,0);assert.equal(transactions,0);slow=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await budget.summary(actor)).calls,0);assert.equal(queries,1);
+test('shared cost bounds stalled authorization and retains its slot until callback settles', async () => {
+  let entered,
+    release,
+    signal,
+    slow = true,
+    queries = 0,
+    transactions = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    base = {
+      enabled: true,
+      scope,
+      query: async () => {
+        queries++;
+        return { rows: [] };
+      },
+      transaction: async () => {
+        transactions++;
+        throw Error('unexpected');
+      },
+      authorize: async (_actor, _scope, _action, _call, received) => {
+        if (slow) {
+          signal = received;
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    };
+  for (const bad of [{ timeoutMs: 100 }, { maxPending: 1 }, { timeoutMs: 99, maxPending: 1 }, { timeoutMs: 100, maxPending: 0 }])
+    assert.throws(() => new PostgresAgentSharedCost({ ...base, ...bad }), /configuration/);
+  const options = { ...base, timeoutMs: 100, maxPending: 1 },
+    budget = new PostgresAgentSharedCost(options);
+  options.timeoutMs = 30000;
+  const first = budget.reserve(actor, call('agent', 'run', 'first'), 100);
+  await ready;
+  await assert.rejects(budget.summary(actor), /unavailable/);
+  await assert.rejects(first, /unavailable/);
+  assert.equal(signal.aborted, true);
+  await assert.rejects(budget.pending(actor), /unavailable/);
+  assert.equal(queries, 0);
+  assert.equal(transactions, 0);
+  slow = false;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await budget.summary(actor)).calls, 0);
+  assert.equal(queries, 1);
 });
 
-test('timed-out shared cost authorization rolls back a held PostgreSQL lock',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='shared_cost_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let release;try{await admin.query(`CREATE SCHEMA "${schema}"`);let checks=0,entered,signal;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),config={enabled:true,scope,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)},budget=new PostgresAgentSharedCost({...config,timeoutMs:100,maxPending:1,authorize:async(_actor,_scope,action,_call,received)=>{if(action==='reserve'&&++checks===3){signal=received;entered();await gate;}return true;}}),peer=new PostgresAgentSharedCost({...config,authorize:()=>true});await budget.initialize();const pending=budget.reserve(actor,call('agent','run','timed-out'),500);await ready;await assert.rejects(pending,/unavailable/);assert.equal(signal.aborted,true);await peer.reserve(actor,call('other','run','allowed'),500);assert.equal(await peer.get(actor,call('agent','run','timed-out')),undefined);assert.equal((await peer.summary(actor)).reservedMicros,500);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(await peer.get(actor,call('agent','run','timed-out')),undefined);
- }finally{release?.();await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('timed-out shared cost authorization rolls back a held PostgreSQL lock', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'shared_cost_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let release;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    let checks = 0,
+      entered,
+      signal;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      config = { enabled: true, scope, query: (sql, args) => pool.query(sql, args), transaction: transaction(pool) },
+      budget = new PostgresAgentSharedCost({
+        ...config,
+        timeoutMs: 100,
+        maxPending: 1,
+        authorize: async (_actor, _scope, action, _call, received) => {
+          if (action === 'reserve' && ++checks === 3) {
+            signal = received;
+            entered();
+            await gate;
+          }
+          return true;
+        }
+      }),
+      peer = new PostgresAgentSharedCost({ ...config, authorize: () => true });
+    await budget.initialize();
+    const pending = budget.reserve(actor, call('agent', 'run', 'timed-out'), 500);
+    await ready;
+    await assert.rejects(pending, /unavailable/);
+    assert.equal(signal.aborted, true);
+    await peer.reserve(actor, call('other', 'run', 'allowed'), 500);
+    assert.equal(await peer.get(actor, call('agent', 'run', 'timed-out')), undefined);
+    assert.equal((await peer.summary(actor)).reservedMicros, 500);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await peer.get(actor, call('agent', 'run', 'timed-out')), undefined);
+  } finally {
+    release?.();
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });

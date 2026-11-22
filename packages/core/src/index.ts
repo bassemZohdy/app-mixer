@@ -1,115 +1,328 @@
-import {createHash} from 'node:crypto';
-import {checkPromotionPackage,validEnvironment} from './promotion.js';
-import {checkPromotionEvidence,type PromotionSignatureEvidence} from './signed-promotion.js';
-import {AppMixerError} from './errors.js';
-import {validateDraftChange,validatePublishable} from './component-validation.js';
-type ComponentProps = {id:string;props?:Record<string,string|number|boolean>};
-export type Component = ComponentProps & ({type:'Text'|'Card'|'Table'|'Input'}|{type:'Extension';extensionId:string;name:string});
-export type Page = {id:string;title:string;route:string;components:Component[];description?:string};
-export type ExtensionReference = {id:string;version:string;scope:'platform'|'development'|'application'};
-export type ExtensionOperation = {extensionId:string;kind:'tool'|'provider';name:string};
-export type ApplicationDefinition = {id:string;schemaVersion:1|2;revision:number;pages:Page[];extensions?:ExtensionReference[];extensionOperations?:ExtensionOperation[]};
-export type PublicationProvenance = {version:number;kind:'unknown'} | {version:number;kind:'publish';previousVersion:number;definitionSha256:string} | {version:number;kind:'rollback';previousVersion:number;sourceVersion:number;definitionSha256:string} | {version:number;kind:'promotion';previousVersion:number;sourceEnvironment:string;targetEnvironment:string;sourceVersion:number;packageDigest:string;definitionSha256:string;signature?:PromotionSignatureEvidence};
-export function definitionSha256(definition:ApplicationDefinition):string{return createHash('sha256').update(JSON.stringify(definition)).digest('hex');}
-export type PublicationGuard = (draft:ApplicationDefinition) => true;
-export function enforcePublicationGuard(guard:PublicationGuard | undefined, draft:ApplicationDefinition):void {
- if(!guard){if(draft.extensions?.length || draft.extensionOperations?.length || draft.pages.some(page=>page.components.some(component=>component.type==='Extension')))throw new AppMixerError('conflict','Extension compatibility failed');return;}
- const result:unknown=guard(structuredClone(draft));
- if(result instanceof Promise) result.catch(()=>{});
- if(result!==true)throw Error("Publication guard must synchronously return true");
+import { createHash } from 'node:crypto';
+import { checkPromotionPackage, validEnvironment } from './promotion.js';
+import { checkPromotionEvidence, type PromotionSignatureEvidence } from './signed-promotion.js';
+import { AppMixerError } from './errors.js';
+import { validateDraftChange, validatePublishable } from './component-validation.js';
+type ComponentProps = { id: string; props?: Record<string, string | number | boolean> };
+export type Component = ComponentProps & ({ type: 'Text' | 'Card' | 'Table' | 'Input' } | { type: 'Extension'; extensionId: string; name: string });
+export type Page = { id: string; title: string; route: string; components: Component[]; description?: string };
+export type ExtensionReference = { id: string; version: string; scope: 'platform' | 'development' | 'application' };
+export type ExtensionOperation = { extensionId: string; kind: 'tool' | 'provider'; name: string };
+export type ApplicationDefinition = { id: string; schemaVersion: 1 | 2; revision: number; pages: Page[]; extensions?: ExtensionReference[]; extensionOperations?: ExtensionOperation[] };
+export type PublicationProvenance =
+  | { version: number; kind: 'unknown' }
+  | { version: number; kind: 'publish'; previousVersion: number; definitionSha256: string }
+  | { version: number; kind: 'rollback'; previousVersion: number; sourceVersion: number; definitionSha256: string }
+  | {
+      version: number;
+      kind: 'promotion';
+      previousVersion: number;
+      sourceEnvironment: string;
+      targetEnvironment: string;
+      sourceVersion: number;
+      packageDigest: string;
+      definitionSha256: string;
+      signature?: PromotionSignatureEvidence;
+    };
+export function definitionSha256(definition: ApplicationDefinition): string {
+  return createHash('sha256').update(JSON.stringify(definition)).digest('hex');
 }
-export type Patch = {op:"addPage";page:Page}|{op:"setPageTitle";pageId:string;title:string}|{op:"setPageDescription";pageId:string;description:string}|{op:"addComponent";pageId:string;component:Component}|{op:'removeComponent';pageId:string;componentId:string}|{op:'setComponentProps';pageId:string;componentId:string;props:Record<string,string|number|boolean>}|{op:'removePage';pageId:string}|{op:'setExtensions';extensions:ExtensionReference[]}|{op:'setExtensionOperations';operations:ExtensionOperation[]};
-const copy = <T>(x:T):T => structuredClone(x);
-export function isValidExtensionReferences(value:unknown):value is ExtensionReference[] {
- if(!Array.isArray(value)||value.length>256)return false;
- const ids=new Set<string>();
- for(const ref of value){
-  if(!ref||typeof ref!=='object'||Array.isArray(ref)||Object.keys(ref).length!==3||!Object.hasOwn(ref,'id')||!Object.hasOwn(ref,'version')||!Object.hasOwn(ref,'scope')||typeof ref.id!=='string'||!/^[a-z][a-z0-9.-]{0,127}$/.test(ref.id)||typeof ref.version!=='string'||!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(ref.version)||!['platform','development','application'].includes(ref.scope)||ids.has(ref.id))return false;
-  ids.add(ref.id);
- }
- return true;
+export type PublicationGuard = (draft: ApplicationDefinition) => true;
+export function enforcePublicationGuard(guard: PublicationGuard | undefined, draft: ApplicationDefinition): void {
+  if (!guard) {
+    if (draft.extensions?.length || draft.extensionOperations?.length || draft.pages.some(page => page.components.some(component => component.type === 'Extension')))
+      throw new AppMixerError('conflict', 'Extension compatibility failed');
+    return;
+  }
+  const result: unknown = guard(structuredClone(draft));
+  if (result instanceof Promise) result.catch(() => {});
+  if (result !== true) throw Error('Publication guard must synchronously return true');
 }
-export function isValidExtensionOperations(value:unknown):value is ExtensionOperation[] {
- if(!Array.isArray(value)||value.length>256)return false;
- const seen=new Set<string>();
- for(const operation of value){
-  if(!operation||typeof operation!=='object'||Array.isArray(operation)||Object.keys(operation).length!==3||!Object.hasOwn(operation,'extensionId')||!Object.hasOwn(operation,'kind')||!Object.hasOwn(operation,'name')||typeof operation.extensionId!=='string'||!/^[a-z][a-z0-9.-]{0,127}$/.test(operation.extensionId)||!['tool','provider'].includes(operation.kind)||typeof operation.name!=='string'||!/^[a-z][a-z0-9.-]{0,127}$/.test(operation.name))return false;
-  const key=JSON.stringify([operation.extensionId,operation.kind,operation.name]);if(seen.has(key))return false;seen.add(key);
- }
- return true;
+export type Patch =
+  | { op: 'addPage'; page: Page }
+  | { op: 'setPageTitle'; pageId: string; title: string }
+  | { op: 'setPageDescription'; pageId: string; description: string }
+  | { op: 'addComponent'; pageId: string; component: Component }
+  | { op: 'removeComponent'; pageId: string; componentId: string }
+  | { op: 'setComponentProps'; pageId: string; componentId: string; props: Record<string, string | number | boolean> }
+  | { op: 'removePage'; pageId: string }
+  | { op: 'setExtensions'; extensions: ExtensionReference[] }
+  | { op: 'setExtensionOperations'; operations: ExtensionOperation[] };
+const copy = <T>(x: T): T => structuredClone(x);
+export function isValidExtensionReferences(value: unknown): value is ExtensionReference[] {
+  if (!Array.isArray(value) || value.length > 256) return false;
+  const ids = new Set<string>();
+  for (const ref of value) {
+    if (
+      !ref ||
+      typeof ref !== 'object' ||
+      Array.isArray(ref) ||
+      Object.keys(ref).length !== 3 ||
+      !Object.hasOwn(ref, 'id') ||
+      !Object.hasOwn(ref, 'version') ||
+      !Object.hasOwn(ref, 'scope') ||
+      typeof ref.id !== 'string' ||
+      !/^[a-z][a-z0-9.-]{0,127}$/.test(ref.id) ||
+      typeof ref.version !== 'string' ||
+      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(ref.version) ||
+      !['platform', 'development', 'application'].includes(ref.scope) ||
+      ids.has(ref.id)
+    )
+      return false;
+    ids.add(ref.id);
+  }
+  return true;
 }
-export function validate(d:ApplicationDefinition):void {
- if(!d.id.trim()||![1,2].includes(d.schemaVersion)||!Number.isSafeInteger(d.revision)||d.revision<0)throw new AppMixerError('invalid',"Invalid manifest");
- if(d.extensions!==undefined&&!isValidExtensionReferences(d.extensions))throw new AppMixerError('invalid','Invalid manifest');
- if(d.extensionOperations!==undefined&&!isValidExtensionOperations(d.extensionOperations))throw new AppMixerError('invalid','Invalid manifest');
- const ids=new Set<string>(),routes=new Set<string>();
- for(const p of d.pages){if((d.schemaVersion===1&&p.description!==undefined)||(d.schemaVersion===2&&(typeof p.description!=='string'||p.description.length>10000))||!p.id||!p.title||!p.route.startsWith("/")||ids.has(p.id)||routes.has(p.route))throw new AppMixerError('invalid',"Duplicate or invalid page");ids.add(p.id);routes.add(p.route);
- const components=new Set<string>();for(const c of p.components){if(!c.id||components.has(c.id)||(!['Text','Card','Table','Input'].includes(c.type) && !(c.type==='Extension' && typeof c.extensionId==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name==='string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name))))throw new AppMixerError('invalid',"Invalid component");components.add(c.id);}
- }
+export function isValidExtensionOperations(value: unknown): value is ExtensionOperation[] {
+  if (!Array.isArray(value) || value.length > 256) return false;
+  const seen = new Set<string>();
+  for (const operation of value) {
+    if (
+      !operation ||
+      typeof operation !== 'object' ||
+      Array.isArray(operation) ||
+      Object.keys(operation).length !== 3 ||
+      !Object.hasOwn(operation, 'extensionId') ||
+      !Object.hasOwn(operation, 'kind') ||
+      !Object.hasOwn(operation, 'name') ||
+      typeof operation.extensionId !== 'string' ||
+      !/^[a-z][a-z0-9.-]{0,127}$/.test(operation.extensionId) ||
+      !['tool', 'provider'].includes(operation.kind) ||
+      typeof operation.name !== 'string' ||
+      !/^[a-z][a-z0-9.-]{0,127}$/.test(operation.name)
+    )
+      return false;
+    const key = JSON.stringify([operation.extensionId, operation.kind, operation.name]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+export function validate(d: ApplicationDefinition): void {
+  if (!d.id.trim() || ![1, 2].includes(d.schemaVersion) || !Number.isSafeInteger(d.revision) || d.revision < 0) throw new AppMixerError('invalid', 'Invalid manifest');
+  if (d.extensions !== undefined && !isValidExtensionReferences(d.extensions)) throw new AppMixerError('invalid', 'Invalid manifest');
+  if (d.extensionOperations !== undefined && !isValidExtensionOperations(d.extensionOperations)) throw new AppMixerError('invalid', 'Invalid manifest');
+  const ids = new Set<string>(),
+    routes = new Set<string>();
+  for (const p of d.pages) {
+    if (
+      (d.schemaVersion === 1 && p.description !== undefined) ||
+      (d.schemaVersion === 2 && (typeof p.description !== 'string' || p.description.length > 10000)) ||
+      !p.id ||
+      !p.title ||
+      !p.route.startsWith('/') ||
+      ids.has(p.id) ||
+      routes.has(p.route)
+    )
+      throw new AppMixerError('invalid', 'Duplicate or invalid page');
+    ids.add(p.id);
+    routes.add(p.route);
+    const components = new Set<string>();
+    for (const c of p.components) {
+      if (
+        !c.id ||
+        components.has(c.id) ||
+        (!['Text', 'Card', 'Table', 'Input'].includes(c.type) &&
+          !(c.type === 'Extension' && typeof c.extensionId === 'string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.extensionId) && typeof c.name === 'string' && /^[a-z][a-z0-9.-]{0,127}$/.test(c.name)))
+      )
+        throw new AppMixerError('invalid', 'Invalid component');
+      components.add(c.id);
+    }
+  }
 }
 export class ApplicationStore {
- private draft:ApplicationDefinition;private provenance=new Map<number,PublicationProvenance>();private published:{version:number;definition:ApplicationDefinition}[]=[];
- constructor(initial:ApplicationDefinition, private readonly publicationGuard?:PublicationGuard){validate(initial);if(publicationGuard!==undefined && typeof publicationGuard!=="function")throw Error("Invalid publication guard");this.draft=copy(initial);}
- getDraft(){return copy(this.draft);}
- getPublished(version?:number){if(version!==undefined&&(!Number.isSafeInteger(version)||version<1))throw Error("Invalid version");const p=version===undefined?this.published.at(-1):this.published.find(x=>x.version===version);return p?copy(p):undefined;}
- getPromotionFloor(sourceEnvironment:string,targetEnvironment:string):number{if(!validEnvironment(sourceEnvironment)||!validEnvironment(targetEnvironment)||sourceEnvironment===targetEnvironment)throw Error('Invalid promotion environment');let floor=0;for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===sourceEnvironment&&previous.targetEnvironment===targetEnvironment)floor=Math.max(floor,previous.sourceVersion);return floor;}
- getPublicationProvenance(version:number):PublicationProvenance|undefined{if(!Number.isSafeInteger(version)||version<1)throw Error('Invalid version');if(!this.published.some(p=>p.version===version))return undefined;return copy(this.provenance.get(version)??{version,kind:'unknown'});}
- apply(baseRevision:number,patches:Patch[]):ApplicationDefinition{
-  if(baseRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");
-  const candidate=copy(this.draft);
-  for(const p of patches){switch(p.op){
-   case "addPage":candidate.pages.push(copy(p.page));break;
-   case "setPageTitle":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid',"Unknown page");page.title=p.title;break;}
-   case "setPageDescription":{if(candidate.schemaVersion!==2||typeof p.description!=='string'||p.description.length>10000)throw new AppMixerError('invalid','Invalid page description');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');page.description=p.description;break;}
-   case "addComponent":{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid',"Unknown page");page.components.push(copy(p.component));break;}
-   // Repair patches: each changes one existing target, so a wrong component or page in a draft can be corrected.
-   case 'removeComponent':{const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');const index=page.components.findIndex(x=>x.id===p.componentId);if(index<0)throw new AppMixerError('invalid','Unknown component');page.components.splice(index,1);break;}
-   case 'setComponentProps':{if(!p.props||typeof p.props!=='object'||Array.isArray(p.props))throw new AppMixerError('invalid','Invalid component');const page=candidate.pages.find(x=>x.id===p.pageId);if(!page)throw new AppMixerError('invalid','Unknown page');const component=page.components.find(x=>x.id===p.componentId);if(!component)throw new AppMixerError('invalid','Unknown component');component.props=copy(p.props);break;}
-   case 'removePage':{const index=candidate.pages.findIndex(x=>x.id===p.pageId);if(index<0)throw new AppMixerError('invalid','Unknown page');candidate.pages.splice(index,1);break;}
-   case 'setExtensions':if(!isValidExtensionReferences(p.extensions))throw new AppMixerError('invalid','Invalid manifest');candidate.extensions=copy(p.extensions);break;
-   case 'setExtensionOperations':if(!isValidExtensionOperations(p.operations))throw new AppMixerError('invalid','Invalid manifest');candidate.extensionOperations=copy(p.operations);break;
-   default: throw new AppMixerError('invalid',"Unknown patch operation");
-  }}
-  candidate.revision++;validate(candidate);validateDraftChange(this.draft,candidate);this.draft=candidate;return copy(candidate);
- }
- migrateDraft(expectedRevision:number,targetVersion:number):ApplicationDefinition{
-  const candidate=this.previewDraftMigration(expectedRevision,targetVersion);this.draft=candidate;return copy(candidate);
- }
- previewDraftMigration(expectedRevision:number,targetVersion:number):ApplicationDefinition{
-  if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!Number.isSafeInteger(targetVersion))throw new AppMixerError('invalid','Invalid migration request');
-  if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict','Revision conflict');
-  if(!((this.draft.schemaVersion===1&&targetVersion===2)||(this.draft.schemaVersion===2&&targetVersion===1)))throw new AppMixerError('conflict','Unsupported schema migration');
-  if(expectedRevision>=Number.MAX_SAFE_INTEGER)throw new AppMixerError('invalid','Invalid migration request');
-  const candidate=copy(this.draft);candidate.revision++;
-  if(targetVersion===2){candidate.schemaVersion=2;candidate.pages=candidate.pages.map(page=>({...page,description:''}));}
-  else{if(candidate.pages.some(page=>page.description!==''))throw new AppMixerError('conflict','Migration would lose page descriptions');candidate.schemaVersion=1;candidate.pages=candidate.pages.map(({description:_description,...page})=>page);}
-  validate(candidate);return copy(candidate);
- }
- publish(expectedRevision:number){if(expectedRevision!==this.draft.revision)throw new AppMixerError('conflict',"Revision conflict");validatePublishable(this.draft);enforcePublicationGuard(this.publicationGuard,this.draft);const latest=this.published.at(-1);if(latest&&definitionSha256(latest.definition)===definitionSha256(this.draft))return copy(latest);/* an unchanged draft is already the latest publication: no new version */const p={version:this.published.length+1,definition:copy(this.draft)},hash=definitionSha256(p.definition);this.published.push(p);this.provenance.set(p.version,{version:p.version,kind:'publish',previousVersion:p.version-1,definitionSha256:hash});return copy(p);}
- promote(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){
-  return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,false);
- }
- promoteAdvancing(input:unknown,expectedVersion:number,targetEnvironment:string,evidence?:PromotionSignatureEvidence){return this.promoteInternal(input,expectedVersion,targetEnvironment,evidence,true);}
- private promoteInternal(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence|undefined,advancing:boolean){
-  if(!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw Error('Invalid version');
-  const item=checkPromotionPackage(input,targetEnvironment,this.draft.id),signature=evidence===undefined?undefined:checkPromotionEvidence(item,targetEnvironment,evidence,expectedVersion),latest=this.published.at(-1)?.version??0;
-  if(latest!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
-  if(advancing)for(const previous of this.provenance.values())if(previous.kind==='promotion'&&previous.sourceEnvironment===item.sourceEnvironment&&previous.targetEnvironment===targetEnvironment&&item.sourceVersion<=previous.sourceVersion)throw Error('Source publication did not advance');
-  enforcePublicationGuard(this.publicationGuard,item.definition);
-  const version=latest+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
-  const publication={version,definition:item.definition},hash=definitionSha256(item.definition);
-  this.published.push(publication);this.provenance.set(version,{version,kind:'promotion',previousVersion:latest,sourceEnvironment:item.sourceEnvironment,targetEnvironment,sourceVersion:item.sourceVersion,packageDigest:item.digest,definitionSha256:hash,...(signature?{signature}: {})});return copy(publication);
- }
- promoteVerified(input:unknown,expectedVersion:number,targetEnvironment:string,evidence:PromotionSignatureEvidence){if(evidence===undefined)throw Error('Invalid promotion evidence');return this.promote(input,expectedVersion,targetEnvironment,evidence);}
- rollback(sourceVersion:number,expectedVersion:number){
-  if(!Number.isSafeInteger(sourceVersion)||sourceVersion<1||!Number.isSafeInteger(expectedVersion)||expectedVersion<1)throw Error('Invalid version');
-  const latest=this.published.at(-1);if(!latest||latest.version!==expectedVersion)throw new AppMixerError('conflict','Publication version conflict');
-  const source=this.published.find(p=>p.version===sourceVersion);if(!source)throw new AppMixerError('not_found','Publication not found');
-  if(sourceVersion>=expectedVersion)throw new AppMixerError('conflict','Rollback requires an earlier version');
-  const definition=copy(source.definition);validate(definition);enforcePublicationGuard(this.publicationGuard,definition);
-  const version=latest.version+1;if(!Number.isSafeInteger(version))throw Error('Invalid version');
-  const publication={version,definition},hash=definitionSha256(definition);this.published.push(publication);this.provenance.set(version,{version,kind:'rollback',previousVersion:expectedVersion,sourceVersion,definitionSha256:hash});return copy(publication);
- }
+  private draft: ApplicationDefinition;
+  private provenance = new Map<number, PublicationProvenance>();
+  private published: { version: number; definition: ApplicationDefinition }[] = [];
+  constructor(
+    initial: ApplicationDefinition,
+    private readonly publicationGuard?: PublicationGuard
+  ) {
+    validate(initial);
+    if (publicationGuard !== undefined && typeof publicationGuard !== 'function') throw Error('Invalid publication guard');
+    this.draft = copy(initial);
+  }
+  getDraft() {
+    return copy(this.draft);
+  }
+  getPublished(version?: number) {
+    if (version !== undefined && (!Number.isSafeInteger(version) || version < 1)) throw Error('Invalid version');
+    const p = version === undefined ? this.published.at(-1) : this.published.find(x => x.version === version);
+    return p ? copy(p) : undefined;
+  }
+  getPromotionFloor(sourceEnvironment: string, targetEnvironment: string): number {
+    if (!validEnvironment(sourceEnvironment) || !validEnvironment(targetEnvironment) || sourceEnvironment === targetEnvironment) throw Error('Invalid promotion environment');
+    let floor = 0;
+    for (const previous of this.provenance.values())
+      if (previous.kind === 'promotion' && previous.sourceEnvironment === sourceEnvironment && previous.targetEnvironment === targetEnvironment) floor = Math.max(floor, previous.sourceVersion);
+    return floor;
+  }
+  getPublicationProvenance(version: number): PublicationProvenance | undefined {
+    if (!Number.isSafeInteger(version) || version < 1) throw Error('Invalid version');
+    if (!this.published.some(p => p.version === version)) return undefined;
+    return copy(this.provenance.get(version) ?? { version, kind: 'unknown' });
+  }
+  apply(baseRevision: number, patches: Patch[]): ApplicationDefinition {
+    if (baseRevision !== this.draft.revision) throw new AppMixerError('conflict', 'Revision conflict');
+    const candidate = copy(this.draft);
+    for (const p of patches) {
+      switch (p.op) {
+        case 'addPage':
+          candidate.pages.push(copy(p.page));
+          break;
+        case 'setPageTitle': {
+          const page = candidate.pages.find(x => x.id === p.pageId);
+          if (!page) throw new AppMixerError('invalid', 'Unknown page');
+          page.title = p.title;
+          break;
+        }
+        case 'setPageDescription': {
+          if (candidate.schemaVersion !== 2 || typeof p.description !== 'string' || p.description.length > 10000) throw new AppMixerError('invalid', 'Invalid page description');
+          const page = candidate.pages.find(x => x.id === p.pageId);
+          if (!page) throw new AppMixerError('invalid', 'Unknown page');
+          page.description = p.description;
+          break;
+        }
+        case 'addComponent': {
+          const page = candidate.pages.find(x => x.id === p.pageId);
+          if (!page) throw new AppMixerError('invalid', 'Unknown page');
+          page.components.push(copy(p.component));
+          break;
+        }
+        // Repair patches: each changes one existing target, so a wrong component or page in a draft can be corrected.
+        case 'removeComponent': {
+          const page = candidate.pages.find(x => x.id === p.pageId);
+          if (!page) throw new AppMixerError('invalid', 'Unknown page');
+          const index = page.components.findIndex(x => x.id === p.componentId);
+          if (index < 0) throw new AppMixerError('invalid', 'Unknown component');
+          page.components.splice(index, 1);
+          break;
+        }
+        case 'setComponentProps': {
+          if (!p.props || typeof p.props !== 'object' || Array.isArray(p.props)) throw new AppMixerError('invalid', 'Invalid component');
+          const page = candidate.pages.find(x => x.id === p.pageId);
+          if (!page) throw new AppMixerError('invalid', 'Unknown page');
+          const component = page.components.find(x => x.id === p.componentId);
+          if (!component) throw new AppMixerError('invalid', 'Unknown component');
+          component.props = copy(p.props);
+          break;
+        }
+        case 'removePage': {
+          const index = candidate.pages.findIndex(x => x.id === p.pageId);
+          if (index < 0) throw new AppMixerError('invalid', 'Unknown page');
+          candidate.pages.splice(index, 1);
+          break;
+        }
+        case 'setExtensions':
+          if (!isValidExtensionReferences(p.extensions)) throw new AppMixerError('invalid', 'Invalid manifest');
+          candidate.extensions = copy(p.extensions);
+          break;
+        case 'setExtensionOperations':
+          if (!isValidExtensionOperations(p.operations)) throw new AppMixerError('invalid', 'Invalid manifest');
+          candidate.extensionOperations = copy(p.operations);
+          break;
+        default:
+          throw new AppMixerError('invalid', 'Unknown patch operation');
+      }
+    }
+    candidate.revision++;
+    validate(candidate);
+    validateDraftChange(this.draft, candidate);
+    this.draft = candidate;
+    return copy(candidate);
+  }
+  migrateDraft(expectedRevision: number, targetVersion: number): ApplicationDefinition {
+    const candidate = this.previewDraftMigration(expectedRevision, targetVersion);
+    this.draft = candidate;
+    return copy(candidate);
+  }
+  previewDraftMigration(expectedRevision: number, targetVersion: number): ApplicationDefinition {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Number.isSafeInteger(targetVersion)) throw new AppMixerError('invalid', 'Invalid migration request');
+    if (expectedRevision !== this.draft.revision) throw new AppMixerError('conflict', 'Revision conflict');
+    if (!((this.draft.schemaVersion === 1 && targetVersion === 2) || (this.draft.schemaVersion === 2 && targetVersion === 1))) throw new AppMixerError('conflict', 'Unsupported schema migration');
+    if (expectedRevision >= Number.MAX_SAFE_INTEGER) throw new AppMixerError('invalid', 'Invalid migration request');
+    const candidate = copy(this.draft);
+    candidate.revision++;
+    if (targetVersion === 2) {
+      candidate.schemaVersion = 2;
+      candidate.pages = candidate.pages.map(page => ({ ...page, description: '' }));
+    } else {
+      if (candidate.pages.some(page => page.description !== '')) throw new AppMixerError('conflict', 'Migration would lose page descriptions');
+      candidate.schemaVersion = 1;
+      candidate.pages = candidate.pages.map(({ description: _description, ...page }) => page);
+    }
+    validate(candidate);
+    return copy(candidate);
+  }
+  publish(expectedRevision: number) {
+    if (expectedRevision !== this.draft.revision) throw new AppMixerError('conflict', 'Revision conflict');
+    validatePublishable(this.draft);
+    enforcePublicationGuard(this.publicationGuard, this.draft);
+    const latest = this.published.at(-1);
+    if (latest && definitionSha256(latest.definition) === definitionSha256(this.draft)) return copy(latest);
+    /* an unchanged draft is already the latest publication: no new version */ const p = { version: this.published.length + 1, definition: copy(this.draft) },
+      hash = definitionSha256(p.definition);
+    this.published.push(p);
+    this.provenance.set(p.version, { version: p.version, kind: 'publish', previousVersion: p.version - 1, definitionSha256: hash });
+    return copy(p);
+  }
+  promote(input: unknown, expectedVersion: number, targetEnvironment: string, evidence?: PromotionSignatureEvidence) {
+    return this.promoteInternal(input, expectedVersion, targetEnvironment, evidence, false);
+  }
+  promoteAdvancing(input: unknown, expectedVersion: number, targetEnvironment: string, evidence?: PromotionSignatureEvidence) {
+    return this.promoteInternal(input, expectedVersion, targetEnvironment, evidence, true);
+  }
+  private promoteInternal(input: unknown, expectedVersion: number, targetEnvironment: string, evidence: PromotionSignatureEvidence | undefined, advancing: boolean) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw Error('Invalid version');
+    const item = checkPromotionPackage(input, targetEnvironment, this.draft.id),
+      signature = evidence === undefined ? undefined : checkPromotionEvidence(item, targetEnvironment, evidence, expectedVersion),
+      latest = this.published.at(-1)?.version ?? 0;
+    if (latest !== expectedVersion) throw new AppMixerError('conflict', 'Publication version conflict');
+    if (advancing)
+      for (const previous of this.provenance.values())
+        if (previous.kind === 'promotion' && previous.sourceEnvironment === item.sourceEnvironment && previous.targetEnvironment === targetEnvironment && item.sourceVersion <= previous.sourceVersion)
+          throw Error('Source publication did not advance');
+    enforcePublicationGuard(this.publicationGuard, item.definition);
+    const version = latest + 1;
+    if (!Number.isSafeInteger(version)) throw Error('Invalid version');
+    const publication = { version, definition: item.definition },
+      hash = definitionSha256(item.definition);
+    this.published.push(publication);
+    this.provenance.set(version, {
+      version,
+      kind: 'promotion',
+      previousVersion: latest,
+      sourceEnvironment: item.sourceEnvironment,
+      targetEnvironment,
+      sourceVersion: item.sourceVersion,
+      packageDigest: item.digest,
+      definitionSha256: hash,
+      ...(signature ? { signature } : {})
+    });
+    return copy(publication);
+  }
+  promoteVerified(input: unknown, expectedVersion: number, targetEnvironment: string, evidence: PromotionSignatureEvidence) {
+    if (evidence === undefined) throw Error('Invalid promotion evidence');
+    return this.promote(input, expectedVersion, targetEnvironment, evidence);
+  }
+  rollback(sourceVersion: number, expectedVersion: number) {
+    if (!Number.isSafeInteger(sourceVersion) || sourceVersion < 1 || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw Error('Invalid version');
+    const latest = this.published.at(-1);
+    if (!latest || latest.version !== expectedVersion) throw new AppMixerError('conflict', 'Publication version conflict');
+    const source = this.published.find(p => p.version === sourceVersion);
+    if (!source) throw new AppMixerError('not_found', 'Publication not found');
+    if (sourceVersion >= expectedVersion) throw new AppMixerError('conflict', 'Rollback requires an earlier version');
+    const definition = copy(source.definition);
+    validate(definition);
+    enforcePublicationGuard(this.publicationGuard, definition);
+    const version = latest.version + 1;
+    if (!Number.isSafeInteger(version)) throw Error('Invalid version');
+    const publication = { version, definition },
+      hash = definitionSha256(definition);
+    this.published.push(publication);
+    this.provenance.set(version, { version, kind: 'rollback', previousVersion: expectedVersion, sourceVersion, definitionSha256: hash });
+    return copy(publication);
+  }
 }
 
 export { createPromotionPackage } from './promotion.js';
@@ -121,8 +334,8 @@ export type { AppMixerErrorCode } from './errors.js';
 export { SqliteRemoteRollout } from './remote-rollout.js';
 export type { RemoteRolloutScope, RemoteRolloutRecoveryEvidence, RemoteRolloutRecoveryEvent } from './remote-rollout.js';
 export { registerRemoteRolloutStatusCapability } from './remote-rollout-status-capability.js';
-export {RemoteRolloutMetrics} from './remote-rollout-metrics.js';
-export type {RemoteRolloutMetricsActor,RemoteRolloutMetricsOptions,RemoteRolloutMetricsSnapshot,RemoteRolloutMetricPhase} from './remote-rollout-metrics.js';
+export { RemoteRolloutMetrics } from './remote-rollout-metrics.js';
+export type { RemoteRolloutMetricsActor, RemoteRolloutMetricsOptions, RemoteRolloutMetricsSnapshot, RemoteRolloutMetricPhase } from './remote-rollout-metrics.js';
 export { registerRemoteRolloutRecoveryCapability } from './remote-rollout-recovery-capability.js';
 export { registerRemoteRolloutEvidenceCapability } from './remote-rollout-evidence-capability.js';
 export type { RemoteRolloutEvidenceCapabilityOptions } from './remote-rollout-evidence-capability.js';
@@ -134,10 +347,26 @@ export { PostgresPromotionTarget } from './postgres-promotion-target.js';
 export type { PostgresPromotionTargetOptions } from './postgres-promotion-target.js';
 export { RemoteRolloutPoller } from './remote-rollout-poller.js';
 export type { RemoteRolloutPollerOptions, RemoteRolloutResult, RemoteRolloutPollerStatus } from './remote-rollout-poller.js';
-export {registerRemoteRolloutPollerCapability} from './remote-rollout-poller-capability.js';
-export type {RemoteRolloutPollerCapabilityOptions,RemoteRolloutPollerControlAudit} from './remote-rollout-poller-capability.js';
+export { registerRemoteRolloutPollerCapability } from './remote-rollout-poller-capability.js';
+export type { RemoteRolloutPollerCapabilityOptions, RemoteRolloutPollerControlAudit } from './remote-rollout-poller-capability.js';
 export { createControlPlane, createDataPlane, createDataPlaneHttps, createProposalPlane, createDevelopmentPlanes } from './planes.js';
-export type { DefinitionRepository, DevelopmentRunner, DevelopmentPreviewOptions, PromotionImportPolicy, PromotionExportSigner, DataPlaneHealthOptions, DataPlaneServer, DataPlaneHttpsServer, DataPlaneTlsOptions, DataPlaneOptions, DataPlanePublicationRepository, DataPlanePublicationAuthorization, DataPlaneRequestObservation, DataPlaneTracingOptions, ControlPlaneTracingOptions } from './planes.js';
+export type {
+  DefinitionRepository,
+  DevelopmentRunner,
+  DevelopmentPreviewOptions,
+  PromotionImportPolicy,
+  PromotionExportSigner,
+  DataPlaneHealthOptions,
+  DataPlaneServer,
+  DataPlaneHttpsServer,
+  DataPlaneTlsOptions,
+  DataPlaneOptions,
+  DataPlanePublicationRepository,
+  DataPlanePublicationAuthorization,
+  DataPlaneRequestObservation,
+  DataPlaneTracingOptions,
+  ControlPlaneTracingOptions
+} from './planes.js';
 
 export { DevelopmentProposals } from './proposals.js';
 export type { Proposal, ProposalSummary } from './proposals.js';
@@ -148,23 +377,85 @@ export type { CapabilityServerTracingOptions, CapabilityHttpsOptions, Capability
 export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';
-export { checkExtensionCompatibility, createExtensionPublicationGuard, ExtensionRegistry, computeExtensionIntegrity, verifyExtensionIntegrity, signExtensionManifest, verifySignedExtensionManifest } from './extensions.js';
-export { registerExtensionComponent, registerDeclaredNativeExtensionComponent, createNativeExtensionPlanFromRegistry, createFlutterExtensionPlan, createFlutterExtensionPlanFromRegistry, registerExtensionCapability, registerDeclaredExtensionCapability, createExtensionRuntime } from './extension-adapters.js';
+export {
+  checkExtensionCompatibility,
+  createExtensionPublicationGuard,
+  ExtensionRegistry,
+  computeExtensionIntegrity,
+  verifyExtensionIntegrity,
+  signExtensionManifest,
+  verifySignedExtensionManifest
+} from './extensions.js';
+export {
+  registerExtensionComponent,
+  registerDeclaredNativeExtensionComponent,
+  createNativeExtensionPlanFromRegistry,
+  createFlutterExtensionPlan,
+  createFlutterExtensionPlanFromRegistry,
+  registerExtensionCapability,
+  registerDeclaredExtensionCapability,
+  createExtensionRuntime
+} from './extension-adapters.js';
 export type { ExtensionRuntimeBindings, ExtensionInvocationApproval, ExtensionInvocationApprovalWithSignal, NativeExtensionPlan, FlutterExtensionPlan } from './extension-adapters.js';
-export {ExtensionApprovalMetrics} from './extension-approval-metrics.js';
-export type {ExtensionApprovalMetricsOptions} from './extension-approval-metrics.js';
-export type { ExtensionManifest, ExtensionHost, ExtensionRequirements, ExtensionBindings, ExtensionImplementation, ExtensionConfigRule, ExtensionConfigSchema, ExtensionConfigValue, ExtensionConfiguration, SignedExtensionManifest, ExtensionSigningPolicy } from './extensions.js';
+export { ExtensionApprovalMetrics } from './extension-approval-metrics.js';
+export type { ExtensionApprovalMetricsOptions } from './extension-approval-metrics.js';
+export type {
+  ExtensionManifest,
+  ExtensionHost,
+  ExtensionRequirements,
+  ExtensionBindings,
+  ExtensionImplementation,
+  ExtensionConfigRule,
+  ExtensionConfigSchema,
+  ExtensionConfigValue,
+  ExtensionConfiguration,
+  SignedExtensionManifest,
+  ExtensionSigningPolicy
+} from './extensions.js';
 
 export { SqliteDataProvider } from './data-provider.js';
-export type { DataProvider, SqliteDataProviderOptions, DataRecord, DataRecordPage, DataScope, DataMigration, DataMigrationRehearsal, DataRollbackRehearsal, DataMigrationRehearsalResult, DataRollback, DataRollbackEvent, DataMigrationEvidence, DataMigrationAuditEvent, MigrationPreview } from './data-provider.js';
+export type {
+  DataProvider,
+  SqliteDataProviderOptions,
+  DataRecord,
+  DataRecordPage,
+  DataScope,
+  DataMigration,
+  DataMigrationRehearsal,
+  DataRollbackRehearsal,
+  DataMigrationRehearsalResult,
+  DataRollback,
+  DataRollbackEvent,
+  DataMigrationEvidence,
+  DataMigrationAuditEvent,
+  MigrationPreview
+} from './data-provider.js';
 
 export { SqliteStagedOperations } from './staged-operations.js';
-export type { StagedOperation, StagedOperationSummary, StagedOperationPage, StagedOperationCounts, StagedStatus, StagedVerificationOutcome, StagedOutcomeVerifier, StagedReconciliationEvidence, StagedReconciliationRecord, StagedRecoveryRecord, StagedSubmitterVerifier } from './staged-operations.js';
+export type {
+  StagedOperation,
+  StagedOperationSummary,
+  StagedOperationPage,
+  StagedOperationCounts,
+  StagedStatus,
+  StagedVerificationOutcome,
+  StagedOutcomeVerifier,
+  StagedReconciliationEvidence,
+  StagedReconciliationRecord,
+  StagedRecoveryRecord,
+  StagedSubmitterVerifier
+} from './staged-operations.js';
 
 export { registerDataCapability } from './data-capabilities.js';
 export type { DataCapabilityOptions } from './data-capabilities.js';
 
-export { registerStagedCapability, registerStagedVerificationCapability, registerStagedEvidenceCapability, registerStagedRecoveryEvidenceCapability, registerStagedRecoveryCapability } from './staged-capabilities.js';
+export {
+  registerStagedCapability,
+  registerStagedVerificationCapability,
+  registerStagedEvidenceCapability,
+  registerStagedRecoveryEvidenceCapability,
+  registerStagedRecoveryCapability
+} from './staged-capabilities.js';
 export type { StagedCapabilityOptions, StagedVerificationCapabilityOptions, StagedEvidenceCapabilityOptions, StagedRecoveryCapabilityOptions } from './staged-capabilities.js';
 
 export { SqliteOfflineQueue } from './offline-queue.js';
@@ -172,97 +463,154 @@ export { OfflineRetentionWorker } from './offline-retention-worker.js';
 export type { OfflineRetentionWorkerOptions } from './offline-retention-worker.js';
 export { PostgresOfflineRequestKeys } from './postgres-offline-request-keys.js';
 export type { PostgresOfflineRequestKeysOptions } from './postgres-offline-request-keys.js';
-export {PostgresOfflineSlots} from './postgres-offline-slots.js';
-export type {PostgresOfflineSlotsOptions} from './postgres-offline-slots.js';
-export {registerSharedOfflineSlotCapability} from './shared-offline-slot-capability.js';
-export type {SharedOfflineSlotAction,SharedOfflineSlotCapabilityOptions} from './shared-offline-slot-capability.js';
-export {PostgresOfflineExecutions} from './postgres-offline-executions.js';
-export type {PostgresOfflineExecutionsOptions,SharedOfflineExecution} from './postgres-offline-executions.js';
-export {PostgresOfflineRecovery} from './postgres-offline-recovery.js';
-export type {PostgresOfflineRecoveryOptions,OfflineRecoveryActor,OfflineRecoveryTarget,OfflineRecoveryAction,OfflineRecoveryEvent} from './postgres-offline-recovery.js';
-export {registerSharedOfflineAllocation,registerSharedOfflineDispatch} from './shared-offline-capabilities.js';
-export type {SharedOfflineCapabilityOptions} from './shared-offline-capabilities.js';
-export type { OfflineStatus, OfflineOperation, OfflineQueueOptions, OfflineFailure, SqliteOfflineRecoveryEvidence, SqliteOfflineRecoveryEvent, ArchivedOfflineOperation, OfflineArchiveListingItem, OfflineArchiveListingPage, OfflineRecoveryCandidate, OfflineRecoveryCandidatePage } from './offline-queue.js';
+export { PostgresOfflineSlots } from './postgres-offline-slots.js';
+export type { PostgresOfflineSlotsOptions } from './postgres-offline-slots.js';
+export { registerSharedOfflineSlotCapability } from './shared-offline-slot-capability.js';
+export type { SharedOfflineSlotAction, SharedOfflineSlotCapabilityOptions } from './shared-offline-slot-capability.js';
+export { PostgresOfflineExecutions } from './postgres-offline-executions.js';
+export type { PostgresOfflineExecutionsOptions, SharedOfflineExecution } from './postgres-offline-executions.js';
+export { PostgresOfflineRecovery } from './postgres-offline-recovery.js';
+export type { PostgresOfflineRecoveryOptions, OfflineRecoveryActor, OfflineRecoveryTarget, OfflineRecoveryAction, OfflineRecoveryEvent } from './postgres-offline-recovery.js';
+export { registerSharedOfflineAllocation, registerSharedOfflineDispatch } from './shared-offline-capabilities.js';
+export type { SharedOfflineCapabilityOptions } from './shared-offline-capabilities.js';
+export type {
+  OfflineStatus,
+  OfflineOperation,
+  OfflineQueueOptions,
+  OfflineFailure,
+  SqliteOfflineRecoveryEvidence,
+  SqliteOfflineRecoveryEvent,
+  ArchivedOfflineOperation,
+  OfflineArchiveListingItem,
+  OfflineArchiveListingPage,
+  OfflineRecoveryCandidate,
+  OfflineRecoveryCandidatePage
+} from './offline-queue.js';
 
 export { OfflineSyncWorker } from './offline-worker.js';
 export type { OfflineWorkerOptions } from './offline-worker.js';
 
-export {createRecordFieldValidator} from './record-field-validator.js';
-export type {RecordField,RecordFieldValidatorOptions} from './record-field-validator.js';
+export { createRecordFieldValidator } from './record-field-validator.js';
+export type { RecordField, RecordFieldValidatorOptions } from './record-field-validator.js';
 
-export {registerDataListCapability} from './data-list-capability.js';
-export type {DataListCapabilityOptions} from './data-list-capability.js';
+export { registerDataListCapability } from './data-list-capability.js';
+export type { DataListCapabilityOptions } from './data-list-capability.js';
 
-export {createRemotePromotionClient, RemotePromotionUncertainError} from './remote-promotion.js';
-export type {RemotePromotionRequest, RemotePromotionDetails, RemotePromotionEvent, RemotePromotionOptions} from './remote-promotion.js';
+export { createRemotePromotionClient, RemotePromotionUncertainError } from './remote-promotion.js';
+export type { RemotePromotionRequest, RemotePromotionDetails, RemotePromotionEvent, RemotePromotionOptions } from './remote-promotion.js';
 
-export {createRecordJsonSchemaValidator} from './record-json-schema.js';
+export { createRecordJsonSchemaValidator } from './record-json-schema.js';
 
-export {signPromotionPackage,createSignedPromotionVerifier} from './signed-promotion.js';
-export type {SignedPromotionPackage,PromotionSigningKey,PromotionSignatureEvidence,VerifiedPromotion} from './signed-promotion.js';
+export { signPromotionPackage, createSignedPromotionVerifier } from './signed-promotion.js';
+export type { SignedPromotionPackage, PromotionSigningKey, PromotionSignatureEvidence, VerifiedPromotion } from './signed-promotion.js';
 
-export {createJwtCapabilityAuthenticator} from './jwt-capability-auth.js';
-export type {JwtCapabilityActor,JwtCapabilityAuthOptions} from './jwt-capability-auth.js';
+export { createJwtCapabilityAuthenticator } from './jwt-capability-auth.js';
+export type { JwtCapabilityActor, JwtCapabilityAuthOptions } from './jwt-capability-auth.js';
 
-export {SqliteJwtRevocations} from './jwt-revocations.js';
-export {PostgresJwtRevocations} from './postgres-jwt-revocations.js';
-export type {PostgresJwtRevocationsOptions,PostgresJwtRevocationQuery} from './postgres-jwt-revocations.js';
+export { SqliteJwtRevocations } from './jwt-revocations.js';
+export { PostgresJwtRevocations } from './postgres-jwt-revocations.js';
+export type { PostgresJwtRevocationsOptions, PostgresJwtRevocationQuery } from './postgres-jwt-revocations.js';
 
-export {JwtJwksManager} from './jwt-jwks-manager.js';
-export type {JwtJwksManagerOptions} from './jwt-jwks-manager.js';
-export {discoverOidcJwks,createOidcJwtJwksManager} from './oidc-discovery.js';
-export type {OidcDiscoveryOptions,OidcJwtJwksManagerOptions} from './oidc-discovery.js';
-export {SqliteCapabilityAudit} from './capability-audit.js';
-export {createTlsCredentialReloader,validateTlsCredentials} from './tls-reloader.js';
-export {limitServer,TLS_POLICY,TLS_CIPHERS,DEFAULT_SERVER_LIMITS} from './server-limits.js';
-export type {ServerLimits} from './server-limits.js';
-export type {TlsCredentials,TlsCredentialInfo,TlsCredentialReloaderOptions} from './tls-reloader.js';
-export {SqlitePromotionSigningAudit,createAuditedPromotionSigner} from './promotion-signing-audit.js';
-export type {PromotionSigningAuditEntry,PromotionSigningAuditHead,PromotionImportRecord,UnauditedPromotionImport} from './promotion-signing-audit.js';
-export {PostgresCapabilityAudit} from './postgres-capability-audit.js';
-export type {PostgresCapabilityAuditOptions} from './postgres-capability-audit.js';
-export {PostgresAuthenticationFailureAudit} from './postgres-auth-failure-audit.js';
-export type {AuthenticationFailureEvent,StoredAuthenticationFailure,PostgresAuthenticationFailureAuditOptions} from './postgres-auth-failure-audit.js';
-export type {StoredCapabilityAuditEvent} from './capability-audit.js';
-export {createRemoteControlConnector,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from './remote-control-connector.js';
-export type {RemotePromotionRepository,RemoteControlConnectorOptions,RemoteControlImportRequest,RemoteControlImportDetails,RemoteControlImportEvent,RemoteControlDiscoveryDetails,RemoteControlDiscoveryEvent,RemotePromotionFloorAnchor} from './remote-control-connector.js';
-export {exportDisconnectedPromotion,createDisconnectedPromotionImporter} from './disconnected-promotion.js';
-export type {DisconnectedPromotionDocument,DisconnectedImportDetails,DisconnectedImportEvent,DisconnectedPromotionRepository,DisconnectedPromotionImporterOptions} from './disconnected-promotion.js';
-export {DataPlaneRequestMetrics} from './data-plane-metrics.js';
-export {createMetricsServer} from './metrics-server.js';
-export type {MetricsServerOptions} from './metrics-server.js';
+export { JwtJwksManager } from './jwt-jwks-manager.js';
+export type { JwtJwksManagerOptions } from './jwt-jwks-manager.js';
+export { discoverOidcJwks, createOidcJwtJwksManager } from './oidc-discovery.js';
+export type { OidcDiscoveryOptions, OidcJwtJwksManagerOptions } from './oidc-discovery.js';
+export { SqliteCapabilityAudit } from './capability-audit.js';
+export { createTlsCredentialReloader, validateTlsCredentials } from './tls-reloader.js';
+export { limitServer, TLS_POLICY, TLS_CIPHERS, DEFAULT_SERVER_LIMITS } from './server-limits.js';
+export type { ServerLimits } from './server-limits.js';
+export type { TlsCredentials, TlsCredentialInfo, TlsCredentialReloaderOptions } from './tls-reloader.js';
+export { SqlitePromotionSigningAudit, createAuditedPromotionSigner } from './promotion-signing-audit.js';
+export type { PromotionSigningAuditEntry, PromotionSigningAuditHead, PromotionImportRecord, UnauditedPromotionImport } from './promotion-signing-audit.js';
+export { PostgresCapabilityAudit } from './postgres-capability-audit.js';
+export type { PostgresCapabilityAuditOptions } from './postgres-capability-audit.js';
+export { PostgresAuthenticationFailureAudit } from './postgres-auth-failure-audit.js';
+export type { AuthenticationFailureEvent, StoredAuthenticationFailure, PostgresAuthenticationFailureAuditOptions } from './postgres-auth-failure-audit.js';
+export type { StoredCapabilityAuditEvent } from './capability-audit.js';
+export { createRemoteControlConnector, RemoteControlImportCancelledError, RemoteControlImportPreflightUnavailableError, RemoteControlImportUncertainError } from './remote-control-connector.js';
+export type {
+  RemotePromotionRepository,
+  RemoteControlConnectorOptions,
+  RemoteControlImportRequest,
+  RemoteControlImportDetails,
+  RemoteControlImportEvent,
+  RemoteControlDiscoveryDetails,
+  RemoteControlDiscoveryEvent,
+  RemotePromotionFloorAnchor
+} from './remote-control-connector.js';
+export { exportDisconnectedPromotion, createDisconnectedPromotionImporter } from './disconnected-promotion.js';
+export type {
+  DisconnectedPromotionDocument,
+  DisconnectedImportDetails,
+  DisconnectedImportEvent,
+  DisconnectedPromotionRepository,
+  DisconnectedPromotionImporterOptions
+} from './disconnected-promotion.js';
+export { DataPlaneRequestMetrics } from './data-plane-metrics.js';
+export { createMetricsServer } from './metrics-server.js';
+export type { MetricsServerOptions } from './metrics-server.js';
 
-export {signPublicationRelease,verifyPublicationRelease} from './signed-publication.js';
-export type {ReleasePublication,SignedPublicationRelease,PublicationReleaseKey} from './signed-publication.js';
-export {signOfflineProvisioning,verifyOfflineProvisioning,MAX_OFFLINE_PROVISIONING_MS} from './offline-provisioning.js';
-export type {OfflineProvisioningGrant,SignedOfflineProvisioning} from './offline-provisioning.js';
+export { signPublicationRelease, verifyPublicationRelease } from './signed-publication.js';
+export type { ReleasePublication, SignedPublicationRelease, PublicationReleaseKey } from './signed-publication.js';
+export { signOfflineProvisioning, verifyOfflineProvisioning, MAX_OFFLINE_PROVISIONING_MS } from './offline-provisioning.js';
+export type { OfflineProvisioningGrant, SignedOfflineProvisioning } from './offline-provisioning.js';
 
-export {PostgresPublicationReleaseRegistry} from './postgres-publication-releases.js';
-export {createFileReleaseFloorAnchor} from './file-release-floor-anchor.js';
-export {createFileSequenceAnchor,capabilityAuditAnchorKey,authenticationFailureAnchorKey,jwtRevocationAnchorKey,extensionApprovalAnchorKey,releaseFloorAnchorKey} from './file-sequence-anchor.js';
-export type {AuditSequenceAnchor,AnchorErrorHandler} from './file-sequence-anchor.js';
-export {createFileCounters} from './file-counters.js';
-export type {FileCounters} from './file-counters.js';
-export type {PublicationReleaseScope,PublicationReleaseFloorAnchor,PostgresPublicationReleaseRegistryOptions} from './postgres-publication-releases.js';
+export { PostgresPublicationReleaseRegistry } from './postgres-publication-releases.js';
+export { createFileReleaseFloorAnchor } from './file-release-floor-anchor.js';
+export {
+  createFileSequenceAnchor,
+  capabilityAuditAnchorKey,
+  authenticationFailureAnchorKey,
+  jwtRevocationAnchorKey,
+  extensionApprovalAnchorKey,
+  releaseFloorAnchorKey
+} from './file-sequence-anchor.js';
+export type { AuditSequenceAnchor, AnchorErrorHandler } from './file-sequence-anchor.js';
+export { createFileCounters } from './file-counters.js';
+export type { FileCounters } from './file-counters.js';
+export type { PublicationReleaseScope, PublicationReleaseFloorAnchor, PostgresPublicationReleaseRegistryOptions } from './postgres-publication-releases.js';
 
-export {PostgresExtensionApprovals} from './postgres-extension-approvals.js';
-export type {PostgresExtensionApprovalsOptions,ExtensionApprovalScope,ExtensionApprovalEvent,ExtensionApprovalState} from './postgres-extension-approvals.js';
+export { PostgresExtensionApprovals } from './postgres-extension-approvals.js';
+export type { PostgresExtensionApprovalsOptions, ExtensionApprovalScope, ExtensionApprovalEvent, ExtensionApprovalState } from './postgres-extension-approvals.js';
 
-export {registerExtensionApprovalDecision,registerExtensionApprovalStatus,registerExtensionApprovalHistory} from './extension-approval-capabilities.js';
-export type {ExtensionApprovalDecisionCapabilityOptions,ExtensionApprovalReadCapabilityOptions} from './extension-approval-capabilities.js';
+export { registerExtensionApprovalDecision, registerExtensionApprovalStatus, registerExtensionApprovalHistory } from './extension-approval-capabilities.js';
+export type { ExtensionApprovalDecisionCapabilityOptions, ExtensionApprovalReadCapabilityOptions } from './extension-approval-capabilities.js';
 
-export {signFlutterExtensionPlan,signFlutterExtensionPlanFromRegistry} from './signed-flutter-plan.js';
-export {signNativeExtensionPlanFromRegistry} from './signed-native-plan.js';
-export type {SignedNativeExtensionPlan,NativePlanSigningOptions} from './signed-native-plan.js';
-export type {SignedFlutterExtensionPlan,FlutterPlanSigningOptions} from './signed-flutter-plan.js';
+export { signFlutterExtensionPlan, signFlutterExtensionPlanFromRegistry } from './signed-flutter-plan.js';
+export { signNativeExtensionPlanFromRegistry } from './signed-native-plan.js';
+export type { SignedNativeExtensionPlan, NativePlanSigningOptions } from './signed-native-plan.js';
+export type { SignedFlutterExtensionPlan, FlutterPlanSigningOptions } from './signed-flutter-plan.js';
 
-export {registerDataMigrationPreview,registerDataMigrationStatus,registerDataMigrationRehearsal,registerDataMigrationApply,registerDataMigrationAudit} from './data-migration-capabilities.js';
-export type {DataMigrationReadCapabilityOptions,DataMigrationAuditCapabilityOptions,DataMigrationStatusCapabilityOptions,DataMigrationRehearsalCapabilityOptions,DataMigrationApplyCapabilityOptions,DataMigrationPlan} from './data-migration-capabilities.js';
+export { registerDataMigrationPreview, registerDataMigrationStatus, registerDataMigrationRehearsal, registerDataMigrationApply, registerDataMigrationAudit } from './data-migration-capabilities.js';
+export type {
+  DataMigrationReadCapabilityOptions,
+  DataMigrationAuditCapabilityOptions,
+  DataMigrationStatusCapabilityOptions,
+  DataMigrationRehearsalCapabilityOptions,
+  DataMigrationApplyCapabilityOptions,
+  DataMigrationPlan
+} from './data-migration-capabilities.js';
 
 export { registerStagedListCapability } from './staged-list-capability.js';
 export type { StagedListCapabilityOptions } from './staged-list-capability.js';
 
 export { registerStagedSummaryCapability } from './staged-summary-capability.js';
 export type { StagedSummaryCapabilityOptions } from './staged-summary-capability.js';
-export {registerOfflineAbandonedRecoveryCapability,registerOfflineVerificationCapability,registerOfflineRecoveryEvidenceCapability,registerOfflineRecoveryListCapability,registerOfflineArchiveCapability,registerOfflineArchiveReadCapability,registerOfflineArchiveListCapability} from './offline-recovery-capabilities.js';
-export type {OfflineAbandonedRecoveryCapabilityOptions,OfflineVerificationCapabilityOptions,OfflineRecoveryEvidenceCapabilityOptions,OfflineRecoveryListCapabilityOptions,OfflineArchiveCapabilityOptions,OfflineArchiveReadCapabilityOptions,OfflineArchiveListCapabilityOptions} from './offline-recovery-capabilities.js';
+export {
+  registerOfflineAbandonedRecoveryCapability,
+  registerOfflineVerificationCapability,
+  registerOfflineRecoveryEvidenceCapability,
+  registerOfflineRecoveryListCapability,
+  registerOfflineArchiveCapability,
+  registerOfflineArchiveReadCapability,
+  registerOfflineArchiveListCapability
+} from './offline-recovery-capabilities.js';
+export type {
+  OfflineAbandonedRecoveryCapabilityOptions,
+  OfflineVerificationCapabilityOptions,
+  OfflineRecoveryEvidenceCapabilityOptions,
+  OfflineRecoveryListCapabilityOptions,
+  OfflineArchiveCapabilityOptions,
+  OfflineArchiveReadCapabilityOptions,
+  OfflineArchiveListCapabilityOptions
+} from './offline-recovery-capabilities.js';

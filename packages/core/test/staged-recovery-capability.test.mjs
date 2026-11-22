@@ -1,43 +1,367 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {CapabilityRegistry,SqliteStagedOperations,registerStagedRecoveryCapability,registerStagedRecoveryEvidenceCapability,createCapabilityServer} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'app'},actor={tenantId:'tenant',principalId:'operator',origin:'ui'},candidate={operationId:'recover',method:'POST',path:'/recover'};
-function register(registry,store,overrides={}){registerStagedRecoveryCapability(registry,store,{candidate,applicationId:'app',externalOperationId:'pay',authorize:a=>a.principalId==='operator',authorizeOperation:(_a,_o,reference)=>reference==='case',verifyStopped:()=>true,...overrides});}
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { CapabilityRegistry, SqliteStagedOperations, registerStagedRecoveryCapability, registerStagedRecoveryEvidenceCapability, createCapabilityServer } from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'app' },
+  actor = { tenantId: 'tenant', principalId: 'operator', origin: 'ui' },
+  candidate = { operationId: 'recover', method: 'POST', path: '/recover' };
+function register(registry, store, overrides = {}) {
+  registerStagedRecoveryCapability(registry, store, {
+    candidate,
+    applicationId: 'app',
+    externalOperationId: 'pay',
+    authorize: a => a.principalId === 'operator',
+    authorizeOperation: (_a, _o, reference) => reference === 'case',
+    verifyStopped: () => true,
+    ...overrides
+  });
+}
 
-test('host-confirmed abandoned recovery commits actor evidence atomically after process exit',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'staged-recovery-')),path=join(dir,'staged.sqlite');let store=new SqliteStagedOperations(path),db;try{const op=store.stage(scope,'pay',{secret:'private'});store.close();store=undefined;const moduleUrl=new URL('../dist/index.js',import.meta.url).href,script=`import {CapabilityRegistry,SqliteStagedOperations} from ${JSON.stringify(moduleUrl)};const store=new SqliteStagedOperations(process.env.RECOVERY_DB),registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:()=>process.exit(0)});await store.submit({tenantId:'tenant',applicationId:'app'},process.env.RECOVERY_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});`;const child=spawnSync(process.execPath,['--input-type=module','-e',script],{env:{...process.env,RECOVERY_DB:path,RECOVERY_ID:op.id},encoding:'utf8'});assert.equal(child.status,0,child.stderr);store=new SqliteStagedOperations(path);assert.equal(store.get(scope,op.id).status,'submitting');db=new DatabaseSync(path);db.exec("CREATE TRIGGER fail_recovery_evidence BEFORE INSERT ON staged_recovery_evidence BEGIN SELECT RAISE(ABORT,'evidence unavailable'); END");const registry=new CapabilityRegistry(()=>{});let checks=0;register(registry,store,{verifyStopped:(_actor,operation)=>{checks++;assert.equal(operation.idempotencyKey,op.idempotencyKey);assert.equal(operation.payload.secret,'private');return true;}});await assert.rejects(registry.invoke('recover',{id:op.id,reference:'case'},actor),/evidence unavailable/);assert.equal(store.get(scope,op.id).status,'submitting');assert.deepEqual(store.listRecoveryEvidence(scope,op.id),[]);db.exec('DROP TRIGGER fail_recovery_evidence');assert.deepEqual(await registry.invoke('recover',{id:op.id,reference:'case'},actor),{recovered:true});assert.equal(store.get(scope,op.id).status,'uncertain');assert.equal(checks,2);const evidence=store.listRecoveryEvidence(scope,op.id);assert.equal(evidence.length,1);assert.equal(evidence[0].principalId,'operator');assert.equal(evidence[0].reference,'case');assert.equal(JSON.stringify(evidence).includes('private'),false);assert.deepEqual(store.listRecoveryEvidence({...scope,tenantId:'other'},op.id),[]);assert.throws(()=>db.exec("UPDATE staged_recovery_evidence SET reference='fake'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM staged_recovery_evidence'),/immutable/);assert.throws(()=>db.exec("INSERT OR REPLACE INTO staged_recovery_evidence SELECT tenant_id,application_id,operation_id,revision,'fake',reference,recorded_at FROM staged_recovery_evidence"),/immutable/);await assert.rejects(registry.invoke('recover',{id:op.id,reference:'case'},actor),/Invalid operation state/);db.close();db=undefined;store.close();store=new SqliteStagedOperations(path);assert.deepEqual(store.listRecoveryEvidence(scope,op.id),evidence);
- }finally{db?.close();store?.close();rmSync(dir,{recursive:true,force:true});}
+test('host-confirmed abandoned recovery commits actor evidence atomically after process exit', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'staged-recovery-')),
+    path = join(dir, 'staged.sqlite');
+  let store = new SqliteStagedOperations(path),
+    db;
+  try {
+    const op = store.stage(scope, 'pay', { secret: 'private' });
+    store.close();
+    store = undefined;
+    const moduleUrl = new URL('../dist/index.js', import.meta.url).href,
+      script = `import {CapabilityRegistry,SqliteStagedOperations} from ${JSON.stringify(moduleUrl)};const store=new SqliteStagedOperations(process.env.RECOVERY_DB),registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:()=>process.exit(0)});await store.submit({tenantId:'tenant',applicationId:'app'},process.env.RECOVERY_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, RECOVERY_DB: path, RECOVERY_ID: op.id }, encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    store = new SqliteStagedOperations(path);
+    assert.equal(store.get(scope, op.id).status, 'submitting');
+    db = new DatabaseSync(path);
+    db.exec("CREATE TRIGGER fail_recovery_evidence BEFORE INSERT ON staged_recovery_evidence BEGIN SELECT RAISE(ABORT,'evidence unavailable'); END");
+    const registry = new CapabilityRegistry(() => {});
+    let checks = 0;
+    register(registry, store, {
+      verifyStopped: (_actor, operation) => {
+        checks++;
+        assert.equal(operation.idempotencyKey, op.idempotencyKey);
+        assert.equal(operation.payload.secret, 'private');
+        return true;
+      }
+    });
+    await assert.rejects(registry.invoke('recover', { id: op.id, reference: 'case' }, actor), /evidence unavailable/);
+    assert.equal(store.get(scope, op.id).status, 'submitting');
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), []);
+    db.exec('DROP TRIGGER fail_recovery_evidence');
+    assert.deepEqual(await registry.invoke('recover', { id: op.id, reference: 'case' }, actor), { recovered: true });
+    assert.equal(store.get(scope, op.id).status, 'uncertain');
+    assert.equal(checks, 2);
+    const evidence = store.listRecoveryEvidence(scope, op.id);
+    assert.equal(evidence.length, 1);
+    assert.equal(evidence[0].principalId, 'operator');
+    assert.equal(evidence[0].reference, 'case');
+    assert.equal(JSON.stringify(evidence).includes('private'), false);
+    assert.deepEqual(store.listRecoveryEvidence({ ...scope, tenantId: 'other' }, op.id), []);
+    assert.throws(() => db.exec("UPDATE staged_recovery_evidence SET reference='fake'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM staged_recovery_evidence'), /immutable/);
+    assert.throws(
+      () => db.exec("INSERT OR REPLACE INTO staged_recovery_evidence SELECT tenant_id,application_id,operation_id,revision,'fake',reference,recorded_at FROM staged_recovery_evidence"),
+      /immutable/
+    );
+    await assert.rejects(registry.invoke('recover', { id: op.id, reference: 'case' }, actor), /Invalid operation state/);
+    db.close();
+    db = undefined;
+    store.close();
+    store = new SqliteStagedOperations(path);
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), evidence);
+  } finally {
+    db?.close();
+    store?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('recovery rejects unconfirmed, unauthorized and stale decisions without changing state',async()=>{
- const store=new SqliteStagedOperations(':memory:'),external=new CapabilityRegistry(()=>{}),registry=new CapabilityRegistry(()=>{});let releaseSubmission,enteredSubmission,releaseCheck,enteredCheck,mode='false',allowed=true;const submitting=new Promise(r=>enteredSubmission=r),submissionGate=new Promise(r=>releaseSubmission=r),checking=new Promise(r=>enteredCheck=r),checkGate=new Promise(r=>releaseCheck=r);
- try{external.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:async()=>{enteredSubmission();await submissionGate;return 'ok';}});const op=store.stage(scope,'pay',{}),pending=store.submit(scope,op.id,external,actor);await submitting;register(registry,store,{authorizeOperation:()=>allowed,verifyStopped:async()=>{if(mode==='wait'){enteredCheck();await checkGate;return true;}return false;}});assert.deepEqual(await registry.invoke('recover',{id:op.id,reference:'case'},actor),{recovered:false});assert.equal(store.get(scope,op.id).status,'submitting');assert.deepEqual(store.listRecoveryEvidence(scope,op.id),[]);allowed=false;await assert.rejects(registry.invoke('recover',{id:op.id,reference:'case'},actor),/forbidden/);allowed=true;await assert.rejects(registry.invoke('recover',{id:op.id,reference:'case',recovered:true},actor),/Invalid capability input/);await assert.rejects(registry.invoke('recover',{id:op.id,reference:'case'},{...actor,tenantId:'other'}),/not found/);const wrong=store.stage(scope,'other',{});await assert.rejects(registry.invoke('recover',{id:wrong.id,reference:'case'},actor),/not found/);mode='wait';const recovery=registry.invoke('recover',{id:op.id,reference:'case'},actor);await checking;releaseSubmission();assert.equal(await pending,'ok');releaseCheck();await assert.rejects(recovery,/Stale staged recovery/);assert.equal(store.get(scope,op.id).status,'succeeded');assert.deepEqual(store.listRecoveryEvidence(scope,op.id),[]);
- }finally{releaseSubmission?.();releaseCheck?.();store.close();}
+test('recovery rejects unconfirmed, unauthorized and stale decisions without changing state', async () => {
+  const store = new SqliteStagedOperations(':memory:'),
+    external = new CapabilityRegistry(() => {}),
+    registry = new CapabilityRegistry(() => {});
+  let releaseSubmission,
+    enteredSubmission,
+    releaseCheck,
+    enteredCheck,
+    mode = 'false',
+    allowed = true;
+  const submitting = new Promise(r => (enteredSubmission = r)),
+    submissionGate = new Promise(r => (releaseSubmission = r)),
+    checking = new Promise(r => (enteredCheck = r)),
+    checkGate = new Promise(r => (releaseCheck = r));
+  try {
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: async () => {
+          enteredSubmission();
+          await submissionGate;
+          return 'ok';
+        }
+      }
+    );
+    const op = store.stage(scope, 'pay', {}),
+      pending = store.submit(scope, op.id, external, actor);
+    await submitting;
+    register(registry, store, {
+      authorizeOperation: () => allowed,
+      verifyStopped: async () => {
+        if (mode === 'wait') {
+          enteredCheck();
+          await checkGate;
+          return true;
+        }
+        return false;
+      }
+    });
+    assert.deepEqual(await registry.invoke('recover', { id: op.id, reference: 'case' }, actor), { recovered: false });
+    assert.equal(store.get(scope, op.id).status, 'submitting');
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), []);
+    allowed = false;
+    await assert.rejects(registry.invoke('recover', { id: op.id, reference: 'case' }, actor), /forbidden/);
+    allowed = true;
+    await assert.rejects(registry.invoke('recover', { id: op.id, reference: 'case', recovered: true }, actor), /Invalid capability input/);
+    await assert.rejects(registry.invoke('recover', { id: op.id, reference: 'case' }, { ...actor, tenantId: 'other' }), /not found/);
+    const wrong = store.stage(scope, 'other', {});
+    await assert.rejects(registry.invoke('recover', { id: wrong.id, reference: 'case' }, actor), /not found/);
+    mode = 'wait';
+    const recovery = registry.invoke('recover', { id: op.id, reference: 'case' }, actor);
+    await checking;
+    releaseSubmission();
+    assert.equal(await pending, 'ok');
+    releaseCheck();
+    await assert.rejects(recovery, /Stale staged recovery/);
+    assert.equal(store.get(scope, op.id).status, 'succeeded');
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), []);
+  } finally {
+    releaseSubmission?.();
+    releaseCheck?.();
+    store.close();
+  }
 });
 
-test('bounded recovery times out without accepting a late submitter confirmation',async()=>{
- const store=new SqliteStagedOperations(':memory:'),external=new CapabilityRegistry(()=>{}),registry=new CapabilityRegistry(()=>{});let releaseSubmission,enteredSubmission,releaseCheck,enteredCheck,signal;const submitting=new Promise(r=>enteredSubmission=r),submissionGate=new Promise(r=>releaseSubmission=r),checking=new Promise(r=>enteredCheck=r),checkGate=new Promise(r=>releaseCheck=r);let server;
- try{external.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:async()=>{enteredSubmission();await submissionGate;return 'ok';}});const op=store.stage(scope,'pay',{}),pending=store.submit(scope,op.id,external,actor);await submitting;register(registry,store,{timeoutMs:100,maxPending:1,verifyStopped:async(_actor,_operation,abort)=>{signal=abort;enteredCheck();await checkGate;return true;}});server=createCapabilityServer(registry,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{id:op.id,reference:'case'}})});const recovery=call();await checking;assert.equal((await recovery).status,503);assert.equal(signal.aborted,true);assert.equal((await call()).status,503);releaseCheck();await new Promise(resolve=>setImmediate(resolve));assert.equal(store.get(scope,op.id).status,'submitting');assert.deepEqual(store.listRecoveryEvidence(scope,op.id),[]);releaseSubmission();assert.equal(await pending,'ok');assert.equal(store.get(scope,op.id).status,'succeeded');
- }finally{releaseCheck?.();releaseSubmission?.();if(server)await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));store.close();}
+test('bounded recovery times out without accepting a late submitter confirmation', async () => {
+  const store = new SqliteStagedOperations(':memory:'),
+    external = new CapabilityRegistry(() => {}),
+    registry = new CapabilityRegistry(() => {});
+  let releaseSubmission, enteredSubmission, releaseCheck, enteredCheck, signal;
+  const submitting = new Promise(r => (enteredSubmission = r)),
+    submissionGate = new Promise(r => (releaseSubmission = r)),
+    checking = new Promise(r => (enteredCheck = r)),
+    checkGate = new Promise(r => (releaseCheck = r));
+  let server;
+  try {
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: async () => {
+          enteredSubmission();
+          await submissionGate;
+          return 'ok';
+        }
+      }
+    );
+    const op = store.stage(scope, 'pay', {}),
+      pending = store.submit(scope, op.id, external, actor);
+    await submitting;
+    register(registry, store, {
+      timeoutMs: 100,
+      maxPending: 1,
+      verifyStopped: async (_actor, _operation, abort) => {
+        signal = abort;
+        enteredCheck();
+        await checkGate;
+        return true;
+      }
+    });
+    server = createCapabilityServer(
+      registry,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = () =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: { id: op.id, reference: 'case' } })
+      });
+    const recovery = call();
+    await checking;
+    assert.equal((await recovery).status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal((await call()).status, 503);
+    releaseCheck();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(store.get(scope, op.id).status, 'submitting');
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), []);
+    releaseSubmission();
+    assert.equal(await pending, 'ok');
+    assert.equal(store.get(scope, op.id).status, 'succeeded');
+  } finally {
+    releaseCheck?.();
+    releaseSubmission?.();
+    if (server) await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    store.close();
+  }
 });
 
- test('recovery evidence capability restricts and pages actor-attributed records over HTTP',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'staged-recovery-read-')),path=join(dir,'staged.sqlite'),registry=new CapabilityRegistry(()=>{});let store=new SqliteStagedOperations(path),server,allowed=true;try{const op=store.stage(scope,'pay',{secret:'private'}),moduleUrl=new URL('../dist/index.js',import.meta.url).href,script=`import {CapabilityRegistry,SqliteStagedOperations} from ${JSON.stringify(moduleUrl)};const store=new SqliteStagedOperations(process.env.RECOVERY_DB),registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:()=>process.exit(0)});await store.submit({tenantId:'tenant',applicationId:'app'},process.env.RECOVERY_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});`;for(const reference of ['first','second']){store.close();store=undefined;const child=spawnSync(process.execPath,['--input-type=module','-e',script],{env:{...process.env,RECOVERY_DB:path,RECOVERY_ID:op.id},encoding:'utf8'});assert.equal(child.status,0,child.stderr);store=new SqliteStagedOperations(path);assert.equal(await store.verifyAndRecoverAbandoned(scope,op.id,()=>true,{principalId:'operator',reference}),true);if(reference==='first')store.reconcile(scope,op.id,'not_applied');}
- registerStagedRecoveryEvidenceCapability(registry,store,{candidate:{operationId:'recovery-evidence',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:a=>a.principalId==='operator',authorizeOperation:(_actor,operation)=>{operation.payload.secret='mutated';return allowed;},timeoutMs:1000,maxPending:2});server=createCapabilityServer(registry,req=>req.headers.authorization==='Bearer valid'?{tenantId:'tenant',principalId:'operator'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(input,token='valid')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/recovery-evidence/invoke`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({origin:'ui',input})});assert.equal((await call({id:op.id},'invalid')).status,401);assert.equal((await call({id:op.id,limit:100})).status,400);const first=(await (await call({id:op.id,limit:1})).json()).result,second=(await (await call({id:op.id,limit:1,after:first.nextAfter})).json()).result;assert.equal(first.items[0].reference,'first');assert.equal(second.items[0].reference,'second');assert.equal(second.nextAfter,undefined);assert.equal(first.items[0].principalId,'operator');assert.equal(JSON.stringify([first,second]).includes('private'),false);assert.equal(store.get(scope,op.id).payload.secret,'private');assert.equal((await call({id:'missing'})).status,404);const wrong=store.stage(scope,'other',{});assert.equal((await call({id:wrong.id})).status,404);await assert.rejects(registry.invoke('recovery-evidence',{id:op.id},{...actor,tenantId:'other'}),/not found/);allowed=false;assert.equal((await call({id:op.id})).status,403);
- }finally{if(server)await new Promise(resolve=>server.close(resolve));store?.close();rmSync(dir,{recursive:true,force:true});}
+test('recovery evidence capability restricts and pages actor-attributed records over HTTP', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'staged-recovery-read-')),
+    path = join(dir, 'staged.sqlite'),
+    registry = new CapabilityRegistry(() => {});
+  let store = new SqliteStagedOperations(path),
+    server,
+    allowed = true;
+  try {
+    const op = store.stage(scope, 'pay', { secret: 'private' }),
+      moduleUrl = new URL('../dist/index.js', import.meta.url).href,
+      script = `import {CapabilityRegistry,SqliteStagedOperations} from ${JSON.stringify(moduleUrl)};const store=new SqliteStagedOperations(process.env.RECOVERY_DB),registry=new CapabilityRegistry(()=>{});registry.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:()=>process.exit(0)});await store.submit({tenantId:'tenant',applicationId:'app'},process.env.RECOVERY_ID,registry,{tenantId:'tenant',principalId:'worker',origin:'service'});`;
+    for (const reference of ['first', 'second']) {
+      store.close();
+      store = undefined;
+      const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, RECOVERY_DB: path, RECOVERY_ID: op.id }, encoding: 'utf8' });
+      assert.equal(child.status, 0, child.stderr);
+      store = new SqliteStagedOperations(path);
+      assert.equal(await store.verifyAndRecoverAbandoned(scope, op.id, () => true, { principalId: 'operator', reference }), true);
+      if (reference === 'first') store.reconcile(scope, op.id, 'not_applied');
+    }
+    registerStagedRecoveryEvidenceCapability(registry, store, {
+      candidate: { operationId: 'recovery-evidence', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: a => a.principalId === 'operator',
+      authorizeOperation: (_actor, operation) => {
+        operation.payload.secret = 'mutated';
+        return allowed;
+      },
+      timeoutMs: 1000,
+      maxPending: 2
+    });
+    server = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (input, token = 'valid') =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/recovery-evidence/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+        body: JSON.stringify({ origin: 'ui', input })
+      });
+    assert.equal((await call({ id: op.id }, 'invalid')).status, 401);
+    assert.equal((await call({ id: op.id, limit: 100 })).status, 400);
+    const first = (await (await call({ id: op.id, limit: 1 })).json()).result,
+      second = (await (await call({ id: op.id, limit: 1, after: first.nextAfter })).json()).result;
+    assert.equal(first.items[0].reference, 'first');
+    assert.equal(second.items[0].reference, 'second');
+    assert.equal(second.nextAfter, undefined);
+    assert.equal(first.items[0].principalId, 'operator');
+    assert.equal(JSON.stringify([first, second]).includes('private'), false);
+    assert.equal(store.get(scope, op.id).payload.secret, 'private');
+    assert.equal((await call({ id: 'missing' })).status, 404);
+    const wrong = store.stage(scope, 'other', {});
+    assert.equal((await call({ id: wrong.id })).status, 404);
+    await assert.rejects(registry.invoke('recovery-evidence', { id: op.id }, { ...actor, tenantId: 'other' }), /not found/);
+    allowed = false;
+    assert.equal((await call({ id: op.id })).status, 403);
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve));
+    store?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('recovery evidence access is rechecked and late policy results are discarded',async()=>{
- const store=new SqliteStagedOperations(':memory:'),registry=new CapabilityRegistry(()=>{});let release,entered,checks=0,allowed=true;const gate=new Promise(r=>release=r),ready=new Promise(r=>entered=r);try{const op=store.stage(scope,'pay',{});registerStagedRecoveryEvidenceCapability(registry,store,{candidate:{operationId:'evidence',method:'POST',path:'/'},applicationId:'app',externalOperationId:'pay',authorize:()=>true,authorizeOperation:async()=>{if(++checks===2){entered();await gate;}return allowed;},timeoutMs:100,maxPending:1});const pending=registry.invoke('evidence',{id:op.id},actor);await ready;await assert.rejects(pending,/evidence unavailable/);allowed=false;await assert.rejects(registry.invoke('evidence',{id:op.id},actor),/evidence unavailable/);release();await new Promise(resolve=>setImmediate(resolve));await assert.rejects(registry.invoke('evidence',{id:op.id},actor),/forbidden/);
- }finally{release?.();store.close();}
+test('recovery evidence access is rechecked and late policy results are discarded', async () => {
+  const store = new SqliteStagedOperations(':memory:'),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    checks = 0,
+    allowed = true;
+  const gate = new Promise(r => (release = r)),
+    ready = new Promise(r => (entered = r));
+  try {
+    const op = store.stage(scope, 'pay', {});
+    registerStagedRecoveryEvidenceCapability(registry, store, {
+      candidate: { operationId: 'evidence', method: 'POST', path: '/' },
+      applicationId: 'app',
+      externalOperationId: 'pay',
+      authorize: () => true,
+      authorizeOperation: async () => {
+        if (++checks === 2) {
+          entered();
+          await gate;
+        }
+        return allowed;
+      },
+      timeoutMs: 100,
+      maxPending: 1
+    });
+    const pending = registry.invoke('evidence', { id: op.id }, actor);
+    await ready;
+    await assert.rejects(pending, /evidence unavailable/);
+    allowed = false;
+    await assert.rejects(registry.invoke('evidence', { id: op.id }, actor), /evidence unavailable/);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(registry.invoke('evidence', { id: op.id }, actor), /forbidden/);
+  } finally {
+    release?.();
+    store.close();
+  }
 });
 
-test('recovery discards confirmation when permission is revoked during verification',async()=>{
- const store=new SqliteStagedOperations(':memory:'),external=new CapabilityRegistry(()=>{}),registry=new CapabilityRegistry(()=>{});let release,entered,allowed=true;const gate=new Promise(r=>release=r),ready=new Promise(r=>entered=r);try{external.register({operationId:'pay',method:'POST',path:'/'},{authorize:()=>true,validate:()=>true,execute:async()=>{entered();await gate;return 'ok';}});const op=store.stage(scope,'pay',{}),submission=store.submit(scope,op.id,external,actor);await ready;register(registry,store,{authorizeOperation:()=>allowed,verifyStopped:()=>{allowed=false;return true;}});await assert.rejects(registry.invoke('recover',{id:op.id,reference:'case'},actor),/forbidden/);assert.equal(store.get(scope,op.id).status,'submitting');assert.deepEqual(store.listRecoveryEvidence(scope,op.id),[]);release();assert.equal(await submission,'ok');assert.equal(store.get(scope,op.id).status,'succeeded');
- }finally{release?.();store.close();}
+test('recovery discards confirmation when permission is revoked during verification', async () => {
+  const store = new SqliteStagedOperations(':memory:'),
+    external = new CapabilityRegistry(() => {}),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    allowed = true;
+  const gate = new Promise(r => (release = r)),
+    ready = new Promise(r => (entered = r));
+  try {
+    external.register(
+      { operationId: 'pay', method: 'POST', path: '/' },
+      {
+        authorize: () => true,
+        validate: () => true,
+        execute: async () => {
+          entered();
+          await gate;
+          return 'ok';
+        }
+      }
+    );
+    const op = store.stage(scope, 'pay', {}),
+      submission = store.submit(scope, op.id, external, actor);
+    await ready;
+    register(registry, store, {
+      authorizeOperation: () => allowed,
+      verifyStopped: () => {
+        allowed = false;
+        return true;
+      }
+    });
+    await assert.rejects(registry.invoke('recover', { id: op.id, reference: 'case' }, actor), /forbidden/);
+    assert.equal(store.get(scope, op.id).status, 'submitting');
+    assert.deepEqual(store.listRecoveryEvidence(scope, op.id), []);
+    release();
+    assert.equal(await submission, 'ok');
+    assert.equal(store.get(scope, op.id).status, 'succeeded');
+  } finally {
+    release?.();
+    store.close();
+  }
 });

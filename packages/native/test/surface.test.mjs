@@ -1,112 +1,180 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {APP_MIXER_CATALOG,NativeSurfaceStore,NativeComponentRegistry} from '../dist/index.js';
-const create=id=>({version:'v0.9.1',createSurface:{surfaceId:id,catalogId:APP_MIXER_CATALOG}});
-const update=(id,components)=>({version:'v0.9.1',updateComponents:{surfaceId:id,components}});
-const remove=id=>({version:'v0.9.1',deleteSurface:{surfaceId:id}});
-test('trusted native extensions validate and isolate component updates',()=>{
- const registry=new NativeComponentRegistry(),render=()=>null;
- registry.register('chart',render,c=>Object.keys(c).every(key=>['id','component','label','options'].includes(key))&&typeof c.label==='string'&&typeof c.options?.color==='string');
- assert.throws(()=>registry.register('chart',render,()=>true),/duplicate/);
- assert.throws(()=>registry.register('Text',render,()=>true),/Invalid/);
- const store=new NativeSurfaceStore(registry);store.apply(create('a'));
- const exposed=registry.snapshot();exposed.get('chart').validate=()=>false;
- const component={id:'root',component:'chart',label:'Sales',options:{color:'blue'}};
- store.apply(update('a',[component]));component.options.color='changed';
- const view=store.snapshot()[0].root;assert.deepEqual(view.extensionProps,{label:'Sales',options:{color:'blue'}});
- view.extensionProps.options.color='mutated';assert.equal(store.snapshot()[0].root.extensionProps.options.color,'blue');
- for(const invalid of [
-  {id:'root',component:'chart',label:1,options:{color:'blue'}},
-  {id:'root',component:'chart',label:'x',options:{color:'blue'},key:'bad'},
-  {id:'root',component:'chart',label:'x',options:{color:'blue'},children:[]},
-  {id:'root',component:'unknown',label:'x'}
- ]){assert.throws(()=>store.apply(update('a',[invalid])));assert.equal(store.snapshot()[0].root.extensionProps.label,'Sales');}
- registry.register('late',render,()=>true);assert.throws(()=>store.apply(update('a',[{id:'root',component:'late'}])),/Unsupported/);
- const asyncRegistry=new NativeComponentRegistry();asyncRegistry.register('async',render,async()=>true);
- const asyncStore=new NativeSurfaceStore(asyncRegistry);asyncStore.apply(create('a'));assert.throws(()=>asyncStore.apply(update('a',[{id:'root',component:'async'}])),/synchronous/);
+import { APP_MIXER_CATALOG, NativeSurfaceStore, NativeComponentRegistry } from '../dist/index.js';
+const create = id => ({ version: 'v0.9.1', createSurface: { surfaceId: id, catalogId: APP_MIXER_CATALOG } });
+const update = (id, components) => ({ version: 'v0.9.1', updateComponents: { surfaceId: id, components } });
+const remove = id => ({ version: 'v0.9.1', deleteSurface: { surfaceId: id } });
+test('trusted native extensions validate and isolate component updates', () => {
+  const registry = new NativeComponentRegistry(),
+    render = () => null;
+  registry.register('chart', render, c => Object.keys(c).every(key => ['id', 'component', 'label', 'options'].includes(key)) && typeof c.label === 'string' && typeof c.options?.color === 'string');
+  assert.throws(() => registry.register('chart', render, () => true), /duplicate/);
+  assert.throws(() => registry.register('Text', render, () => true), /Invalid/);
+  const store = new NativeSurfaceStore(registry);
+  store.apply(create('a'));
+  const exposed = registry.snapshot();
+  exposed.get('chart').validate = () => false;
+  const component = { id: 'root', component: 'chart', label: 'Sales', options: { color: 'blue' } };
+  store.apply(update('a', [component]));
+  component.options.color = 'changed';
+  const view = store.snapshot()[0].root;
+  assert.deepEqual(view.extensionProps, { label: 'Sales', options: { color: 'blue' } });
+  view.extensionProps.options.color = 'mutated';
+  assert.equal(store.snapshot()[0].root.extensionProps.options.color, 'blue');
+  for (const invalid of [
+    { id: 'root', component: 'chart', label: 1, options: { color: 'blue' } },
+    { id: 'root', component: 'chart', label: 'x', options: { color: 'blue' }, key: 'bad' },
+    { id: 'root', component: 'chart', label: 'x', options: { color: 'blue' }, children: [] },
+    { id: 'root', component: 'unknown', label: 'x' }
+  ]) {
+    assert.throws(() => store.apply(update('a', [invalid])));
+    assert.equal(store.snapshot()[0].root.extensionProps.label, 'Sales');
+  }
+  registry.register('late', render, () => true);
+  assert.throws(() => store.apply(update('a', [{ id: 'root', component: 'late' }])), /Unsupported/);
+  const asyncRegistry = new NativeComponentRegistry();
+  asyncRegistry.register('async', render, async () => true);
+  const asyncStore = new NativeSurfaceStore(asyncRegistry);
+  asyncStore.apply(create('a'));
+  assert.throws(() => asyncStore.apply(update('a', [{ id: 'root', component: 'async' }])), /synchronous/);
 });
-test('renders static layouts incrementally and isolates surfaces',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));store.apply(create('b'));
- const components=[{id:'root',component:'Row',children:['title','later'],justify:'spaceBetween'},{id:'title',component:'Text',text:'<safe>',variant:'h1'}];
- store.apply(update('a',components));components[0].children[0]='tampered';
- store.apply(update('b',[{id:'root',component:'Card',child:'text'},{id:'text',component:'Text',text:'Other'}]));
- store.apply(update('a',[{id:'later',component:'Text',text:'Loaded'}]));
- let surfaces=store.snapshot();assert.deepEqual(surfaces[0].root.children.map(x=>x.text),['<safe>','Loaded']);assert.equal(surfaces[1].root.children[0].text,'Other');
- surfaces[0].root.children[0].text='tampered';assert.equal(store.snapshot()[0].root.children[0].text,'<safe>');store.apply(remove('a'));assert.equal(store.snapshot()[0].id,'b');
+test('renders static layouts incrementally and isolates surfaces', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply(create('b'));
+  const components = [
+    { id: 'root', component: 'Row', children: ['title', 'later'], justify: 'spaceBetween' },
+    { id: 'title', component: 'Text', text: '<safe>', variant: 'h1' }
+  ];
+  store.apply(update('a', components));
+  components[0].children[0] = 'tampered';
+  store.apply(
+    update('b', [
+      { id: 'root', component: 'Card', child: 'text' },
+      { id: 'text', component: 'Text', text: 'Other' }
+    ])
+  );
+  store.apply(update('a', [{ id: 'later', component: 'Text', text: 'Loaded' }]));
+  let surfaces = store.snapshot();
+  assert.deepEqual(
+    surfaces[0].root.children.map(x => x.text),
+    ['<safe>', 'Loaded']
+  );
+  assert.equal(surfaces[1].root.children[0].text, 'Other');
+  surfaces[0].root.children[0].text = 'tampered';
+  assert.equal(store.snapshot()[0].root.children[0].text, '<safe>');
+  store.apply(remove('a'));
+  assert.equal(store.snapshot()[0].id, 'b');
 });
-test('rejects incompatible and cyclic updates atomically',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));store.apply(update('a',[{id:'root',component:'Text',text:'Safe'}]));
- for(const invalid of [
-  update('a',[{id:'root',component:'Button',child:'x'}]),
-  update('a',[{id:'root',component:'Text',text:{path:'relative'}}]),
-  update('a',[{id:'root',component:'Column',children:['root']}]),
-  {version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/__proto__/polluted',value:'x'}}
- ])assert.throws(()=>store.apply(invalid));
- assert.equal(store.snapshot()[0].root.text,'Safe');
+test('rejects incompatible and cyclic updates atomically', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply(update('a', [{ id: 'root', component: 'Text', text: 'Safe' }]));
+  for (const invalid of [
+    update('a', [{ id: 'root', component: 'Button', child: 'x' }]),
+    update('a', [{ id: 'root', component: 'Text', text: { path: 'relative' } }]),
+    update('a', [{ id: 'root', component: 'Column', children: ['root'] }]),
+    { version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/__proto__/polluted', value: 'x' } }
+  ])
+    assert.throws(() => store.apply(invalid));
+  assert.equal(store.snapshot()[0].root.text, 'Safe');
 });
-test('rejects expanded trees over the resource limit',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));
- const components=[{id:'root',component:'Column',children:Array(1000).fill('branch')},{id:'branch',component:'Column',children:Array(6).fill('leaf')},{id:'leaf',component:'Text',text:'x'}];
- assert.throws(()=>store.apply(update('a',components)),/tree too large/);assert.equal(store.snapshot()[0].root,undefined);
+test('rejects expanded trees over the resource limit', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  const components = [
+    { id: 'root', component: 'Column', children: Array(1000).fill('branch') },
+    { id: 'branch', component: 'Column', children: Array(6).fill('leaf') },
+    { id: 'leaf', component: 'Text', text: 'x' }
+  ];
+  assert.throws(() => store.apply(update('a', components)), /tree too large/);
+  assert.equal(store.snapshot()[0].root, undefined);
 });
-test('progress bars validate their definition and resolve clamped bound values',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{upload:{percent:40}}}});
- store.apply(update('a',[{id:'root',component:'Progress',label:'Upload',value:{path:'/upload/percent'},max:50}]));
- assert.deepEqual(store.snapshot()[0].root,{id:'root',kind:'Progress',label:'Upload',max:50,progress:40,children:[]});
- for(const invalid of [
-  update('a',[{id:'root',component:'Progress',value:{path:'/p'}}]),
-  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/'}}]),
-  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'relative'}}]),
-  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/p'},max:0}]),
-  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/p'},max:'80'}]),
-  update('a',[{id:'root',component:'Progress',label:'x',value:{path:'/p'},extra:true}])
- ]){assert.throws(()=>store.apply(invalid),/Progress|absolute JSON pointers/);assert.equal(store.snapshot()[0].root.label,'Upload');}
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/upload/percent',value:80}});
- assert.equal(store.snapshot()[0].root.progress,50,'bound values clamp to max');
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/upload/percent',value:'half'}});
- assert.equal(store.snapshot()[0].root.progress,undefined,'a non-number leaves the bar indeterminate');
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/upload/percent'}});
- assert.equal(store.snapshot()[0].root.progress,undefined);
+test('progress bars validate their definition and resolve clamped bound values', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', value: { upload: { percent: 40 } } } });
+  store.apply(update('a', [{ id: 'root', component: 'Progress', label: 'Upload', value: { path: '/upload/percent' }, max: 50 }]));
+  assert.deepEqual(store.snapshot()[0].root, { id: 'root', kind: 'Progress', label: 'Upload', max: 50, progress: 40, children: [] });
+  for (const invalid of [
+    update('a', [{ id: 'root', component: 'Progress', value: { path: '/p' } }]),
+    update('a', [{ id: 'root', component: 'Progress', label: 'x', value: { path: '/' } }]),
+    update('a', [{ id: 'root', component: 'Progress', label: 'x', value: { path: 'relative' } }]),
+    update('a', [{ id: 'root', component: 'Progress', label: 'x', value: { path: '/p' }, max: 0 }]),
+    update('a', [{ id: 'root', component: 'Progress', label: 'x', value: { path: '/p' }, max: '80' }]),
+    update('a', [{ id: 'root', component: 'Progress', label: 'x', value: { path: '/p' }, extra: true }])
+  ]) {
+    assert.throws(() => store.apply(invalid), /Progress|absolute JSON pointers/);
+    assert.equal(store.snapshot()[0].root.label, 'Upload');
+  }
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/upload/percent', value: 80 } });
+  assert.equal(store.snapshot()[0].root.progress, 50, 'bound values clamp to max');
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/upload/percent', value: 'half' } });
+  assert.equal(store.snapshot()[0].root.progress, undefined, 'a non-number leaves the bar indeterminate');
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/upload/percent' } });
+  assert.equal(store.snapshot()[0].root.progress, undefined);
 });
 
-test('bound text follows data updates while unsafe paths leave state unchanged',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));
- store.apply(update('a',[{id:'root',component:'Text',text:{path:'/person/name'}}]));
- const data=(path,value)=>({version:'v0.9.1',updateDataModel:{surfaceId:'a',path,value}});
- store.apply(data('/person/name','Ada'));assert.equal(store.snapshot()[0].root.text,'Ada');
- assert.throws(()=>store.apply(data('/person/__proto__/x','bad')),/Unsafe/);assert.equal(store.snapshot()[0].root.text,'Ada');
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/person/name'}});assert.equal(store.snapshot()[0].root.text,'');
+test('bound text follows data updates while unsafe paths leave state unchanged', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply(update('a', [{ id: 'root', component: 'Text', text: { path: '/person/name' } }]));
+  const data = (path, value) => ({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path, value } });
+  store.apply(data('/person/name', 'Ada'));
+  assert.equal(store.snapshot()[0].root.text, 'Ada');
+  assert.throws(() => store.apply(data('/person/__proto__/x', 'bad')), /Unsafe/);
+  assert.equal(store.snapshot()[0].root.text, 'Ada');
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/person/name' } });
+  assert.equal(store.snapshot()[0].root.text, '');
 });
 
-test('field writes are isolated and reject stale callbacks',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));
- store.apply(update('a',[{id:'root',component:'TextField',label:'Name',value:{path:'/name'}}]));
- const first=store.snapshot()[0];store.writeField('a','root',first.revision,'Ada');store.writeField('a','root',first.revision,'Grace');
- assert.equal(store.snapshot()[0].root.value,'Grace');
- assert.throws(()=>store.apply(update('a',[{id:'root',component:'TextField',label:'Unsafe',value:{path:'/__proto__/x'}}])),/Unsafe/);
- store.apply(remove('a'));store.apply(create('a'));store.apply(update('a',[{id:'root',component:'TextField',label:'New',value:{path:'/name'}}]));
- assert.throws(()=>store.writeField('a','root',first.revision,'stale'),/Stale/);assert.equal(store.snapshot()[0].root.value,'');
+test('field writes are isolated and reject stale callbacks', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply(update('a', [{ id: 'root', component: 'TextField', label: 'Name', value: { path: '/name' } }]));
+  const first = store.snapshot()[0];
+  store.writeField('a', 'root', first.revision, 'Ada');
+  store.writeField('a', 'root', first.revision, 'Grace');
+  assert.equal(store.snapshot()[0].root.value, 'Grace');
+  assert.throws(() => store.apply(update('a', [{ id: 'root', component: 'TextField', label: 'Unsafe', value: { path: '/__proto__/x' } }])), /Unsafe/);
+  store.apply(remove('a'));
+  store.apply(create('a'));
+  store.apply(update('a', [{ id: 'root', component: 'TextField', label: 'New', value: { path: '/name' } }]));
+  assert.throws(() => store.writeField('a', 'root', first.revision, 'stale'), /Stale/);
+  assert.equal(store.snapshot()[0].root.value, '');
 });
 
-test('buttons resolve only explicit context and reject stale action callbacks',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{form:{name:'Ada',secret:'private'}}}});
- store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'},source:'screen'}}}},{id:'label',component:'Text',text:'Save'}]));
- const revision=store.snapshot()[0].revision;
- const action=store.action('a','root',revision);assert.deepEqual(action.action.context,{name:'Ada',source:'screen'});assert.equal(action.action.sourceComponentId,'root');
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/form/name',value:'Grace'}});assert.equal(store.action('a','root',revision).action.context.name,'Grace');
- store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'other'}}}]));assert.throws(()=>store.action('a','root',revision),/Stale/);
- assert.throws(()=>store.apply(update('a',[{id:'root',component:'Button',child:'label',action:{event:{name:'bad',context:{x:{path:'/__proto__/x'}}}}}])),/Unsafe/);
+test('buttons resolve only explicit context and reject stale action callbacks', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', value: { form: { name: 'Ada', secret: 'private' } } } });
+  store.apply(
+    update('a', [
+      { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { name: { path: '/form/name' }, source: 'screen' } } } },
+      { id: 'label', component: 'Text', text: 'Save' }
+    ])
+  );
+  const revision = store.snapshot()[0].revision;
+  const action = store.action('a', 'root', revision);
+  assert.deepEqual(action.action.context, { name: 'Ada', source: 'screen' });
+  assert.equal(action.action.sourceComponentId, 'root');
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/form/name', value: 'Grace' } });
+  assert.equal(store.action('a', 'root', revision).action.context.name, 'Grace');
+  store.apply(update('a', [{ id: 'root', component: 'Button', child: 'label', action: { event: { name: 'other' } } }]));
+  assert.throws(() => store.action('a', 'root', revision), /Stale/);
+  assert.throws(() => store.apply(update('a', [{ id: 'root', component: 'Button', child: 'label', action: { event: { name: 'bad', context: { x: { path: '/__proto__/x' } } } } }])), /Unsafe/);
 });
 
-test('data model limits reject unsafe or oversized updates atomically',()=>{
- const store=new NativeSurfaceStore();store.apply(create('a'));
- store.apply(update('a',[{id:'root',component:'Text',text:{path:'/name'}}]));
- store.apply({version:'v0.9.1',updateDataModel:{surfaceId:'a',value:{name:'Safe'}}});
- const data=value=>({version:'v0.9.1',updateDataModel:{surfaceId:'a',path:'/extra',value}});
- assert.throws(()=>store.apply(data(Array(10001).fill(1))),/too large/);
- assert.throws(()=>store.apply(data(JSON.parse('{"__proto__":{"x":1}}'))),/Unsafe/);
- const cycle=[];cycle.push(cycle);assert.throws(()=>store.apply(data(cycle)),/Cyclic/);
- assert.equal(store.snapshot()[0].root.text,'Safe');
+test('data model limits reject unsafe or oversized updates atomically', () => {
+  const store = new NativeSurfaceStore();
+  store.apply(create('a'));
+  store.apply(update('a', [{ id: 'root', component: 'Text', text: { path: '/name' } }]));
+  store.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', value: { name: 'Safe' } } });
+  const data = value => ({ version: 'v0.9.1', updateDataModel: { surfaceId: 'a', path: '/extra', value } });
+  assert.throws(() => store.apply(data(Array(10001).fill(1))), /too large/);
+  assert.throws(() => store.apply(data(JSON.parse('{"__proto__":{"x":1}}'))), /Unsafe/);
+  const cycle = [];
+  cycle.push(cycle);
+  assert.throws(() => store.apply(data(cycle)), /Cyclic/);
+  assert.equal(store.snapshot()[0].root.text, 'Safe');
 });

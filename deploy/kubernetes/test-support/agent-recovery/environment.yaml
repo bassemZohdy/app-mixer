@@ -3,12 +3,12 @@ kind: PersistentVolume
 metadata:
   name: agent-recovery-test
 spec:
-  capacity: {storage: 64Mi}
+  capacity: { storage: 64Mi }
   accessModes: [ReadWriteOnce]
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
-  hostPath: {path: /var/agent-recovery-test, type: DirectoryOrCreate}
-  claimRef: {namespace: agent-recovery-test, name: agent-recovery-test}
+  storageClassName: ''
+  hostPath: { path: /var/agent-recovery-test, type: DirectoryOrCreate }
+  claimRef: { namespace: agent-recovery-test, name: agent-recovery-test }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -16,15 +16,15 @@ metadata:
   name: agent-recovery-test
 spec:
   accessModes: [ReadWriteOnce]
-  resources: {requests: {storage: 64Mi}}
-  storageClassName: ""
+  resources: { requests: { storage: 64Mi } }
+  storageClassName: ''
   volumeName: agent-recovery-test
 ---
 apiVersion: v1
 kind: Pod
 metadata:
   name: agent-test-provider
-  labels: {app: agent-test-provider}
+  labels: { app: agent-test-provider }
 spec:
   restartPolicy: Never
   containers:
@@ -32,15 +32,15 @@ spec:
       image: app-mixer-agent-recovery:test
       imagePullPolicy: Never
       args: [node, deploy/kubernetes/test-support/agent-recovery/recovery.mjs, provider]
-      readinessProbe: {tcpSocket: {port: 3000}, periodSeconds: 1}
+      readinessProbe: { tcpSocket: { port: 3000 }, periodSeconds: 1 }
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: agent-test-provider
 spec:
-  selector: {app: agent-test-provider}
-  ports: [{port: 3000, targetPort: 3000}]
+  selector: { app: agent-test-provider }
+  ports: [{ port: 3000, targetPort: 3000 }]
 ---
 apiVersion: v1
 kind: Pod
@@ -52,7 +52,7 @@ spec:
     - name: manager
       image: app-mixer-agent-recovery:test
       imagePullPolicy: Never
-      volumeMounts: [{name: state, mountPath: /data}]
+      volumeMounts: [{ name: state, mountPath: /data }]
   volumes:
     - name: state
-      persistentVolumeClaim: {claimName: agent-recovery-test}
+      persistentVolumeClaim: { claimName: agent-recovery-test }

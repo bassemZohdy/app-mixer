@@ -1,114 +1,328 @@
-import {EncryptedBrowserQueue,BrowserOfflineWorker,mountOfflineConflictPanel} from './offline.js';
-import {invokeCapability} from './capabilities.mjs';
+import { EncryptedBrowserQueue, BrowserOfflineWorker, mountOfflineConflictPanel } from './offline.js';
+import { invokeCapability } from './capabilities.mjs';
 
 // Trusted host code supplies an unlocked key, current identity and authorized transport.
-export async function createGeneratedOfflineRuntime(config){
-  if(!config||config.enabled!==true||!Array.isArray(config.operations)||!config.operations.length||config.operations.length>100||typeof config.canEnqueue!=='function'||typeof config.canDiscard!=='function'||(config.canRetire!==undefined&&typeof config.canRetire!=='function')||(config.confirmAbandoned!==undefined&&typeof config.confirmAbandoned!=='function')||(config.verifyOutcome!==undefined&&typeof config.verifyOutcome!=='function')||typeof config.isOnline!=='function'||typeof config.resolveActor!=='function'||typeof config.dispatch!=='function'||typeof config.classify!=='function'||typeof config.onError!=='function'||typeof config.loadCurrent!=='function')throw Error('Invalid offline runtime configuration');
-  const pattern=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,operations=new Map();
-  for(const operation of config.operations){
-    if(!operation||typeof operation.id!=='string'||!pattern.test(operation.id)||typeof operation.label!=='string'||!operation.label.trim()||operation.label.length>120||operations.has(operation.id))throw Error('Invalid offline operation');
-    operations.set(operation.id,operation.label);
+export async function createGeneratedOfflineRuntime(config) {
+  if (
+    !config ||
+    config.enabled !== true ||
+    !Array.isArray(config.operations) ||
+    !config.operations.length ||
+    config.operations.length > 100 ||
+    typeof config.canEnqueue !== 'function' ||
+    typeof config.canDiscard !== 'function' ||
+    (config.canRetire !== undefined && typeof config.canRetire !== 'function') ||
+    (config.confirmAbandoned !== undefined && typeof config.confirmAbandoned !== 'function') ||
+    (config.verifyOutcome !== undefined && typeof config.verifyOutcome !== 'function') ||
+    typeof config.isOnline !== 'function' ||
+    typeof config.resolveActor !== 'function' ||
+    typeof config.dispatch !== 'function' ||
+    typeof config.classify !== 'function' ||
+    typeof config.onError !== 'function' ||
+    typeof config.loadCurrent !== 'function'
+  )
+    throw Error('Invalid offline runtime configuration');
+  const pattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,
+    operations = new Map();
+  for (const operation of config.operations) {
+    if (
+      !operation ||
+      typeof operation.id !== 'string' ||
+      !pattern.test(operation.id) ||
+      typeof operation.label !== 'string' ||
+      !operation.label.trim() ||
+      operation.label.length > 120 ||
+      operations.has(operation.id)
+    )
+      throw Error('Invalid offline operation');
+    operations.set(operation.id, operation.label);
   }
-  const {canEnqueue,canDiscard,canRetire,confirmAbandoned,verifyOutcome,isOnline,resolveActor,dispatch,classify,onError,loadCurrent}=config;
-  const scope={tenantId:config.scope?.tenantId,applicationId:config.scope?.applicationId,principalId:config.scope?.principalId};
-  const queue=await EncryptedBrowserQueue.open({enabled:true,databaseName:config.databaseName,scope,key:config.key,...(config.indexedDB?{indexedDB:config.indexedDB}:{}),...(config.crypto?{crypto:config.crypto}:{}),...(config.rollbackAnchor!==undefined?{rollbackAnchor:config.rollbackAnchor}:{})});
-  let closed=false,closePromise;const panels=new Set();
+  const { canEnqueue, canDiscard, canRetire, confirmAbandoned, verifyOutcome, isOnline, resolveActor, dispatch, classify, onError, loadCurrent } = config;
+  const scope = { tenantId: config.scope?.tenantId, applicationId: config.scope?.applicationId, principalId: config.scope?.principalId };
+  const queue = await EncryptedBrowserQueue.open({
+    enabled: true,
+    databaseName: config.databaseName,
+    scope,
+    key: config.key,
+    ...(config.indexedDB ? { indexedDB: config.indexedDB } : {}),
+    ...(config.crypto ? { crypto: config.crypto } : {}),
+    ...(config.rollbackAnchor !== undefined ? { rollbackAnchor: config.rollbackAnchor } : {})
+  });
+  let closed = false,
+    closePromise;
+  const panels = new Set();
   class OperationNotAllowed extends Error {}
-  const current=async()=>{if(closed)return false;const actor=await resolveActor();return !closed&&!!actor&&actor.tenantId===scope.tenantId&&actor.applicationId===scope.applicationId&&actor.principalId===scope.principalId;};
+  const current = async () => {
+    if (closed) return false;
+    const actor = await resolveActor();
+    return !closed && !!actor && actor.tenantId === scope.tenantId && actor.applicationId === scope.applicationId && actor.principalId === scope.principalId;
+  };
   let worker;
-  try{
-    worker=new BrowserOfflineWorker(queue,{
-      intervalMs:config.intervalMs,maxPerPass:config.maxPerPass,maxAttempts:config.maxAttempts,isOnline,resolveActor,...(config.policyTimeoutMs!==undefined?{policyTimeoutMs:config.policyTimeoutMs}:{}),...(config.maxPendingPolicies!==undefined?{maxPendingPolicies:config.maxPendingPolicies}:{}),
-      dispatch:(operation,input,actor)=>{if(!operations.has(operation))throw new OperationNotAllowed('Offline operation not allowed');return dispatch(operation,input,actor);},
-      classify:error=>error instanceof OperationNotAllowed?'uncertain':classify(error),onError
+  try {
+    worker = new BrowserOfflineWorker(queue, {
+      intervalMs: config.intervalMs,
+      maxPerPass: config.maxPerPass,
+      maxAttempts: config.maxAttempts,
+      isOnline,
+      resolveActor,
+      ...(config.policyTimeoutMs !== undefined ? { policyTimeoutMs: config.policyTimeoutMs } : {}),
+      ...(config.maxPendingPolicies !== undefined ? { maxPendingPolicies: config.maxPendingPolicies } : {}),
+      dispatch: (operation, input, actor) => {
+        if (!operations.has(operation)) throw new OperationNotAllowed('Offline operation not allowed');
+        return dispatch(operation, input, actor);
+      },
+      classify: error => (error instanceof OperationNotAllowed ? 'uncertain' : classify(error)),
+      onError
     });
-  }catch(error){queue.close();throw error;}
-  const ensureOpen=()=>{if(closed)throw Error('Offline runtime closed');};
-  const runtime={
-    async enqueue(operationId,requestKey,payload,options){
-      const safe=structuredClone(payload),keyOptions=options===undefined?undefined:structuredClone(options);
-      ensureOpen();if(!operations.has(operationId)||!await current())throw Error('Offline operation not allowed');
-      if(await canEnqueue(operationId,structuredClone(safe),{...scope})!==true||!await current()||closed)throw Error('Offline operation not allowed');
-      return queue.enqueue(operationId,requestKey,safe,keyOptions);
+  } catch (error) {
+    queue.close();
+    throw error;
+  }
+  const ensureOpen = () => {
+    if (closed) throw Error('Offline runtime closed');
+  };
+  const runtime = {
+    async enqueue(operationId, requestKey, payload, options) {
+      const safe = structuredClone(payload),
+        keyOptions = options === undefined ? undefined : structuredClone(options);
+      ensureOpen();
+      if (!operations.has(operationId) || !(await current())) throw Error('Offline operation not allowed');
+      if ((await canEnqueue(operationId, structuredClone(safe), { ...scope })) !== true || !(await current()) || closed) throw Error('Offline operation not allowed');
+      return queue.enqueue(operationId, requestKey, safe, keyOptions);
     },
-    async retire(id,expectedVersion){
-      ensureOpen();if(!canRetire||!await current())throw Error('Offline operation not allowed');
-      const item=await queue.get(id);if(!item||!operations.has(item.operationId)||!['succeeded','discarded','retired'].includes(item.status)||closed||!await current())throw Error('Offline operation not allowed');
-      if(await canRetire(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
-      return queue.retire(id,expectedVersion);
+    async retire(id, expectedVersion) {
+      ensureOpen();
+      if (!canRetire || !(await current())) throw Error('Offline operation not allowed');
+      const item = await queue.get(id);
+      if (!item || !operations.has(item.operationId) || !['succeeded', 'discarded', 'retired'].includes(item.status) || closed || !(await current())) throw Error('Offline operation not allowed');
+      if ((await canRetire(structuredClone(item), { ...scope })) !== true || closed || !(await current())) throw Error('Offline operation not allowed');
+      return queue.retire(id, expectedVersion);
     },
-    async recoverAbandoned(id,expectedVersion){
-      ensureOpen();if(!confirmAbandoned||!await current())throw Error('Offline operation not allowed');
-      const item=await queue.get(id);if(!item||item.version!==expectedVersion||item.status!=='running'||!operations.has(item.operationId)||closed||!await current())throw Error('Offline operation not allowed');
-      if(await confirmAbandoned(structuredClone(item),{...scope})!==true||closed||!await current())throw Error('Offline operation not allowed');
-      return queue.transition(id,expectedVersion,'uncertain');
+    async recoverAbandoned(id, expectedVersion) {
+      ensureOpen();
+      if (!confirmAbandoned || !(await current())) throw Error('Offline operation not allowed');
+      const item = await queue.get(id);
+      if (!item || item.version !== expectedVersion || item.status !== 'running' || !operations.has(item.operationId) || closed || !(await current())) throw Error('Offline operation not allowed');
+      if ((await confirmAbandoned(structuredClone(item), { ...scope })) !== true || closed || !(await current())) throw Error('Offline operation not allowed');
+      return queue.transition(id, expectedVersion, 'uncertain');
     },
-    async verifyUncertain(id,expectedVersion){
-      ensureOpen();if(!verifyOutcome||!await current())throw Error('Offline operation not allowed');
-      const item=await queue.get(id);if(!item||item.version!==expectedVersion||item.status!=='uncertain'||!operations.has(item.operationId)||closed||!await current())throw Error('Offline operation not allowed');
-      const outcome=await verifyOutcome(structuredClone(item),{...scope});if(closed||!await current())throw Error('Offline operation not allowed');
-      if(outcome==='unknown'){const latest=await queue.get(id);if(closed||!await current()||!latest||latest.version!==expectedVersion||latest.status!=='uncertain')throw Error('Offline version conflict');return latest;}
-      if(outcome!=='applied'&&outcome!=='not_applied')throw Error('Invalid offline verification outcome');
-      return queue.transition(id,expectedVersion,outcome==='applied'?'reconcileApplied':'reconcileNotApplied');
+    async verifyUncertain(id, expectedVersion) {
+      ensureOpen();
+      if (!verifyOutcome || !(await current())) throw Error('Offline operation not allowed');
+      const item = await queue.get(id);
+      if (!item || item.version !== expectedVersion || item.status !== 'uncertain' || !operations.has(item.operationId) || closed || !(await current())) throw Error('Offline operation not allowed');
+      const outcome = await verifyOutcome(structuredClone(item), { ...scope });
+      if (closed || !(await current())) throw Error('Offline operation not allowed');
+      if (outcome === 'unknown') {
+        const latest = await queue.get(id);
+        if (closed || !(await current()) || !latest || latest.version !== expectedVersion || latest.status !== 'uncertain') throw Error('Offline version conflict');
+        return latest;
+      }
+      if (outcome !== 'applied' && outcome !== 'not_applied') throw Error('Invalid offline verification outcome');
+      return queue.transition(id, expectedVersion, outcome === 'applied' ? 'reconcileApplied' : 'reconcileNotApplied');
     },
-    mountConflicts(root){
-      ensureOpen();const panel=mountOfflineConflictPanel(root,queue,{
-        authorizeRead:async()=>!closed&&await current(),
-        loadCurrent:async(operation,payload,actor)=>{
-          if(!operations.has(operation)||!await current())throw Error('Offline operation not allowed');
-          const result=await loadCurrent(operation,payload,actor);if(!await current()||closed)throw Error('Offline operation not allowed');return result;
+    mountConflicts(root) {
+      ensureOpen();
+      const panel = mountOfflineConflictPanel(root, queue, {
+        authorizeRead: async () => !closed && (await current()),
+        loadCurrent: async (operation, payload, actor) => {
+          if (!operations.has(operation) || !(await current())) throw Error('Offline operation not allowed');
+          const result = await loadCurrent(operation, payload, actor);
+          if (!(await current()) || closed) throw Error('Offline operation not allowed');
+          return result;
         },
-        authorizeMutation:async(action,item,payload)=>{
-          if(closed||!await current())return false;
-          const allowed=action==='resolve'?operations.has(item.operationId)&&await canEnqueue(item.operationId,structuredClone(payload),{...scope})===true:await canDiscard(structuredClone(item),{...scope})===true;
-          return allowed&&!closed&&await current();
+        authorizeMutation: async (action, item, payload) => {
+          if (closed || !(await current())) return false;
+          const allowed =
+            action === 'resolve'
+              ? operations.has(item.operationId) && (await canEnqueue(item.operationId, structuredClone(payload), { ...scope })) === true
+              : (await canDiscard(structuredClone(item), { ...scope })) === true;
+          return allowed && !closed && (await current());
         }
       });
-      const guarded={async refresh(){if(closed||!await current())throw Error('Offline operation not allowed');await panel.refresh();if(closed||!await current()){panel.dispose();throw Error('Offline operation not allowed');}},dispose(){panel.dispose();panels.delete(guarded);}};
-      panels.add(guarded);return guarded;
+      const guarded = {
+        async refresh() {
+          if (closed || !(await current())) throw Error('Offline operation not allowed');
+          await panel.refresh();
+          if (closed || !(await current())) {
+            panel.dispose();
+            throw Error('Offline operation not allowed');
+          }
+        },
+        dispose() {
+          panel.dispose();
+          panels.delete(guarded);
+        }
+      };
+      panels.add(guarded);
+      return guarded;
     },
-    mountHistory(root,options){
-      ensureOpen();const panel=mountGeneratedOfflineHistory(root,runtime,options);
-      const guarded={refresh:()=>panel.refresh(),dispose(){panel.dispose();panels.delete(guarded);}};
-      panels.add(guarded);return guarded;
+    mountHistory(root, options) {
+      ensureOpen();
+      const panel = mountGeneratedOfflineHistory(root, runtime, options);
+      const guarded = {
+        refresh: () => panel.refresh(),
+        dispose() {
+          panel.dispose();
+          panels.delete(guarded);
+        }
+      };
+      panels.add(guarded);
+      return guarded;
     },
-    start(){ensureOpen();worker.start();},
-    async stop(){await worker.stop();},
-    close(){if(closePromise)return closePromise;closed=true;for(const panel of panels)panel.dispose();closePromise=(async()=>{await worker.stop();queue.close();})();return closePromise;},
-    async list(){ensureOpen();if(!await current())throw Error('Offline operation not allowed');const result=await queue.list();if(closed||!await current())throw Error('Offline operation not allowed');return result;},
-    async hasPendingRollbackAnchor(){ensureOpen();if(!await current()||closed)throw Error('Offline operation not allowed');return queue.hasPendingRollbackAnchor();},
-    async syncRollbackAnchor(){ensureOpen();if(!await current()||closed)throw Error('Offline operation not allowed');const result=await queue.syncRollbackAnchor();if(closed||!await current())throw Error('Offline operation not allowed');return result;},
-    operations(){return [...operations].map(([id,label])=>({id,label}));}
+    start() {
+      ensureOpen();
+      worker.start();
+    },
+    async stop() {
+      await worker.stop();
+    },
+    close() {
+      if (closePromise) return closePromise;
+      closed = true;
+      for (const panel of panels) panel.dispose();
+      closePromise = (async () => {
+        await worker.stop();
+        queue.close();
+      })();
+      return closePromise;
+    },
+    async list() {
+      ensureOpen();
+      if (!(await current())) throw Error('Offline operation not allowed');
+      const result = await queue.list();
+      if (closed || !(await current())) throw Error('Offline operation not allowed');
+      return result;
+    },
+    async hasPendingRollbackAnchor() {
+      ensureOpen();
+      if (!(await current()) || closed) throw Error('Offline operation not allowed');
+      return queue.hasPendingRollbackAnchor();
+    },
+    async syncRollbackAnchor() {
+      ensureOpen();
+      if (!(await current()) || closed) throw Error('Offline operation not allowed');
+      const result = await queue.syncRollbackAnchor();
+      if (closed || !(await current())) throw Error('Offline operation not allowed');
+      return result;
+    },
+    operations() {
+      return [...operations].map(([id, label]) => ({ id, label }));
+    }
   };
   return runtime;
 }
 
 // Host callbacks govern optional recovery and retirement actions.
-export function mountGeneratedOfflineHistory(root,runtime,options={}){
-  if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||typeof runtime?.list!=='function'||!options||typeof options!=='object'||['onRecover','onRetire','onAbandoned','onVerify'].some(name=>options[name]!==undefined&&typeof options[name]!=='function'))throw Error('Invalid offline history');
-  const doc=root.ownerDocument,{onRecover,onRetire,onAbandoned,onVerify}=options;let generation=0,disposed=false,lastItems=[];
-  const node=(tag,text)=>{const result=doc.createElement(tag);if(text!==undefined)result.textContent=text;return result;};
-  const panel={
-    async refresh(){
-      if(disposed)return;lastItems=[];const current=++generation,heading=node('h2','Offline operation history'),status=node('p','Loading operations…'),list=node('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');root.replaceChildren(heading,status,list);
-      try{
-        const items=await runtime.list();if(disposed||current!==generation)return;lastItems=items;
-        if(!items.length){status.textContent='No offline operations.';return true;}
-        status.textContent='Review saved operations before creating another request.';
-        for(const item of items){
-          const section=node('section');section.append(node('h3',item.operationId+' — '+item.status),node('p','Operation ID: '+item.id));
-          if(item.status==='retired')section.appendChild(node('p','Request data removed.'));else{const details=node('details'),summary=node('summary','Show queued data');details.append(summary,node('pre',JSON.stringify(item.payload,null,2)));section.appendChild(details);}
-          const action=(label,callback,success,failure,refresh=false)=>{const button=node('button',label);button.type='button';button.addEventListener('click',()=>{if(disposed||current!==generation||!root.contains(button)||button.disabled)return;button.disabled=true;void (async()=>{try{await callback(item.id,item.version);if(!disposed&&current===generation){if(refresh){const loaded=await panel.refresh();if(loaded&&!disposed&&generation===current+1&&success){const message=root.querySelector('[role="status"]');if(message)message.textContent=typeof success==='function'?success(lastItems.find(value=>value.id===item.id)):success;}}else status.textContent=success;}}catch{if(!disposed&&current===generation)status.textContent=failure;}finally{if(!disposed&&current===generation)button.disabled=false;}})();});section.appendChild(button);};
-          if(onRecover&&item.status!=='retired')action('Use request in form',onRecover,'Request loaded into the form. Review it before submitting.','Unable to load the request into the form.');
-          if(onRetire&&['succeeded','discarded'].includes(item.status))action('Remove request data',onRetire,'','Could not confirm removal. Refresh history to check.',true);
-          if(onAbandoned&&item.status==='running')action('Check interrupted operation',onAbandoned,'','Could not confirm recovery. Refresh history to check.',true);
-          if(onVerify&&item.status==='uncertain')action('Verify operation outcome',onVerify,result=>result?.status==='uncertain'?'Outcome remains uncertain.':result?.status==='pending'?'Operation verified and ready to retry.':result?.status==='succeeded'?'Operation verified as completed.':'Verification finished. Review the current operation state.','Could not confirm verification. Refresh history to check.',true);
+export function mountGeneratedOfflineHistory(root, runtime, options = {}) {
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    typeof runtime?.list !== 'function' ||
+    !options ||
+    typeof options !== 'object' ||
+    ['onRecover', 'onRetire', 'onAbandoned', 'onVerify'].some(name => options[name] !== undefined && typeof options[name] !== 'function')
+  )
+    throw Error('Invalid offline history');
+  const doc = root.ownerDocument,
+    { onRecover, onRetire, onAbandoned, onVerify } = options;
+  let generation = 0,
+    disposed = false,
+    lastItems = [];
+  const node = (tag, text) => {
+    const result = doc.createElement(tag);
+    if (text !== undefined) result.textContent = text;
+    return result;
+  };
+  const panel = {
+    async refresh() {
+      if (disposed) return;
+      lastItems = [];
+      const current = ++generation,
+        heading = node('h2', 'Offline operation history'),
+        status = node('p', 'Loading operations…'),
+        list = node('div');
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-live', 'polite');
+      root.replaceChildren(heading, status, list);
+      try {
+        const items = await runtime.list();
+        if (disposed || current !== generation) return;
+        lastItems = items;
+        if (!items.length) {
+          status.textContent = 'No offline operations.';
+          return true;
+        }
+        status.textContent = 'Review saved operations before creating another request.';
+        for (const item of items) {
+          const section = node('section');
+          section.append(node('h3', item.operationId + ' — ' + item.status), node('p', 'Operation ID: ' + item.id));
+          if (item.status === 'retired') section.appendChild(node('p', 'Request data removed.'));
+          else {
+            const details = node('details'),
+              summary = node('summary', 'Show queued data');
+            details.append(summary, node('pre', JSON.stringify(item.payload, null, 2)));
+            section.appendChild(details);
+          }
+          const action = (label, callback, success, failure, refresh = false) => {
+            const button = node('button', label);
+            button.type = 'button';
+            button.addEventListener('click', () => {
+              if (disposed || current !== generation || !root.contains(button) || button.disabled) return;
+              button.disabled = true;
+              void (async () => {
+                try {
+                  await callback(item.id, item.version);
+                  if (!disposed && current === generation) {
+                    if (refresh) {
+                      const loaded = await panel.refresh();
+                      if (loaded && !disposed && generation === current + 1 && success) {
+                        const message = root.querySelector('[role="status"]');
+                        if (message) message.textContent = typeof success === 'function' ? success(lastItems.find(value => value.id === item.id)) : success;
+                      }
+                    } else status.textContent = success;
+                  }
+                } catch {
+                  if (!disposed && current === generation) status.textContent = failure;
+                } finally {
+                  if (!disposed && current === generation) button.disabled = false;
+                }
+              })();
+            });
+            section.appendChild(button);
+          };
+          if (onRecover && item.status !== 'retired')
+            action('Use request in form', onRecover, 'Request loaded into the form. Review it before submitting.', 'Unable to load the request into the form.');
+          if (onRetire && ['succeeded', 'discarded'].includes(item.status)) action('Remove request data', onRetire, '', 'Could not confirm removal. Refresh history to check.', true);
+          if (onAbandoned && item.status === 'running') action('Check interrupted operation', onAbandoned, '', 'Could not confirm recovery. Refresh history to check.', true);
+          if (onVerify && item.status === 'uncertain')
+            action(
+              'Verify operation outcome',
+              onVerify,
+              result =>
+                result?.status === 'uncertain'
+                  ? 'Outcome remains uncertain.'
+                  : result?.status === 'pending'
+                    ? 'Operation verified and ready to retry.'
+                    : result?.status === 'succeeded'
+                      ? 'Operation verified as completed.'
+                      : 'Verification finished. Review the current operation state.',
+              'Could not confirm verification. Refresh history to check.',
+              true
+            );
           list.appendChild(section);
         }
         return true;
-      }catch{if(!disposed&&current===generation)status.textContent='Unable to load offline operations.';}
+      } catch {
+        if (!disposed && current === generation) status.textContent = 'Unable to load offline operations.';
+      }
     },
-    dispose(){disposed=true;generation++;lastItems=[];root.replaceChildren();}
+    dispose() {
+      disposed = true;
+      generation++;
+      lastItems = [];
+      root.replaceChildren();
+    }
   };
   return panel;
 }
@@ -117,376 +331,3283 @@ export function mountGeneratedOfflineHistory(root,runtime,options={}){
 // The local identity and generation stores can share the encrypted queue's rollback anchor contract. With an anchor,
 // the store keeps a counter and a digest of every row; each write commits both only if no other write happened since
 // it read them, and opening compares the counter with the host's floor. Without an anchor the store behaves as before.
-const FENCE_ROW='rollback-anchor';
-async function openFencedStore({indexedDB,crypto,databaseName,storeName,label,errors,rollbackAnchor}){
-  if(rollbackAnchor!==undefined&&(!rollbackAnchor||typeof rollbackAnchor.read!=='function'||typeof rollbackAnchor.advance!=='function'))throw Error('Invalid '+errors+' rollback anchor');
-  const db=await new Promise((resolve,reject)=>{const request=indexedDB.open(databaseName,1);let blocked=false;request.onupgradeneeded=()=>request.result.createObjectStore(storeName,{keyPath:'id'});request.onblocked=()=>{blocked=true;reject(Error(label+' database blocked'));};request.onerror=()=>reject(request.error??Error(label+' database unavailable'));request.onsuccess=()=>{if(blocked)request.result.close();else resolve(request.result);};});
-  let closed=false,pending=0,synced=0;db.onversionchange=()=>{closed=true;db.close();};
-  const rollback=()=>Error('Offline '+errors+' rollback detected'),tampered=()=>Error('Offline '+errors+' tampering detected');
-  const transact=(mode,body)=>new Promise((resolve,reject)=>{if(closed){reject(Error(label+' store closed'));return;}const tx=db.transaction(storeName,mode),store=tx.objectStore(storeName);let result,failure;body(store,value=>{result=value;},error=>{failure=error;tx.abort();});tx.oncomplete=()=>resolve(result);tx.onabort=tx.onerror=()=>reject(failure??tx.error??Error(label+(mode==='readonly'?' read failed':' write failed')));});
-  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-  const digest=async rows=>{const data=new TextEncoder().encode(JSON.stringify([...rows].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),byte=>byte.toString(16).padStart(2,'0')).join('');};
-  const snapshot=()=>transact('readonly',(store,done)=>{const request=store.getAll();request.onsuccess=()=>{const all=request.result;done({rows:all.filter(row=>row?.id!==FENCE_ROW),meta:all.find(row=>row?.id===FENCE_ROW)});};});
-  const checkMeta=meta=>{if(!meta||Object.keys(meta).sort().join(',')!=='counter,digest,id'||!Number.isSafeInteger(meta.counter)||meta.counter<0||typeof meta.digest!=='string'||!/^[a-f0-9]{64}$/.test(meta.digest))throw tampered();};
-  const verified=async()=>{const snap=await snapshot();if(snap.meta===undefined)throw rollback();checkMeta(snap.meta);if(await digest(snap.rows)!==snap.meta.digest)throw tampered();return snap;};
-  const push=async counter=>{pending=Math.max(pending,counter);if(pending<=synced)return;const target=pending;try{await rollbackAnchor.advance(target);synced=Math.max(synced,target);}catch{}};
-  if(rollbackAnchor){
-    let floor;try{floor=await rollbackAnchor.read();}catch{db.close();throw rollback();}
-    try{
-      if(!Number.isSafeInteger(floor)||floor<0)throw rollback();
-      const snap=await snapshot();
-      if(snap.meta===undefined){
+const FENCE_ROW = 'rollback-anchor';
+async function openFencedStore({ indexedDB, crypto, databaseName, storeName, label, errors, rollbackAnchor }) {
+  if (rollbackAnchor !== undefined && (!rollbackAnchor || typeof rollbackAnchor.read !== 'function' || typeof rollbackAnchor.advance !== 'function'))
+    throw Error('Invalid ' + errors + ' rollback anchor');
+  const db = await new Promise((resolve, reject) => {
+    const request = indexedDB.open(databaseName, 1);
+    let blocked = false;
+    request.onupgradeneeded = () => request.result.createObjectStore(storeName, { keyPath: 'id' });
+    request.onblocked = () => {
+      blocked = true;
+      reject(Error(label + ' database blocked'));
+    };
+    request.onerror = () => reject(request.error ?? Error(label + ' database unavailable'));
+    request.onsuccess = () => {
+      if (blocked) request.result.close();
+      else resolve(request.result);
+    };
+  });
+  let closed = false,
+    pending = 0,
+    synced = 0;
+  db.onversionchange = () => {
+    closed = true;
+    db.close();
+  };
+  const rollback = () => Error('Offline ' + errors + ' rollback detected'),
+    tampered = () => Error('Offline ' + errors + ' tampering detected');
+  const transact = (mode, body) =>
+    new Promise((resolve, reject) => {
+      if (closed) {
+        reject(Error(label + ' store closed'));
+        return;
+      }
+      const tx = db.transaction(storeName, mode),
+        store = tx.objectStore(storeName);
+      let result, failure;
+      body(
+        store,
+        value => {
+          result = value;
+        },
+        error => {
+          failure = error;
+          tx.abort();
+        }
+      );
+      tx.oncomplete = () => resolve(result);
+      tx.onabort = tx.onerror = () => reject(failure ?? tx.error ?? Error(label + (mode === 'readonly' ? ' read failed' : ' write failed')));
+    });
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const digest = async rows => {
+    const data = new TextEncoder().encode(JSON.stringify([...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))));
+    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), byte => byte.toString(16).padStart(2, '0')).join('');
+  };
+  const snapshot = () =>
+    transact('readonly', (store, done) => {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const all = request.result;
+        done({ rows: all.filter(row => row?.id !== FENCE_ROW), meta: all.find(row => row?.id === FENCE_ROW) });
+      };
+    });
+  const checkMeta = meta => {
+    if (
+      !meta ||
+      Object.keys(meta).sort().join(',') !== 'counter,digest,id' ||
+      !Number.isSafeInteger(meta.counter) ||
+      meta.counter < 0 ||
+      typeof meta.digest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(meta.digest)
+    )
+      throw tampered();
+  };
+  const verified = async () => {
+    const snap = await snapshot();
+    if (snap.meta === undefined) throw rollback();
+    checkMeta(snap.meta);
+    if ((await digest(snap.rows)) !== snap.meta.digest) throw tampered();
+    return snap;
+  };
+  const push = async counter => {
+    pending = Math.max(pending, counter);
+    if (pending <= synced) return;
+    const target = pending;
+    try {
+      await rollbackAnchor.advance(target);
+      synced = Math.max(synced, target);
+    } catch {}
+  };
+  if (rollbackAnchor) {
+    let floor;
+    try {
+      floor = await rollbackAnchor.read();
+    } catch {
+      db.close();
+      throw rollback();
+    }
+    try {
+      if (!Number.isSafeInteger(floor) || floor < 0) throw rollback();
+      const snap = await snapshot();
+      if (snap.meta === undefined) {
         // First anchored use: rows written before the anchor existed are adopted as they are, and only if nothing was ever anchored.
-        if(floor>0)throw rollback();const meta={id:FENCE_ROW,counter:0,digest:await digest(snap.rows)};
-        const created=await transact('readwrite',(store,done)=>{const request=store.get(FENCE_ROW);request.onsuccess=()=>{if(request.result!==undefined){done(false);return;}store.put(meta);done(true);};});
-        if(!created)await verified();
-      }else{checkMeta(snap.meta);if(await digest(snap.rows)!==snap.meta.digest)throw tampered();if(floor>snap.meta.counter)throw rollback();synced=floor;if(snap.meta.counter>floor)await push(snap.meta.counter);}
-    }catch(error){closed=true;db.close();throw error;}
+        if (floor > 0) throw rollback();
+        const meta = { id: FENCE_ROW, counter: 0, digest: await digest(snap.rows) };
+        const created = await transact('readwrite', (store, done) => {
+          const request = store.get(FENCE_ROW);
+          request.onsuccess = () => {
+            if (request.result !== undefined) {
+              done(false);
+              return;
+            }
+            store.put(meta);
+            done(true);
+          };
+        });
+        if (!created) await verified();
+      } else {
+        checkMeta(snap.meta);
+        if ((await digest(snap.rows)) !== snap.meta.digest) throw tampered();
+        if (floor > snap.meta.counter) throw rollback();
+        synced = floor;
+        if (snap.meta.counter > floor) await push(snap.meta.counter);
+      }
+    } catch (error) {
+      closed = true;
+      db.close();
+      throw error;
+    }
   }
   return {
-    async read(id){if(!rollbackAnchor)return transact('readonly',(store,done)=>{const request=store.get(id);request.onsuccess=()=>done(request.result);});return (await verified()).rows.find(row=>row.id===id);},
-    // Replaces the row with next (or deletes it when next is undefined) only if it still equals expected.
-    async commit(id,expected,next){
-      if(!rollbackAnchor)return transact('readwrite',(store,done)=>{const request=store.get(id);request.onsuccess=()=>{if(!same(request.result,expected)){done(false);return;}if(next===undefined)store.delete(id);else store.put(next);done(true);};});
-      if(pending>synced)await push(pending);
-      for(let attempt=0;attempt<32;attempt++){
-        const snap=await verified(),current=snap.rows.find(row=>row.id===id);if(!same(current,expected))return false;
-        const meta={id:FENCE_ROW,counter:snap.meta.counter+1,digest:await digest([...snap.rows.filter(row=>row.id!==id),...(next===undefined?[]:[next])])};
-        const outcome=await transact('readwrite',(store,done)=>{const fence=store.get(FENCE_ROW);fence.onsuccess=()=>{if(!same(fence.result,snap.meta)){done('retry');return;}const row=store.get(id);row.onsuccess=()=>{if(!same(row.result,expected)){done('changed');return;}if(next===undefined)store.delete(id);else store.put(next);store.put(meta);done('committed');};};});
-        if(outcome==='committed'){await push(meta.counter);return true;}if(outcome==='changed')return false;
-        await new Promise(resolve=>setTimeout(resolve,Math.floor(Math.random()*(5+attempt*5))));
-      }
-      throw Error(label+' changed concurrently');
+    async read(id) {
+      if (!rollbackAnchor)
+        return transact('readonly', (store, done) => {
+          const request = store.get(id);
+          request.onsuccess = () => done(request.result);
+        });
+      return (await verified()).rows.find(row => row.id === id);
     },
-    hasPendingRollbackAnchor:()=>pending>synced,
-    async syncRollbackAnchor(){if(!rollbackAnchor)return;await push(pending);if(pending>synced)throw Error('Offline '+errors+' rollback anchor unavailable');},
-    get closed(){return closed;},
-    close(){closed=true;db.close();}
+    // Replaces the row with next (or deletes it when next is undefined) only if it still equals expected.
+    async commit(id, expected, next) {
+      if (!rollbackAnchor)
+        return transact('readwrite', (store, done) => {
+          const request = store.get(id);
+          request.onsuccess = () => {
+            if (!same(request.result, expected)) {
+              done(false);
+              return;
+            }
+            if (next === undefined) store.delete(id);
+            else store.put(next);
+            done(true);
+          };
+        });
+      if (pending > synced) await push(pending);
+      for (let attempt = 0; attempt < 32; attempt++) {
+        const snap = await verified(),
+          current = snap.rows.find(row => row.id === id);
+        if (!same(current, expected)) return false;
+        const meta = { id: FENCE_ROW, counter: snap.meta.counter + 1, digest: await digest([...snap.rows.filter(row => row.id !== id), ...(next === undefined ? [] : [next])]) };
+        const outcome = await transact('readwrite', (store, done) => {
+          const fence = store.get(FENCE_ROW);
+          fence.onsuccess = () => {
+            if (!same(fence.result, snap.meta)) {
+              done('retry');
+              return;
+            }
+            const row = store.get(id);
+            row.onsuccess = () => {
+              if (!same(row.result, expected)) {
+                done('changed');
+                return;
+              }
+              if (next === undefined) store.delete(id);
+              else store.put(next);
+              store.put(meta);
+              done('committed');
+            };
+          };
+        });
+        if (outcome === 'committed') {
+          await push(meta.counter);
+          return true;
+        }
+        if (outcome === 'changed') return false;
+        await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (5 + attempt * 5))));
+      }
+      throw Error(label + ' changed concurrently');
+    },
+    hasPendingRollbackAnchor: () => pending > synced,
+    async syncRollbackAnchor() {
+      if (!rollbackAnchor) return;
+      await push(pending);
+      if (pending > synced) throw Error('Offline ' + errors + ' rollback anchor unavailable');
+    },
+    get closed() {
+      return closed;
+    },
+    close() {
+      closed = true;
+      db.close();
+    }
   };
 }
 
-export async function createPersistentOfflineRequestKeys({databaseName,scope,rollbackAnchor,indexedDB=globalThis.indexedDB,crypto=globalThis.crypto}={}){
-  const valid=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value);
-  if(!valid(databaseName)||!scope||!valid(scope.tenantId)||!valid(scope.applicationId)||!valid(scope.principalId)||!indexedDB||!crypto?.subtle||typeof crypto.randomUUID!=='function')throw Error('Invalid persistent request configuration');
-  const identity=[scope.tenantId,scope.applicationId,scope.principalId],enc=new TextEncoder(),uuid=/^[0-9a-f-]{36}$/;
-  const hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(value))),byte=>byte.toString(16).padStart(2,'0')).join('');
-  const local=await openFencedStore({indexedDB,crypto,databaseName,storeName:'request-identities',label:'Request identity',errors:'request identity',rollbackAnchor});
-  const slotId=async slot=>{if(!valid(slot))throw Error('Invalid request identity slot');return hash(JSON.stringify([...identity,slot]));};
-  const read=id=>local.read(id);
+export async function createPersistentOfflineRequestKeys({ databaseName, scope, rollbackAnchor, indexedDB = globalThis.indexedDB, crypto = globalThis.crypto } = {}) {
+  const valid = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
+  if (!valid(databaseName) || !scope || !valid(scope.tenantId) || !valid(scope.applicationId) || !valid(scope.principalId) || !indexedDB || !crypto?.subtle || typeof crypto.randomUUID !== 'function')
+    throw Error('Invalid persistent request configuration');
+  const identity = [scope.tenantId, scope.applicationId, scope.principalId],
+    enc = new TextEncoder(),
+    uuid = /^[0-9a-f-]{36}$/;
+  const hash = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(value))), byte => byte.toString(16).padStart(2, '0')).join('');
+  const local = await openFencedStore({ indexedDB, crypto, databaseName, storeName: 'request-identities', label: 'Request identity', errors: 'request identity', rollbackAnchor });
+  const slotId = async slot => {
+    if (!valid(slot)) throw Error('Invalid request identity slot');
+    return hash(JSON.stringify([...identity, slot]));
+  };
+  const read = id => local.read(id);
   // Applies next(current) as a compare-and-swap, retrying when another tab changed the row first.
-  const update=async(id,next)=>{for(let i=0;i<30;i++){const current=await read(id);check(current);if(await local.commit(id,current,next(current)))return;}throw Error('Request identity changed concurrently');};
-  const digest=(salt,operation,payload)=>hash(JSON.stringify([salt,operation,payload]));
-  const check=value=>{if(value!==undefined&&(!value||Object.keys(value).sort().join(',')!=='digest,id,key,salt'||!uuid.test(value.key)||!uuid.test(value.salt)||typeof value.digest!=='string'||!/^[a-f0-9]{64}$/.test(value.digest)||typeof value.id!=='string'||!/^[a-f0-9]{64}$/.test(value.id)))throw Error('Invalid stored request identity');};
+  const update = async (id, next) => {
+    for (let i = 0; i < 30; i++) {
+      const current = await read(id);
+      check(current);
+      if (await local.commit(id, current, next(current))) return;
+    }
+    throw Error('Request identity changed concurrently');
+  };
+  const digest = (salt, operation, payload) => hash(JSON.stringify([salt, operation, payload]));
+  const check = value => {
+    if (
+      value !== undefined &&
+      (!value ||
+        Object.keys(value).sort().join(',') !== 'digest,id,key,salt' ||
+        !uuid.test(value.key) ||
+        !uuid.test(value.salt) ||
+        typeof value.digest !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(value.digest) ||
+        typeof value.id !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(value.id))
+    )
+      throw Error('Invalid stored request identity');
+  };
   return {
-    async getOrCreate(slot,operation,payload){
-      if(!valid(operation)||!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid offline request');const id=await slotId(slot),serialized=JSON.stringify(payload),fixed=JSON.parse(serialized);
-      for(let i=0;i<30;i++){
-        const previous=await read(id);check(previous);if(previous&&previous.id!==id)throw Error('Invalid stored request identity');
-        const matches=previous&&previous.digest===await digest(previous.salt,operation,fixed);const salt=matches?previous.salt:crypto.randomUUID(),candidate=matches?previous:{id,key:crypto.randomUUID(),salt,digest:await digest(salt,operation,fixed)};
-        if(matches||await local.commit(id,previous,candidate))return candidate.key;
+    async getOrCreate(slot, operation, payload) {
+      if (!valid(operation) || !payload || typeof payload !== 'object' || Array.isArray(payload)) throw Error('Invalid offline request');
+      const id = await slotId(slot),
+        serialized = JSON.stringify(payload),
+        fixed = JSON.parse(serialized);
+      for (let i = 0; i < 30; i++) {
+        const previous = await read(id);
+        check(previous);
+        if (previous && previous.id !== id) throw Error('Invalid stored request identity');
+        const matches = previous && previous.digest === (await digest(previous.salt, operation, fixed));
+        const salt = matches ? previous.salt : crypto.randomUUID(),
+          candidate = matches ? previous : { id, key: crypto.randomUUID(), salt, digest: await digest(salt, operation, fixed) };
+        if (matches || (await local.commit(id, previous, candidate))) return candidate.key;
       }
       throw Error('Request identity changed concurrently');
     },
-    async reset(slot){const id=await slotId(slot);await update(id,()=>undefined);},
-    async restore(slot,operation,payload,key){if(!valid(operation)||!uuid.test(key)||!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid offline request');const id=await slotId(slot),salt=crypto.randomUUID(),value={id,key,salt,digest:await digest(salt,operation,JSON.parse(JSON.stringify(payload)))};await update(id,()=>value);},
-    hasPendingRollbackAnchor:()=>local.hasPendingRollbackAnchor(),
-    syncRollbackAnchor:()=>local.syncRollbackAnchor(),
-    close(){local.close();}
+    async reset(slot) {
+      const id = await slotId(slot);
+      await update(id, () => undefined);
+    },
+    async restore(slot, operation, payload, key) {
+      if (!valid(operation) || !uuid.test(key) || !payload || typeof payload !== 'object' || Array.isArray(payload)) throw Error('Invalid offline request');
+      const id = await slotId(slot),
+        salt = crypto.randomUUID(),
+        value = { id, key, salt, digest: await digest(salt, operation, JSON.parse(JSON.stringify(payload))) };
+      await update(id, () => value);
+    },
+    hasPendingRollbackAnchor: () => local.hasPendingRollbackAnchor(),
+    syncRollbackAnchor: () => local.syncRollbackAnchor(),
+    close() {
+      local.close();
+    }
   };
 }
 
 // Shared slots require an authenticated capability and a dedicated local generation store.
-export async function createSharedOfflineIdentityStore({databaseName,scope,operations,invoke,resolveActor,rollbackAnchor,indexedDB=globalThis.indexedDB,crypto=globalThis.crypto}={}){
-  const valid=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\x00-\x1f\x7f]/.test(value),cap=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-  if(!valid(databaseName)||!scope||!valid(scope.tenantId)||!valid(scope.applicationId)||!valid(scope.principalId)||!Array.isArray(operations)||!operations.length||operations.length>100||typeof invoke!=='function'||typeof resolveActor!=='function'||!indexedDB||!crypto?.subtle)throw Error('Invalid shared identity configuration');
-  const identity={tenantId:scope.tenantId,applicationId:scope.applicationId,principalId:scope.principalId},mapping=new Map();for(const item of operations){if(!item||typeof item.id!=='string'||!cap.test(item.id)||typeof item.slotCapability!=='string'||!cap.test(item.slotCapability)||mapping.has(item.id))throw Error('Invalid shared identity configuration');mapping.set(item.id,item.slotCapability);}
-  const local=await openFencedStore({indexedDB,crypto,databaseName,storeName:'shared-slots',label:'Shared identity',errors:'shared identity',rollbackAnchor});
-  const ensure=async()=>{if(local.closed)throw Error('Shared identity store closed');const actor=await resolveActor();if(local.closed||!actor||actor.tenantId!==identity.tenantId||actor.applicationId!==identity.applicationId||actor.principalId!==identity.principalId)throw Error('Shared identity unavailable');};
-  const slotId=async slot=>{if(!valid(slot))throw Error('Invalid shared identity slot');const data=new TextEncoder().encode(JSON.stringify([identity.tenantId,identity.applicationId,identity.principalId,slot]));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),byte=>byte.toString(16).padStart(2,'0')).join('');};
-  const check=(row,id)=>{if(row!==undefined&&(!row||Object.keys(row).sort().join(',')!=='id,requestKey'||row.id!==id||typeof row.requestKey!=='string'||!uuid.test(row.requestKey)))throw Error('Invalid stored shared identity');};
-  const read=async id=>{const row=await local.read(id);check(row,id);return row?.requestKey;};
+export async function createSharedOfflineIdentityStore({ databaseName, scope, operations, invoke, resolveActor, rollbackAnchor, indexedDB = globalThis.indexedDB, crypto = globalThis.crypto } = {}) {
+  const valid = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value),
+    cap = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,
+    uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  if (
+    !valid(databaseName) ||
+    !scope ||
+    !valid(scope.tenantId) ||
+    !valid(scope.applicationId) ||
+    !valid(scope.principalId) ||
+    !Array.isArray(operations) ||
+    !operations.length ||
+    operations.length > 100 ||
+    typeof invoke !== 'function' ||
+    typeof resolveActor !== 'function' ||
+    !indexedDB ||
+    !crypto?.subtle
+  )
+    throw Error('Invalid shared identity configuration');
+  const identity = { tenantId: scope.tenantId, applicationId: scope.applicationId, principalId: scope.principalId },
+    mapping = new Map();
+  for (const item of operations) {
+    if (!item || typeof item.id !== 'string' || !cap.test(item.id) || typeof item.slotCapability !== 'string' || !cap.test(item.slotCapability) || mapping.has(item.id))
+      throw Error('Invalid shared identity configuration');
+    mapping.set(item.id, item.slotCapability);
+  }
+  const local = await openFencedStore({ indexedDB, crypto, databaseName, storeName: 'shared-slots', label: 'Shared identity', errors: 'shared identity', rollbackAnchor });
+  const ensure = async () => {
+    if (local.closed) throw Error('Shared identity store closed');
+    const actor = await resolveActor();
+    if (local.closed || !actor || actor.tenantId !== identity.tenantId || actor.applicationId !== identity.applicationId || actor.principalId !== identity.principalId)
+      throw Error('Shared identity unavailable');
+  };
+  const slotId = async slot => {
+    if (!valid(slot)) throw Error('Invalid shared identity slot');
+    const data = new TextEncoder().encode(JSON.stringify([identity.tenantId, identity.applicationId, identity.principalId, slot]));
+    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), byte => byte.toString(16).padStart(2, '0')).join('');
+  };
+  const check = (row, id) => {
+    if (row !== undefined && (!row || Object.keys(row).sort().join(',') !== 'id,requestKey' || row.id !== id || typeof row.requestKey !== 'string' || !uuid.test(row.requestKey)))
+      throw Error('Invalid stored shared identity');
+  };
+  const read = async id => {
+    const row = await local.read(id);
+    check(row, id);
+    return row?.requestKey;
+  };
   // Replaces the stored generation only if it is still the expected one.
-  const compare=async(id,expected,next)=>{const row=await local.read(id);check(row,id);if(row?.requestKey!==expected)return false;return local.commit(id,row,{id,requestKey:next});};
-  const capability=operation=>{const value=mapping.get(operation);if(!value)throw Error('Shared identity operation unavailable');return value;};
-  const call=async(operation,input)=>{await ensure();const result=await invoke(capability(operation),structuredClone(input));await ensure();return result;};
-  const open=async(slot,operation)=>{const result=await call(operation,{action:'open',slot});if(!result||Object.keys(result).join(',')!=='requestKey'||typeof result.requestKey!=='string'||!uuid.test(result.requestKey))throw Error('Invalid shared identity response');return result.requestKey;};
-  const current=async(slot,operation,id)=>{let value=await read(id);await ensure();if(value!==undefined)return value;const remote=await open(slot,operation);if(await compare(id,undefined,remote))return remote;value=await read(id);if(value===undefined)throw Error('Shared identity changed concurrently');return value;};
-  const copyPayload=payload=>{if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid offline request');return structuredClone(payload);};
+  const compare = async (id, expected, next) => {
+    const row = await local.read(id);
+    check(row, id);
+    if (row?.requestKey !== expected) return false;
+    return local.commit(id, row, { id, requestKey: next });
+  };
+  const capability = operation => {
+    const value = mapping.get(operation);
+    if (!value) throw Error('Shared identity operation unavailable');
+    return value;
+  };
+  const call = async (operation, input) => {
+    await ensure();
+    const result = await invoke(capability(operation), structuredClone(input));
+    await ensure();
+    return result;
+  };
+  const open = async (slot, operation) => {
+    const result = await call(operation, { action: 'open', slot });
+    if (!result || Object.keys(result).join(',') !== 'requestKey' || typeof result.requestKey !== 'string' || !uuid.test(result.requestKey)) throw Error('Invalid shared identity response');
+    return result.requestKey;
+  };
+  const current = async (slot, operation, id) => {
+    let value = await read(id);
+    await ensure();
+    if (value !== undefined) return value;
+    const remote = await open(slot, operation);
+    if (await compare(id, undefined, remote)) return remote;
+    value = await read(id);
+    if (value === undefined) throw Error('Shared identity changed concurrently');
+    return value;
+  };
+  const copyPayload = payload => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw Error('Invalid offline request');
+    return structuredClone(payload);
+  };
   return {
-    async getOrCreate(slot,operation,payload){const safe=copyPayload(payload),id=await slotId(slot);capability(operation);await ensure();const requestKey=await current(slot,operation,id),result=await call(operation,{action:'allocate',slot,expectedRequestKey:requestKey,payload:safe});if(!result||Object.keys(result).sort().join(',')!=='idempotencyKey,requestKey'||result.requestKey!==requestKey||typeof result.idempotencyKey!=='string'||!uuid.test(result.idempotencyKey))throw Error('Invalid shared identity response');return {requestKey,idempotencyKey:result.idempotencyKey};},
-    async reset(slot,operation){const id=await slotId(slot);capability(operation);await ensure();const previous=await current(slot,operation,id),result=await call(operation,{action:'reset',slot,expectedRequestKey:previous});if(!result||Object.keys(result).join(',')!=='requestKey'||typeof result.requestKey!=='string'||!uuid.test(result.requestKey)||result.requestKey===previous)throw Error('Invalid shared identity response');if(!await compare(id,previous,result.requestKey))throw Error('Shared identity changed concurrently');await ensure();},
-    async restore(slot,operation,payload,pair){const safe=copyPayload(payload);if(!pair||typeof pair!=='object'||!uuid.test(pair.requestKey)||!uuid.test(pair.idempotencyKey))throw Error('Invalid shared request identity');const selected={requestKey:pair.requestKey,idempotencyKey:pair.idempotencyKey},id=await slotId(slot);capability(operation);await ensure();const previous=await current(slot,operation,id),result=await call(operation,{action:'restore',slot,expectedRequestKey:previous,...selected,payload:safe});if(!result||Object.keys(result).join(',')!=='requestKey'||result.requestKey!==selected.requestKey)throw Error('Invalid shared identity response');if(!await compare(id,previous,selected.requestKey))throw Error('Shared identity changed concurrently');await ensure();},
-    hasPendingRollbackAnchor:()=>local.hasPendingRollbackAnchor(),
-    syncRollbackAnchor:()=>local.syncRollbackAnchor(),
-    async adoptCurrent(slot,operation){const id=await slotId(slot);capability(operation);await ensure();const previous=await read(id),remote=await open(slot,operation);if(!await compare(id,previous,remote))throw Error('Shared identity changed concurrently');await ensure();return remote;},
-    close(){local.close();}
+    async getOrCreate(slot, operation, payload) {
+      const safe = copyPayload(payload),
+        id = await slotId(slot);
+      capability(operation);
+      await ensure();
+      const requestKey = await current(slot, operation, id),
+        result = await call(operation, { action: 'allocate', slot, expectedRequestKey: requestKey, payload: safe });
+      if (
+        !result ||
+        Object.keys(result).sort().join(',') !== 'idempotencyKey,requestKey' ||
+        result.requestKey !== requestKey ||
+        typeof result.idempotencyKey !== 'string' ||
+        !uuid.test(result.idempotencyKey)
+      )
+        throw Error('Invalid shared identity response');
+      return { requestKey, idempotencyKey: result.idempotencyKey };
+    },
+    async reset(slot, operation) {
+      const id = await slotId(slot);
+      capability(operation);
+      await ensure();
+      const previous = await current(slot, operation, id),
+        result = await call(operation, { action: 'reset', slot, expectedRequestKey: previous });
+      if (!result || Object.keys(result).join(',') !== 'requestKey' || typeof result.requestKey !== 'string' || !uuid.test(result.requestKey) || result.requestKey === previous)
+        throw Error('Invalid shared identity response');
+      if (!(await compare(id, previous, result.requestKey))) throw Error('Shared identity changed concurrently');
+      await ensure();
+    },
+    async restore(slot, operation, payload, pair) {
+      const safe = copyPayload(payload);
+      if (!pair || typeof pair !== 'object' || !uuid.test(pair.requestKey) || !uuid.test(pair.idempotencyKey)) throw Error('Invalid shared request identity');
+      const selected = { requestKey: pair.requestKey, idempotencyKey: pair.idempotencyKey },
+        id = await slotId(slot);
+      capability(operation);
+      await ensure();
+      const previous = await current(slot, operation, id),
+        result = await call(operation, { action: 'restore', slot, expectedRequestKey: previous, ...selected, payload: safe });
+      if (!result || Object.keys(result).join(',') !== 'requestKey' || result.requestKey !== selected.requestKey) throw Error('Invalid shared identity response');
+      if (!(await compare(id, previous, selected.requestKey))) throw Error('Shared identity changed concurrently');
+      await ensure();
+    },
+    hasPendingRollbackAnchor: () => local.hasPendingRollbackAnchor(),
+    syncRollbackAnchor: () => local.syncRollbackAnchor(),
+    async adoptCurrent(slot, operation) {
+      const id = await slotId(slot);
+      capability(operation);
+      await ensure();
+      const previous = await read(id),
+        remote = await open(slot, operation);
+      if (!(await compare(id, previous, remote))) throw Error('Shared identity changed concurrently');
+      await ensure();
+      return remote;
+    },
+    close() {
+      local.close();
+    }
   };
 }
 
 // Explicit user action creates a durable intent. Hosts must not allowlist staged submission.
-export function mountGeneratedOfflineForm(root,runtime,options={}){
-  const identityValid=store=>!!store&&typeof store.getOrCreate==='function'&&typeof store.reset==='function'&&typeof store.restore==='function';
-  if(!root?.ownerDocument||typeof runtime?.enqueue!=='function'||typeof runtime.operations!=='function'||!options||typeof options!=='object'||(options.storageKey!==undefined&&(typeof options.storageKey!=='string'||!options.storageKey.trim()||options.storageKey.length>200))||(options.identityStore!==undefined&&!identityValid(options.identityStore))||(options.sharedIdentityStore!==undefined&&!identityValid(options.sharedIdentityStore))||(options.identityStore!==undefined&&options.sharedIdentityStore!==undefined))throw Error('Invalid offline form');
-  const identityStore=options.identityStore,sharedIdentityStore=options.sharedIdentityStore,uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-  const doc=root.ownerDocument,form=doc.createElement('form'),label=doc.createElement('label'),select=doc.createElement('select'),dataLabel=doc.createElement('label'),data=doc.createElement('textarea'),button=doc.createElement('button'),reset=doc.createElement('button'),status=doc.createElement('p');
-  label.textContent='Operation';for(const operation of runtime.operations()){const option=doc.createElement('option');option.value=operation.id;option.textContent=operation.label;select.appendChild(option);}label.appendChild(select);
-  dataLabel.textContent='Operation data (JSON object)';data.value='{}';dataLabel.appendChild(data);button.type='submit';button.textContent='Queue operation';reset.type='button';reset.textContent='New operation';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-  form.append(label,dataLabel,button,reset,status);root.replaceChildren(form);let busy=false,disposed=false;const storageKey='app-mixer-offline-form-v1:'+(options.storageKey??(root.id||'default'));
-  reset.addEventListener('click',()=>{if(busy||disposed)return;busy=true;button.disabled=true;reset.disabled=true;void (async()=>{try{if(sharedIdentityStore)await sharedIdentityStore.reset(storageKey,select.value);else if(identityStore)await identityStore.reset(storageKey);else doc.defaultView.sessionStorage.removeItem(storageKey);if(!disposed)status.textContent='Ready to queue a new operation.';}catch{if(!disposed)status.textContent='Unable to create a new request ID. Your data is retained.';}finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;}}})();});
-  form.addEventListener('submit',event=>{event.preventDefault();void (async()=>{
-    if(busy||disposed)return;let payload;try{payload=JSON.parse(data.value);if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid');}catch{status.textContent='Enter a valid JSON object.';return;}
-    const operation=select.value;busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
-    try{
-      let requestKey,keyOptions;
-      if(sharedIdentityStore){const pair=await sharedIdentityStore.getOrCreate(storageKey,operation,structuredClone(payload));if(!pair||typeof pair!=='object'||Array.isArray(pair)||Object.keys(pair).sort().join(',')!=='idempotencyKey,requestKey'||typeof pair.requestKey!=='string'||typeof pair.idempotencyKey!=='string'||!uuid.test(pair.requestKey)||!uuid.test(pair.idempotencyKey))throw Error('Invalid shared request identity');requestKey=pair.requestKey;keyOptions={idempotencyKey:pair.idempotencyKey};}
-      else if(identityStore)requestKey=await identityStore.getOrCreate(storageKey,operation,payload);
-      else {
-      const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
-      const raw=storage.getItem(storageKey);let saved=raw===null?undefined:JSON.parse(raw);if(saved!==undefined&&(!saved||typeof saved!=='object'||Array.isArray(saved)||Object.keys(saved).sort().join(',')!=='digest,key,salt,version'||saved.version!==1||typeof saved.key!=='string'||!/^[0-9a-f-]{36}$/.test(saved.key)||typeof saved.salt!=='string'||!/^[0-9a-f-]{36}$/.test(saved.salt)||typeof saved.digest!=='string'||!/^[0-9a-f]{64}$/.test(saved.digest)))throw Error('Invalid stored request ID');
-      const digest=async salt=>Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([salt,operation,payload])))),byte=>byte.toString(16).padStart(2,'0')).join('');
-      if(!saved||saved.digest!==await digest(saved.salt)){const salt=crypt.randomUUID();saved={version:1,key:crypt.randomUUID(),salt,digest:await digest(salt)};storage.setItem(storageKey,JSON.stringify(saved));}
-        requestKey=saved.key;
+export function mountGeneratedOfflineForm(root, runtime, options = {}) {
+  const identityValid = store => !!store && typeof store.getOrCreate === 'function' && typeof store.reset === 'function' && typeof store.restore === 'function';
+  if (
+    !root?.ownerDocument ||
+    typeof runtime?.enqueue !== 'function' ||
+    typeof runtime.operations !== 'function' ||
+    !options ||
+    typeof options !== 'object' ||
+    (options.storageKey !== undefined && (typeof options.storageKey !== 'string' || !options.storageKey.trim() || options.storageKey.length > 200)) ||
+    (options.identityStore !== undefined && !identityValid(options.identityStore)) ||
+    (options.sharedIdentityStore !== undefined && !identityValid(options.sharedIdentityStore)) ||
+    (options.identityStore !== undefined && options.sharedIdentityStore !== undefined)
+  )
+    throw Error('Invalid offline form');
+  const identityStore = options.identityStore,
+    sharedIdentityStore = options.sharedIdentityStore,
+    uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const doc = root.ownerDocument,
+    form = doc.createElement('form'),
+    label = doc.createElement('label'),
+    select = doc.createElement('select'),
+    dataLabel = doc.createElement('label'),
+    data = doc.createElement('textarea'),
+    button = doc.createElement('button'),
+    reset = doc.createElement('button'),
+    status = doc.createElement('p');
+  label.textContent = 'Operation';
+  for (const operation of runtime.operations()) {
+    const option = doc.createElement('option');
+    option.value = operation.id;
+    option.textContent = operation.label;
+    select.appendChild(option);
+  }
+  label.appendChild(select);
+  dataLabel.textContent = 'Operation data (JSON object)';
+  data.value = '{}';
+  dataLabel.appendChild(data);
+  button.type = 'submit';
+  button.textContent = 'Queue operation';
+  reset.type = 'button';
+  reset.textContent = 'New operation';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  form.append(label, dataLabel, button, reset, status);
+  root.replaceChildren(form);
+  let busy = false,
+    disposed = false;
+  const storageKey = 'app-mixer-offline-form-v1:' + (options.storageKey ?? (root.id || 'default'));
+  reset.addEventListener('click', () => {
+    if (busy || disposed) return;
+    busy = true;
+    button.disabled = true;
+    reset.disabled = true;
+    void (async () => {
+      try {
+        if (sharedIdentityStore) await sharedIdentityStore.reset(storageKey, select.value);
+        else if (identityStore) await identityStore.reset(storageKey);
+        else doc.defaultView.sessionStorage.removeItem(storageKey);
+        if (!disposed) status.textContent = 'Ready to queue a new operation.';
+      } catch {
+        if (!disposed) status.textContent = 'Unable to create a new request ID. Your data is retained.';
+      } finally {
+        busy = false;
+        if (!disposed) {
+          button.disabled = false;
+          reset.disabled = false;
+        }
       }
-      if(disposed)throw Error('Offline form disposed');const item=await runtime.enqueue(operation,requestKey,payload,keyOptions);if(!disposed)status.textContent='Operation '+item.status+'.';
-    }
-    catch(error){if(!disposed)status.textContent=error instanceof Error&&error.message==='Shared offline slot conflict'?'Shared request changed or conflicts. Review before proceeding.':'Unable to queue operation. Your data is retained.';}
-    finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}}
-  })();});
+    })();
+  });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    void (async () => {
+      if (busy || disposed) return;
+      let payload;
+      try {
+        payload = JSON.parse(data.value);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw Error('Invalid');
+      } catch {
+        status.textContent = 'Enter a valid JSON object.';
+        return;
+      }
+      const operation = select.value;
+      busy = true;
+      button.disabled = true;
+      reset.disabled = true;
+      select.disabled = true;
+      data.disabled = true;
+      try {
+        let requestKey, keyOptions;
+        if (sharedIdentityStore) {
+          const pair = await sharedIdentityStore.getOrCreate(storageKey, operation, structuredClone(payload));
+          if (
+            !pair ||
+            typeof pair !== 'object' ||
+            Array.isArray(pair) ||
+            Object.keys(pair).sort().join(',') !== 'idempotencyKey,requestKey' ||
+            typeof pair.requestKey !== 'string' ||
+            typeof pair.idempotencyKey !== 'string' ||
+            !uuid.test(pair.requestKey) ||
+            !uuid.test(pair.idempotencyKey)
+          )
+            throw Error('Invalid shared request identity');
+          requestKey = pair.requestKey;
+          keyOptions = { idempotencyKey: pair.idempotencyKey };
+        } else if (identityStore) requestKey = await identityStore.getOrCreate(storageKey, operation, payload);
+        else {
+          const crypt = doc.defaultView?.crypto,
+            storage = doc.defaultView?.sessionStorage;
+          if (!crypt || typeof crypt.randomUUID !== 'function' || !crypt.subtle || !storage) throw Error('Secure request IDs are unavailable');
+          const raw = storage.getItem(storageKey);
+          let saved = raw === null ? undefined : JSON.parse(raw);
+          if (
+            saved !== undefined &&
+            (!saved ||
+              typeof saved !== 'object' ||
+              Array.isArray(saved) ||
+              Object.keys(saved).sort().join(',') !== 'digest,key,salt,version' ||
+              saved.version !== 1 ||
+              typeof saved.key !== 'string' ||
+              !/^[0-9a-f-]{36}$/.test(saved.key) ||
+              typeof saved.salt !== 'string' ||
+              !/^[0-9a-f-]{36}$/.test(saved.salt) ||
+              typeof saved.digest !== 'string' ||
+              !/^[0-9a-f]{64}$/.test(saved.digest))
+          )
+            throw Error('Invalid stored request ID');
+          const digest = async salt =>
+            Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([salt, operation, payload])))), byte => byte.toString(16).padStart(2, '0')).join('');
+          if (!saved || saved.digest !== (await digest(saved.salt))) {
+            const salt = crypt.randomUUID();
+            saved = { version: 1, key: crypt.randomUUID(), salt, digest: await digest(salt) };
+            storage.setItem(storageKey, JSON.stringify(saved));
+          }
+          requestKey = saved.key;
+        }
+        if (disposed) throw Error('Offline form disposed');
+        const item = await runtime.enqueue(operation, requestKey, payload, keyOptions);
+        if (!disposed) status.textContent = 'Operation ' + item.status + '.';
+      } catch (error) {
+        if (!disposed)
+          status.textContent =
+            error instanceof Error && error.message === 'Shared offline slot conflict'
+              ? 'Shared request changed or conflicts. Review before proceeding.'
+              : 'Unable to queue operation. Your data is retained.';
+      } finally {
+        busy = false;
+        if (!disposed) {
+          button.disabled = false;
+          reset.disabled = false;
+          select.disabled = false;
+          data.disabled = false;
+        }
+      }
+    })();
+  });
   return {
-    async recover(id){
-      if(disposed||busy||typeof runtime.list!=='function'||typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id))throw Error('Cannot recover offline request');
-      busy=true;button.disabled=true;reset.disabled=true;select.disabled=true;data.disabled=true;
-      try{
-        const crypt=doc.defaultView?.crypto,storage=doc.defaultView?.sessionStorage;if(!crypt||typeof crypt.randomUUID!=='function'||!crypt.subtle||!storage)throw Error('Secure request IDs are unavailable');
-        const item=(await runtime.list()).find(value=>value.id===id);if(disposed||!item||item.status==='retired'||![...select.options].some(option=>option.value===item.operationId)||typeof item.requestKey!=='string'||!/^[0-9a-f-]{36}$/.test(item.requestKey))throw Error('Cannot recover offline request');
-        const payload=JSON.stringify(item.payload,null,2),salt=crypt.randomUUID(),digest=Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([salt,item.operationId,item.payload])))),byte=>byte.toString(16).padStart(2,'0')).join('');
-        const latest=(await runtime.list()).find(value=>value.id===id);if(disposed||!latest||latest.status==='retired'||latest.version!==item.version)throw Error('Cannot recover offline request');if(sharedIdentityStore){if(!uuid.test(item.requestKey)||!uuid.test(item.idempotencyKey))throw Error('Cannot recover shared request');await sharedIdentityStore.restore(storageKey,item.operationId,structuredClone(item.payload),{requestKey:item.requestKey,idempotencyKey:item.idempotencyKey});}else if(identityStore)await identityStore.restore(storageKey,item.operationId,item.payload,item.requestKey);else storage.setItem(storageKey,JSON.stringify({version:1,key:item.requestKey,salt,digest}));if(disposed)throw Error('Cannot recover offline request');select.value=item.operationId;data.value=payload;status.textContent='Previous request loaded. Review before submitting.';
-      }finally{busy=false;if(!disposed){button.disabled=false;reset.disabled=false;select.disabled=false;data.disabled=false;}}
+    async recover(id) {
+      if (disposed || busy || typeof runtime.list !== 'function' || typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw Error('Cannot recover offline request');
+      busy = true;
+      button.disabled = true;
+      reset.disabled = true;
+      select.disabled = true;
+      data.disabled = true;
+      try {
+        const crypt = doc.defaultView?.crypto,
+          storage = doc.defaultView?.sessionStorage;
+        if (!crypt || typeof crypt.randomUUID !== 'function' || !crypt.subtle || !storage) throw Error('Secure request IDs are unavailable');
+        const item = (await runtime.list()).find(value => value.id === id);
+        if (
+          disposed ||
+          !item ||
+          item.status === 'retired' ||
+          ![...select.options].some(option => option.value === item.operationId) ||
+          typeof item.requestKey !== 'string' ||
+          !/^[0-9a-f-]{36}$/.test(item.requestKey)
+        )
+          throw Error('Cannot recover offline request');
+        const payload = JSON.stringify(item.payload, null, 2),
+          salt = crypt.randomUUID(),
+          digest = Array.from(new Uint8Array(await crypt.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([salt, item.operationId, item.payload])))), byte =>
+            byte.toString(16).padStart(2, '0')
+          ).join('');
+        const latest = (await runtime.list()).find(value => value.id === id);
+        if (disposed || !latest || latest.status === 'retired' || latest.version !== item.version) throw Error('Cannot recover offline request');
+        if (sharedIdentityStore) {
+          if (!uuid.test(item.requestKey) || !uuid.test(item.idempotencyKey)) throw Error('Cannot recover shared request');
+          await sharedIdentityStore.restore(storageKey, item.operationId, structuredClone(item.payload), { requestKey: item.requestKey, idempotencyKey: item.idempotencyKey });
+        } else if (identityStore) await identityStore.restore(storageKey, item.operationId, item.payload, item.requestKey);
+        else storage.setItem(storageKey, JSON.stringify({ version: 1, key: item.requestKey, salt, digest }));
+        if (disposed) throw Error('Cannot recover offline request');
+        select.value = item.operationId;
+        data.value = payload;
+        status.textContent = 'Previous request loaded. Review before submitting.';
+      } finally {
+        busy = false;
+        if (!disposed) {
+          button.disabled = false;
+          reset.disabled = false;
+          select.disabled = false;
+          data.disabled = false;
+        }
+      }
     },
-    dispose(){disposed=true;root.replaceChildren();}
+    dispose() {
+      disposed = true;
+      root.replaceChildren();
+    }
   };
 }
 
 // Optional operator view; the capability server owns authentication and recovery policy.
-export function mountOfflineRecovery(root,{listOperation,recoverOperation,verifyOperation,evidenceOperation}={}){
- const valid=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![listOperation,recoverOperation,verifyOperation,evidenceOperation].every(valid))throw Error('Invalid offline recovery view');
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Offline recovery'),status=node('p','Browse operations that may need recovery.'),list=node('ul'),browse=node('button','Browse operations'),next=node('button','Next operations page'),selection=node('p','No operation selected.'),lookupLabel=node('label','Operation ID for evidence'),lookup=node('input'),selectById=node('button','Select operation for evidence'),label=node('label','Evidence reference'),reference=node('input'),recover=node('button','Recover interrupted operation'),verify=node('button','Verify provider outcome'),showEvidence=node('button','View recovery evidence'),evidenceNext=node('button','Next evidence page'),evidenceList=node('ul');
- for(const button of [browse,next,selectById,recover,verify,showEvidence,evidenceNext])button.type='button';status.setAttribute('role','status');status.setAttribute('aria-live','polite');reference.maxLength=256;lookup.maxLength=256;lookupLabel.append(lookup);label.append(reference);section.append(heading,status,browse,next,list,selection,lookupLabel,selectById,label,recover,verify,showEvidence,evidenceNext,evidenceList);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,cursor,selected,evidenceCursor;
- const sync=()=>{browse.disabled=busy;next.disabled=busy||!cursor;lookup.disabled=busy;selectById.disabled=busy||!lookup.value.trim();reference.disabled=busy||!selected;recover.disabled=busy||!selected||selected.status!=='running'||!reference.value.trim();verify.disabled=busy||!selected||selected.status!=='uncertain'||!reference.value.trim();showEvidence.disabled=busy||!selected;evidenceNext.disabled=busy||!selected||evidenceCursor===undefined;for(const button of list.querySelectorAll('button'))button.disabled=busy;};
- const validId=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\u0000-\u001f]/.test(value);
- const clearSelection=()=>{selected=undefined;evidenceCursor=undefined;reference.value='';selection.textContent='No operation selected.';evidenceList.replaceChildren();};
- const run=async(task)=>{if(disposed||busy)return;busy=true;const active=++generation;sync();try{await task(()=>!disposed&&generation===active);}catch{if(!disposed&&generation===active){clearSelection();cursor=undefined;list.replaceChildren();status.textContent='Unable to complete the request. Refresh before trying again.';}}finally{if(!disposed&&generation===active){busy=false;sync();}}};
- const page=async(after,active)=>{const result=await invokeCapability(listOperation,{...(after?{after}:{}),limit:20});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>20||(result.nextAfter!==undefined&&!validId(result.nextAfter)))throw Error('Invalid recovery listing');for(const item of result.items)if(!item||!validId(item.id)||!['running','uncertain'].includes(item.status)||!Number.isSafeInteger(item.attempts)||item.attempts<1)throw Error('Invalid recovery listing');cursor=result.nextAfter;clearSelection();list.replaceChildren();for(const item of result.items){const row=node('li'),button=node('button',item.id+' — '+item.status+' ('+item.attempts+' attempts)');button.type='button';button.addEventListener('click',()=>{if(busy||disposed)return;selected={id:item.id,status:item.status};lookup.value=item.id;reference.value='';selection.textContent='Selected '+item.id+' — '+item.status+'.';evidenceCursor=undefined;evidenceList.replaceChildren();sync();});row.append(button);list.append(row);}status.textContent=result.items.length?'Select an operation to review.':'No operations on this page.';};
- browse.addEventListener('click',()=>{void run(active=>page(undefined,active));});next.addEventListener('click',()=>{if(cursor)void run(active=>page(cursor,active));});reference.addEventListener('input',sync);lookup.addEventListener('input',()=>{clearSelection();sync();});
- selectById.addEventListener('click',()=>{if(busy||disposed||!validId(lookup.value))return;selected={id:lookup.value,status:'unknown'};reference.value='';selection.textContent='Selected '+lookup.value+' for evidence.';evidenceCursor=undefined;evidenceList.replaceChildren();status.textContent='View evidence for this operation.';sync();});
- const act=(operation,expected)=>{if(!selected||selected.status!==expected||!validId(reference.value))return;const chosen={...selected},proof=reference.value;void run(async active=>{const result=await invokeCapability(operation,{id:chosen.id,reference:proof});if(!active())return;if(!result||typeof result!=='object'||(expected==='running'?typeof result.recovered!=='boolean':!['applied','not_applied','unknown'].includes(result.outcome)))throw Error('Invalid recovery result');selected={id:chosen.id,status:expected==='running'?(result.recovered?'uncertain':'running'):(result.outcome==='applied'?'succeeded':result.outcome==='not_applied'?'pending':'uncertain')};reference.value='';selection.textContent='Selected '+chosen.id+' — '+selected.status+'.';evidenceCursor=undefined;evidenceList.replaceChildren();cursor=undefined;list.replaceChildren();status.textContent=expected==='running'?(result.recovered?'Interrupted operation marked uncertain.':'The submitter could not be confirmed stopped.'):'Verification result: '+result.outcome+'.';});};
- recover.addEventListener('click',()=>act(recoverOperation,'running'));verify.addEventListener('click',()=>act(verifyOperation,'uncertain'));
- const evidencePage=async(after,active)=>{const chosen=selected;if(!chosen)return;const result=await invokeCapability(evidenceOperation,{id:chosen.id,...(after===undefined?{}:{after}),limit:20});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>20||(result.nextAfter!==undefined&&(!Number.isSafeInteger(result.nextAfter)||result.nextAfter<1)))throw Error('Invalid evidence listing');for(const item of result.items)if(!item||!validId(item.operatorId)||!validId(item.reference)||!['recover','applied','not_applied'].includes(item.action)||!Number.isSafeInteger(item.recordedAt)||item.recordedAt<0)throw Error('Invalid evidence listing');evidenceCursor=result.nextAfter;evidenceList.replaceChildren();for(const item of result.items)evidenceList.append(node('li',item.action+' — '+item.operatorId+' — '+item.reference+' — '+item.recordedAt));status.textContent=result.items.length?'Recovery evidence loaded.':'No recovery evidence on this page.';};
- showEvidence.addEventListener('click',()=>{void run(active=>evidencePage(undefined,active));});evidenceNext.addEventListener('click',()=>{if(evidenceCursor!==undefined)void run(active=>evidencePage(evidenceCursor,active));});sync();
- return {refresh(){return run(active=>page(undefined,active));},dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountOfflineRecovery(root, { listOperation, recoverOperation, verifyOperation, evidenceOperation } = {}) {
+  const valid = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![listOperation, recoverOperation, verifyOperation, evidenceOperation].every(valid))
+    throw Error('Invalid offline recovery view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Offline recovery'),
+    status = node('p', 'Browse operations that may need recovery.'),
+    list = node('ul'),
+    browse = node('button', 'Browse operations'),
+    next = node('button', 'Next operations page'),
+    selection = node('p', 'No operation selected.'),
+    lookupLabel = node('label', 'Operation ID for evidence'),
+    lookup = node('input'),
+    selectById = node('button', 'Select operation for evidence'),
+    label = node('label', 'Evidence reference'),
+    reference = node('input'),
+    recover = node('button', 'Recover interrupted operation'),
+    verify = node('button', 'Verify provider outcome'),
+    showEvidence = node('button', 'View recovery evidence'),
+    evidenceNext = node('button', 'Next evidence page'),
+    evidenceList = node('ul');
+  for (const button of [browse, next, selectById, recover, verify, showEvidence, evidenceNext]) button.type = 'button';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  reference.maxLength = 256;
+  lookup.maxLength = 256;
+  lookupLabel.append(lookup);
+  label.append(reference);
+  section.append(heading, status, browse, next, list, selection, lookupLabel, selectById, label, recover, verify, showEvidence, evidenceNext, evidenceList);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    cursor,
+    selected,
+    evidenceCursor;
+  const sync = () => {
+    browse.disabled = busy;
+    next.disabled = busy || !cursor;
+    lookup.disabled = busy;
+    selectById.disabled = busy || !lookup.value.trim();
+    reference.disabled = busy || !selected;
+    recover.disabled = busy || !selected || selected.status !== 'running' || !reference.value.trim();
+    verify.disabled = busy || !selected || selected.status !== 'uncertain' || !reference.value.trim();
+    showEvidence.disabled = busy || !selected;
+    evidenceNext.disabled = busy || !selected || evidenceCursor === undefined;
+    for (const button of list.querySelectorAll('button')) button.disabled = busy;
+  };
+  const validId = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\u0000-\u001f]/.test(value);
+  const clearSelection = () => {
+    selected = undefined;
+    evidenceCursor = undefined;
+    reference.value = '';
+    selection.textContent = 'No operation selected.';
+    evidenceList.replaceChildren();
+  };
+  const run = async task => {
+    if (disposed || busy) return;
+    busy = true;
+    const active = ++generation;
+    sync();
+    try {
+      await task(() => !disposed && generation === active);
+    } catch {
+      if (!disposed && generation === active) {
+        clearSelection();
+        cursor = undefined;
+        list.replaceChildren();
+        status.textContent = 'Unable to complete the request. Refresh before trying again.';
+      }
+    } finally {
+      if (!disposed && generation === active) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const page = async (after, active) => {
+    const result = await invokeCapability(listOperation, { ...(after ? { after } : {}), limit: 20 });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 20 || (result.nextAfter !== undefined && !validId(result.nextAfter))) throw Error('Invalid recovery listing');
+    for (const item of result.items)
+      if (!item || !validId(item.id) || !['running', 'uncertain'].includes(item.status) || !Number.isSafeInteger(item.attempts) || item.attempts < 1) throw Error('Invalid recovery listing');
+    cursor = result.nextAfter;
+    clearSelection();
+    list.replaceChildren();
+    for (const item of result.items) {
+      const row = node('li'),
+        button = node('button', item.id + ' — ' + item.status + ' (' + item.attempts + ' attempts)');
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        if (busy || disposed) return;
+        selected = { id: item.id, status: item.status };
+        lookup.value = item.id;
+        reference.value = '';
+        selection.textContent = 'Selected ' + item.id + ' — ' + item.status + '.';
+        evidenceCursor = undefined;
+        evidenceList.replaceChildren();
+        sync();
+      });
+      row.append(button);
+      list.append(row);
+    }
+    status.textContent = result.items.length ? 'Select an operation to review.' : 'No operations on this page.';
+  };
+  browse.addEventListener('click', () => {
+    void run(active => page(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor) void run(active => page(cursor, active));
+  });
+  reference.addEventListener('input', sync);
+  lookup.addEventListener('input', () => {
+    clearSelection();
+    sync();
+  });
+  selectById.addEventListener('click', () => {
+    if (busy || disposed || !validId(lookup.value)) return;
+    selected = { id: lookup.value, status: 'unknown' };
+    reference.value = '';
+    selection.textContent = 'Selected ' + lookup.value + ' for evidence.';
+    evidenceCursor = undefined;
+    evidenceList.replaceChildren();
+    status.textContent = 'View evidence for this operation.';
+    sync();
+  });
+  const act = (operation, expected) => {
+    if (!selected || selected.status !== expected || !validId(reference.value)) return;
+    const chosen = { ...selected },
+      proof = reference.value;
+    void run(async active => {
+      const result = await invokeCapability(operation, { id: chosen.id, reference: proof });
+      if (!active()) return;
+      if (!result || typeof result !== 'object' || (expected === 'running' ? typeof result.recovered !== 'boolean' : !['applied', 'not_applied', 'unknown'].includes(result.outcome)))
+        throw Error('Invalid recovery result');
+      selected = {
+        id: chosen.id,
+        status: expected === 'running' ? (result.recovered ? 'uncertain' : 'running') : result.outcome === 'applied' ? 'succeeded' : result.outcome === 'not_applied' ? 'pending' : 'uncertain'
+      };
+      reference.value = '';
+      selection.textContent = 'Selected ' + chosen.id + ' — ' + selected.status + '.';
+      evidenceCursor = undefined;
+      evidenceList.replaceChildren();
+      cursor = undefined;
+      list.replaceChildren();
+      status.textContent =
+        expected === 'running' ? (result.recovered ? 'Interrupted operation marked uncertain.' : 'The submitter could not be confirmed stopped.') : 'Verification result: ' + result.outcome + '.';
+    });
+  };
+  recover.addEventListener('click', () => act(recoverOperation, 'running'));
+  verify.addEventListener('click', () => act(verifyOperation, 'uncertain'));
+  const evidencePage = async (after, active) => {
+    const chosen = selected;
+    if (!chosen) return;
+    const result = await invokeCapability(evidenceOperation, { id: chosen.id, ...(after === undefined ? {} : { after }), limit: 20 });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 20 || (result.nextAfter !== undefined && (!Number.isSafeInteger(result.nextAfter) || result.nextAfter < 1)))
+      throw Error('Invalid evidence listing');
+    for (const item of result.items)
+      if (
+        !item ||
+        !validId(item.operatorId) ||
+        !validId(item.reference) ||
+        !['recover', 'applied', 'not_applied'].includes(item.action) ||
+        !Number.isSafeInteger(item.recordedAt) ||
+        item.recordedAt < 0
+      )
+        throw Error('Invalid evidence listing');
+    evidenceCursor = result.nextAfter;
+    evidenceList.replaceChildren();
+    for (const item of result.items) evidenceList.append(node('li', item.action + ' — ' + item.operatorId + ' — ' + item.reference + ' — ' + item.recordedAt));
+    status.textContent = result.items.length ? 'Recovery evidence loaded.' : 'No recovery evidence on this page.';
+  };
+  showEvidence.addEventListener('click', () => {
+    void run(active => evidencePage(undefined, active));
+  });
+  evidenceNext.addEventListener('click', () => {
+    if (evidenceCursor !== undefined) void run(active => evidencePage(evidenceCursor, active));
+  });
+  sync();
+  return {
+    refresh() {
+      return run(active => page(undefined, active));
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 // Optional controls for one host-bound rollout; authorization remains server-side.
-export function mountRemoteRolloutControls(root,{statusOperation,controlOperation}={}){
- const valid=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![statusOperation,controlOperation].every(valid))throw Error('Invalid rollout controls');
- const doc=root.ownerDocument,node=(tag,text)=>{const el=doc.createElement(tag);el.textContent=text;return el;},section=node('section',''),heading=node('h2','Remote rollout'),gate=node('p','Gate status: not checked.'),poller=node('p','Poller status: not checked.'),message=node('p','Refresh the gate before using the controls.'),refresh=node('button','Refresh gate'),start=node('button','Start poller'),stop=node('button','Stop poller');
- for(const button of [refresh,start,stop])button.type='button';message.setAttribute('role','status');message.setAttribute('aria-live','polite');section.append(heading,gate,poller,message,refresh,start,stop);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,phase,stopPending=false,controlUnknown=false;
- const sync=()=>{refresh.disabled=busy;start.disabled=busy||phase!=='idle'||stopPending||controlUnknown;stop.disabled=busy||!phase;};
- const run=async(task,control=false)=>{if(disposed||busy)return;busy=true;const current=++generation,active=()=>!disposed&&generation===current;sync();try{await task(active);}catch{if(active()){phase=undefined;gate.textContent='Gate status: not checked.';if(control){controlUnknown=true;poller.textContent='Poller status: unknown.';message.textContent='Control outcome unknown. Refresh the gate, then stop the poller before starting it again.';}else message.textContent='Unable to refresh the gate. Try again.';}}finally{if(active()){busy=false;sync();}}};
- const read=active=>invokeCapability(statusOperation,{}).then(result=>{if(!active())return;const version=(v,min)=>Number.isSafeInteger(v)&&v>=min;if(!result||!['idle','running','importing','uncertain'].includes(result.phase)||(['idle','running'].includes(result.phase)?result.sourceVersion!==null||result.expectedVersion!==null:!version(result.sourceVersion,1)||!version(result.expectedVersion,0)))throw Error('Invalid rollout status');phase=result.phase;gate.textContent='Gate status: '+phase+'.';message.textContent=controlUnknown?'Control outcome unknown. Stop the poller before starting it again.':phase==='idle'?'Gate is idle.':'Gate is active or requires review.';});
- const act=action=>{if((action==='start'&&(phase!=='idle'||stopPending||controlUnknown))||(action==='stop'&&!phase))return;void run(async active=>{const result=await invokeCapability(controlOperation,{action});if(!active())return;if(!result||typeof result.running!=='boolean'||typeof result.inFlight!=='boolean'||typeof result.stopPending!=='boolean'||typeof result.reviewRequired!=='boolean')throw Error('Invalid poller status');stopPending=result.stopPending;controlUnknown=false;poller.textContent='Poller: '+(result.running?'running':'stopped')+(result.inFlight?', work in progress':'')+(stopPending?', stop pending':'')+(result.reviewRequired?', review required':'')+'.';phase=undefined;gate.textContent='Gate status: not checked.';message.textContent=stopPending?'Stop is pending. Refresh the gate and stop again to check completion.':'Refresh the gate before another action.';},true);};
- refresh.addEventListener('click',()=>{void run(read);});start.addEventListener('click',()=>act('start'));stop.addEventListener('click',()=>act('stop'));sync();
- return {refresh(){return run(read);},dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountRemoteRolloutControls(root, { statusOperation, controlOperation } = {}) {
+  const valid = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![statusOperation, controlOperation].every(valid)) throw Error('Invalid rollout controls');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const el = doc.createElement(tag);
+      el.textContent = text;
+      return el;
+    },
+    section = node('section', ''),
+    heading = node('h2', 'Remote rollout'),
+    gate = node('p', 'Gate status: not checked.'),
+    poller = node('p', 'Poller status: not checked.'),
+    message = node('p', 'Refresh the gate before using the controls.'),
+    refresh = node('button', 'Refresh gate'),
+    start = node('button', 'Start poller'),
+    stop = node('button', 'Stop poller');
+  for (const button of [refresh, start, stop]) button.type = 'button';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  section.append(heading, gate, poller, message, refresh, start, stop);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    phase,
+    stopPending = false,
+    controlUnknown = false;
+  const sync = () => {
+    refresh.disabled = busy;
+    start.disabled = busy || phase !== 'idle' || stopPending || controlUnknown;
+    stop.disabled = busy || !phase;
+  };
+  const run = async (task, control = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const current = ++generation,
+      active = () => !disposed && generation === current;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        phase = undefined;
+        gate.textContent = 'Gate status: not checked.';
+        if (control) {
+          controlUnknown = true;
+          poller.textContent = 'Poller status: unknown.';
+          message.textContent = 'Control outcome unknown. Refresh the gate, then stop the poller before starting it again.';
+        } else message.textContent = 'Unable to refresh the gate. Try again.';
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const read = active =>
+    invokeCapability(statusOperation, {}).then(result => {
+      if (!active()) return;
+      const version = (v, min) => Number.isSafeInteger(v) && v >= min;
+      if (
+        !result ||
+        !['idle', 'running', 'importing', 'uncertain'].includes(result.phase) ||
+        (['idle', 'running'].includes(result.phase) ? result.sourceVersion !== null || result.expectedVersion !== null : !version(result.sourceVersion, 1) || !version(result.expectedVersion, 0))
+      )
+        throw Error('Invalid rollout status');
+      phase = result.phase;
+      gate.textContent = 'Gate status: ' + phase + '.';
+      message.textContent = controlUnknown ? 'Control outcome unknown. Stop the poller before starting it again.' : phase === 'idle' ? 'Gate is idle.' : 'Gate is active or requires review.';
+    });
+  const act = action => {
+    if ((action === 'start' && (phase !== 'idle' || stopPending || controlUnknown)) || (action === 'stop' && !phase)) return;
+    void run(async active => {
+      const result = await invokeCapability(controlOperation, { action });
+      if (!active()) return;
+      if (!result || typeof result.running !== 'boolean' || typeof result.inFlight !== 'boolean' || typeof result.stopPending !== 'boolean' || typeof result.reviewRequired !== 'boolean')
+        throw Error('Invalid poller status');
+      stopPending = result.stopPending;
+      controlUnknown = false;
+      poller.textContent =
+        'Poller: ' +
+        (result.running ? 'running' : 'stopped') +
+        (result.inFlight ? ', work in progress' : '') +
+        (stopPending ? ', stop pending' : '') +
+        (result.reviewRequired ? ', review required' : '') +
+        '.';
+      phase = undefined;
+      gate.textContent = 'Gate status: not checked.';
+      message.textContent = stopPending ? 'Stop is pending. Refresh the gate and stop again to check completion.' : 'Refresh the gate before another action.';
+    }, true);
+  };
+  refresh.addEventListener('click', () => {
+    void run(read);
+  });
+  start.addEventListener('click', () => act('start'));
+  stop.addEventListener('click', () => act('stop'));
+  sync();
+  return {
+    refresh() {
+      return run(read);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 // Recovery is a separate opt-in view and does not itself verify worker fencing.
-export function mountRemoteRolloutRecovery(root,{statusOperation,recoveryOperation,evidenceOperation}={}){
- const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),validText=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\u0000-\u001f\u007f]/.test(value),version=(value,min)=>Number.isSafeInteger(value)&&value>=min,cursorValid=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{48}$/.test(value);
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![statusOperation,recoveryOperation,evidenceOperation].every(validOperation))throw Error('Invalid rollout recovery view');
- const doc=root.ownerDocument,node=(tag,text)=>{const el=doc.createElement(tag);if(text!==undefined)el.textContent=text;return el;},section=node('section'),heading=node('h2','Rollout recovery'),status=node('p','Gate status: not checked.'),message=node('p','Refresh the gate before requesting recovery.'),refresh=node('button','Refresh recovery gate'),label=node('label','Evidence reference'),reference=node('input'),recover=node('button','Request verified recovery'),browse=node('button','View recovery evidence'),next=node('button','Next evidence page'),list=node('ul');
- reference.maxLength=256;label.append(reference);for(const button of [refresh,recover,browse,next])button.type='button';message.setAttribute('role','status');message.setAttribute('aria-live','polite');section.append(heading,status,message,refresh,label,recover,browse,next,list);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,phase,cursor;
- const sync=()=>{refresh.disabled=busy;reference.disabled=busy||!phase||phase==='idle';recover.disabled=reference.disabled||!validText(reference.value);browse.disabled=busy;next.disabled=busy||!cursor;};
- const clearGate=()=>{phase=undefined;reference.value='';status.textContent='Gate status: not checked.';};
- const run=async(task,recovery=false)=>{if(disposed||busy)return;busy=true;const current=++generation,active=()=>!disposed&&generation===current;sync();try{await task(active);}catch{if(active()){if(recovery){clearGate();cursor=undefined;list.replaceChildren();message.textContent='Recovery outcome unknown. Refresh the gate and inspect evidence before retrying.';}else message.textContent='Unable to load the requested information.';}}finally{if(active()){busy=false;sync();}}};
- const read=async active=>{clearGate();const result=await invokeCapability(statusOperation,{});if(!active())return;if(!result||!['idle','running','importing','uncertain'].includes(result.phase)||(['idle','running'].includes(result.phase)?result.sourceVersion!==null||result.expectedVersion!==null:!version(result.sourceVersion,1)||!version(result.expectedVersion,0)))throw Error('Invalid rollout status');phase=result.phase;status.textContent='Gate status: '+phase+(['importing','uncertain'].includes(phase)?'; source version '+result.sourceVersion+', expected target version '+result.expectedVersion:'')+'.';message.textContent=phase==='idle'?'No recovery is currently required.':'Provide a reference to independently verified recovery evidence.';};
- const page=async(after,active)=>{const result=await invokeCapability(evidenceOperation,{...(after?{cursor:after}:{}),limit:20});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>20||(result.nextCursor!==undefined&&!cursorValid(result.nextCursor)))throw Error('Invalid recovery evidence');for(const item of result.items)if(!item||!validText(item.principalId)||!validText(item.reference)||!version(item.observedAt,0)||!['running','importing','uncertain'].includes(item.phase)||(item.phase==='running'?(item.sourceVersion!==null||item.expectedVersion!==null):(!version(item.sourceVersion,1)||!version(item.expectedVersion,0))))throw Error('Invalid recovery evidence');cursor=result.nextCursor;list.replaceChildren();for(const item of result.items)list.append(node('li',item.phase+' — '+item.principalId+' — '+item.reference+' — '+item.observedAt+(item.phase==='running'?'':' — source '+item.sourceVersion+', expected '+item.expectedVersion)));message.textContent=result.items.length?'Recovery evidence loaded.':'No recovery evidence on this page.';};
- refresh.addEventListener('click',()=>{void run(read);});reference.addEventListener('input',sync);recover.addEventListener('click',()=>{if(!phase||phase==='idle'||!validText(reference.value))return;const proof=reference.value;void run(async active=>{const result=await invokeCapability(recoveryOperation,{reference:proof});if(!active())return;if(!result||result.recovered!==true)throw Error('Invalid recovery result');clearGate();cursor=undefined;list.replaceChildren();message.textContent='Recovery accepted. Refresh the gate and inspect evidence.';},true);});browse.addEventListener('click',()=>{cursor=undefined;list.replaceChildren();void run(active=>page(undefined,active));});next.addEventListener('click',()=>{if(cursor)void run(active=>page(cursor,active));});sync();
- return {refresh(){return run(read);},dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountRemoteRolloutRecovery(root, { statusOperation, recoveryOperation, evidenceOperation } = {}) {
+  const validOperation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    validText = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value),
+    version = (value, min) => Number.isSafeInteger(value) && value >= min,
+    cursorValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{48}$/.test(value);
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![statusOperation, recoveryOperation, evidenceOperation].every(validOperation))
+    throw Error('Invalid rollout recovery view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const el = doc.createElement(tag);
+      if (text !== undefined) el.textContent = text;
+      return el;
+    },
+    section = node('section'),
+    heading = node('h2', 'Rollout recovery'),
+    status = node('p', 'Gate status: not checked.'),
+    message = node('p', 'Refresh the gate before requesting recovery.'),
+    refresh = node('button', 'Refresh recovery gate'),
+    label = node('label', 'Evidence reference'),
+    reference = node('input'),
+    recover = node('button', 'Request verified recovery'),
+    browse = node('button', 'View recovery evidence'),
+    next = node('button', 'Next evidence page'),
+    list = node('ul');
+  reference.maxLength = 256;
+  label.append(reference);
+  for (const button of [refresh, recover, browse, next]) button.type = 'button';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  section.append(heading, status, message, refresh, label, recover, browse, next, list);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    phase,
+    cursor;
+  const sync = () => {
+    refresh.disabled = busy;
+    reference.disabled = busy || !phase || phase === 'idle';
+    recover.disabled = reference.disabled || !validText(reference.value);
+    browse.disabled = busy;
+    next.disabled = busy || !cursor;
+  };
+  const clearGate = () => {
+    phase = undefined;
+    reference.value = '';
+    status.textContent = 'Gate status: not checked.';
+  };
+  const run = async (task, recovery = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const current = ++generation,
+      active = () => !disposed && generation === current;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        if (recovery) {
+          clearGate();
+          cursor = undefined;
+          list.replaceChildren();
+          message.textContent = 'Recovery outcome unknown. Refresh the gate and inspect evidence before retrying.';
+        } else message.textContent = 'Unable to load the requested information.';
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const read = async active => {
+    clearGate();
+    const result = await invokeCapability(statusOperation, {});
+    if (!active()) return;
+    if (
+      !result ||
+      !['idle', 'running', 'importing', 'uncertain'].includes(result.phase) ||
+      (['idle', 'running'].includes(result.phase) ? result.sourceVersion !== null || result.expectedVersion !== null : !version(result.sourceVersion, 1) || !version(result.expectedVersion, 0))
+    )
+      throw Error('Invalid rollout status');
+    phase = result.phase;
+    status.textContent =
+      'Gate status: ' + phase + (['importing', 'uncertain'].includes(phase) ? '; source version ' + result.sourceVersion + ', expected target version ' + result.expectedVersion : '') + '.';
+    message.textContent = phase === 'idle' ? 'No recovery is currently required.' : 'Provide a reference to independently verified recovery evidence.';
+  };
+  const page = async (after, active) => {
+    const result = await invokeCapability(evidenceOperation, { ...(after ? { cursor: after } : {}), limit: 20 });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 20 || (result.nextCursor !== undefined && !cursorValid(result.nextCursor))) throw Error('Invalid recovery evidence');
+    for (const item of result.items)
+      if (
+        !item ||
+        !validText(item.principalId) ||
+        !validText(item.reference) ||
+        !version(item.observedAt, 0) ||
+        !['running', 'importing', 'uncertain'].includes(item.phase) ||
+        (item.phase === 'running' ? item.sourceVersion !== null || item.expectedVersion !== null : !version(item.sourceVersion, 1) || !version(item.expectedVersion, 0))
+      )
+        throw Error('Invalid recovery evidence');
+    cursor = result.nextCursor;
+    list.replaceChildren();
+    for (const item of result.items)
+      list.append(
+        node(
+          'li',
+          item.phase +
+            ' — ' +
+            item.principalId +
+            ' — ' +
+            item.reference +
+            ' — ' +
+            item.observedAt +
+            (item.phase === 'running' ? '' : ' — source ' + item.sourceVersion + ', expected ' + item.expectedVersion)
+        )
+      );
+    message.textContent = result.items.length ? 'Recovery evidence loaded.' : 'No recovery evidence on this page.';
+  };
+  refresh.addEventListener('click', () => {
+    void run(read);
+  });
+  reference.addEventListener('input', sync);
+  recover.addEventListener('click', () => {
+    if (!phase || phase === 'idle' || !validText(reference.value)) return;
+    const proof = reference.value;
+    void run(async active => {
+      const result = await invokeCapability(recoveryOperation, { reference: proof });
+      if (!active()) return;
+      if (!result || result.recovered !== true) throw Error('Invalid recovery result');
+      clearGate();
+      cursor = undefined;
+      list.replaceChildren();
+      message.textContent = 'Recovery accepted. Refresh the gate and inspect evidence.';
+    }, true);
+  });
+  browse.addEventListener('click', () => {
+    cursor = undefined;
+    list.replaceChildren();
+    void run(active => page(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor) void run(active => page(cursor, active));
+  });
+  sync();
+  return {
+    refresh() {
+      return run(read);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 // A host-fixed migration plan; this view never accepts executable migration code.
-export function mountDataMigration(root,{rehearsalOperation,applyOperation,auditOperation,statusOperation,targetLabel,auditNewestFirst=false}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),validText=(value,max)=>typeof value==='string'&&value.trim().length>0&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value),digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value),number=(value,min)=>Number.isSafeInteger(value)&&value>=min;
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![rehearsalOperation,applyOperation,auditOperation].every(operation)||(statusOperation!==undefined&&!operation(statusOperation))||typeof auditNewestFirst!=='boolean'||!validText(targetLabel,256))throw Error('Invalid migration view');
- const doc=root.ownerDocument,node=(tag,text)=>{const el=doc.createElement(tag);if(text!==undefined)el.textContent=text;return el;},section=node('section'),heading=node('h2','Data migration: '+targetLabel),summary=node('p','No rehearsal loaded.'),message=node('p','Run a rehearsal before applying the plan.'),rehearse=node('button','Rehearse migration'),label=node('label','Evidence reference'),reference=node('input'),apply=node('button','Apply rehearsed migration'),audit=node('button','View migration audit'),next=node('button','Next audit page'),schema=node('p','Schema generation: not checked.'),checkSchema=node('button','Check schema generation'),acknowledge=node('button','I checked schema and audit'),list=node('ul');
- reference.maxLength=512;label.append(reference);for(const button of [rehearse,apply,audit,next,checkSchema,acknowledge])button.type='button';message.setAttribute('role','status');message.setAttribute('aria-live','polite');checkSchema.hidden=statusOperation===undefined;schema.hidden=statusOperation===undefined;section.append(heading,summary,message,rehearse,label,apply,audit,next,list,schema,checkSchema,acknowledge);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,preview,cursor,needsReview=false,auditReviewed=false,schemaChecked=false;
- const sync=()=>{rehearse.disabled=busy||needsReview;acknowledge.hidden=!needsReview;acknowledge.disabled=busy||!needsReview||!auditReviewed||(statusOperation!==undefined&&!schemaChecked);checkSchema.disabled=busy;reference.disabled=busy||!preview;apply.disabled=busy||!preview||!validText(reference.value,512);audit.disabled=busy;next.disabled=busy||cursor===undefined;};
- const clear=()=>{preview=undefined;reference.value='';summary.textContent='No rehearsal loaded.';};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const current=++generation,active=()=>!disposed&&current===generation;sync();try{await task(active);}catch{if(active()){if(mutation){clear();needsReview=true;auditReviewed=false;schemaChecked=false;schema.textContent='Schema generation: not checked.';cursor=undefined;list.replaceChildren();message.textContent='Migration outcome unknown. Inspect audit and schema before running another rehearsal.';}else message.textContent='Unable to load migration information.';}}finally{if(active()){busy=false;sync();}}};
- const load=async active=>{clear();const result=await invokeCapability(rehearsalOperation,{query:{}});if(!active())return;if(!result||!number(result.schemaVersion,0)||!number(result.count,0)||!digest(result.digest)||!digest(result.outputDigest))throw Error('Invalid migration rehearsal');const plan=result.plan;if((plan===undefined)!==(result.planDigest===undefined))throw Error('Invalid migration plan');if(plan!==undefined&&(!plan||!['forward','rollback'].includes(plan.kind)||plan.fromVersion!==result.schemaVersion||plan.toVersion!==result.schemaVersion+1||(plan.kind==='rollback'&&(!number(plan.targetVersion,0)||plan.targetVersion>=plan.fromVersion))||(plan.kind==='forward'&&plan.targetVersion!==undefined)||!digest(result.planDigest)))throw Error('Invalid migration plan');preview={schemaVersion:result.schemaVersion,count:result.count,digest:result.digest,outputDigest:result.outputDigest,...(plan?{planDigest:result.planDigest}: {})};summary.textContent=(plan?(plan.kind==='forward'?'Forward migration to generation '+plan.toVersion+'. ':'Rollback to shape '+plan.targetVersion+', new generation '+plan.toVersion+'. '):'Plan details unavailable. ')+'Schema generation '+preview.schemaVersion+', '+preview.count+(preview.count===1?' record. Input digest: ':' records. Input digest: ')+preview.digest+'. Output digest: '+preview.outputDigest+'.';message.textContent='Review the target, digests and evidence before applying.';};
- const page=async(after,active)=>{const query=auditNewestFirst?{order:'desc',...(after===undefined?{}:{before:after}),limit:20}:{...(after===undefined?{}:{after}),limit:20},result=await invokeCapability(auditOperation,{query});if(!active())return;const nextCursor=auditNewestFirst?result?.nextBefore:result?.nextAfter;if(!result||!Array.isArray(result.items)||result.items.length>20||(nextCursor!==undefined&&!number(nextCursor,1))||(auditNewestFirst?result.nextAfter!==undefined:result.nextBefore!==undefined))throw Error('Invalid migration audit');for(const item of result.items)if(!item||!number(item.fromVersion,0)||!number(item.toVersion,1)||(item.targetVersion!==null&&!number(item.targetVersion,0))||!digest(item.digest)||(item.outputDigest!==undefined&&!digest(item.outputDigest))||(item.planDigest!==undefined&&!digest(item.planDigest))||!number(item.recordCount,0)||!validText(item.principalId,256)||!validText(item.reference,512)||!number(item.observedAt,0))throw Error('Invalid migration audit');cursor=nextCursor;if(needsReview)auditReviewed=auditNewestFirst?(auditReviewed||after===undefined):cursor===undefined;list.replaceChildren();for(const item of result.items)list.append(node('li','Generation '+item.fromVersion+' to '+item.toVersion+(item.targetVersion===null?'':', rollback target '+item.targetVersion)+' — '+item.recordCount+' records — '+item.principalId+' — '+item.reference+' — '+item.observedAt+' — input '+item.digest+(item.outputDigest?' — output '+item.outputDigest:'')+(item.planDigest?' — plan '+item.planDigest:'')));message.textContent=result.items.length?'Migration audit loaded.':'No migration audit on this page.';};
- checkSchema.addEventListener('click',()=>{if(statusOperation===undefined)return;schemaChecked=false;schema.textContent='Schema generation: not checked.';void run(async active=>{const result=await invokeCapability(statusOperation,{query:{}});if(!active())return;if(!result||!number(result.schemaVersion,0))throw Error('Invalid schema status');schemaChecked=true;schema.textContent='Schema generation: '+result.schemaVersion+'.';message.textContent='Schema generation loaded.';});});rehearse.addEventListener('click',()=>{if(!needsReview)void run(load);});acknowledge.addEventListener('click',()=>{if(busy||!needsReview||!auditReviewed||(statusOperation!==undefined&&!schemaChecked))return;needsReview=false;auditReviewed=false;message.textContent='Review acknowledged. Run a new rehearsal.';sync();});reference.addEventListener('input',sync);apply.addEventListener('click',()=>{if(!preview||!validText(reference.value,512))return;const chosen={...preview},proof=reference.value;void run(async active=>{const result=await invokeCapability(applyOperation,{query:{digest:chosen.digest,outputDigest:chosen.outputDigest,...(chosen.planDigest?{planDigest:chosen.planDigest}:{}),reference:proof}});if(!active())return;if(!result||result.schemaVersion!==chosen.schemaVersion+1||result.count!==chosen.count||!digest(result.digest))throw Error('Invalid migration result');clear();cursor=undefined;list.replaceChildren();message.textContent='Migration applied. Inspect the audit before continuing.';},true);});audit.addEventListener('click',()=>{cursor=undefined;if(needsReview)auditReviewed=false;list.replaceChildren();void run(active=>page(undefined,active));});next.addEventListener('click',()=>{if(cursor!==undefined)void run(active=>page(cursor,active));});sync();
- return {refresh(){if(!needsReview)return run(load);},dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountDataMigration(root, { rehearsalOperation, applyOperation, auditOperation, statusOperation, targetLabel, auditNewestFirst = false } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    validText = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value),
+    digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value),
+    number = (value, min) => Number.isSafeInteger(value) && value >= min;
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    ![rehearsalOperation, applyOperation, auditOperation].every(operation) ||
+    (statusOperation !== undefined && !operation(statusOperation)) ||
+    typeof auditNewestFirst !== 'boolean' ||
+    !validText(targetLabel, 256)
+  )
+    throw Error('Invalid migration view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const el = doc.createElement(tag);
+      if (text !== undefined) el.textContent = text;
+      return el;
+    },
+    section = node('section'),
+    heading = node('h2', 'Data migration: ' + targetLabel),
+    summary = node('p', 'No rehearsal loaded.'),
+    message = node('p', 'Run a rehearsal before applying the plan.'),
+    rehearse = node('button', 'Rehearse migration'),
+    label = node('label', 'Evidence reference'),
+    reference = node('input'),
+    apply = node('button', 'Apply rehearsed migration'),
+    audit = node('button', 'View migration audit'),
+    next = node('button', 'Next audit page'),
+    schema = node('p', 'Schema generation: not checked.'),
+    checkSchema = node('button', 'Check schema generation'),
+    acknowledge = node('button', 'I checked schema and audit'),
+    list = node('ul');
+  reference.maxLength = 512;
+  label.append(reference);
+  for (const button of [rehearse, apply, audit, next, checkSchema, acknowledge]) button.type = 'button';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  checkSchema.hidden = statusOperation === undefined;
+  schema.hidden = statusOperation === undefined;
+  section.append(heading, summary, message, rehearse, label, apply, audit, next, list, schema, checkSchema, acknowledge);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    preview,
+    cursor,
+    needsReview = false,
+    auditReviewed = false,
+    schemaChecked = false;
+  const sync = () => {
+    rehearse.disabled = busy || needsReview;
+    acknowledge.hidden = !needsReview;
+    acknowledge.disabled = busy || !needsReview || !auditReviewed || (statusOperation !== undefined && !schemaChecked);
+    checkSchema.disabled = busy;
+    reference.disabled = busy || !preview;
+    apply.disabled = busy || !preview || !validText(reference.value, 512);
+    audit.disabled = busy;
+    next.disabled = busy || cursor === undefined;
+  };
+  const clear = () => {
+    preview = undefined;
+    reference.value = '';
+    summary.textContent = 'No rehearsal loaded.';
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const current = ++generation,
+      active = () => !disposed && current === generation;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        if (mutation) {
+          clear();
+          needsReview = true;
+          auditReviewed = false;
+          schemaChecked = false;
+          schema.textContent = 'Schema generation: not checked.';
+          cursor = undefined;
+          list.replaceChildren();
+          message.textContent = 'Migration outcome unknown. Inspect audit and schema before running another rehearsal.';
+        } else message.textContent = 'Unable to load migration information.';
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const load = async active => {
+    clear();
+    const result = await invokeCapability(rehearsalOperation, { query: {} });
+    if (!active()) return;
+    if (!result || !number(result.schemaVersion, 0) || !number(result.count, 0) || !digest(result.digest) || !digest(result.outputDigest)) throw Error('Invalid migration rehearsal');
+    const plan = result.plan;
+    if ((plan === undefined) !== (result.planDigest === undefined)) throw Error('Invalid migration plan');
+    if (
+      plan !== undefined &&
+      (!plan ||
+        !['forward', 'rollback'].includes(plan.kind) ||
+        plan.fromVersion !== result.schemaVersion ||
+        plan.toVersion !== result.schemaVersion + 1 ||
+        (plan.kind === 'rollback' && (!number(plan.targetVersion, 0) || plan.targetVersion >= plan.fromVersion)) ||
+        (plan.kind === 'forward' && plan.targetVersion !== undefined) ||
+        !digest(result.planDigest))
+    )
+      throw Error('Invalid migration plan');
+    preview = { schemaVersion: result.schemaVersion, count: result.count, digest: result.digest, outputDigest: result.outputDigest, ...(plan ? { planDigest: result.planDigest } : {}) };
+    summary.textContent =
+      (plan
+        ? plan.kind === 'forward'
+          ? 'Forward migration to generation ' + plan.toVersion + '. '
+          : 'Rollback to shape ' + plan.targetVersion + ', new generation ' + plan.toVersion + '. '
+        : 'Plan details unavailable. ') +
+      'Schema generation ' +
+      preview.schemaVersion +
+      ', ' +
+      preview.count +
+      (preview.count === 1 ? ' record. Input digest: ' : ' records. Input digest: ') +
+      preview.digest +
+      '. Output digest: ' +
+      preview.outputDigest +
+      '.';
+    message.textContent = 'Review the target, digests and evidence before applying.';
+  };
+  const page = async (after, active) => {
+    const query = auditNewestFirst ? { order: 'desc', ...(after === undefined ? {} : { before: after }), limit: 20 } : { ...(after === undefined ? {} : { after }), limit: 20 },
+      result = await invokeCapability(auditOperation, { query });
+    if (!active()) return;
+    const nextCursor = auditNewestFirst ? result?.nextBefore : result?.nextAfter;
+    if (
+      !result ||
+      !Array.isArray(result.items) ||
+      result.items.length > 20 ||
+      (nextCursor !== undefined && !number(nextCursor, 1)) ||
+      (auditNewestFirst ? result.nextAfter !== undefined : result.nextBefore !== undefined)
+    )
+      throw Error('Invalid migration audit');
+    for (const item of result.items)
+      if (
+        !item ||
+        !number(item.fromVersion, 0) ||
+        !number(item.toVersion, 1) ||
+        (item.targetVersion !== null && !number(item.targetVersion, 0)) ||
+        !digest(item.digest) ||
+        (item.outputDigest !== undefined && !digest(item.outputDigest)) ||
+        (item.planDigest !== undefined && !digest(item.planDigest)) ||
+        !number(item.recordCount, 0) ||
+        !validText(item.principalId, 256) ||
+        !validText(item.reference, 512) ||
+        !number(item.observedAt, 0)
+      )
+        throw Error('Invalid migration audit');
+    cursor = nextCursor;
+    if (needsReview) auditReviewed = auditNewestFirst ? auditReviewed || after === undefined : cursor === undefined;
+    list.replaceChildren();
+    for (const item of result.items)
+      list.append(
+        node(
+          'li',
+          'Generation ' +
+            item.fromVersion +
+            ' to ' +
+            item.toVersion +
+            (item.targetVersion === null ? '' : ', rollback target ' + item.targetVersion) +
+            ' — ' +
+            item.recordCount +
+            ' records — ' +
+            item.principalId +
+            ' — ' +
+            item.reference +
+            ' — ' +
+            item.observedAt +
+            ' — input ' +
+            item.digest +
+            (item.outputDigest ? ' — output ' + item.outputDigest : '') +
+            (item.planDigest ? ' — plan ' + item.planDigest : '')
+        )
+      );
+    message.textContent = result.items.length ? 'Migration audit loaded.' : 'No migration audit on this page.';
+  };
+  checkSchema.addEventListener('click', () => {
+    if (statusOperation === undefined) return;
+    schemaChecked = false;
+    schema.textContent = 'Schema generation: not checked.';
+    void run(async active => {
+      const result = await invokeCapability(statusOperation, { query: {} });
+      if (!active()) return;
+      if (!result || !number(result.schemaVersion, 0)) throw Error('Invalid schema status');
+      schemaChecked = true;
+      schema.textContent = 'Schema generation: ' + result.schemaVersion + '.';
+      message.textContent = 'Schema generation loaded.';
+    });
+  });
+  rehearse.addEventListener('click', () => {
+    if (!needsReview) void run(load);
+  });
+  acknowledge.addEventListener('click', () => {
+    if (busy || !needsReview || !auditReviewed || (statusOperation !== undefined && !schemaChecked)) return;
+    needsReview = false;
+    auditReviewed = false;
+    message.textContent = 'Review acknowledged. Run a new rehearsal.';
+    sync();
+  });
+  reference.addEventListener('input', sync);
+  apply.addEventListener('click', () => {
+    if (!preview || !validText(reference.value, 512)) return;
+    const chosen = { ...preview },
+      proof = reference.value;
+    void run(async active => {
+      const result = await invokeCapability(applyOperation, {
+        query: { digest: chosen.digest, outputDigest: chosen.outputDigest, ...(chosen.planDigest ? { planDigest: chosen.planDigest } : {}), reference: proof }
+      });
+      if (!active()) return;
+      if (!result || result.schemaVersion !== chosen.schemaVersion + 1 || result.count !== chosen.count || !digest(result.digest)) throw Error('Invalid migration result');
+      clear();
+      cursor = undefined;
+      list.replaceChildren();
+      message.textContent = 'Migration applied. Inspect the audit before continuing.';
+    }, true);
+  });
+  audit.addEventListener('click', () => {
+    cursor = undefined;
+    if (needsReview) auditReviewed = false;
+    list.replaceChildren();
+    void run(active => page(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor !== undefined) void run(active => page(cursor, active));
+  });
+  sync();
+  return {
+    refresh() {
+      if (!needsReview) return run(load);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 // Optional administrative view for one host-bound extension operation.
-export function mountExtensionApproval(root,{statusOperation,decisionOperation,historyOperation,targetLabel,historyNewestFirst=false}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),validText=(value,max)=>typeof value==='string'&&value.trim().length>0&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value),integer=(value,min)=>Number.isSafeInteger(value)&&value>=min,time=value=>integer(value,0)&&value<=8640000000000000;
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![statusOperation,decisionOperation,historyOperation].every(operation)||typeof historyNewestFirst!=='boolean'||!validText(targetLabel,256))throw Error('Invalid extension approval view');
- const doc=root.ownerDocument,node=(tag,text)=>{const el=doc.createElement(tag);if(text!==undefined)el.textContent=text;return el;},section=node('section'),heading=node('h2','Extension approval: '+targetLabel),status=node('p','Approval status: not checked.'),message=node('p','Refresh the approval before making a decision.'),refresh=node('button','Refresh approval'),label=node('label','Approval expiration (local time, within 365 days)'),expiry=node('input'),approve=node('button','Approve operation'),revoke=node('button','Revoke operation'),history=node('button','View approval history'),next=node('button','Next history page'),acknowledge=node('button','I checked approval and history'),list=node('ul');
- expiry.type='datetime-local';label.append(expiry);for(const button of [refresh,approve,revoke,history,next,acknowledge])button.type='button';message.setAttribute('role','status');message.setAttribute('aria-live','polite');section.append(heading,status,message,refresh,label,approve,revoke,history,next,list,acknowledge);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,current,cursor,needsReview=false,historyReviewed=false;
- const expiration=()=>{const value=expiry.value?new Date(expiry.value).getTime():NaN,now=Date.now();return integer(value,1)&&value>now&&value-now<=365*86400000?value:undefined;};
- const sync=()=>{refresh.disabled=busy;expiry.disabled=busy||current===undefined||current.revision>=Number.MAX_SAFE_INTEGER;approve.disabled=busy||needsReview||current===undefined||current.revision>=Number.MAX_SAFE_INTEGER||expiration()===undefined;revoke.disabled=busy||needsReview||!current?.allowed;acknowledge.hidden=!needsReview;acknowledge.disabled=busy||!needsReview||!historyReviewed||current===undefined;history.disabled=busy;next.disabled=busy||cursor===undefined;};
- const clear=()=>{current=undefined;expiry.value='';status.textContent='Approval status: not checked.';};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const sequence=++generation,active=()=>!disposed&&sequence===generation;sync();try{await task(active);}catch{if(active()){if(mutation){clear();needsReview=true;historyReviewed=false;cursor=undefined;list.replaceChildren();message.textContent='Decision outcome unknown. Refresh approval and inspect history before retrying.';}else message.textContent='Unable to load approval information.';}}finally{if(active()){busy=false;sync();}}};
- const read=async active=>{clear();const result=await invokeCapability(statusOperation,{query:{}});if(!active())return;if(result!==null&&(!result||!integer(result.revision,1)||typeof result.allowed!=='boolean'||!time(result.expiresAt)||typeof result.active!=='boolean'||(result.allowed?result.expiresAt===0:result.expiresAt!==0)||(!result.allowed&&result.active)||(result.terminal!==undefined&&(result.terminal!==true||result.revision!==Number.MAX_SAFE_INTEGER||result.allowed))))throw Error('Invalid approval status');current=result===null?{revision:0,allowed:false,active:false,expiresAt:0}:{revision:result.revision,allowed:result.allowed,active:result.active,expiresAt:result.expiresAt,terminal:result.terminal===true};status.textContent='Revision '+current.revision+': '+(current.terminal?'terminally revoked':current.allowed?(current.active?'approved':'expired'):'not approved')+(current.allowed?' until '+new Date(current.expiresAt).toISOString():'')+'.';message.textContent=current.revision>=Number.MAX_SAFE_INTEGER?(current.allowed?'Revision limit reached. Only permanent revocation is available.':'Approval is at its terminal revision and cannot be renewed.'):'Review the target and expiration before making a decision.';};
- const page=async(after,active)=>{const query=historyNewestFirst?{order:'desc',...(after===undefined?{}:{before:after}),limit:20}:{...(after===undefined?{}:{after}),limit:20},result=await invokeCapability(historyOperation,{query});if(!active())return;const nextCursor=historyNewestFirst?result?.nextBefore:result?.nextAfter;if(!result||!Array.isArray(result.items)||result.items.length>20||(nextCursor!==undefined&&!integer(nextCursor,1))||(historyNewestFirst?result.nextAfter!==undefined:result.nextBefore!==undefined))throw Error('Invalid approval history');for(const item of result.items)if(!item||!integer(item.id,1)||!integer(item.revision,1)||typeof item.allowed!=='boolean'||!time(item.expiresAt)||!time(item.observedAt)||!validText(item.actorId,128)||(item.allowed?item.expiresAt===0:item.expiresAt!==0)||(item.terminal!==undefined&&(item.terminal!==true||item.revision!==Number.MAX_SAFE_INTEGER||item.allowed)))throw Error('Invalid approval history');cursor=nextCursor;if(needsReview)historyReviewed=historyNewestFirst?(historyReviewed||after===undefined):cursor===undefined;list.replaceChildren();for(const item of result.items)list.append(node('li','Revision '+item.revision+' — '+(item.terminal?'terminally revoked':item.allowed?'approved until '+new Date(item.expiresAt).toISOString():'revoked')+' — '+item.actorId+' — '+new Date(item.observedAt).toISOString()));message.textContent=result.items.length?'Approval history loaded.':'No approval history on this page.';};
- const act=allowed=>{const until=allowed?expiration():0;if(needsReview||!current||(allowed&&current.revision>=Number.MAX_SAFE_INTEGER)||(allowed?until===undefined:!current.allowed))return;const expectedRevision=current.revision;void run(async active=>{const result=await invokeCapability(decisionOperation,{query:{allowed,expiresAt:until,expectedRevision}});if(!active())return;if(!result||(expectedRevision===Number.MAX_SAFE_INTEGER?result.revision!==expectedRevision||result.terminal!==true:result.revision!==expectedRevision+1||result.terminal!==undefined))throw Error('Invalid approval result');clear();cursor=undefined;list.replaceChildren();message.textContent='Decision recorded. Refresh approval and inspect history.';},true);};
- refresh.addEventListener('click',()=>{void run(read);});expiry.addEventListener('input',sync);approve.addEventListener('click',()=>act(true));revoke.addEventListener('click',()=>act(false));acknowledge.addEventListener('click',()=>{if(busy||!needsReview||!historyReviewed||current===undefined)return;needsReview=false;historyReviewed=false;message.textContent='Review acknowledged. Check the target before deciding.';sync();});history.addEventListener('click',()=>{cursor=undefined;if(needsReview)historyReviewed=false;list.replaceChildren();void run(active=>page(undefined,active));});next.addEventListener('click',()=>{if(cursor!==undefined)void run(active=>page(cursor,active));});sync();
- return {refresh(){return run(read);},dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountExtensionApproval(root, { statusOperation, decisionOperation, historyOperation, targetLabel, historyNewestFirst = false } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    validText = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value),
+    integer = (value, min) => Number.isSafeInteger(value) && value >= min,
+    time = value => integer(value, 0) && value <= 8640000000000000;
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    ![statusOperation, decisionOperation, historyOperation].every(operation) ||
+    typeof historyNewestFirst !== 'boolean' ||
+    !validText(targetLabel, 256)
+  )
+    throw Error('Invalid extension approval view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const el = doc.createElement(tag);
+      if (text !== undefined) el.textContent = text;
+      return el;
+    },
+    section = node('section'),
+    heading = node('h2', 'Extension approval: ' + targetLabel),
+    status = node('p', 'Approval status: not checked.'),
+    message = node('p', 'Refresh the approval before making a decision.'),
+    refresh = node('button', 'Refresh approval'),
+    label = node('label', 'Approval expiration (local time, within 365 days)'),
+    expiry = node('input'),
+    approve = node('button', 'Approve operation'),
+    revoke = node('button', 'Revoke operation'),
+    history = node('button', 'View approval history'),
+    next = node('button', 'Next history page'),
+    acknowledge = node('button', 'I checked approval and history'),
+    list = node('ul');
+  expiry.type = 'datetime-local';
+  label.append(expiry);
+  for (const button of [refresh, approve, revoke, history, next, acknowledge]) button.type = 'button';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  section.append(heading, status, message, refresh, label, approve, revoke, history, next, list, acknowledge);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    current,
+    cursor,
+    needsReview = false,
+    historyReviewed = false;
+  const expiration = () => {
+    const value = expiry.value ? new Date(expiry.value).getTime() : NaN,
+      now = Date.now();
+    return integer(value, 1) && value > now && value - now <= 365 * 86400000 ? value : undefined;
+  };
+  const sync = () => {
+    refresh.disabled = busy;
+    expiry.disabled = busy || current === undefined || current.revision >= Number.MAX_SAFE_INTEGER;
+    approve.disabled = busy || needsReview || current === undefined || current.revision >= Number.MAX_SAFE_INTEGER || expiration() === undefined;
+    revoke.disabled = busy || needsReview || !current?.allowed;
+    acknowledge.hidden = !needsReview;
+    acknowledge.disabled = busy || !needsReview || !historyReviewed || current === undefined;
+    history.disabled = busy;
+    next.disabled = busy || cursor === undefined;
+  };
+  const clear = () => {
+    current = undefined;
+    expiry.value = '';
+    status.textContent = 'Approval status: not checked.';
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const sequence = ++generation,
+      active = () => !disposed && sequence === generation;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        if (mutation) {
+          clear();
+          needsReview = true;
+          historyReviewed = false;
+          cursor = undefined;
+          list.replaceChildren();
+          message.textContent = 'Decision outcome unknown. Refresh approval and inspect history before retrying.';
+        } else message.textContent = 'Unable to load approval information.';
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const read = async active => {
+    clear();
+    const result = await invokeCapability(statusOperation, { query: {} });
+    if (!active()) return;
+    if (
+      result !== null &&
+      (!result ||
+        !integer(result.revision, 1) ||
+        typeof result.allowed !== 'boolean' ||
+        !time(result.expiresAt) ||
+        typeof result.active !== 'boolean' ||
+        (result.allowed ? result.expiresAt === 0 : result.expiresAt !== 0) ||
+        (!result.allowed && result.active) ||
+        (result.terminal !== undefined && (result.terminal !== true || result.revision !== Number.MAX_SAFE_INTEGER || result.allowed)))
+    )
+      throw Error('Invalid approval status');
+    current =
+      result === null
+        ? { revision: 0, allowed: false, active: false, expiresAt: 0 }
+        : { revision: result.revision, allowed: result.allowed, active: result.active, expiresAt: result.expiresAt, terminal: result.terminal === true };
+    status.textContent =
+      'Revision ' +
+      current.revision +
+      ': ' +
+      (current.terminal ? 'terminally revoked' : current.allowed ? (current.active ? 'approved' : 'expired') : 'not approved') +
+      (current.allowed ? ' until ' + new Date(current.expiresAt).toISOString() : '') +
+      '.';
+    message.textContent =
+      current.revision >= Number.MAX_SAFE_INTEGER
+        ? current.allowed
+          ? 'Revision limit reached. Only permanent revocation is available.'
+          : 'Approval is at its terminal revision and cannot be renewed.'
+        : 'Review the target and expiration before making a decision.';
+  };
+  const page = async (after, active) => {
+    const query = historyNewestFirst ? { order: 'desc', ...(after === undefined ? {} : { before: after }), limit: 20 } : { ...(after === undefined ? {} : { after }), limit: 20 },
+      result = await invokeCapability(historyOperation, { query });
+    if (!active()) return;
+    const nextCursor = historyNewestFirst ? result?.nextBefore : result?.nextAfter;
+    if (
+      !result ||
+      !Array.isArray(result.items) ||
+      result.items.length > 20 ||
+      (nextCursor !== undefined && !integer(nextCursor, 1)) ||
+      (historyNewestFirst ? result.nextAfter !== undefined : result.nextBefore !== undefined)
+    )
+      throw Error('Invalid approval history');
+    for (const item of result.items)
+      if (
+        !item ||
+        !integer(item.id, 1) ||
+        !integer(item.revision, 1) ||
+        typeof item.allowed !== 'boolean' ||
+        !time(item.expiresAt) ||
+        !time(item.observedAt) ||
+        !validText(item.actorId, 128) ||
+        (item.allowed ? item.expiresAt === 0 : item.expiresAt !== 0) ||
+        (item.terminal !== undefined && (item.terminal !== true || item.revision !== Number.MAX_SAFE_INTEGER || item.allowed))
+      )
+        throw Error('Invalid approval history');
+    cursor = nextCursor;
+    if (needsReview) historyReviewed = historyNewestFirst ? historyReviewed || after === undefined : cursor === undefined;
+    list.replaceChildren();
+    for (const item of result.items)
+      list.append(
+        node(
+          'li',
+          'Revision ' +
+            item.revision +
+            ' — ' +
+            (item.terminal ? 'terminally revoked' : item.allowed ? 'approved until ' + new Date(item.expiresAt).toISOString() : 'revoked') +
+            ' — ' +
+            item.actorId +
+            ' — ' +
+            new Date(item.observedAt).toISOString()
+        )
+      );
+    message.textContent = result.items.length ? 'Approval history loaded.' : 'No approval history on this page.';
+  };
+  const act = allowed => {
+    const until = allowed ? expiration() : 0;
+    if (needsReview || !current || (allowed && current.revision >= Number.MAX_SAFE_INTEGER) || (allowed ? until === undefined : !current.allowed)) return;
+    const expectedRevision = current.revision;
+    void run(async active => {
+      const result = await invokeCapability(decisionOperation, { query: { allowed, expiresAt: until, expectedRevision } });
+      if (!active()) return;
+      if (
+        !result ||
+        (expectedRevision === Number.MAX_SAFE_INTEGER ? result.revision !== expectedRevision || result.terminal !== true : result.revision !== expectedRevision + 1 || result.terminal !== undefined)
+      )
+        throw Error('Invalid approval result');
+      clear();
+      cursor = undefined;
+      list.replaceChildren();
+      message.textContent = 'Decision recorded. Refresh approval and inspect history.';
+    }, true);
+  };
+  refresh.addEventListener('click', () => {
+    void run(read);
+  });
+  expiry.addEventListener('input', sync);
+  approve.addEventListener('click', () => act(true));
+  revoke.addEventListener('click', () => act(false));
+  acknowledge.addEventListener('click', () => {
+    if (busy || !needsReview || !historyReviewed || current === undefined) return;
+    needsReview = false;
+    historyReviewed = false;
+    message.textContent = 'Review acknowledged. Check the target before deciding.';
+    sync();
+  });
+  history.addEventListener('click', () => {
+    cursor = undefined;
+    if (needsReview) historyReviewed = false;
+    list.replaceChildren();
+    void run(active => page(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor !== undefined) void run(active => page(cursor, active));
+  });
+  sync();
+  return {
+    refresh() {
+      return run(read);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 // Optional operator view; each capability remains separately host-authorized.
-export function mountOfflineArchive(root,{candidateListOperation,archivedListOperation,archiveOperation,readOperation}={}){
- const validOperation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),validId=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\u0000-\u001f]/.test(value),validTime=value=>Number.isSafeInteger(value)&&value>=0;
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![candidateListOperation,archivedListOperation,archiveOperation,readOperation].every(validOperation))throw Error('Invalid offline archive view');
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Offline retention'),status=node('p','Browse completed operations or archive records.'),candidates=node('button','Browse completed operations'),archived=node('button','Browse archive records'),next=node('button','Next page'),cutoffLabel=node('label','Completed before (UTC date; unknown times excluded)'),cutoff=node('input'),list=node('ul'),selection=node('p','No operation selected.'),referenceLabel=node('label','Retirement evidence reference'),reference=node('input'),retire=node('button','Retire selected operation'),read=node('button','View archive marker'),details=node('div');
- for(const button of [candidates,archived,next,retire,read])button.type='button';status.setAttribute('role','status');status.setAttribute('aria-live','polite');reference.maxLength=256;cutoff.type='date';cutoff.min='1970-01-01';cutoffLabel.append(cutoff);referenceLabel.append(reference);section.append(heading,status,cutoffLabel,candidates,archived,next,list,selection,referenceLabel,retire,read,details);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,cursor,mode,selected,candidateCutoff;
- const cutoffValue=()=>{if(!cutoff.value)return undefined;const value=Date.parse(cutoff.value+'T00:00:00.000Z');return validTime(value)&&new Date(value).toISOString().slice(0,10)===cutoff.value?value:null;};
- const displayTime=value=>value<=8640000000000000?new Date(value).toISOString():String(value)+' ms';
- const sync=()=>{cutoff.disabled=busy;candidates.disabled=busy||cutoffValue()===null;archived.disabled=busy;next.disabled=busy||!cursor;reference.disabled=busy||selected?.kind!=='candidates';retire.disabled=busy||selected?.kind!=='candidates'||!validId(reference.value);read.disabled=busy||selected?.kind!=='archived';for(const button of list.querySelectorAll('button'))button.disabled=busy;};
- const clear=()=>{selected=undefined;reference.value='';selection.textContent='No operation selected.';details.replaceChildren();};
- const run=async task=>{if(disposed||busy)return;busy=true;const request=++generation;sync();try{await task(()=>!disposed&&generation===request);}catch{if(!disposed&&generation===request){clear();cursor=undefined;list.replaceChildren();status.textContent='Unable to complete the request. Refresh before trying again.';}}finally{if(!disposed&&generation===request){busy=false;sync();}}};
- const page=async(kind,after,active,filter)=>{const result=await invokeCapability(kind==='candidates'?candidateListOperation:archivedListOperation,{...(after?{after}:{}),...(kind==='candidates'&&filter!==undefined?{completedBefore:filter}:{}),limit:20});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>20||(result.nextAfter!==undefined&&!validId(result.nextAfter)))throw Error('Invalid archive listing');for(const item of result.items)if(!item||!validId(item.id)||!['succeeded','discarded'].includes(item.status)||(kind==='archived'?!validTime(item.recordedAt):(item.completedAt!==undefined&&!validTime(item.completedAt))))throw Error('Invalid archive listing');mode=kind;candidateCutoff=filter;cursor=result.nextAfter;clear();list.replaceChildren();for(const item of result.items){const row=node('li'),when=kind==='archived'?'retired at '+displayTime(item.recordedAt):item.completedAt===undefined?'completion time unknown':'completed at '+displayTime(item.completedAt),button=node('button',item.id+' — '+item.status+' — '+when);button.type='button';button.addEventListener('click',()=>{if(busy||disposed)return;selected={id:item.id,status:item.status,kind};reference.value='';selection.textContent='Selected '+item.id+' — '+item.status+'.';details.replaceChildren();sync();});row.append(button);list.append(row);}status.textContent=result.items.length?'Select an operation to review.':'No operations on this page.';};
- const browseCandidates=()=>{const filter=cutoffValue();if(filter===null){status.textContent='Choose a date on or after 1970-01-01.';return Promise.resolve();}return run(active=>page('candidates',undefined,active,filter));};
- candidates.addEventListener('click',()=>{void browseCandidates();});archived.addEventListener('click',()=>{void run(active=>page('archived',undefined,active));});next.addEventListener('click',()=>{if(cursor&&mode)void run(active=>page(mode,cursor,active,candidateCutoff));});cutoff.addEventListener('input',()=>{cursor=undefined;mode=undefined;candidateCutoff=undefined;clear();list.replaceChildren();status.textContent=cutoffValue()===null?'Choose a date on or after 1970-01-01.':'Browse completed operations to apply the date filter.';sync();});reference.addEventListener('input',sync);
- retire.addEventListener('click',()=>{if(selected?.kind!=='candidates'||!validId(reference.value))return;const chosen={...selected},proof=reference.value;void run(async active=>{const result=await invokeCapability(archiveOperation,{id:chosen.id,reference:proof});if(!active())return;if(!result||result.archived!==true)throw Error('Invalid archive result');selected={...chosen,kind:'archived'};reference.value='';selection.textContent='Selected '+chosen.id+' — archived.';cursor=undefined;list.replaceChildren();details.replaceChildren();status.textContent='Operation retired. Its request identity remains protected.';});});
- read.addEventListener('click',()=>{if(selected?.kind!=='archived')return;const chosen={...selected};void run(async active=>{const result=await invokeCapability(readOperation,{id:chosen.id});if(!active())return;if(!result||result.id!==chosen.id||![result.operationId,result.requestKey,result.idempotencyKey,result.operatorId,result.reference].every(validId)||!['succeeded','discarded'].includes(result.status)||!validTime(result.recordedAt))throw Error('Invalid archive marker');details.replaceChildren();const heading=node('h3','Archive marker'),items=node('ul');for(const [label,value] of [['Operation',result.operationId],['Status',result.status],['Request key',result.requestKey],['Idempotency key',result.idempotencyKey],['Operator',result.operatorId],['Reference',result.reference],['Retired at',displayTime(result.recordedAt)]])items.append(node('li',label+': '+value));details.append(heading,items);status.textContent='Archive marker loaded.';});});
- sync();return {refresh(){return browseCandidates();},dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountOfflineArchive(root, { candidateListOperation, archivedListOperation, archiveOperation, readOperation } = {}) {
+  const validOperation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    validId = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\u0000-\u001f]/.test(value),
+    validTime = value => Number.isSafeInteger(value) && value >= 0;
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![candidateListOperation, archivedListOperation, archiveOperation, readOperation].every(validOperation))
+    throw Error('Invalid offline archive view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Offline retention'),
+    status = node('p', 'Browse completed operations or archive records.'),
+    candidates = node('button', 'Browse completed operations'),
+    archived = node('button', 'Browse archive records'),
+    next = node('button', 'Next page'),
+    cutoffLabel = node('label', 'Completed before (UTC date; unknown times excluded)'),
+    cutoff = node('input'),
+    list = node('ul'),
+    selection = node('p', 'No operation selected.'),
+    referenceLabel = node('label', 'Retirement evidence reference'),
+    reference = node('input'),
+    retire = node('button', 'Retire selected operation'),
+    read = node('button', 'View archive marker'),
+    details = node('div');
+  for (const button of [candidates, archived, next, retire, read]) button.type = 'button';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  reference.maxLength = 256;
+  cutoff.type = 'date';
+  cutoff.min = '1970-01-01';
+  cutoffLabel.append(cutoff);
+  referenceLabel.append(reference);
+  section.append(heading, status, cutoffLabel, candidates, archived, next, list, selection, referenceLabel, retire, read, details);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    cursor,
+    mode,
+    selected,
+    candidateCutoff;
+  const cutoffValue = () => {
+    if (!cutoff.value) return undefined;
+    const value = Date.parse(cutoff.value + 'T00:00:00.000Z');
+    return validTime(value) && new Date(value).toISOString().slice(0, 10) === cutoff.value ? value : null;
+  };
+  const displayTime = value => (value <= 8640000000000000 ? new Date(value).toISOString() : String(value) + ' ms');
+  const sync = () => {
+    cutoff.disabled = busy;
+    candidates.disabled = busy || cutoffValue() === null;
+    archived.disabled = busy;
+    next.disabled = busy || !cursor;
+    reference.disabled = busy || selected?.kind !== 'candidates';
+    retire.disabled = busy || selected?.kind !== 'candidates' || !validId(reference.value);
+    read.disabled = busy || selected?.kind !== 'archived';
+    for (const button of list.querySelectorAll('button')) button.disabled = busy;
+  };
+  const clear = () => {
+    selected = undefined;
+    reference.value = '';
+    selection.textContent = 'No operation selected.';
+    details.replaceChildren();
+  };
+  const run = async task => {
+    if (disposed || busy) return;
+    busy = true;
+    const request = ++generation;
+    sync();
+    try {
+      await task(() => !disposed && generation === request);
+    } catch {
+      if (!disposed && generation === request) {
+        clear();
+        cursor = undefined;
+        list.replaceChildren();
+        status.textContent = 'Unable to complete the request. Refresh before trying again.';
+      }
+    } finally {
+      if (!disposed && generation === request) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const page = async (kind, after, active, filter) => {
+    const result = await invokeCapability(kind === 'candidates' ? candidateListOperation : archivedListOperation, {
+      ...(after ? { after } : {}),
+      ...(kind === 'candidates' && filter !== undefined ? { completedBefore: filter } : {}),
+      limit: 20
+    });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 20 || (result.nextAfter !== undefined && !validId(result.nextAfter))) throw Error('Invalid archive listing');
+    for (const item of result.items)
+      if (
+        !item ||
+        !validId(item.id) ||
+        !['succeeded', 'discarded'].includes(item.status) ||
+        (kind === 'archived' ? !validTime(item.recordedAt) : item.completedAt !== undefined && !validTime(item.completedAt))
+      )
+        throw Error('Invalid archive listing');
+    mode = kind;
+    candidateCutoff = filter;
+    cursor = result.nextAfter;
+    clear();
+    list.replaceChildren();
+    for (const item of result.items) {
+      const row = node('li'),
+        when = kind === 'archived' ? 'retired at ' + displayTime(item.recordedAt) : item.completedAt === undefined ? 'completion time unknown' : 'completed at ' + displayTime(item.completedAt),
+        button = node('button', item.id + ' — ' + item.status + ' — ' + when);
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        if (busy || disposed) return;
+        selected = { id: item.id, status: item.status, kind };
+        reference.value = '';
+        selection.textContent = 'Selected ' + item.id + ' — ' + item.status + '.';
+        details.replaceChildren();
+        sync();
+      });
+      row.append(button);
+      list.append(row);
+    }
+    status.textContent = result.items.length ? 'Select an operation to review.' : 'No operations on this page.';
+  };
+  const browseCandidates = () => {
+    const filter = cutoffValue();
+    if (filter === null) {
+      status.textContent = 'Choose a date on or after 1970-01-01.';
+      return Promise.resolve();
+    }
+    return run(active => page('candidates', undefined, active, filter));
+  };
+  candidates.addEventListener('click', () => {
+    void browseCandidates();
+  });
+  archived.addEventListener('click', () => {
+    void run(active => page('archived', undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor && mode) void run(active => page(mode, cursor, active, candidateCutoff));
+  });
+  cutoff.addEventListener('input', () => {
+    cursor = undefined;
+    mode = undefined;
+    candidateCutoff = undefined;
+    clear();
+    list.replaceChildren();
+    status.textContent = cutoffValue() === null ? 'Choose a date on or after 1970-01-01.' : 'Browse completed operations to apply the date filter.';
+    sync();
+  });
+  reference.addEventListener('input', sync);
+  retire.addEventListener('click', () => {
+    if (selected?.kind !== 'candidates' || !validId(reference.value)) return;
+    const chosen = { ...selected },
+      proof = reference.value;
+    void run(async active => {
+      const result = await invokeCapability(archiveOperation, { id: chosen.id, reference: proof });
+      if (!active()) return;
+      if (!result || result.archived !== true) throw Error('Invalid archive result');
+      selected = { ...chosen, kind: 'archived' };
+      reference.value = '';
+      selection.textContent = 'Selected ' + chosen.id + ' — archived.';
+      cursor = undefined;
+      list.replaceChildren();
+      details.replaceChildren();
+      status.textContent = 'Operation retired. Its request identity remains protected.';
+    });
+  });
+  read.addEventListener('click', () => {
+    if (selected?.kind !== 'archived') return;
+    const chosen = { ...selected };
+    void run(async active => {
+      const result = await invokeCapability(readOperation, { id: chosen.id });
+      if (!active()) return;
+      if (
+        !result ||
+        result.id !== chosen.id ||
+        ![result.operationId, result.requestKey, result.idempotencyKey, result.operatorId, result.reference].every(validId) ||
+        !['succeeded', 'discarded'].includes(result.status) ||
+        !validTime(result.recordedAt)
+      )
+        throw Error('Invalid archive marker');
+      details.replaceChildren();
+      const heading = node('h3', 'Archive marker'),
+        items = node('ul');
+      for (const [label, value] of [
+        ['Operation', result.operationId],
+        ['Status', result.status],
+        ['Request key', result.requestKey],
+        ['Idempotency key', result.idempotencyKey],
+        ['Operator', result.operatorId],
+        ['Reference', result.reference],
+        ['Retired at', displayTime(result.recordedAt)]
+      ])
+        items.append(node('li', label + ': ' + value));
+      details.append(heading, items);
+      status.textContent = 'Archive marker loaded.';
+    });
+  });
+  sync();
+  return {
+    refresh() {
+      return browseCandidates();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 // Optional administrative view for one host-fixed run. Recovery never proves external work stopped.
-export function mountAgentLeaseRecovery(root,{discoveryOperation,recoveryOperation,historyOperation,runId}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),integer=(value,min)=>Number.isSafeInteger(value)&&value>=min,cursorValid=value=>typeof value==='string'&&value.length>0&&value.length<=1000&&/^[A-Za-z0-9_-]+$/.test(value);
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![discoveryOperation,recoveryOperation,historyOperation].every(operation)||!id(runId))throw Error('Invalid agent lease recovery view');
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Lease recovery: '+runId),warning=node('p','Marking a lease uncertain does not prove the worker stopped or make retry safe.'),status=node('p','Browse expired leases before taking action.'),selection=node('p','No expired lease selected.'),browse=node('button','Browse expired leases'),next=node('button','Next lease page'),referenceLabel=node('label','Evidence reference'),reference=node('input'),recover=node('button','Mark lease uncertain'),history=node('button','View recovery history'),historyNext=node('button','Next history page'),historyList=node('ul'),acknowledge=node('button','I reviewed the lease and history');
- for(const button of [browse,next,recover,history,historyNext,acknowledge])button.type='button';reference.maxLength=128;referenceLabel.append(reference);status.setAttribute('role','status');status.setAttribute('aria-live','polite');section.append(heading,warning,status,browse,next,selection,referenceLabel,recover,history,historyNext,historyList,acknowledge);root.replaceChildren(section);
- reference.placeholder='e.g. incident-123';
- const displayTime=value=>value<=8640000000000000?new Date(value).toISOString():String(value)+' ms';
- let disposed=false,busy=false,generation=0,selected,leaseCursor,historyCursor,needsReview=false,leaseReviewed=false,historyReviewed=false;
- const clear=()=>{selected=undefined;reference.value='';selection.textContent='No expired lease selected.';};
- const sync=()=>{browse.disabled=busy;next.disabled=busy||!leaseCursor;reference.disabled=busy||!selected||selected.revision>=Number.MAX_SAFE_INTEGER||needsReview;recover.disabled=busy||needsReview||!selected||selected.revision>=Number.MAX_SAFE_INTEGER||!id(reference.value);history.disabled=busy;historyNext.disabled=busy||historyCursor===undefined;acknowledge.hidden=!needsReview;acknowledge.disabled=busy||!needsReview||!leaseReviewed||!historyReviewed;};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const token=++generation,active=()=>!disposed&&token===generation;sync();try{await task(active);}catch{if(active()){clear();leaseCursor=undefined;historyCursor=undefined;historyList.replaceChildren();if(mutation){needsReview=true;leaseReviewed=false;historyReviewed=false;status.textContent='Recovery outcome unknown. Browse leases and review all history before continuing.';}else{leaseReviewed=false;historyReviewed=false;status.textContent='Unable to load information. Refresh before continuing.';}}}finally{if(active()){busy=false;sync();}}};
- const leases=async(after,active)=>{clear();const result=await invokeCapability(discoveryOperation,{query:after?{cursor:after}:{}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextCursor!==undefined&&!cursorValid(result.nextCursor)))throw Error('Invalid expired lease listing');for(const item of result.items)if(!item||!id(item.runId)||!integer(item.revision,1)||!integer(item.leaseUntil,0)||!['running','pause_requested','cancel_requested'].includes(item.status))throw Error('Invalid expired lease listing');if(new Set(result.items.map(item=>item.runId)).size!==result.items.length||(after!==undefined&&result.nextCursor===after))throw Error('Invalid expired lease listing');const match=result.items.find(item=>item.runId===runId);leaseCursor=result.nextCursor;if(match){selected={runId,revision:match.revision,status:match.status,leaseUntil:match.leaseUntil};selection.textContent='Expired '+match.status+' lease, revision '+match.revision+', expiry '+displayTime(match.leaseUntil)+'.';}if(needsReview)leaseReviewed=!!match||leaseCursor===undefined;status.textContent=match?(match.revision>=Number.MAX_SAFE_INTEGER?'Revision limit reached; this lease cannot be recovered here.':'Review the expired lease before recovery.'):leaseCursor?'Target not on this page. Continue browsing.':'No expired lease for this run was found.';};
- const evidence=async(after,active)=>{const result=await invokeCapability(historyOperation,{query:after===undefined?{}:{after}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextAfter!==undefined&&!integer(result.nextAfter,1)))throw Error('Invalid lease recovery history');for(const item of result.items)if(!item||!integer(item.id,1)||!id(item.runId)||!integer(item.revision,2)||!['running','pause_requested','cancel_requested'].includes(item.previousStatus)||!integer(item.leaseUntil,0)||!integer(item.observedAt,0)||item.observedAt<item.leaseUntil||!id(item.principalId)||!id(item.reference))throw Error('Invalid lease recovery history');let previous=after??0;for(const item of result.items){if(item.id<=previous)throw Error('Invalid lease recovery history');previous=item.id;}if(result.nextAfter!==undefined&&(result.nextAfter<previous||result.nextAfter<=(after??0)))throw Error('Invalid lease recovery history');historyCursor=result.nextAfter;if(needsReview)historyReviewed=historyCursor===undefined;historyList.replaceChildren();for(const item of result.items)if(item.runId===runId)historyList.append(node('li','Revision '+item.revision+' — '+item.principalId+' — '+item.reference+' — '+displayTime(item.observedAt)));status.textContent=historyCursor===undefined?'History page loaded.':'History page loaded. Continue to the last page for a complete review.';};
- browse.addEventListener('click',()=>{leaseCursor=undefined;if(needsReview)leaseReviewed=false;void run(active=>leases(undefined,active));});next.addEventListener('click',()=>{if(leaseCursor)void run(active=>leases(leaseCursor,active));});history.addEventListener('click',()=>{historyCursor=undefined;historyList.replaceChildren();if(needsReview)historyReviewed=false;void run(active=>evidence(undefined,active));});historyNext.addEventListener('click',()=>{if(historyCursor!==undefined)void run(active=>evidence(historyCursor,active));});reference.addEventListener('input',sync);
- recover.addEventListener('click',()=>{if(needsReview||!selected||selected.revision>=Number.MAX_SAFE_INTEGER||!id(reference.value))return;const revision=selected.revision,proof=reference.value;void run(async active=>{const result=await invokeCapability(recoveryOperation,{revision,reference:proof});if(!active())return;if(!result||result.runId!==runId||result.status!=='uncertain'||result.revisedTo!==revision+1)throw Error('Invalid lease recovery result');clear();leaseCursor=undefined;historyCursor=undefined;historyList.replaceChildren();status.textContent='Lease marked uncertain. Verify external effects before reconciliation.';},true);});acknowledge.addEventListener('click',()=>{if(busy||!needsReview||!leaseReviewed||!historyReviewed)return;needsReview=false;leaseReviewed=false;historyReviewed=false;status.textContent='Review acknowledged. Verify the worker and external effects before further action.';sync();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentLeaseRecovery(root, { discoveryOperation, recoveryOperation, historyOperation, runId } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),
+    integer = (value, min) => Number.isSafeInteger(value) && value >= min,
+    cursorValid = value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && /^[A-Za-z0-9_-]+$/.test(value);
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![discoveryOperation, recoveryOperation, historyOperation].every(operation) || !id(runId))
+    throw Error('Invalid agent lease recovery view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Lease recovery: ' + runId),
+    warning = node('p', 'Marking a lease uncertain does not prove the worker stopped or make retry safe.'),
+    status = node('p', 'Browse expired leases before taking action.'),
+    selection = node('p', 'No expired lease selected.'),
+    browse = node('button', 'Browse expired leases'),
+    next = node('button', 'Next lease page'),
+    referenceLabel = node('label', 'Evidence reference'),
+    reference = node('input'),
+    recover = node('button', 'Mark lease uncertain'),
+    history = node('button', 'View recovery history'),
+    historyNext = node('button', 'Next history page'),
+    historyList = node('ul'),
+    acknowledge = node('button', 'I reviewed the lease and history');
+  for (const button of [browse, next, recover, history, historyNext, acknowledge]) button.type = 'button';
+  reference.maxLength = 128;
+  referenceLabel.append(reference);
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  section.append(heading, warning, status, browse, next, selection, referenceLabel, recover, history, historyNext, historyList, acknowledge);
+  root.replaceChildren(section);
+  reference.placeholder = 'e.g. incident-123';
+  const displayTime = value => (value <= 8640000000000000 ? new Date(value).toISOString() : String(value) + ' ms');
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    selected,
+    leaseCursor,
+    historyCursor,
+    needsReview = false,
+    leaseReviewed = false,
+    historyReviewed = false;
+  const clear = () => {
+    selected = undefined;
+    reference.value = '';
+    selection.textContent = 'No expired lease selected.';
+  };
+  const sync = () => {
+    browse.disabled = busy;
+    next.disabled = busy || !leaseCursor;
+    reference.disabled = busy || !selected || selected.revision >= Number.MAX_SAFE_INTEGER || needsReview;
+    recover.disabled = busy || needsReview || !selected || selected.revision >= Number.MAX_SAFE_INTEGER || !id(reference.value);
+    history.disabled = busy;
+    historyNext.disabled = busy || historyCursor === undefined;
+    acknowledge.hidden = !needsReview;
+    acknowledge.disabled = busy || !needsReview || !leaseReviewed || !historyReviewed;
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && token === generation;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        clear();
+        leaseCursor = undefined;
+        historyCursor = undefined;
+        historyList.replaceChildren();
+        if (mutation) {
+          needsReview = true;
+          leaseReviewed = false;
+          historyReviewed = false;
+          status.textContent = 'Recovery outcome unknown. Browse leases and review all history before continuing.';
+        } else {
+          leaseReviewed = false;
+          historyReviewed = false;
+          status.textContent = 'Unable to load information. Refresh before continuing.';
+        }
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const leases = async (after, active) => {
+    clear();
+    const result = await invokeCapability(discoveryOperation, { query: after ? { cursor: after } : {} });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextCursor !== undefined && !cursorValid(result.nextCursor))) throw Error('Invalid expired lease listing');
+    for (const item of result.items)
+      if (!item || !id(item.runId) || !integer(item.revision, 1) || !integer(item.leaseUntil, 0) || !['running', 'pause_requested', 'cancel_requested'].includes(item.status))
+        throw Error('Invalid expired lease listing');
+    if (new Set(result.items.map(item => item.runId)).size !== result.items.length || (after !== undefined && result.nextCursor === after)) throw Error('Invalid expired lease listing');
+    const match = result.items.find(item => item.runId === runId);
+    leaseCursor = result.nextCursor;
+    if (match) {
+      selected = { runId, revision: match.revision, status: match.status, leaseUntil: match.leaseUntil };
+      selection.textContent = 'Expired ' + match.status + ' lease, revision ' + match.revision + ', expiry ' + displayTime(match.leaseUntil) + '.';
+    }
+    if (needsReview) leaseReviewed = !!match || leaseCursor === undefined;
+    status.textContent = match
+      ? match.revision >= Number.MAX_SAFE_INTEGER
+        ? 'Revision limit reached; this lease cannot be recovered here.'
+        : 'Review the expired lease before recovery.'
+      : leaseCursor
+        ? 'Target not on this page. Continue browsing.'
+        : 'No expired lease for this run was found.';
+  };
+  const evidence = async (after, active) => {
+    const result = await invokeCapability(historyOperation, { query: after === undefined ? {} : { after } });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextAfter !== undefined && !integer(result.nextAfter, 1))) throw Error('Invalid lease recovery history');
+    for (const item of result.items)
+      if (
+        !item ||
+        !integer(item.id, 1) ||
+        !id(item.runId) ||
+        !integer(item.revision, 2) ||
+        !['running', 'pause_requested', 'cancel_requested'].includes(item.previousStatus) ||
+        !integer(item.leaseUntil, 0) ||
+        !integer(item.observedAt, 0) ||
+        item.observedAt < item.leaseUntil ||
+        !id(item.principalId) ||
+        !id(item.reference)
+      )
+        throw Error('Invalid lease recovery history');
+    let previous = after ?? 0;
+    for (const item of result.items) {
+      if (item.id <= previous) throw Error('Invalid lease recovery history');
+      previous = item.id;
+    }
+    if (result.nextAfter !== undefined && (result.nextAfter < previous || result.nextAfter <= (after ?? 0))) throw Error('Invalid lease recovery history');
+    historyCursor = result.nextAfter;
+    if (needsReview) historyReviewed = historyCursor === undefined;
+    historyList.replaceChildren();
+    for (const item of result.items)
+      if (item.runId === runId) historyList.append(node('li', 'Revision ' + item.revision + ' — ' + item.principalId + ' — ' + item.reference + ' — ' + displayTime(item.observedAt)));
+    status.textContent = historyCursor === undefined ? 'History page loaded.' : 'History page loaded. Continue to the last page for a complete review.';
+  };
+  browse.addEventListener('click', () => {
+    leaseCursor = undefined;
+    if (needsReview) leaseReviewed = false;
+    void run(active => leases(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (leaseCursor) void run(active => leases(leaseCursor, active));
+  });
+  history.addEventListener('click', () => {
+    historyCursor = undefined;
+    historyList.replaceChildren();
+    if (needsReview) historyReviewed = false;
+    void run(active => evidence(undefined, active));
+  });
+  historyNext.addEventListener('click', () => {
+    if (historyCursor !== undefined) void run(active => evidence(historyCursor, active));
+  });
+  reference.addEventListener('input', sync);
+  recover.addEventListener('click', () => {
+    if (needsReview || !selected || selected.revision >= Number.MAX_SAFE_INTEGER || !id(reference.value)) return;
+    const revision = selected.revision,
+      proof = reference.value;
+    void run(async active => {
+      const result = await invokeCapability(recoveryOperation, { revision, reference: proof });
+      if (!active()) return;
+      if (!result || result.runId !== runId || result.status !== 'uncertain' || result.revisedTo !== revision + 1) throw Error('Invalid lease recovery result');
+      clear();
+      leaseCursor = undefined;
+      historyCursor = undefined;
+      historyList.replaceChildren();
+      status.textContent = 'Lease marked uncertain. Verify external effects before reconciliation.';
+    }, true);
+  });
+  acknowledge.addEventListener('click', () => {
+    if (busy || !needsReview || !leaseReviewed || !historyReviewed) return;
+    needsReview = false;
+    leaseReviewed = false;
+    historyReviewed = false;
+    status.textContent = 'Review acknowledged. Verify the worker and external effects before further action.';
+    sync();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 /** Optional fixed-run controls; the host must bind all operations to the same scope and run. */
-export function mountAgentRunControl(root,{inspectionOperation,controlOperation,historyOperation,runId}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),integer=(value,min)=>Number.isSafeInteger(value)&&value>=min,statuses=['queued','running','pause_requested','cancel_requested','paused','uncertain','succeeded','failed','cancelled'];
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![inspectionOperation,controlOperation,historyOperation].every(operation)||!id(runId))throw Error('Invalid agent run control view');
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Run controls: '+runId),warning=node('p','Pause or cancel requests do not guarantee that an active worker has stopped.'),message=node('p','Inspect the run before taking action.'),details=node('p','No run selected.'),inspect=node('button','Inspect run'),pause=node('button','Pause run'),resume=node('button','Resume run'),cancel=node('button','Cancel run'),archive=node('button','Archive run'),history=node('button','View control history'),historyNext=node('button','Next history page'),historyList=node('ul'),acknowledge=node('button','I reviewed the run and history');
- for(const button of [inspect,pause,resume,cancel,archive,history,historyNext,acknowledge])button.type='button';message.setAttribute('role','status');message.setAttribute('aria-live','polite');section.append(heading,warning,message,inspect,details,pause,resume,cancel,archive,history,historyNext,historyList,acknowledge);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,selected,historyCursor,needsReview=false,runReviewed=false,historyReviewed=false;
- const clear=()=>{selected=undefined;details.textContent='No run selected.';};
- const sync=()=>{inspect.disabled=busy;history.disabled=busy;historyNext.disabled=busy||historyCursor===undefined;const state=selected?.status,disabled=busy||needsReview||!selected||selected.archived||selected.revision>=Number.MAX_SAFE_INTEGER;pause.disabled=disabled||!['queued','running'].includes(state);resume.disabled=disabled||state!=='paused';cancel.disabled=disabled||!['queued','paused','running','pause_requested'].includes(state);archive.disabled=disabled||!['succeeded','failed','cancelled'].includes(state);acknowledge.hidden=!needsReview;acknowledge.disabled=busy||!needsReview||!runReviewed||!historyReviewed;};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const token=++generation,active=()=>!disposed&&token===generation;sync();try{await task(active);}catch{if(active()){clear();historyCursor=undefined;historyList.replaceChildren();if(mutation){needsReview=true;runReviewed=false;historyReviewed=false;message.textContent='Control outcome unknown. Inspect the run and review all history before continuing.';}else{runReviewed=false;historyReviewed=false;message.textContent='Unable to load information. Refresh before continuing.';}}}finally{if(active()){busy=false;sync();}}};
- const readRun=async active=>{clear();const result=await invokeCapability(inspectionOperation,{query:{}});if(!active())return;if(!result||result.runId!==runId||!integer(result.revision,1)||!statuses.includes(result.status)||!integer(result.attempts,0)||!integer(result.maxAttempts,1)||result.attempts>result.maxAttempts||!integer(result.deadline,0)||typeof result.archived!=='boolean')throw Error('Invalid run inspection');selected={runId,revision:result.revision,status:result.status,archived:result.archived};details.textContent='Status: '+result.status+', revision '+result.revision+', attempts '+result.attempts+'/'+result.maxAttempts+(result.archived?', archived.':'.');if(needsReview)runReviewed=true;message.textContent=result.revision>=Number.MAX_SAFE_INTEGER?'Revision limit reached; this run cannot be controlled here.':'Run inspected. Review its state before acting.';};
- const readHistory=async(after,active)=>{const result=await invokeCapability(historyOperation,{query:after===undefined?{}:{after}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextAfter!==undefined&&!integer(result.nextAfter,1)))throw Error('Invalid control history');let previous=after??0;for(const item of result.items){if(!item||!integer(item.id,1)||item.id<=previous||!id(item.runId)||!integer(item.revision,2)||!['pause','resume','cancel','archive'].includes(item.action)||!statuses.includes(item.previousStatus)||!statuses.includes(item.status)||!id(item.principalId)||!integer(item.observedAt,0))throw Error('Invalid control history');previous=item.id;}if(result.nextAfter!==undefined&&(result.nextAfter<previous||result.nextAfter<=(after??0)))throw Error('Invalid control history');historyCursor=result.nextAfter;if(needsReview)historyReviewed=historyCursor===undefined;historyList.replaceChildren();for(const item of result.items)if(item.runId===runId)historyList.append(node('li','Revision '+item.revision+' — '+item.action+' — '+item.previousStatus+' to '+item.status+' — '+item.principalId+' — '+(item.observedAt<=8640000000000000?new Date(item.observedAt).toISOString():String(item.observedAt)+' ms')));message.textContent=historyCursor===undefined?'History page loaded.':'History page loaded. Continue to the last page for a complete review.';};
- inspect.addEventListener('click',()=>{if(needsReview)runReviewed=false;void run(readRun);});history.addEventListener('click',()=>{historyCursor=undefined;historyList.replaceChildren();if(needsReview)historyReviewed=false;void run(active=>readHistory(undefined,active));});historyNext.addEventListener('click',()=>{if(historyCursor!==undefined)void run(active=>readHistory(historyCursor,active));});
- const control=action=>{if(needsReview||!selected||selected.archived||selected.revision>=Number.MAX_SAFE_INTEGER)return;const revision=selected.revision;void run(async active=>{const result=await invokeCapability(controlOperation,{action,revision});if(!active())return;const allowed=action==='pause'?['paused','pause_requested']:action==='resume'?['queued']:action==='archive'?[selected.status]:['cancelled','cancel_requested'];if(!result||result.runId!==runId||result.revision!==revision+1||!allowed.includes(result.status)||result.archived!==(action==='archive'))throw Error('Invalid control result');clear();historyCursor=undefined;historyList.replaceChildren();message.textContent='Run '+action+' request recorded. Inspect the run to see its current state.';},true);};pause.addEventListener('click',()=>control('pause'));resume.addEventListener('click',()=>control('resume'));cancel.addEventListener('click',()=>control('cancel'));archive.addEventListener('click',()=>control('archive'));acknowledge.addEventListener('click',()=>{if(busy||!needsReview||!runReviewed||!historyReviewed)return;needsReview=false;runReviewed=false;historyReviewed=false;message.textContent='Review acknowledged. Inspect the run again before taking action.';clear();sync();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentRunControl(root, { inspectionOperation, controlOperation, historyOperation, runId } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),
+    integer = (value, min) => Number.isSafeInteger(value) && value >= min,
+    statuses = ['queued', 'running', 'pause_requested', 'cancel_requested', 'paused', 'uncertain', 'succeeded', 'failed', 'cancelled'];
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![inspectionOperation, controlOperation, historyOperation].every(operation) || !id(runId))
+    throw Error('Invalid agent run control view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Run controls: ' + runId),
+    warning = node('p', 'Pause or cancel requests do not guarantee that an active worker has stopped.'),
+    message = node('p', 'Inspect the run before taking action.'),
+    details = node('p', 'No run selected.'),
+    inspect = node('button', 'Inspect run'),
+    pause = node('button', 'Pause run'),
+    resume = node('button', 'Resume run'),
+    cancel = node('button', 'Cancel run'),
+    archive = node('button', 'Archive run'),
+    history = node('button', 'View control history'),
+    historyNext = node('button', 'Next history page'),
+    historyList = node('ul'),
+    acknowledge = node('button', 'I reviewed the run and history');
+  for (const button of [inspect, pause, resume, cancel, archive, history, historyNext, acknowledge]) button.type = 'button';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  section.append(heading, warning, message, inspect, details, pause, resume, cancel, archive, history, historyNext, historyList, acknowledge);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    selected,
+    historyCursor,
+    needsReview = false,
+    runReviewed = false,
+    historyReviewed = false;
+  const clear = () => {
+    selected = undefined;
+    details.textContent = 'No run selected.';
+  };
+  const sync = () => {
+    inspect.disabled = busy;
+    history.disabled = busy;
+    historyNext.disabled = busy || historyCursor === undefined;
+    const state = selected?.status,
+      disabled = busy || needsReview || !selected || selected.archived || selected.revision >= Number.MAX_SAFE_INTEGER;
+    pause.disabled = disabled || !['queued', 'running'].includes(state);
+    resume.disabled = disabled || state !== 'paused';
+    cancel.disabled = disabled || !['queued', 'paused', 'running', 'pause_requested'].includes(state);
+    archive.disabled = disabled || !['succeeded', 'failed', 'cancelled'].includes(state);
+    acknowledge.hidden = !needsReview;
+    acknowledge.disabled = busy || !needsReview || !runReviewed || !historyReviewed;
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && token === generation;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        clear();
+        historyCursor = undefined;
+        historyList.replaceChildren();
+        if (mutation) {
+          needsReview = true;
+          runReviewed = false;
+          historyReviewed = false;
+          message.textContent = 'Control outcome unknown. Inspect the run and review all history before continuing.';
+        } else {
+          runReviewed = false;
+          historyReviewed = false;
+          message.textContent = 'Unable to load information. Refresh before continuing.';
+        }
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const readRun = async active => {
+    clear();
+    const result = await invokeCapability(inspectionOperation, { query: {} });
+    if (!active()) return;
+    if (
+      !result ||
+      result.runId !== runId ||
+      !integer(result.revision, 1) ||
+      !statuses.includes(result.status) ||
+      !integer(result.attempts, 0) ||
+      !integer(result.maxAttempts, 1) ||
+      result.attempts > result.maxAttempts ||
+      !integer(result.deadline, 0) ||
+      typeof result.archived !== 'boolean'
+    )
+      throw Error('Invalid run inspection');
+    selected = { runId, revision: result.revision, status: result.status, archived: result.archived };
+    details.textContent = 'Status: ' + result.status + ', revision ' + result.revision + ', attempts ' + result.attempts + '/' + result.maxAttempts + (result.archived ? ', archived.' : '.');
+    if (needsReview) runReviewed = true;
+    message.textContent = result.revision >= Number.MAX_SAFE_INTEGER ? 'Revision limit reached; this run cannot be controlled here.' : 'Run inspected. Review its state before acting.';
+  };
+  const readHistory = async (after, active) => {
+    const result = await invokeCapability(historyOperation, { query: after === undefined ? {} : { after } });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextAfter !== undefined && !integer(result.nextAfter, 1))) throw Error('Invalid control history');
+    let previous = after ?? 0;
+    for (const item of result.items) {
+      if (
+        !item ||
+        !integer(item.id, 1) ||
+        item.id <= previous ||
+        !id(item.runId) ||
+        !integer(item.revision, 2) ||
+        !['pause', 'resume', 'cancel', 'archive'].includes(item.action) ||
+        !statuses.includes(item.previousStatus) ||
+        !statuses.includes(item.status) ||
+        !id(item.principalId) ||
+        !integer(item.observedAt, 0)
+      )
+        throw Error('Invalid control history');
+      previous = item.id;
+    }
+    if (result.nextAfter !== undefined && (result.nextAfter < previous || result.nextAfter <= (after ?? 0))) throw Error('Invalid control history');
+    historyCursor = result.nextAfter;
+    if (needsReview) historyReviewed = historyCursor === undefined;
+    historyList.replaceChildren();
+    for (const item of result.items)
+      if (item.runId === runId)
+        historyList.append(
+          node(
+            'li',
+            'Revision ' +
+              item.revision +
+              ' — ' +
+              item.action +
+              ' — ' +
+              item.previousStatus +
+              ' to ' +
+              item.status +
+              ' — ' +
+              item.principalId +
+              ' — ' +
+              (item.observedAt <= 8640000000000000 ? new Date(item.observedAt).toISOString() : String(item.observedAt) + ' ms')
+          )
+        );
+    message.textContent = historyCursor === undefined ? 'History page loaded.' : 'History page loaded. Continue to the last page for a complete review.';
+  };
+  inspect.addEventListener('click', () => {
+    if (needsReview) runReviewed = false;
+    void run(readRun);
+  });
+  history.addEventListener('click', () => {
+    historyCursor = undefined;
+    historyList.replaceChildren();
+    if (needsReview) historyReviewed = false;
+    void run(active => readHistory(undefined, active));
+  });
+  historyNext.addEventListener('click', () => {
+    if (historyCursor !== undefined) void run(active => readHistory(historyCursor, active));
+  });
+  const control = action => {
+    if (needsReview || !selected || selected.archived || selected.revision >= Number.MAX_SAFE_INTEGER) return;
+    const revision = selected.revision;
+    void run(async active => {
+      const result = await invokeCapability(controlOperation, { action, revision });
+      if (!active()) return;
+      const allowed = action === 'pause' ? ['paused', 'pause_requested'] : action === 'resume' ? ['queued'] : action === 'archive' ? [selected.status] : ['cancelled', 'cancel_requested'];
+      if (!result || result.runId !== runId || result.revision !== revision + 1 || !allowed.includes(result.status) || result.archived !== (action === 'archive'))
+        throw Error('Invalid control result');
+      clear();
+      historyCursor = undefined;
+      historyList.replaceChildren();
+      message.textContent = 'Run ' + action + ' request recorded. Inspect the run to see its current state.';
+    }, true);
+  };
+  pause.addEventListener('click', () => control('pause'));
+  resume.addEventListener('click', () => control('resume'));
+  cancel.addEventListener('click', () => control('cancel'));
+  archive.addEventListener('click', () => control('archive'));
+  acknowledge.addEventListener('click', () => {
+    if (busy || !needsReview || !runReviewed || !historyReviewed) return;
+    needsReview = false;
+    runReviewed = false;
+    historyReviewed = false;
+    message.textContent = 'Review acknowledged. Inspect the run again before taking action.';
+    clear();
+    sync();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 /** Optional manual start panel; callers must retain request IDs across reloads. */
-export function mountAgentManualStart(root,{startOperation,statusOperation,agentId,pendingStorage,pendingKey}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),version=value=>/^[1-9][0-9]*$/.test(value)&&Number.isSafeInteger(Number(value));
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||!operation(startOperation)||(statusOperation===undefined)!==(agentId===undefined)||(statusOperation!==undefined&&(!operation(statusOperation)||!id(agentId)))||(pendingStorage===undefined)!==(pendingKey===undefined)||(pendingStorage!==undefined&&(!pendingStorage||typeof pendingStorage.getItem!=='function'||typeof pendingStorage.setItem!=='function'||typeof pendingStorage.removeItem!=='function'||!id(pendingKey))))throw Error('Invalid manual start view');
- const decode=raw=>{const saved=JSON.parse(raw);if(!saved||typeof saved!=='object'||Array.isArray(saved)||Object.keys(saved).length!==4||saved.version!==1||saved.operation!==startOperation||!id(saved.requestId)||!Number.isSafeInteger(saved.definitionVersion)||saved.definitionVersion<1)throw Error('Invalid saved manual start request');return {requestId:saved.requestId,definitionVersion:saved.definitionVersion};};
- const matches=candidate=>{const raw=pendingStorage.getItem(pendingKey);if(typeof raw!=='string')return false;const saved=decode(raw);return saved.requestId===candidate.requestId&&saved.definitionVersion===candidate.definitionVersion;};
- let restored;if(pendingStorage!==undefined){let raw;try{raw=pendingStorage.getItem(pendingKey);}catch{throw Error('Manual start storage unavailable');}if(raw!==null){try{if(typeof raw!=='string')throw Error();restored=decode(raw);}catch{throw Error('Invalid saved manual start request');}}}
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Start an agent run'),guidance=node('p','Save the request ID and definition version before starting. Use the same values if the result is unknown or this page is reopened.'),status=node('p','Enter a request ID and the current definition version.'),requestLabel=node('label','Request ID'),request=node('input'),versionLabel=node('label','Definition version'),definitionVersion=node('input'),check=statusOperation===undefined?undefined:node('button','Check agent status'),start=node('button','Start run'),reset=node('button','Start another request');
- request.maxLength=128;request.autocomplete='off';requestLabel.append(request);definitionVersion.inputMode='numeric';definitionVersion.autocomplete='off';versionLabel.append(definitionVersion);for(const button of [start,reset,...(check?[check]:[])])button.type='button';status.setAttribute('role','status');status.setAttribute('aria-live','polite');section.append(heading,guidance,status,requestLabel,versionLabel,...(check?[check]:[]),start,reset);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,snapshot=restored,completed=false;if(restored){request.value=restored.requestId;definitionVersion.value=String(restored.definitionVersion);status.textContent='Saved request restored. Retry the same request or check its outcome.';}
- const sync=()=>{request.disabled=busy||!!snapshot;definitionVersion.disabled=busy||!!snapshot;if(check)check.disabled=busy||!!snapshot;start.disabled=busy||completed||(!snapshot&&(!id(request.value)||!version(definitionVersion.value)));start.textContent=snapshot?'Retry same request':'Start run';reset.disabled=busy||!completed;};
- request.addEventListener('input',sync);definitionVersion.addEventListener('input',sync);
- check?.addEventListener('click',()=>{if(disposed||busy||snapshot)return;busy=true;const token=++generation,active=()=>!disposed&&token===generation;sync();void (async()=>{try{const result=await invokeCapability(statusOperation,{query:{}});if(!active())return;if(!result||result.agentId!==agentId||!Number.isSafeInteger(result.version)||result.version<1||typeof result.enabled!=='boolean')throw Error('Invalid agent status');if(result.enabled){definitionVersion.value=String(result.version);status.textContent='Agent enabled at definition version '+result.version+'.';}else{definitionVersion.value='';status.textContent='Agent suspended at definition version '+result.version+'.';}}catch{if(active()){definitionVersion.value='';status.textContent='Unable to check agent status.';}}finally{if(active()){busy=false;sync();}}})();});
- start.addEventListener('click',()=>{if(disposed||busy||completed)return;if(!snapshot){if(!id(request.value)||!version(definitionVersion.value))return;const candidate={requestId:request.value,definitionVersion:Number(definitionVersion.value)};if(pendingStorage!==undefined)try{if(pendingStorage.getItem(pendingKey)!==null)throw Error();const result=pendingStorage.setItem(pendingKey,JSON.stringify({version:1,operation:startOperation,...candidate}));if(result&&typeof result.then==='function')throw Error();if(!matches(candidate))throw Error();}catch{status.textContent='Unable to save the request. Nothing was sent.';return;}snapshot=candidate;}if(pendingStorage!==undefined)try{if(!matches(snapshot))throw Error();}catch{status.textContent='Saved request changed or is unavailable. Nothing was sent; check the saved request before continuing.';return;}busy=true;const token=++generation,active=()=>!disposed&&token===generation;sync();void (async()=>{try{const result=await invokeCapability(startOperation,{...snapshot});if(!active())return;if(!result||!id(result.runId)||typeof result.duplicate!=='boolean')throw Error('Invalid manual start result');completed=true;status.textContent=(result.duplicate?'Existing run: ':'Run started: ')+result.runId+'.';}catch(error){if(active())status.textContent=error?.status===429&&error.message==='Manual start backlog full'&&error.code!=='CAPABILITY_OUTCOME_UNCERTAIN'?'Agent backlog is full. Retry the same request later.':'Start outcome unknown. Retry using the same request ID and definition version, or check with an administrator.';}finally{if(active()){busy=false;sync();}}})();});
- reset.addEventListener('click',()=>{if(busy||!completed)return;if(pendingStorage!==undefined)try{if(!matches(snapshot))throw Error();const result=pendingStorage.removeItem(pendingKey);if(result&&typeof result.then==='function')throw Error();if(pendingStorage.getItem(pendingKey)!==null)throw Error();}catch{status.textContent='Unable to clear the saved request. Try again before starting another.';return;}snapshot=undefined;completed=false;request.value='';definitionVersion.value='';status.textContent='Enter a new request ID and the current definition version.';sync();request.focus();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentManualStart(root, { startOperation, statusOperation, agentId, pendingStorage, pendingKey } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),
+    version = value => /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    !operation(startOperation) ||
+    (statusOperation === undefined) !== (agentId === undefined) ||
+    (statusOperation !== undefined && (!operation(statusOperation) || !id(agentId))) ||
+    (pendingStorage === undefined) !== (pendingKey === undefined) ||
+    (pendingStorage !== undefined &&
+      (!pendingStorage || typeof pendingStorage.getItem !== 'function' || typeof pendingStorage.setItem !== 'function' || typeof pendingStorage.removeItem !== 'function' || !id(pendingKey)))
+  )
+    throw Error('Invalid manual start view');
+  const decode = raw => {
+    const saved = JSON.parse(raw);
+    if (
+      !saved ||
+      typeof saved !== 'object' ||
+      Array.isArray(saved) ||
+      Object.keys(saved).length !== 4 ||
+      saved.version !== 1 ||
+      saved.operation !== startOperation ||
+      !id(saved.requestId) ||
+      !Number.isSafeInteger(saved.definitionVersion) ||
+      saved.definitionVersion < 1
+    )
+      throw Error('Invalid saved manual start request');
+    return { requestId: saved.requestId, definitionVersion: saved.definitionVersion };
+  };
+  const matches = candidate => {
+    const raw = pendingStorage.getItem(pendingKey);
+    if (typeof raw !== 'string') return false;
+    const saved = decode(raw);
+    return saved.requestId === candidate.requestId && saved.definitionVersion === candidate.definitionVersion;
+  };
+  let restored;
+  if (pendingStorage !== undefined) {
+    let raw;
+    try {
+      raw = pendingStorage.getItem(pendingKey);
+    } catch {
+      throw Error('Manual start storage unavailable');
+    }
+    if (raw !== null) {
+      try {
+        if (typeof raw !== 'string') throw Error();
+        restored = decode(raw);
+      } catch {
+        throw Error('Invalid saved manual start request');
+      }
+    }
+  }
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Start an agent run'),
+    guidance = node('p', 'Save the request ID and definition version before starting. Use the same values if the result is unknown or this page is reopened.'),
+    status = node('p', 'Enter a request ID and the current definition version.'),
+    requestLabel = node('label', 'Request ID'),
+    request = node('input'),
+    versionLabel = node('label', 'Definition version'),
+    definitionVersion = node('input'),
+    check = statusOperation === undefined ? undefined : node('button', 'Check agent status'),
+    start = node('button', 'Start run'),
+    reset = node('button', 'Start another request');
+  request.maxLength = 128;
+  request.autocomplete = 'off';
+  requestLabel.append(request);
+  definitionVersion.inputMode = 'numeric';
+  definitionVersion.autocomplete = 'off';
+  versionLabel.append(definitionVersion);
+  for (const button of [start, reset, ...(check ? [check] : [])]) button.type = 'button';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  section.append(heading, guidance, status, requestLabel, versionLabel, ...(check ? [check] : []), start, reset);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    snapshot = restored,
+    completed = false;
+  if (restored) {
+    request.value = restored.requestId;
+    definitionVersion.value = String(restored.definitionVersion);
+    status.textContent = 'Saved request restored. Retry the same request or check its outcome.';
+  }
+  const sync = () => {
+    request.disabled = busy || !!snapshot;
+    definitionVersion.disabled = busy || !!snapshot;
+    if (check) check.disabled = busy || !!snapshot;
+    start.disabled = busy || completed || (!snapshot && (!id(request.value) || !version(definitionVersion.value)));
+    start.textContent = snapshot ? 'Retry same request' : 'Start run';
+    reset.disabled = busy || !completed;
+  };
+  request.addEventListener('input', sync);
+  definitionVersion.addEventListener('input', sync);
+  check?.addEventListener('click', () => {
+    if (disposed || busy || snapshot) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && token === generation;
+    sync();
+    void (async () => {
+      try {
+        const result = await invokeCapability(statusOperation, { query: {} });
+        if (!active()) return;
+        if (!result || result.agentId !== agentId || !Number.isSafeInteger(result.version) || result.version < 1 || typeof result.enabled !== 'boolean') throw Error('Invalid agent status');
+        if (result.enabled) {
+          definitionVersion.value = String(result.version);
+          status.textContent = 'Agent enabled at definition version ' + result.version + '.';
+        } else {
+          definitionVersion.value = '';
+          status.textContent = 'Agent suspended at definition version ' + result.version + '.';
+        }
+      } catch {
+        if (active()) {
+          definitionVersion.value = '';
+          status.textContent = 'Unable to check agent status.';
+        }
+      } finally {
+        if (active()) {
+          busy = false;
+          sync();
+        }
+      }
+    })();
+  });
+  start.addEventListener('click', () => {
+    if (disposed || busy || completed) return;
+    if (!snapshot) {
+      if (!id(request.value) || !version(definitionVersion.value)) return;
+      const candidate = { requestId: request.value, definitionVersion: Number(definitionVersion.value) };
+      if (pendingStorage !== undefined)
+        try {
+          if (pendingStorage.getItem(pendingKey) !== null) throw Error();
+          const result = pendingStorage.setItem(pendingKey, JSON.stringify({ version: 1, operation: startOperation, ...candidate }));
+          if (result && typeof result.then === 'function') throw Error();
+          if (!matches(candidate)) throw Error();
+        } catch {
+          status.textContent = 'Unable to save the request. Nothing was sent.';
+          return;
+        }
+      snapshot = candidate;
+    }
+    if (pendingStorage !== undefined)
+      try {
+        if (!matches(snapshot)) throw Error();
+      } catch {
+        status.textContent = 'Saved request changed or is unavailable. Nothing was sent; check the saved request before continuing.';
+        return;
+      }
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && token === generation;
+    sync();
+    void (async () => {
+      try {
+        const result = await invokeCapability(startOperation, { ...snapshot });
+        if (!active()) return;
+        if (!result || !id(result.runId) || typeof result.duplicate !== 'boolean') throw Error('Invalid manual start result');
+        completed = true;
+        status.textContent = (result.duplicate ? 'Existing run: ' : 'Run started: ') + result.runId + '.';
+      } catch (error) {
+        if (active())
+          status.textContent =
+            error?.status === 429 && error.message === 'Manual start backlog full' && error.code !== 'CAPABILITY_OUTCOME_UNCERTAIN'
+              ? 'Agent backlog is full. Retry the same request later.'
+              : 'Start outcome unknown. Retry using the same request ID and definition version, or check with an administrator.';
+      } finally {
+        if (active()) {
+          busy = false;
+          sync();
+        }
+      }
+    })();
+  });
+  reset.addEventListener('click', () => {
+    if (busy || !completed) return;
+    if (pendingStorage !== undefined)
+      try {
+        if (!matches(snapshot)) throw Error();
+        const result = pendingStorage.removeItem(pendingKey);
+        if (result && typeof result.then === 'function') throw Error();
+        if (pendingStorage.getItem(pendingKey) !== null) throw Error();
+      } catch {
+        status.textContent = 'Unable to clear the saved request. Try again before starting another.';
+        return;
+      }
+    snapshot = undefined;
+    completed = false;
+    request.value = '';
+    definitionVersion.value = '';
+    status.textContent = 'Enter a new request ID and the current definition version.';
+    sync();
+    request.focus();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 /** Fixed-agent definition controls; each operation must be separately authorized by the host. */
-export function mountAgentDefinitionControl(root,{statusOperation,controlOperation,historyOperation,controlHistoryOperation,agentId}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),integer=(value,min)=>Number.isSafeInteger(value)&&value>=min;
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![statusOperation,controlOperation,historyOperation].every(operation)||(controlHistoryOperation!==undefined&&!operation(controlHistoryOperation))||!id(agentId))throw Error('Invalid agent definition control view');
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Agent controls: '+agentId),warning=node('p','Suspending an agent does not prove that already dispatched external actions have stopped. General audit entries show versions and operators, not the changed fields; control evidence does not cover general edits or older control actions.'),message=node('p','Inspect the agent before taking action.'),details=node('p','No agent status selected.'),inspect=node('button','Inspect agent'),enable=node('button','Enable agent'),suspend=node('button','Suspend agent'),history=node('button','View definition history'),next=node('button','Next history page'),list=node('ul'),controlHistory=controlHistoryOperation?node('button','View control evidence'):undefined,controlNext=controlHistoryOperation?node('button','Next evidence page'):undefined,controlList=controlHistoryOperation?node('ul'):undefined,ack=node('button','I reviewed the status and history');
- for(const button of [inspect,enable,suspend,history,next,ack,...(controlHistory?[controlHistory,controlNext]:[])])button.type='button';message.setAttribute('role','status');message.setAttribute('aria-live','polite');section.append(heading,warning,message,inspect,details,enable,suspend,history,next,list,...(controlHistory?[controlHistory,controlNext,controlList]:[]),ack);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,selected,cursor,controlCursor,needsReview=false,statusReviewed=false,historyReviewed=false,controlReviewed=false;
- const clear=()=>{selected=undefined;details.textContent='No agent status selected.';};
- const sync=()=>{inspect.disabled=busy;history.disabled=busy;next.disabled=busy||cursor===undefined;if(controlHistory){controlHistory.disabled=busy;controlNext.disabled=busy||controlCursor===undefined;}const disabled=busy||needsReview||!selected||selected.version>=Number.MAX_SAFE_INTEGER;enable.disabled=disabled||selected.enabled;suspend.disabled=disabled||!selected.enabled;ack.hidden=!needsReview;ack.disabled=busy||!needsReview||!statusReviewed||!historyReviewed||(!!controlHistory&&!controlReviewed);};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const token=++generation,active=()=>!disposed&&token===generation;sync();try{await task(active);}catch{if(active()){clear();cursor=undefined;controlCursor=undefined;list.replaceChildren();controlList?.replaceChildren();statusReviewed=false;historyReviewed=false;controlReviewed=false;if(mutation){needsReview=true;message.textContent='Control outcome unknown. Inspect the agent and review all history before continuing.';}else message.textContent='Unable to load information. Refresh before continuing.';}}finally{if(active()){busy=false;sync();}}};
- const readStatus=async active=>{clear();const result=await invokeCapability(statusOperation,{query:{}});if(!active())return;if(!result||result.agentId!==agentId||!integer(result.version,1)||typeof result.enabled!=='boolean')throw Error('Invalid agent status');selected={version:result.version,enabled:result.enabled};details.textContent='Agent '+(result.enabled?'enabled':'suspended')+', definition version '+result.version+'.';if(needsReview)statusReviewed=true;message.textContent=result.version>=Number.MAX_SAFE_INTEGER?'Version limit reached; this agent cannot be changed here.':'Review the agent status before acting.';};
- const readHistory=async(after,active)=>{const result=await invokeCapability(historyOperation,{query:after===undefined?{}:{after}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextAfter!==undefined&&!integer(result.nextAfter,1)))throw Error('Invalid definition history');let previous=after??0;for(const item of result.items){if(!item||item.agentId!==agentId||!integer(item.version,1)||item.version<=previous||!id(item.principalId)||!integer(item.observedAt,0))throw Error('Invalid definition history');previous=item.version;}if(result.nextAfter!==undefined&&(result.nextAfter!==previous||previous<=(after??0)))throw Error('Invalid definition history');cursor=result.nextAfter;if(needsReview)historyReviewed=cursor===undefined;list.replaceChildren();for(const item of result.items)list.append(node('li','Version '+item.version+' — '+item.principalId+' — '+(item.observedAt<=8640000000000000?new Date(item.observedAt).toISOString():String(item.observedAt)+' ms')));message.textContent=cursor===undefined?'History page loaded.':'History page loaded. Continue to the last page for a complete review.';};
- const readControlHistory=async(after,active)=>{const result=await invokeCapability(controlHistoryOperation,{query:after===undefined?{}:{after}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextAfter!==undefined&&!integer(result.nextAfter,1)))throw Error('Invalid control evidence');let previous=after??0;for(const item of result.items){if(!item||item.agentId!==agentId||!integer(item.version,1)||item.version<=previous||!['enable','suspend'].includes(item.action)||!id(item.principalId)||!integer(item.observedAt,0))throw Error('Invalid control evidence');previous=item.version;}if(result.nextAfter!==undefined&&(result.nextAfter!==previous||previous<=(after??0)))throw Error('Invalid control evidence');controlCursor=result.nextAfter;if(needsReview)controlReviewed=controlCursor===undefined;controlList.replaceChildren();for(const item of result.items)controlList.append(node('li','Version '+item.version+' — '+item.action+' — '+item.principalId+' — '+(item.observedAt<=8640000000000000?new Date(item.observedAt).toISOString():String(item.observedAt)+' ms')));message.textContent=controlCursor===undefined?'Control evidence page loaded.':'Control evidence page loaded. Continue to the last page for a complete review.';};
- inspect.addEventListener('click',()=>{if(needsReview)statusReviewed=false;void run(readStatus);});history.addEventListener('click',()=>{cursor=undefined;list.replaceChildren();if(needsReview)historyReviewed=false;void run(active=>readHistory(undefined,active));});next.addEventListener('click',()=>{if(cursor!==undefined)void run(active=>readHistory(cursor,active));});
- controlHistory?.addEventListener('click',()=>{controlCursor=undefined;controlList.replaceChildren();if(needsReview)controlReviewed=false;void run(active=>readControlHistory(undefined,active));});controlNext?.addEventListener('click',()=>{if(controlCursor!==undefined)void run(active=>readControlHistory(controlCursor,active));});
- const change=enabled=>{if(needsReview||!selected||selected.version>=Number.MAX_SAFE_INTEGER||selected.enabled===enabled)return;const version=selected.version;void run(async active=>{const result=await invokeCapability(controlOperation,{version,enabled});if(!active())return;if(!result||result.agentId!==agentId||result.version!==version+1||result.enabled!==enabled)throw Error('Invalid definition control result');clear();cursor=undefined;controlCursor=undefined;list.replaceChildren();controlList?.replaceChildren();message.textContent='Agent '+(enabled?'enabled':'suspended')+'. Inspect the agent to confirm its current state.';},true);};enable.addEventListener('click',()=>change(true));suspend.addEventListener('click',()=>change(false));ack.addEventListener('click',()=>{if(busy||!needsReview||!statusReviewed||!historyReviewed||(controlHistory&&!controlReviewed))return;needsReview=false;statusReviewed=false;historyReviewed=false;controlReviewed=false;message.textContent='Review acknowledged. Inspect the agent again before taking action.';clear();sync();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentDefinitionControl(root, { statusOperation, controlOperation, historyOperation, controlHistoryOperation, agentId } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),
+    integer = (value, min) => Number.isSafeInteger(value) && value >= min;
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    ![statusOperation, controlOperation, historyOperation].every(operation) ||
+    (controlHistoryOperation !== undefined && !operation(controlHistoryOperation)) ||
+    !id(agentId)
+  )
+    throw Error('Invalid agent definition control view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Agent controls: ' + agentId),
+    warning = node(
+      'p',
+      'Suspending an agent does not prove that already dispatched external actions have stopped. General audit entries show versions and operators, not the changed fields; control evidence does not cover general edits or older control actions.'
+    ),
+    message = node('p', 'Inspect the agent before taking action.'),
+    details = node('p', 'No agent status selected.'),
+    inspect = node('button', 'Inspect agent'),
+    enable = node('button', 'Enable agent'),
+    suspend = node('button', 'Suspend agent'),
+    history = node('button', 'View definition history'),
+    next = node('button', 'Next history page'),
+    list = node('ul'),
+    controlHistory = controlHistoryOperation ? node('button', 'View control evidence') : undefined,
+    controlNext = controlHistoryOperation ? node('button', 'Next evidence page') : undefined,
+    controlList = controlHistoryOperation ? node('ul') : undefined,
+    ack = node('button', 'I reviewed the status and history');
+  for (const button of [inspect, enable, suspend, history, next, ack, ...(controlHistory ? [controlHistory, controlNext] : [])]) button.type = 'button';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  section.append(heading, warning, message, inspect, details, enable, suspend, history, next, list, ...(controlHistory ? [controlHistory, controlNext, controlList] : []), ack);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    selected,
+    cursor,
+    controlCursor,
+    needsReview = false,
+    statusReviewed = false,
+    historyReviewed = false,
+    controlReviewed = false;
+  const clear = () => {
+    selected = undefined;
+    details.textContent = 'No agent status selected.';
+  };
+  const sync = () => {
+    inspect.disabled = busy;
+    history.disabled = busy;
+    next.disabled = busy || cursor === undefined;
+    if (controlHistory) {
+      controlHistory.disabled = busy;
+      controlNext.disabled = busy || controlCursor === undefined;
+    }
+    const disabled = busy || needsReview || !selected || selected.version >= Number.MAX_SAFE_INTEGER;
+    enable.disabled = disabled || selected.enabled;
+    suspend.disabled = disabled || !selected.enabled;
+    ack.hidden = !needsReview;
+    ack.disabled = busy || !needsReview || !statusReviewed || !historyReviewed || (!!controlHistory && !controlReviewed);
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && token === generation;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        clear();
+        cursor = undefined;
+        controlCursor = undefined;
+        list.replaceChildren();
+        controlList?.replaceChildren();
+        statusReviewed = false;
+        historyReviewed = false;
+        controlReviewed = false;
+        if (mutation) {
+          needsReview = true;
+          message.textContent = 'Control outcome unknown. Inspect the agent and review all history before continuing.';
+        } else message.textContent = 'Unable to load information. Refresh before continuing.';
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const readStatus = async active => {
+    clear();
+    const result = await invokeCapability(statusOperation, { query: {} });
+    if (!active()) return;
+    if (!result || result.agentId !== agentId || !integer(result.version, 1) || typeof result.enabled !== 'boolean') throw Error('Invalid agent status');
+    selected = { version: result.version, enabled: result.enabled };
+    details.textContent = 'Agent ' + (result.enabled ? 'enabled' : 'suspended') + ', definition version ' + result.version + '.';
+    if (needsReview) statusReviewed = true;
+    message.textContent = result.version >= Number.MAX_SAFE_INTEGER ? 'Version limit reached; this agent cannot be changed here.' : 'Review the agent status before acting.';
+  };
+  const readHistory = async (after, active) => {
+    const result = await invokeCapability(historyOperation, { query: after === undefined ? {} : { after } });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextAfter !== undefined && !integer(result.nextAfter, 1))) throw Error('Invalid definition history');
+    let previous = after ?? 0;
+    for (const item of result.items) {
+      if (!item || item.agentId !== agentId || !integer(item.version, 1) || item.version <= previous || !id(item.principalId) || !integer(item.observedAt, 0))
+        throw Error('Invalid definition history');
+      previous = item.version;
+    }
+    if (result.nextAfter !== undefined && (result.nextAfter !== previous || previous <= (after ?? 0))) throw Error('Invalid definition history');
+    cursor = result.nextAfter;
+    if (needsReview) historyReviewed = cursor === undefined;
+    list.replaceChildren();
+    for (const item of result.items)
+      list.append(
+        node('li', 'Version ' + item.version + ' — ' + item.principalId + ' — ' + (item.observedAt <= 8640000000000000 ? new Date(item.observedAt).toISOString() : String(item.observedAt) + ' ms'))
+      );
+    message.textContent = cursor === undefined ? 'History page loaded.' : 'History page loaded. Continue to the last page for a complete review.';
+  };
+  const readControlHistory = async (after, active) => {
+    const result = await invokeCapability(controlHistoryOperation, { query: after === undefined ? {} : { after } });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextAfter !== undefined && !integer(result.nextAfter, 1))) throw Error('Invalid control evidence');
+    let previous = after ?? 0;
+    for (const item of result.items) {
+      if (
+        !item ||
+        item.agentId !== agentId ||
+        !integer(item.version, 1) ||
+        item.version <= previous ||
+        !['enable', 'suspend'].includes(item.action) ||
+        !id(item.principalId) ||
+        !integer(item.observedAt, 0)
+      )
+        throw Error('Invalid control evidence');
+      previous = item.version;
+    }
+    if (result.nextAfter !== undefined && (result.nextAfter !== previous || previous <= (after ?? 0))) throw Error('Invalid control evidence');
+    controlCursor = result.nextAfter;
+    if (needsReview) controlReviewed = controlCursor === undefined;
+    controlList.replaceChildren();
+    for (const item of result.items)
+      controlList.append(
+        node(
+          'li',
+          'Version ' +
+            item.version +
+            ' — ' +
+            item.action +
+            ' — ' +
+            item.principalId +
+            ' — ' +
+            (item.observedAt <= 8640000000000000 ? new Date(item.observedAt).toISOString() : String(item.observedAt) + ' ms')
+        )
+      );
+    message.textContent = controlCursor === undefined ? 'Control evidence page loaded.' : 'Control evidence page loaded. Continue to the last page for a complete review.';
+  };
+  inspect.addEventListener('click', () => {
+    if (needsReview) statusReviewed = false;
+    void run(readStatus);
+  });
+  history.addEventListener('click', () => {
+    cursor = undefined;
+    list.replaceChildren();
+    if (needsReview) historyReviewed = false;
+    void run(active => readHistory(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor !== undefined) void run(active => readHistory(cursor, active));
+  });
+  controlHistory?.addEventListener('click', () => {
+    controlCursor = undefined;
+    controlList.replaceChildren();
+    if (needsReview) controlReviewed = false;
+    void run(active => readControlHistory(undefined, active));
+  });
+  controlNext?.addEventListener('click', () => {
+    if (controlCursor !== undefined) void run(active => readControlHistory(controlCursor, active));
+  });
+  const change = enabled => {
+    if (needsReview || !selected || selected.version >= Number.MAX_SAFE_INTEGER || selected.enabled === enabled) return;
+    const version = selected.version;
+    void run(async active => {
+      const result = await invokeCapability(controlOperation, { version, enabled });
+      if (!active()) return;
+      if (!result || result.agentId !== agentId || result.version !== version + 1 || result.enabled !== enabled) throw Error('Invalid definition control result');
+      clear();
+      cursor = undefined;
+      controlCursor = undefined;
+      list.replaceChildren();
+      controlList?.replaceChildren();
+      message.textContent = 'Agent ' + (enabled ? 'enabled' : 'suspended') + '. Inspect the agent to confirm its current state.';
+    }, true);
+  };
+  enable.addEventListener('click', () => change(true));
+  suspend.addEventListener('click', () => change(false));
+  ack.addEventListener('click', () => {
+    if (busy || !needsReview || !statusReviewed || !historyReviewed || (controlHistory && !controlReviewed)) return;
+    needsReview = false;
+    statusReviewed = false;
+    historyReviewed = false;
+    controlReviewed = false;
+    message.textContent = 'Review acknowledged. Inspect the agent again before taking action.';
+    clear();
+    sync();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 /** Fixed-scope JSON editor; full definition access is sensitive and independently authorized. */
-export function mountAgentDefinitionEditor(root,{readOperation,writeOperation,historyOperation,tenantId,agentId}={}){
- const operation=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),integer=(value,min)=>Number.isSafeInteger(value)&&value>=min,object=value=>!!value&&typeof value==='object'&&!Array.isArray(value),validManifest=value=>object(value)&&value.tenantId===tenantId&&value.agentId===agentId;
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![readOperation,writeOperation,historyOperation].every(operation)||!id(tenantId)||!id(agentId))throw Error('Invalid agent definition editor');
- const doc=root.ownerDocument,node=(tag,text)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;return element;},section=node('section'),heading=node('h2','Agent definition: '+agentId),warning=node('p','Definitions can contain sensitive instructions and credential references. Protect this screen and review changes before saving.'),message=node('p','Load the definition or prepare a new one.'),versionText=node('p','No definition selected.'),load=node('button','Load definition'),create=node('button','Prepare new definition'),currentLabel=node('label','Current definition'),current=node('textarea'),draftLabel=node('label','Definition draft'),draft=node('textarea'),useCurrent=node('button','Use current as draft'),save=node('button','Save definition'),history=node('button','View definition history'),next=node('button','Next history page'),list=node('ul'),ack=node('button','I reviewed the definition and history');
- for(const button of [load,create,useCurrent,save,history,next,ack])button.type='button';current.readOnly=true;current.rows=12;draft.rows=12;draft.maxLength=65536;currentLabel.append(current);draftLabel.append(draft);message.setAttribute('role','status');message.setAttribute('aria-live','polite');section.append(heading,warning,message,load,create,versionText,currentLabel,draftLabel,useCurrent,save,history,next,list,ack);root.replaceChildren(section);
- let disposed=false,busy=false,generation=0,selected,cursor,needsReview=false,definitionReviewed=false,historyReviewed=false;
- const clearSelection=()=>{selected=undefined;versionText.textContent='No definition selected.';};
- const sync=()=>{load.disabled=busy;create.disabled=busy||needsReview;draft.disabled=busy||needsReview||selected===undefined||selected>=Number.MAX_SAFE_INTEGER;save.disabled=draft.disabled;useCurrent.disabled=draft.disabled||selected===0||!current.value;history.disabled=busy;next.disabled=busy||cursor===undefined;ack.hidden=!needsReview;ack.disabled=busy||!needsReview||!definitionReviewed||!historyReviewed;};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const token=++generation,active=()=>!disposed&&token===generation;sync();try{await task(active);}catch{if(active()){clearSelection();cursor=undefined;list.replaceChildren();if(mutation){needsReview=true;definitionReviewed=false;historyReviewed=false;message.textContent='Save outcome unknown. Review the current definition and all history before continuing. Your draft is retained below.';}else{definitionReviewed=false;historyReviewed=false;message.textContent='Unable to load information. Your draft is retained below.';}}}finally{if(active()){busy=false;sync();}}};
- const read=async active=>{clearSelection();let result;try{result=await invokeCapability(readOperation,{query:{}});}catch(error){if(error?.status!==404||error.message!=='Definition read not found')throw error;if(!active())return;current.value='';versionText.textContent='No definition found.';if(needsReview)definitionReviewed=true;message.textContent='No definition found. Prepare a new definition to create one.';return;}if(!active())return;if(!result||!integer(result.version,1)||!validManifest(result.manifest))throw Error('Invalid agent definition');const text=JSON.stringify(result.manifest,null,2);if(new TextEncoder().encode(text).length>131072)throw Error('Invalid agent definition');current.value=text;versionText.textContent='Current definition version '+result.version+'.';if(needsReview)definitionReviewed=true;else{selected=result.version;if(!draft.value)draft.value=text;}message.textContent=result.version>=Number.MAX_SAFE_INTEGER?'Version limit reached; this definition cannot be edited here.':draft.value!==text?'Definition loaded. Your existing draft was retained.':'Definition loaded.';};
- const readHistory=async(after,active)=>{const result=await invokeCapability(historyOperation,{query:after===undefined?{}:{after}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextAfter!==undefined&&!integer(result.nextAfter,1)))throw Error('Invalid definition history');let previous=after??0;for(const item of result.items){if(!item||item.agentId!==agentId||!integer(item.version,1)||item.version<=previous||!id(item.principalId)||!integer(item.observedAt,0))throw Error('Invalid definition history');previous=item.version;}if(result.nextAfter!==undefined&&(result.nextAfter!==previous||previous<=(after??0)))throw Error('Invalid definition history');cursor=result.nextAfter;if(needsReview)historyReviewed=cursor===undefined;list.replaceChildren();for(const item of result.items)list.append(node('li','Version '+item.version+' — '+item.principalId+' — '+(item.observedAt<=8640000000000000?new Date(item.observedAt).toISOString():String(item.observedAt)+' ms')));message.textContent=cursor===undefined?'History page loaded.':'History page loaded. Continue to the last page for a complete review.';};
- load.addEventListener('click',()=>{if(needsReview)definitionReviewed=false;void run(read);});create.addEventListener('click',()=>{if(busy||needsReview)return;selected=0;current.value='';versionText.textContent='New definition; expected version 0.';if(!draft.value)draft.value=JSON.stringify({manifestVersion:1,tenantId,agentId},null,2);message.textContent='Complete and review the draft before saving.';sync();});history.addEventListener('click',()=>{cursor=undefined;list.replaceChildren();if(needsReview)historyReviewed=false;void run(active=>readHistory(undefined,active));});next.addEventListener('click',()=>{if(cursor!==undefined)void run(active=>readHistory(cursor,active));});
- useCurrent.addEventListener('click',()=>{if(busy||needsReview||selected===undefined||selected===0||!current.value)return;draft.value=current.value;message.textContent='Current definition copied to the draft.';});save.addEventListener('click',()=>{if(busy||needsReview||selected===undefined||selected>=Number.MAX_SAFE_INTEGER)return;let manifest;try{if(new TextEncoder().encode(draft.value).length>65536)throw Error();manifest=JSON.parse(draft.value);if(!validManifest(manifest))throw Error();}catch{message.textContent='Enter valid JSON for this tenant and agent, up to 64 KiB.';return;}const expectedVersion=selected;void run(async active=>{const result=await invokeCapability(writeOperation,{expectedVersion,manifest});if(!active())return;if(!result||result.agentId!==agentId||result.version!==expectedVersion+1)throw Error('Invalid definition write result');clearSelection();current.value='';cursor=undefined;list.replaceChildren();message.textContent='Definition saved as version '+result.version+'. Load it before making further changes.';},true);});ack.addEventListener('click',()=>{if(busy||!needsReview||!definitionReviewed||!historyReviewed)return;needsReview=false;definitionReviewed=false;historyReviewed=false;clearSelection();message.textContent='Review acknowledged. Load the definition or prepare a new one before saving.';sync();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentDefinitionEditor(root, { readOperation, writeOperation, historyOperation, tenantId, agentId } = {}) {
+  const operation = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),
+    integer = (value, min) => Number.isSafeInteger(value) && value >= min,
+    object = value => !!value && typeof value === 'object' && !Array.isArray(value),
+    validManifest = value => object(value) && value.tenantId === tenantId && value.agentId === agentId;
+  if (!root?.ownerDocument || typeof root.replaceChildren !== 'function' || ![readOperation, writeOperation, historyOperation].every(operation) || !id(tenantId) || !id(agentId))
+    throw Error('Invalid agent definition editor');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const element = doc.createElement(tag);
+      if (text !== undefined) element.textContent = text;
+      return element;
+    },
+    section = node('section'),
+    heading = node('h2', 'Agent definition: ' + agentId),
+    warning = node('p', 'Definitions can contain sensitive instructions and credential references. Protect this screen and review changes before saving.'),
+    message = node('p', 'Load the definition or prepare a new one.'),
+    versionText = node('p', 'No definition selected.'),
+    load = node('button', 'Load definition'),
+    create = node('button', 'Prepare new definition'),
+    currentLabel = node('label', 'Current definition'),
+    current = node('textarea'),
+    draftLabel = node('label', 'Definition draft'),
+    draft = node('textarea'),
+    useCurrent = node('button', 'Use current as draft'),
+    save = node('button', 'Save definition'),
+    history = node('button', 'View definition history'),
+    next = node('button', 'Next history page'),
+    list = node('ul'),
+    ack = node('button', 'I reviewed the definition and history');
+  for (const button of [load, create, useCurrent, save, history, next, ack]) button.type = 'button';
+  current.readOnly = true;
+  current.rows = 12;
+  draft.rows = 12;
+  draft.maxLength = 65536;
+  currentLabel.append(current);
+  draftLabel.append(draft);
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  section.append(heading, warning, message, load, create, versionText, currentLabel, draftLabel, useCurrent, save, history, next, list, ack);
+  root.replaceChildren(section);
+  let disposed = false,
+    busy = false,
+    generation = 0,
+    selected,
+    cursor,
+    needsReview = false,
+    definitionReviewed = false,
+    historyReviewed = false;
+  const clearSelection = () => {
+    selected = undefined;
+    versionText.textContent = 'No definition selected.';
+  };
+  const sync = () => {
+    load.disabled = busy;
+    create.disabled = busy || needsReview;
+    draft.disabled = busy || needsReview || selected === undefined || selected >= Number.MAX_SAFE_INTEGER;
+    save.disabled = draft.disabled;
+    useCurrent.disabled = draft.disabled || selected === 0 || !current.value;
+    history.disabled = busy;
+    next.disabled = busy || cursor === undefined;
+    ack.hidden = !needsReview;
+    ack.disabled = busy || !needsReview || !definitionReviewed || !historyReviewed;
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && token === generation;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        clearSelection();
+        cursor = undefined;
+        list.replaceChildren();
+        if (mutation) {
+          needsReview = true;
+          definitionReviewed = false;
+          historyReviewed = false;
+          message.textContent = 'Save outcome unknown. Review the current definition and all history before continuing. Your draft is retained below.';
+        } else {
+          definitionReviewed = false;
+          historyReviewed = false;
+          message.textContent = 'Unable to load information. Your draft is retained below.';
+        }
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const read = async active => {
+    clearSelection();
+    let result;
+    try {
+      result = await invokeCapability(readOperation, { query: {} });
+    } catch (error) {
+      if (error?.status !== 404 || error.message !== 'Definition read not found') throw error;
+      if (!active()) return;
+      current.value = '';
+      versionText.textContent = 'No definition found.';
+      if (needsReview) definitionReviewed = true;
+      message.textContent = 'No definition found. Prepare a new definition to create one.';
+      return;
+    }
+    if (!active()) return;
+    if (!result || !integer(result.version, 1) || !validManifest(result.manifest)) throw Error('Invalid agent definition');
+    const text = JSON.stringify(result.manifest, null, 2);
+    if (new TextEncoder().encode(text).length > 131072) throw Error('Invalid agent definition');
+    current.value = text;
+    versionText.textContent = 'Current definition version ' + result.version + '.';
+    if (needsReview) definitionReviewed = true;
+    else {
+      selected = result.version;
+      if (!draft.value) draft.value = text;
+    }
+    message.textContent =
+      result.version >= Number.MAX_SAFE_INTEGER
+        ? 'Version limit reached; this definition cannot be edited here.'
+        : draft.value !== text
+          ? 'Definition loaded. Your existing draft was retained.'
+          : 'Definition loaded.';
+  };
+  const readHistory = async (after, active) => {
+    const result = await invokeCapability(historyOperation, { query: after === undefined ? {} : { after } });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextAfter !== undefined && !integer(result.nextAfter, 1))) throw Error('Invalid definition history');
+    let previous = after ?? 0;
+    for (const item of result.items) {
+      if (!item || item.agentId !== agentId || !integer(item.version, 1) || item.version <= previous || !id(item.principalId) || !integer(item.observedAt, 0))
+        throw Error('Invalid definition history');
+      previous = item.version;
+    }
+    if (result.nextAfter !== undefined && (result.nextAfter !== previous || previous <= (after ?? 0))) throw Error('Invalid definition history');
+    cursor = result.nextAfter;
+    if (needsReview) historyReviewed = cursor === undefined;
+    list.replaceChildren();
+    for (const item of result.items)
+      list.append(
+        node('li', 'Version ' + item.version + ' — ' + item.principalId + ' — ' + (item.observedAt <= 8640000000000000 ? new Date(item.observedAt).toISOString() : String(item.observedAt) + ' ms'))
+      );
+    message.textContent = cursor === undefined ? 'History page loaded.' : 'History page loaded. Continue to the last page for a complete review.';
+  };
+  load.addEventListener('click', () => {
+    if (needsReview) definitionReviewed = false;
+    void run(read);
+  });
+  create.addEventListener('click', () => {
+    if (busy || needsReview) return;
+    selected = 0;
+    current.value = '';
+    versionText.textContent = 'New definition; expected version 0.';
+    if (!draft.value) draft.value = JSON.stringify({ manifestVersion: 1, tenantId, agentId }, null, 2);
+    message.textContent = 'Complete and review the draft before saving.';
+    sync();
+  });
+  history.addEventListener('click', () => {
+    cursor = undefined;
+    list.replaceChildren();
+    if (needsReview) historyReviewed = false;
+    void run(active => readHistory(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor !== undefined) void run(active => readHistory(cursor, active));
+  });
+  useCurrent.addEventListener('click', () => {
+    if (busy || needsReview || selected === undefined || selected === 0 || !current.value) return;
+    draft.value = current.value;
+    message.textContent = 'Current definition copied to the draft.';
+  });
+  save.addEventListener('click', () => {
+    if (busy || needsReview || selected === undefined || selected >= Number.MAX_SAFE_INTEGER) return;
+    let manifest;
+    try {
+      if (new TextEncoder().encode(draft.value).length > 65536) throw Error();
+      manifest = JSON.parse(draft.value);
+      if (!validManifest(manifest)) throw Error();
+    } catch {
+      message.textContent = 'Enter valid JSON for this tenant and agent, up to 64 KiB.';
+      return;
+    }
+    const expectedVersion = selected;
+    void run(async active => {
+      const result = await invokeCapability(writeOperation, { expectedVersion, manifest });
+      if (!active()) return;
+      if (!result || result.agentId !== agentId || result.version !== expectedVersion + 1) throw Error('Invalid definition write result');
+      clearSelection();
+      current.value = '';
+      cursor = undefined;
+      list.replaceChildren();
+      message.textContent = 'Definition saved as version ' + result.version + '. Load it before making further changes.';
+    }, true);
+  });
+  ack.addEventListener('click', () => {
+    if (busy || !needsReview || !definitionReviewed || !historyReviewed) return;
+    needsReview = false;
+    definitionReviewed = false;
+    historyReviewed = false;
+    clearSelection();
+    message.textContent = 'Review acknowledged. Load the definition or prepare a new one before saving.';
+    sync();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 /** Opt-in fixed-scope administrative erasure with retained request evidence. */
-export function mountAgentMemoryErasure(root,{eraseOperation,evidenceOperation,scopeLabel}={}){
- const operation=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||!operation(eraseOperation)||!operation(evidenceOperation)||typeof scopeLabel!=='string'||!scopeLabel.trim()||scopeLabel.length>256)throw Error('Invalid memory erasure view');
- const doc=root.ownerDocument,node=(tag,text)=>{const item=doc.createElement(tag);if(text!==undefined)item.textContent=text;return item;},section=node('section'),heading=node('h2','Erase memory: '+scopeLabel),warning=node('p','Erasure affects every memory in this fixed scope. Use a unique request ID for each intended erasure and retain it across reloads. Review state is not retained on reload.'),label=node('label','Request ID'),input=node('input'),confirmLabel=node('label'),confirm=node('input'),erase=node('button','Erase memory'),inspect=node('button','Inspect request evidence'),ack=node('button','I reviewed the evidence'),status=node('p','Enter a unique request ID and confirm the scope.'),detail=node('p','No evidence selected.');
- input.type='text';input.maxLength=128;label.append(input);confirm.type='checkbox';confirmLabel.append(confirm,doc.createTextNode(' I intend to erase this scope'));for(const button of [erase,inspect,ack])button.type='button';status.setAttribute('role','status');status.setAttribute('aria-live','polite');section.append(heading,warning,label,confirmLabel,erase,inspect,ack,status,detail);root.replaceChildren(section);
- let busy=false,disposed=false,generation=0,pending,reviewed=false;
- const sync=()=>{input.disabled=busy||!!pending;confirm.disabled=busy||!!pending;erase.disabled=busy||!!pending||!id(input.value)||!confirm.checked;inspect.disabled=busy||!id(pending??input.value);ack.hidden=!pending;ack.disabled=busy||!pending||!reviewed;};
- const run=async task=>{if(disposed||busy)return;busy=true;const token=++generation,active=()=>!disposed&&generation===token;sync();try{await task(active);}finally{if(active()){busy=false;sync();}}};
- input.addEventListener('input',()=>{detail.textContent='No evidence selected.';sync();});confirm.addEventListener('change',sync);
- erase.addEventListener('click',()=>{if(busy||pending||!id(input.value)||!confirm.checked)return;const requestId=input.value;confirm.checked=false;pending=requestId;reviewed=false;detail.textContent='No evidence selected.';void run(async active=>{try{const result=await invokeCapability(eraseOperation,{query:{confirm:true,requestId}});if(!active())return;if(!result||!Number.isSafeInteger(result.erased)||result.erased<0||typeof result.replayed!=='boolean')throw Error('Invalid erasure result');pending=undefined;status.textContent=(result.replayed?'Previously recorded erasure: ':'Erasure recorded: ')+result.erased+' memories. Inspect evidence if needed.';}catch{if(active())status.textContent='Erasure outcome unknown. Inspect the retained evidence before continuing.';}});});
- inspect.addEventListener('click',()=>{const requestId=pending??input.value;if(busy||!id(requestId))return;reviewed=false;detail.textContent='No evidence selected.';void run(async active=>{try{const result=await invokeCapability(evidenceOperation,{query:{requestId}});if(!active())return;if(result===null){status.textContent='No evidence found. The request may still be in flight; investigate before continuing.';return;}if(!result||result.requestId!==requestId||!id(result.principalId)||!Number.isSafeInteger(result.erased)||result.erased<0)throw Error('Invalid erasure evidence');detail.textContent='Request '+requestId+' — '+result.principalId+' — '+result.erased+' memories erased.';if(pending)reviewed=true;status.textContent='Evidence loaded. It does not describe later writes.';}catch{if(active())status.textContent='Unable to load evidence. Investigate before continuing.';}});});
- ack.addEventListener('click',()=>{if(!pending||!reviewed||busy)return;pending=undefined;reviewed=false;input.value='';detail.textContent='No evidence selected.';status.textContent='Review acknowledged. Enter a new request ID for another erasure.';sync();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentMemoryErasure(root, { eraseOperation, evidenceOperation, scopeLabel } = {}) {
+  const operation = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value);
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    !operation(eraseOperation) ||
+    !operation(evidenceOperation) ||
+    typeof scopeLabel !== 'string' ||
+    !scopeLabel.trim() ||
+    scopeLabel.length > 256
+  )
+    throw Error('Invalid memory erasure view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const item = doc.createElement(tag);
+      if (text !== undefined) item.textContent = text;
+      return item;
+    },
+    section = node('section'),
+    heading = node('h2', 'Erase memory: ' + scopeLabel),
+    warning = node('p', 'Erasure affects every memory in this fixed scope. Use a unique request ID for each intended erasure and retain it across reloads. Review state is not retained on reload.'),
+    label = node('label', 'Request ID'),
+    input = node('input'),
+    confirmLabel = node('label'),
+    confirm = node('input'),
+    erase = node('button', 'Erase memory'),
+    inspect = node('button', 'Inspect request evidence'),
+    ack = node('button', 'I reviewed the evidence'),
+    status = node('p', 'Enter a unique request ID and confirm the scope.'),
+    detail = node('p', 'No evidence selected.');
+  input.type = 'text';
+  input.maxLength = 128;
+  label.append(input);
+  confirm.type = 'checkbox';
+  confirmLabel.append(confirm, doc.createTextNode(' I intend to erase this scope'));
+  for (const button of [erase, inspect, ack]) button.type = 'button';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  section.append(heading, warning, label, confirmLabel, erase, inspect, ack, status, detail);
+  root.replaceChildren(section);
+  let busy = false,
+    disposed = false,
+    generation = 0,
+    pending,
+    reviewed = false;
+  const sync = () => {
+    input.disabled = busy || !!pending;
+    confirm.disabled = busy || !!pending;
+    erase.disabled = busy || !!pending || !id(input.value) || !confirm.checked;
+    inspect.disabled = busy || !id(pending ?? input.value);
+    ack.hidden = !pending;
+    ack.disabled = busy || !pending || !reviewed;
+  };
+  const run = async task => {
+    if (disposed || busy) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && generation === token;
+    sync();
+    try {
+      await task(active);
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  input.addEventListener('input', () => {
+    detail.textContent = 'No evidence selected.';
+    sync();
+  });
+  confirm.addEventListener('change', sync);
+  erase.addEventListener('click', () => {
+    if (busy || pending || !id(input.value) || !confirm.checked) return;
+    const requestId = input.value;
+    confirm.checked = false;
+    pending = requestId;
+    reviewed = false;
+    detail.textContent = 'No evidence selected.';
+    void run(async active => {
+      try {
+        const result = await invokeCapability(eraseOperation, { query: { confirm: true, requestId } });
+        if (!active()) return;
+        if (!result || !Number.isSafeInteger(result.erased) || result.erased < 0 || typeof result.replayed !== 'boolean') throw Error('Invalid erasure result');
+        pending = undefined;
+        status.textContent = (result.replayed ? 'Previously recorded erasure: ' : 'Erasure recorded: ') + result.erased + ' memories. Inspect evidence if needed.';
+      } catch {
+        if (active()) status.textContent = 'Erasure outcome unknown. Inspect the retained evidence before continuing.';
+      }
+    });
+  });
+  inspect.addEventListener('click', () => {
+    const requestId = pending ?? input.value;
+    if (busy || !id(requestId)) return;
+    reviewed = false;
+    detail.textContent = 'No evidence selected.';
+    void run(async active => {
+      try {
+        const result = await invokeCapability(evidenceOperation, { query: { requestId } });
+        if (!active()) return;
+        if (result === null) {
+          status.textContent = 'No evidence found. The request may still be in flight; investigate before continuing.';
+          return;
+        }
+        if (!result || result.requestId !== requestId || !id(result.principalId) || !Number.isSafeInteger(result.erased) || result.erased < 0) throw Error('Invalid erasure evidence');
+        detail.textContent = 'Request ' + requestId + ' — ' + result.principalId + ' — ' + result.erased + ' memories erased.';
+        if (pending) reviewed = true;
+        status.textContent = 'Evidence loaded. It does not describe later writes.';
+      } catch {
+        if (active()) status.textContent = 'Unable to load evidence. Investigate before continuing.';
+      }
+    });
+  });
+  ack.addEventListener('click', () => {
+    if (!pending || !reviewed || busy) return;
+    pending = undefined;
+    reviewed = false;
+    input.value = '';
+    detail.textContent = 'No evidence selected.';
+    status.textContent = 'Review acknowledged. Enter a new request ID for another erasure.';
+    sync();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }
 
 /** Opt-in administration of a host-fixed delegated grant. */
-export function mountAgentDelegationControl(root,{issueOperation,readOperation,renewOperation,revokeOperation,historyOperation,tenantId,agentId,runId,grantId}={}){
- const op=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(value),id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),integer=(value,min)=>Number.isSafeInteger(value)&&value>=min;
- if(!root?.ownerDocument||typeof root.replaceChildren!=='function'||![issueOperation,readOperation,renewOperation,revokeOperation,historyOperation].every(op)||![tenantId,agentId,runId,grantId].every(id))throw Error('Invalid delegation control view');
- const doc=root.ownerDocument,node=(tag,text)=>{const item=doc.createElement(tag);if(text!==undefined)item.textContent=text;return item;},section=node('section'),heading=node('h2','Delegation: '+grantId),warning=node('p','Grant administration changes user authority. Confirm consent and expiry. Not revoked does not establish that a grant is valid: it may be expired or its run unavailable. History is not a cross-page snapshot; review state resets on reload.'),status=node('p','Inspect the grant before taking action.'),detail=node('p','No grant selected.'),principalLabel=node('label','User principal'),principal=node('input'),versionLabel=node('label','Permission version'),version=node('input'),expiryLabel=node('label','Expiry (Unix milliseconds)'),expiry=node('input'),read=node('button','Inspect delegation'),issue=node('button','Issue delegation'),renew=node('button','Renew delegation'),revoke=node('button','Revoke delegation'),history=node('button','View delegation history'),next=node('button','Next history page'),list=node('ul'),ack=node('button','I reviewed the delegation and history');
- principal.type='text';principal.maxLength=128;principalLabel.append(principal);version.type='text';version.maxLength=128;versionLabel.append(version);expiry.type='text';expiry.inputMode='numeric';expiryLabel.append(expiry);for(const button of [read,issue,renew,revoke,history,next,ack])button.type='button';status.setAttribute('role','status');status.setAttribute('aria-live','polite');section.append(heading,warning,status,read,detail,principalLabel,versionLabel,expiryLabel,issue,renew,revoke,history,next,list,ack);root.replaceChildren(section);
- let busy=false,disposed=false,generation=0,loaded=false,selected,cursor,needsReview=false,readReviewed=false,historyReviewed=false;
- const clear=()=>{loaded=false;selected=undefined;detail.textContent='No grant selected.';};
- const sync=()=>{read.disabled=busy;history.disabled=busy;next.disabled=busy||cursor===undefined;const disabled=busy||needsReview||!loaded;principal.disabled=disabled||!!selected;version.disabled=disabled;expiry.disabled=disabled;issue.disabled=disabled||!!selected;renew.disabled=disabled||!selected||selected.revoked||selected.revision>=Number.MAX_SAFE_INTEGER;revoke.disabled=disabled||!selected||selected.revoked;ack.hidden=!needsReview;ack.disabled=busy||!needsReview||!readReviewed||!historyReviewed;};
- const run=async(task,mutation=false)=>{if(disposed||busy)return;busy=true;const token=++generation,active=()=>!disposed&&generation===token;sync();try{await task(active);}catch{if(active()){clear();cursor=undefined;list.replaceChildren();readReviewed=false;historyReviewed=false;if(mutation){needsReview=true;status.textContent='Delegation outcome unknown. Inspect the grant and review all history before continuing.';}else status.textContent='Unable to load delegation information. Refresh before continuing.';}}finally{if(active()){busy=false;sync();}}};
- const grantValid=result=>{const g=result?.grant;return !!result&&typeof result==='object'&&integer(result.revision,1)&&typeof result.revoked==='boolean'&&g&&g.tenantId===tenantId&&g.agentId===agentId&&g.runId===runId&&g.grantId===grantId&&id(g.principalId)&&id(g.permissionVersion)&&integer(g.expiresAt,0)&&g.revision===result.revision;};
- read.addEventListener('click',()=>{if(needsReview)readReviewed=false;void run(async active=>{clear();const result=await invokeCapability(readOperation,{query:{}});if(!active())return;if(result===null){loaded=true;principal.value='';version.value='';expiry.value='';detail.textContent='No delegation found.';status.textContent=needsReview?'No grant found; the earlier request may still be in flight. Investigate before continuing.':'No grant found. Review the proposed authority before issuing.';return;}if(!grantValid(result))throw Error('Invalid delegation');selected={revision:result.revision,revoked:result.revoked,principalId:result.grant.principalId};principal.value=result.grant.principalId;loaded=true;detail.textContent='User '+result.grant.principalId+', permission '+result.grant.permissionVersion+', expiry '+result.grant.expiresAt+', revision '+result.revision+(result.revoked?', revoked.':', not revoked.');if(needsReview)readReviewed=true;status.textContent='Delegation loaded. Review its state before acting.';});});
- const readHistory=async(after,active)=>{const result=await invokeCapability(historyOperation,{query:after===undefined?{}:{after}});if(!active())return;if(!result||!Array.isArray(result.items)||result.items.length>100||(result.nextAfter!==undefined&&!integer(result.nextAfter,1)))throw Error('Invalid delegation history');let previous=after??0;for(const item of result.items){if(!item||!integer(item.id,1)||item.id<=previous||!integer(item.revision,1)||!['issued','renewed','revoked'].includes(item.event)||!id(item.actorId)||!id(item.principalId)||!id(item.permissionVersion)||!integer(item.expiresAt,0)||!integer(item.at,0))throw Error('Invalid delegation history');previous=item.id;}if(result.nextAfter!==undefined&&(result.nextAfter!==previous||previous<=(after??0)))throw Error('Invalid delegation history');cursor=result.nextAfter;if(needsReview)historyReviewed=cursor===undefined;list.replaceChildren();for(const item of result.items)list.append(node('li','Revision '+item.revision+' — '+item.event+' — '+item.actorId+' — user '+item.principalId+' — permission '+item.permissionVersion+' — expiry '+item.expiresAt+' — recorded '+item.at));status.textContent=cursor===undefined?'Delegation history loaded.':'Delegation history loaded. Continue to the last page for a complete review.';};
- history.addEventListener('click',()=>{cursor=undefined;list.replaceChildren();if(needsReview)historyReviewed=false;void run(active=>readHistory(undefined,active));});next.addEventListener('click',()=>{if(cursor!==undefined)void run(active=>readHistory(cursor,active));});
- const change=mode=>{if(busy||needsReview||!loaded)return;const old=selected;if((mode==='issue'&&old)||(mode!=='issue'&&(!old||old.revoked))||(mode==='renew'&&old.revision>=Number.MAX_SAFE_INTEGER))return;const value=expiry.value,expiresAt=/^[1-9][0-9]*$/.test(value)?Number(value):NaN;if(mode!=='revoke'&&(!id(version.value)||!integer(expiresAt,1)||(mode==='issue'&&!id(principal.value)))){status.textContent='Enter a valid user, permission version and expiry.';return;}const query=mode==='issue'?{principalId:principal.value,permissionVersion:version.value,expiresAt}:mode==='renew'?{revision:old.revision,permissionVersion:version.value,expiresAt}:{revision:old.revision},operation=mode==='issue'?issueOperation:mode==='renew'?renewOperation:revokeOperation;void run(async active=>{const result=await invokeCapability(operation,{query});if(!active())return;if(!grantValid(result)||(mode!=='revoke'&&(result.grant.permissionVersion!==query.permissionVersion||result.grant.expiresAt!==query.expiresAt))||(mode==='issue'?result.revision!==1||result.revoked||result.grant.principalId!==query.principalId:result.revision!==(mode==='revoke'&&old.revision===Number.MAX_SAFE_INTEGER?old.revision:old.revision+1)||result.grant.principalId!==old.principalId||(mode==='revoke'?!result.revoked:result.revoked)))throw Error('Invalid delegation result');clear();cursor=undefined;list.replaceChildren();status.textContent='Delegation change recorded. Inspect the grant before another action.';},true);};
- issue.addEventListener('click',()=>change('issue'));renew.addEventListener('click',()=>change('renew'));revoke.addEventListener('click',()=>change('revoke'));ack.addEventListener('click',()=>{if(busy||!needsReview||!readReviewed||!historyReviewed)return;needsReview=false;readReviewed=false;historyReviewed=false;clear();status.textContent='Review acknowledged. Inspect the grant again before taking action.';sync();});sync();return {dispose(){if(disposed)return;disposed=true;generation++;root.replaceChildren();}};
+export function mountAgentDelegationControl(root, { issueOperation, readOperation, renewOperation, revokeOperation, historyOperation, tenantId, agentId, runId, grantId } = {}) {
+  const op = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(value),
+    id = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(value),
+    integer = (value, min) => Number.isSafeInteger(value) && value >= min;
+  if (
+    !root?.ownerDocument ||
+    typeof root.replaceChildren !== 'function' ||
+    ![issueOperation, readOperation, renewOperation, revokeOperation, historyOperation].every(op) ||
+    ![tenantId, agentId, runId, grantId].every(id)
+  )
+    throw Error('Invalid delegation control view');
+  const doc = root.ownerDocument,
+    node = (tag, text) => {
+      const item = doc.createElement(tag);
+      if (text !== undefined) item.textContent = text;
+      return item;
+    },
+    section = node('section'),
+    heading = node('h2', 'Delegation: ' + grantId),
+    warning = node(
+      'p',
+      'Grant administration changes user authority. Confirm consent and expiry. Not revoked does not establish that a grant is valid: it may be expired or its run unavailable. History is not a cross-page snapshot; review state resets on reload.'
+    ),
+    status = node('p', 'Inspect the grant before taking action.'),
+    detail = node('p', 'No grant selected.'),
+    principalLabel = node('label', 'User principal'),
+    principal = node('input'),
+    versionLabel = node('label', 'Permission version'),
+    version = node('input'),
+    expiryLabel = node('label', 'Expiry (Unix milliseconds)'),
+    expiry = node('input'),
+    read = node('button', 'Inspect delegation'),
+    issue = node('button', 'Issue delegation'),
+    renew = node('button', 'Renew delegation'),
+    revoke = node('button', 'Revoke delegation'),
+    history = node('button', 'View delegation history'),
+    next = node('button', 'Next history page'),
+    list = node('ul'),
+    ack = node('button', 'I reviewed the delegation and history');
+  principal.type = 'text';
+  principal.maxLength = 128;
+  principalLabel.append(principal);
+  version.type = 'text';
+  version.maxLength = 128;
+  versionLabel.append(version);
+  expiry.type = 'text';
+  expiry.inputMode = 'numeric';
+  expiryLabel.append(expiry);
+  for (const button of [read, issue, renew, revoke, history, next, ack]) button.type = 'button';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  section.append(heading, warning, status, read, detail, principalLabel, versionLabel, expiryLabel, issue, renew, revoke, history, next, list, ack);
+  root.replaceChildren(section);
+  let busy = false,
+    disposed = false,
+    generation = 0,
+    loaded = false,
+    selected,
+    cursor,
+    needsReview = false,
+    readReviewed = false,
+    historyReviewed = false;
+  const clear = () => {
+    loaded = false;
+    selected = undefined;
+    detail.textContent = 'No grant selected.';
+  };
+  const sync = () => {
+    read.disabled = busy;
+    history.disabled = busy;
+    next.disabled = busy || cursor === undefined;
+    const disabled = busy || needsReview || !loaded;
+    principal.disabled = disabled || !!selected;
+    version.disabled = disabled;
+    expiry.disabled = disabled;
+    issue.disabled = disabled || !!selected;
+    renew.disabled = disabled || !selected || selected.revoked || selected.revision >= Number.MAX_SAFE_INTEGER;
+    revoke.disabled = disabled || !selected || selected.revoked;
+    ack.hidden = !needsReview;
+    ack.disabled = busy || !needsReview || !readReviewed || !historyReviewed;
+  };
+  const run = async (task, mutation = false) => {
+    if (disposed || busy) return;
+    busy = true;
+    const token = ++generation,
+      active = () => !disposed && generation === token;
+    sync();
+    try {
+      await task(active);
+    } catch {
+      if (active()) {
+        clear();
+        cursor = undefined;
+        list.replaceChildren();
+        readReviewed = false;
+        historyReviewed = false;
+        if (mutation) {
+          needsReview = true;
+          status.textContent = 'Delegation outcome unknown. Inspect the grant and review all history before continuing.';
+        } else status.textContent = 'Unable to load delegation information. Refresh before continuing.';
+      }
+    } finally {
+      if (active()) {
+        busy = false;
+        sync();
+      }
+    }
+  };
+  const grantValid = result => {
+    const g = result?.grant;
+    return (
+      !!result &&
+      typeof result === 'object' &&
+      integer(result.revision, 1) &&
+      typeof result.revoked === 'boolean' &&
+      g &&
+      g.tenantId === tenantId &&
+      g.agentId === agentId &&
+      g.runId === runId &&
+      g.grantId === grantId &&
+      id(g.principalId) &&
+      id(g.permissionVersion) &&
+      integer(g.expiresAt, 0) &&
+      g.revision === result.revision
+    );
+  };
+  read.addEventListener('click', () => {
+    if (needsReview) readReviewed = false;
+    void run(async active => {
+      clear();
+      const result = await invokeCapability(readOperation, { query: {} });
+      if (!active()) return;
+      if (result === null) {
+        loaded = true;
+        principal.value = '';
+        version.value = '';
+        expiry.value = '';
+        detail.textContent = 'No delegation found.';
+        status.textContent = needsReview
+          ? 'No grant found; the earlier request may still be in flight. Investigate before continuing.'
+          : 'No grant found. Review the proposed authority before issuing.';
+        return;
+      }
+      if (!grantValid(result)) throw Error('Invalid delegation');
+      selected = { revision: result.revision, revoked: result.revoked, principalId: result.grant.principalId };
+      principal.value = result.grant.principalId;
+      loaded = true;
+      detail.textContent =
+        'User ' +
+        result.grant.principalId +
+        ', permission ' +
+        result.grant.permissionVersion +
+        ', expiry ' +
+        result.grant.expiresAt +
+        ', revision ' +
+        result.revision +
+        (result.revoked ? ', revoked.' : ', not revoked.');
+      if (needsReview) readReviewed = true;
+      status.textContent = 'Delegation loaded. Review its state before acting.';
+    });
+  });
+  const readHistory = async (after, active) => {
+    const result = await invokeCapability(historyOperation, { query: after === undefined ? {} : { after } });
+    if (!active()) return;
+    if (!result || !Array.isArray(result.items) || result.items.length > 100 || (result.nextAfter !== undefined && !integer(result.nextAfter, 1))) throw Error('Invalid delegation history');
+    let previous = after ?? 0;
+    for (const item of result.items) {
+      if (
+        !item ||
+        !integer(item.id, 1) ||
+        item.id <= previous ||
+        !integer(item.revision, 1) ||
+        !['issued', 'renewed', 'revoked'].includes(item.event) ||
+        !id(item.actorId) ||
+        !id(item.principalId) ||
+        !id(item.permissionVersion) ||
+        !integer(item.expiresAt, 0) ||
+        !integer(item.at, 0)
+      )
+        throw Error('Invalid delegation history');
+      previous = item.id;
+    }
+    if (result.nextAfter !== undefined && (result.nextAfter !== previous || previous <= (after ?? 0))) throw Error('Invalid delegation history');
+    cursor = result.nextAfter;
+    if (needsReview) historyReviewed = cursor === undefined;
+    list.replaceChildren();
+    for (const item of result.items)
+      list.append(
+        node(
+          'li',
+          'Revision ' +
+            item.revision +
+            ' — ' +
+            item.event +
+            ' — ' +
+            item.actorId +
+            ' — user ' +
+            item.principalId +
+            ' — permission ' +
+            item.permissionVersion +
+            ' — expiry ' +
+            item.expiresAt +
+            ' — recorded ' +
+            item.at
+        )
+      );
+    status.textContent = cursor === undefined ? 'Delegation history loaded.' : 'Delegation history loaded. Continue to the last page for a complete review.';
+  };
+  history.addEventListener('click', () => {
+    cursor = undefined;
+    list.replaceChildren();
+    if (needsReview) historyReviewed = false;
+    void run(active => readHistory(undefined, active));
+  });
+  next.addEventListener('click', () => {
+    if (cursor !== undefined) void run(active => readHistory(cursor, active));
+  });
+  const change = mode => {
+    if (busy || needsReview || !loaded) return;
+    const old = selected;
+    if ((mode === 'issue' && old) || (mode !== 'issue' && (!old || old.revoked)) || (mode === 'renew' && old.revision >= Number.MAX_SAFE_INTEGER)) return;
+    const value = expiry.value,
+      expiresAt = /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN;
+    if (mode !== 'revoke' && (!id(version.value) || !integer(expiresAt, 1) || (mode === 'issue' && !id(principal.value)))) {
+      status.textContent = 'Enter a valid user, permission version and expiry.';
+      return;
+    }
+    const query =
+        mode === 'issue'
+          ? { principalId: principal.value, permissionVersion: version.value, expiresAt }
+          : mode === 'renew'
+            ? { revision: old.revision, permissionVersion: version.value, expiresAt }
+            : { revision: old.revision },
+      operation = mode === 'issue' ? issueOperation : mode === 'renew' ? renewOperation : revokeOperation;
+    void run(async active => {
+      const result = await invokeCapability(operation, { query });
+      if (!active()) return;
+      if (
+        !grantValid(result) ||
+        (mode !== 'revoke' && (result.grant.permissionVersion !== query.permissionVersion || result.grant.expiresAt !== query.expiresAt)) ||
+        (mode === 'issue'
+          ? result.revision !== 1 || result.revoked || result.grant.principalId !== query.principalId
+          : result.revision !== (mode === 'revoke' && old.revision === Number.MAX_SAFE_INTEGER ? old.revision : old.revision + 1) ||
+            result.grant.principalId !== old.principalId ||
+            (mode === 'revoke' ? !result.revoked : result.revoked))
+      )
+        throw Error('Invalid delegation result');
+      clear();
+      cursor = undefined;
+      list.replaceChildren();
+      status.textContent = 'Delegation change recorded. Inspect the grant before another action.';
+    }, true);
+  };
+  issue.addEventListener('click', () => change('issue'));
+  renew.addEventListener('click', () => change('renew'));
+  revoke.addEventListener('click', () => change('revoke'));
+  ack.addEventListener('click', () => {
+    if (busy || !needsReview || !readReviewed || !historyReviewed) return;
+    needsReview = false;
+    readReviewed = false;
+    historyReviewed = false;
+    clear();
+    status.textContent = 'Review acknowledged. Inspect the grant again before taking action.';
+    sync();
+  });
+  sync();
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      root.replaceChildren();
+    }
+  };
 }

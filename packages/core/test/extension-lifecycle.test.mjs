@@ -1,90 +1,608 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {generateKeyPairSync} from 'node:crypto';
-import {ExtensionRegistry,SqliteApplicationStore,createExtensionPublicationGuard,createExtensionRuntime,createCapabilityServer,CapabilityRegistry,registerExtensionCapability,signExtensionManifest,computeExtensionIntegrity} from '../dist/index.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { generateKeyPairSync } from 'node:crypto';
+import {
+  ExtensionRegistry,
+  SqliteApplicationStore,
+  createExtensionPublicationGuard,
+  createExtensionRuntime,
+  createCapabilityServer,
+  CapabilityRegistry,
+  registerExtensionCapability,
+  signExtensionManifest,
+  computeExtensionIntegrity
+} from '../dist/index.js';
 
-function policyFixture(policy,globals={}){const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:['read.data']},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},registry=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]}),calls=[];registry.register(manifest,{components:{},tools:{lookup:()=>{calls.push('executed');return 'ok';}},providers:{}});const application={id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[reference],extensionOperations:[{extensionId:reference.id,kind:'tool',name:'lookup'}]},runtime=createExtensionRuntime(application,registry,()=>{},{...globals,operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},validate:()=>true,...policy}}});return {runtime,calls,context:{tenantId:'tenant',principalId:'operator',origin:'ui'}};}
+function policyFixture(policy, globals = {}) {
+  const manifest = {
+      manifestVersion: 1,
+      id: 'example.report',
+      version: '1.0.0',
+      scope: 'application',
+      runtimeVersions: ['0.1.0'],
+      renderers: ['react'],
+      components: [],
+      tools: ['lookup'],
+      providers: [],
+      permissions: ['read.data']
+    },
+    reference = { id: manifest.id, version: manifest.version, scope: manifest.scope },
+    registry = new ExtensionRegistry({ runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: ['read.data'] }] }),
+    calls = [];
+  registry.register(manifest, {
+    components: {},
+    tools: {
+      lookup: () => {
+        calls.push('executed');
+        return 'ok';
+      }
+    },
+    providers: {}
+  });
+  const application = { id: 'demo', schemaVersion: 1, revision: 0, pages: [], extensions: [reference], extensionOperations: [{ extensionId: reference.id, kind: 'tool', name: 'lookup' }] },
+    runtime = createExtensionRuntime(application, registry, () => {}, {
+      ...globals,
+      operations: { lookup: { candidate: { operationId: 'lookup', method: 'GET', path: '/lookup' }, validate: () => true, ...policy } }
+    });
+  return { runtime, calls, context: { tenantId: 'tenant', principalId: 'operator', origin: 'ui' } };
+}
 
-test('extension scope authorization is rechecked after live approval waits',async()=>{
- let allowed=true,release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,authorizeExtension:async()=>{entered();await gate;return true;}});const pending=runtime.capabilities.invoke('lookup',{},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(calls,[]);
+test('extension scope authorization is rechecked after live approval waits', async () => {
+  let allowed = true,
+    release,
+    entered;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    { runtime, calls, context } = policyFixture({
+      authorize: () => allowed,
+      authorizeExtension: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    });
+  const pending = runtime.capabilities.invoke('lookup', {}, context);
+  await ready;
+  allowed = false;
+  release();
+  await assert.rejects(pending, /forbidden/);
+  assert.deepEqual(calls, []);
 });
 
-test('bounded extension policy rejects late approvals and reserves pending capacity',async()=>{
- let blocked=true,release,callsToPolicy=0;const gate=new Promise(resolve=>release=resolve),{runtime,calls,context}=policyFixture({authorize:()=>true,authorizeExtension:async()=>{callsToPolicy++;if(blocked)await gate;return true;},policyTimeoutMs:100,maxPendingPolicies:1});try{await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);assert.equal(callsToPolicy,1);assert.deepEqual(calls,[]);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls,[]);assert.equal(await runtime.capabilities.invoke('lookup',{},context),'ok');assert.deepEqual(calls,['executed']);}finally{release();}
+test('bounded extension policy rejects late approvals and reserves pending capacity', async () => {
+  let blocked = true,
+    release,
+    callsToPolicy = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    { runtime, calls, context } = policyFixture({
+      authorize: () => true,
+      authorizeExtension: async () => {
+        callsToPolicy++;
+        if (blocked) await gate;
+        return true;
+      },
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1
+    });
+  try {
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension policy unavailable/);
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension policy unavailable/);
+    assert.equal(callsToPolicy, 1);
+    assert.deepEqual(calls, []);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, []);
+    assert.equal(await runtime.capabilities.invoke('lookup', {}, context), 'ok');
+    assert.deepEqual(calls, ['executed']);
+  } finally {
+    release();
+  }
 });
 
-test('extension policy timeout returns HTTP 503 without invoking the implementation',async()=>{
- let release;const gate=new Promise(resolve=>release=resolve),{runtime,calls}=policyFixture({authorize:()=>true,authorizeExtension:()=>gate,policyTimeoutMs:100,maxPendingPolicies:1}),server=createCapabilityServer(runtime.capabilities,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Extension policy unavailable'});assert.deepEqual(calls,[]);}finally{release(true);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+test('extension policy timeout returns HTTP 503 without invoking the implementation', async () => {
+  let release;
+  const gate = new Promise(resolve => (release = resolve)),
+    { runtime, calls } = policyFixture({ authorize: () => true, authorizeExtension: () => gate, policyTimeoutMs: 100, maxPendingPolicies: 1 }),
+    server = createCapabilityServer(
+      runtime.capabilities,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: {} })
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'Extension policy unavailable' });
+    assert.deepEqual(calls, []);
+  } finally {
+    release(true);
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
-test('timed-out global approval cannot start later operation policy',async()=>{
- let release,signal,blocked=true,operationCalls=0,scopeCalls=0;const gate=new Promise(resolve=>release=resolve),{runtime,calls,context}=policyFixture({authorize:()=>{throw Error('legacy scope called');},authorizeWithSignal:(_actor,current)=>{scopeCalls++;assert.equal(current.aborted,false);return true;},authorizeExtension:()=>{throw Error('legacy operation called');},authorizeExtensionWithSignal:(_actor,_ref,_operation,current)=>{operationCalls++;assert.equal(current.aborted,false);return true;},policyTimeoutMs:100,maxPendingPolicies:1},{authorizeExtension:()=>{throw Error('legacy global called');},authorizeExtensionWithSignal:async(_actor,_ref,_operation,current)=>{if(blocked){signal=current;await gate;}return true;}});try{await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);assert.equal(signal.aborted,true);assert.equal(operationCalls,0);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(operationCalls,0);assert.deepEqual(calls,[]);assert.equal(await runtime.capabilities.invoke('lookup',{},context),'ok');assert.ok(scopeCalls>0);assert.ok(operationCalls>0);assert.deepEqual(calls,['executed']);}finally{release();}
+test('timed-out global approval cannot start later operation policy', async () => {
+  let release,
+    signal,
+    blocked = true,
+    operationCalls = 0,
+    scopeCalls = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    { runtime, calls, context } = policyFixture(
+      {
+        authorize: () => {
+          throw Error('legacy scope called');
+        },
+        authorizeWithSignal: (_actor, current) => {
+          scopeCalls++;
+          assert.equal(current.aborted, false);
+          return true;
+        },
+        authorizeExtension: () => {
+          throw Error('legacy operation called');
+        },
+        authorizeExtensionWithSignal: (_actor, _ref, _operation, current) => {
+          operationCalls++;
+          assert.equal(current.aborted, false);
+          return true;
+        },
+        policyTimeoutMs: 100,
+        maxPendingPolicies: 1
+      },
+      {
+        authorizeExtension: () => {
+          throw Error('legacy global called');
+        },
+        authorizeExtensionWithSignal: async (_actor, _ref, _operation, current) => {
+          if (blocked) {
+            signal = current;
+            await gate;
+          }
+          return true;
+        }
+      }
+    );
+  try {
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension policy unavailable/);
+    assert.equal(signal.aborted, true);
+    assert.equal(operationCalls, 0);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(operationCalls, 0);
+    assert.deepEqual(calls, []);
+    assert.equal(await runtime.capabilities.invoke('lookup', {}, context), 'ok');
+    assert.ok(scopeCalls > 0);
+    assert.ok(operationCalls > 0);
+    assert.deepEqual(calls, ['executed']);
+  } finally {
+    release();
+  }
 });
 
-test('bounded extension validation fences late results and rechecks authorization',async()=>{
- let release,signal,blocked=true,validations=0,allowed=true;const gate=new Promise(resolve=>release=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,validate:()=>{throw Error('legacy validation called');},validateWithSignal:async(_input,current)=>{validations++;if(blocked){signal=current;await gate;}return true;},validationTimeoutMs:100,maxPendingValidations:1});try{await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension validation unavailable/);assert.equal(signal.aborted,true);await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension validation unavailable/);assert.equal(validations,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls,[]);allowed=false;await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/forbidden/);allowed=true;assert.equal(await runtime.capabilities.invoke('lookup',{},context),'ok');assert.deepEqual(calls,['executed']);assert.throws(()=>policyFixture({authorize:()=>true,validationTimeoutMs:100}),/Invalid extension capability policy/);}finally{release();}
+test('bounded extension validation fences late results and rechecks authorization', async () => {
+  let release,
+    signal,
+    blocked = true,
+    validations = 0,
+    allowed = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    { runtime, calls, context } = policyFixture({
+      authorize: () => allowed,
+      validate: () => {
+        throw Error('legacy validation called');
+      },
+      validateWithSignal: async (_input, current) => {
+        validations++;
+        if (blocked) {
+          signal = current;
+          await gate;
+        }
+        return true;
+      },
+      validationTimeoutMs: 100,
+      maxPendingValidations: 1
+    });
+  try {
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension validation unavailable/);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension validation unavailable/);
+    assert.equal(validations, 1);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, []);
+    allowed = false;
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /forbidden/);
+    allowed = true;
+    assert.equal(await runtime.capabilities.invoke('lookup', {}, context), 'ok');
+    assert.deepEqual(calls, ['executed']);
+    assert.throws(() => policyFixture({ authorize: () => true, validationTimeoutMs: 100 }), /Invalid extension capability policy/);
+  } finally {
+    release();
+  }
 });
 
-test('extension validation timeout returns HTTP 503 without invoking the implementation',async()=>{
- let release;const gate=new Promise(resolve=>release=resolve),{runtime,calls}=policyFixture({authorize:()=>true,validate:()=>gate,validationTimeoutMs:100,maxPendingValidations:1}),server=createCapabilityServer(runtime.capabilities,()=>({tenantId:'tenant',principalId:'operator'}),()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Extension validation unavailable'});assert.deepEqual(calls,[]);}finally{release(true);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+test('extension validation timeout returns HTTP 503 without invoking the implementation', async () => {
+  let release;
+  const gate = new Promise(resolve => (release = resolve)),
+    { runtime, calls } = policyFixture({ authorize: () => true, validate: () => gate, validationTimeoutMs: 100, maxPendingValidations: 1 }),
+    server = createCapabilityServer(
+      runtime.capabilities,
+      () => ({ tenantId: 'tenant', principalId: 'operator' }),
+      () => {}
+    );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: {} })
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'Extension validation unavailable' });
+    assert.deepEqual(calls, []);
+  } finally {
+    release(true);
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
-test('extension authorization is rechecked after bounded validation resolves',async()=>{
- let release,entered,allowed=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,validate:async()=>{entered();await gate;return true;},validationTimeoutMs:1000,maxPendingValidations:1});try{const pending=runtime.capabilities.invoke('lookup',{},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(calls,[]);}finally{release();}
+test('extension authorization is rechecked after bounded validation resolves', async () => {
+  let release,
+    entered,
+    allowed = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    { runtime, calls, context } = policyFixture({
+      authorize: () => allowed,
+      validate: async () => {
+        entered();
+        await gate;
+        return true;
+      },
+      validationTimeoutMs: 1000,
+      maxPendingValidations: 1
+    });
+  try {
+    const pending = runtime.capabilities.invoke('lookup', {}, context);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+    assert.deepEqual(calls, []);
+  } finally {
+    release();
+  }
 });
 
-test('declared extension authorization is rechecked after ordinary validation',async()=>{
- let release,entered,allowed=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),{runtime,calls,context}=policyFixture({authorize:()=>allowed,validate:async()=>{entered();await gate;return true;}});try{const pending=runtime.capabilities.invoke('lookup',{},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.deepEqual(calls,[]);}finally{release();}
+test('declared extension authorization is rechecked after ordinary validation', async () => {
+  let release,
+    entered,
+    allowed = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    { runtime, calls, context } = policyFixture({
+      authorize: () => allowed,
+      validate: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    });
+  try {
+    const pending = runtime.capabilities.invoke('lookup', {}, context);
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+    assert.deepEqual(calls, []);
+  } finally {
+    release();
+  }
 });
 
-test('legacy extension tools recheck authorization after validation',async()=>{
- const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:[]},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},extensions=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:[]}]}),registry=new CapabilityRegistry(()=>{});let release,entered,allowed=true,executed=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);extensions.register(manifest,{components:{},tools:{lookup:()=>{executed++;return 'ok';}},providers:{}});registerExtensionCapability(registry,extensions,[reference],{operationId:'lookup',method:'GET',path:'/lookup'},{authorize:()=>allowed,validate:async()=>{entered();await gate;return true;}});try{const pending=registry.invoke('lookup',{}, {tenantId:'tenant',principalId:'operator',origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.equal(executed,0);}finally{release();}
+test('legacy extension tools recheck authorization after validation', async () => {
+  const manifest = {
+      manifestVersion: 1,
+      id: 'example.report',
+      version: '1.0.0',
+      scope: 'application',
+      runtimeVersions: ['0.1.0'],
+      renderers: ['react'],
+      components: [],
+      tools: ['lookup'],
+      providers: [],
+      permissions: []
+    },
+    reference = { id: manifest.id, version: manifest.version, scope: manifest.scope },
+    extensions = new ExtensionRegistry({ runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: [] }] }),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    allowed = true,
+    executed = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  extensions.register(manifest, {
+    components: {},
+    tools: {
+      lookup: () => {
+        executed++;
+        return 'ok';
+      }
+    },
+    providers: {}
+  });
+  registerExtensionCapability(
+    registry,
+    extensions,
+    [reference],
+    { operationId: 'lookup', method: 'GET', path: '/lookup' },
+    {
+      authorize: () => allowed,
+      validate: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    }
+  );
+  try {
+    const pending = registry.invoke('lookup', {}, { tenantId: 'tenant', principalId: 'operator', origin: 'ui' });
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+    assert.equal(executed, 0);
+  } finally {
+    release();
+  }
 });
 
-test('approved extension publication survives repository reopening and is rechecked when rebuilding the runtime',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'app-mixer-extension-lifecycle-'));
- const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:['report'],tools:['lookup'],providers:[],permissions:['read.data']};
- const reference={id:manifest.id,version:manifest.version,scope:manifest.scope};
- const host={runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]};
- const implementation={components:{report:()=>null},tools:{lookup:input=>({value:input.value})},providers:{}};
- const initial={id:'demo',schemaVersion:1,revision:0,pages:[{id:'home',title:'Home',route:'/',components:[]}]};
- const requirements=()=>({components:[],tools:[],providers:[]});
- const registry=new ExtensionRegistry(host);registry.register(manifest,implementation);
- const guard=createExtensionPublicationGuard(registry.getManifests(),host,requirements),path=join(dir,'application.sqlite');
- try{
-  let store=new SqliteApplicationStore(path,initial,guard);
-  try{
-   store.apply(0,[{op:'setExtensions',extensions:[reference]},{op:'addComponent',pageId:'home',component:{id:'report1',type:'Extension',extensionId:reference.id,name:'report'}},{op:'setExtensionOperations',operations:[{extensionId:reference.id,kind:'tool',name:'lookup'}]}]);
-   assert.equal(store.publish(1).version,1);
-  }finally{store.close();}
-  store=new SqliteApplicationStore(path,initial,guard);
-  try{
-   const publication=store.getPublished();assert.equal(publication.version,1);
-   const events=[],runtime=createExtensionRuntime(publication.definition,registry,event=>events.push(event.outcome),{operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},authorize:context=>context.principalId==='allowed',validate:input=>typeof input?.value==='string'}}});
-   const context={tenantId:'tenant',principalId:'denied',origin:'ui'};
-   await assert.rejects(()=>runtime.capabilities.invoke('lookup',{value:'sales'},context),/forbidden/);
-   context.principalId='allowed';assert.deepEqual(await runtime.capabilities.invoke('lookup',{value:'sales'},context),{value:'sales'});assert.deepEqual(events,['attempt','denied','attempt','succeeded']);
-  }finally{store.close();}
-  const revoked={...host,approved:[]},newRegistry=new ExtensionRegistry(revoked);
-  assert.throws(()=>newRegistry.register(manifest,implementation),/compatib/i);
-  const newGuard=createExtensionPublicationGuard([manifest],revoked,requirements);store=new SqliteApplicationStore(path,initial,newGuard);
-  try{assert.throws(()=>store.publish(1),/compatibility/i);assert.equal(store.getPublished().version,1);assert.throws(()=>createExtensionRuntime(store.getPublished().definition,newRegistry,()=>{},{operations:{}}));}finally{store.close();}
- }finally{await rm(dir,{recursive:true,force:true});}
+test('approved extension publication survives repository reopening and is rechecked when rebuilding the runtime', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-mixer-extension-lifecycle-'));
+  const manifest = {
+    manifestVersion: 1,
+    id: 'example.report',
+    version: '1.0.0',
+    scope: 'application',
+    runtimeVersions: ['0.1.0'],
+    renderers: ['react'],
+    components: ['report'],
+    tools: ['lookup'],
+    providers: [],
+    permissions: ['read.data']
+  };
+  const reference = { id: manifest.id, version: manifest.version, scope: manifest.scope };
+  const host = { runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: ['read.data'] }] };
+  const implementation = { components: { report: () => null }, tools: { lookup: input => ({ value: input.value }) }, providers: {} };
+  const initial = { id: 'demo', schemaVersion: 1, revision: 0, pages: [{ id: 'home', title: 'Home', route: '/', components: [] }] };
+  const requirements = () => ({ components: [], tools: [], providers: [] });
+  const registry = new ExtensionRegistry(host);
+  registry.register(manifest, implementation);
+  const guard = createExtensionPublicationGuard(registry.getManifests(), host, requirements),
+    path = join(dir, 'application.sqlite');
+  try {
+    let store = new SqliteApplicationStore(path, initial, guard);
+    try {
+      store.apply(0, [
+        { op: 'setExtensions', extensions: [reference] },
+        { op: 'addComponent', pageId: 'home', component: { id: 'report1', type: 'Extension', extensionId: reference.id, name: 'report' } },
+        { op: 'setExtensionOperations', operations: [{ extensionId: reference.id, kind: 'tool', name: 'lookup' }] }
+      ]);
+      assert.equal(store.publish(1).version, 1);
+    } finally {
+      store.close();
+    }
+    store = new SqliteApplicationStore(path, initial, guard);
+    try {
+      const publication = store.getPublished();
+      assert.equal(publication.version, 1);
+      const events = [],
+        runtime = createExtensionRuntime(publication.definition, registry, event => events.push(event.outcome), {
+          operations: {
+            lookup: {
+              candidate: { operationId: 'lookup', method: 'GET', path: '/lookup' },
+              authorize: context => context.principalId === 'allowed',
+              validate: input => typeof input?.value === 'string'
+            }
+          }
+        });
+      const context = { tenantId: 'tenant', principalId: 'denied', origin: 'ui' };
+      await assert.rejects(() => runtime.capabilities.invoke('lookup', { value: 'sales' }, context), /forbidden/);
+      context.principalId = 'allowed';
+      assert.deepEqual(await runtime.capabilities.invoke('lookup', { value: 'sales' }, context), { value: 'sales' });
+      assert.deepEqual(events, ['attempt', 'denied', 'attempt', 'succeeded']);
+    } finally {
+      store.close();
+    }
+    const revoked = { ...host, approved: [] },
+      newRegistry = new ExtensionRegistry(revoked);
+    assert.throws(() => newRegistry.register(manifest, implementation), /compatib/i);
+    const newGuard = createExtensionPublicationGuard([manifest], revoked, requirements);
+    store = new SqliteApplicationStore(path, initial, newGuard);
+    try {
+      assert.throws(() => store.publish(1), /compatibility/i);
+      assert.equal(store.getPublished().version, 1);
+      assert.throws(() => createExtensionRuntime(store.getPublished().definition, newRegistry, () => {}, { operations: {} }));
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('runtime rechecks live extension approval after validation and isolates policy inputs',async()=>{
- const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:['read.data']},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},host={runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]},registry=new ExtensionRegistry(host),calls=[],events=[],seen=[];registry.register(manifest,{components:{},tools:{lookup:input=>{calls.push(input);return 'ok';}},providers:{}});const application={id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[reference],extensionOperations:[{extensionId:reference.id,kind:'tool',name:'lookup'}]};let approved=true,block=false,entered,release;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),bindings={authorizeExtension:(actor,ref,op)=>{seen.push({actor:{...actor},ref:{...ref},op:{...op}});ref.version='forged';op.name='forged';actor.principalId='forged';return approved;},operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},authorize:actor=>actor.tenantId==='tenant'&&actor.principalId==='allowed',authorizeExtension:(actor,ref,op)=>actor.principalId==='allowed'&&ref.version==='1.0.0'&&op.name==='lookup',validate:async input=>{if(block){entered();await gate;}return input?.ok===true;}}}},runtime=createExtensionRuntime(application,registry,event=>events.push(event.outcome),bindings),context={tenantId:'tenant',principalId:'allowed',origin:'agent'};reference.version='forged';bindings.authorizeExtension=()=>false;assert.equal(await runtime.capabilities.invoke('lookup',{ok:true},context),'ok');assert.deepEqual(calls,[{ok:true}]);assert.ok(seen.every(item=>item.ref.version==='1.0.0'&&item.op.name==='lookup'&&item.actor.principalId==='allowed'));block=true;const pending=runtime.capabilities.invoke('lookup',{ok:true},context);await ready;approved=false;release();await assert.rejects(pending,/forbidden/);assert.equal(calls.length,1);assert.deepEqual(events,['attempt','succeeded','attempt','denied']);await assert.rejects(runtime.capabilities.invoke('lookup',{ok:true},{...context,tenantId:'other'}),/forbidden/);assert.equal(calls.length,1);
+test('runtime rechecks live extension approval after validation and isolates policy inputs', async () => {
+  const manifest = {
+      manifestVersion: 1,
+      id: 'example.report',
+      version: '1.0.0',
+      scope: 'application',
+      runtimeVersions: ['0.1.0'],
+      renderers: ['react'],
+      components: [],
+      tools: ['lookup'],
+      providers: [],
+      permissions: ['read.data']
+    },
+    reference = { id: manifest.id, version: manifest.version, scope: manifest.scope },
+    host = { runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: ['read.data'] }] },
+    registry = new ExtensionRegistry(host),
+    calls = [],
+    events = [],
+    seen = [];
+  registry.register(manifest, {
+    components: {},
+    tools: {
+      lookup: input => {
+        calls.push(input);
+        return 'ok';
+      }
+    },
+    providers: {}
+  });
+  const application = { id: 'demo', schemaVersion: 1, revision: 0, pages: [], extensions: [reference], extensionOperations: [{ extensionId: reference.id, kind: 'tool', name: 'lookup' }] };
+  let approved = true,
+    block = false,
+    entered,
+    release;
+  const ready = new Promise(r => (entered = r)),
+    gate = new Promise(r => (release = r)),
+    bindings = {
+      authorizeExtension: (actor, ref, op) => {
+        seen.push({ actor: { ...actor }, ref: { ...ref }, op: { ...op } });
+        ref.version = 'forged';
+        op.name = 'forged';
+        actor.principalId = 'forged';
+        return approved;
+      },
+      operations: {
+        lookup: {
+          candidate: { operationId: 'lookup', method: 'GET', path: '/lookup' },
+          authorize: actor => actor.tenantId === 'tenant' && actor.principalId === 'allowed',
+          authorizeExtension: (actor, ref, op) => actor.principalId === 'allowed' && ref.version === '1.0.0' && op.name === 'lookup',
+          validate: async input => {
+            if (block) {
+              entered();
+              await gate;
+            }
+            return input?.ok === true;
+          }
+        }
+      }
+    },
+    runtime = createExtensionRuntime(application, registry, event => events.push(event.outcome), bindings),
+    context = { tenantId: 'tenant', principalId: 'allowed', origin: 'agent' };
+  reference.version = 'forged';
+  bindings.authorizeExtension = () => false;
+  assert.equal(await runtime.capabilities.invoke('lookup', { ok: true }, context), 'ok');
+  assert.deepEqual(calls, [{ ok: true }]);
+  assert.ok(seen.every(item => item.ref.version === '1.0.0' && item.op.name === 'lookup' && item.actor.principalId === 'allowed'));
+  block = true;
+  const pending = runtime.capabilities.invoke('lookup', { ok: true }, context);
+  await ready;
+  approved = false;
+  release();
+  await assert.rejects(pending, /forbidden/);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(events, ['attempt', 'succeeded', 'attempt', 'denied']);
+  await assert.rejects(runtime.capabilities.invoke('lookup', { ok: true }, { ...context, tenantId: 'other' }), /forbidden/);
+  assert.equal(calls.length, 1);
 });
 
-
-test('signed registry snapshots publication policy and rebuilds an authorized runtime after reopening',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'signed-extension-lifecycle-')),path=join(dir,'app.sqlite'),keys=generateKeyPairSync('ed25519'),other=generateKeyPairSync('ed25519'),bytes=Buffer.from('report package'),manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:['read.data'],integrity:computeExtensionIntegrity(bytes)},reference={id:manifest.id,version:manifest.version,scope:manifest.scope},host={runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]},policy={trustedKeys:{publisher:keys.publicKey},allowedExtensions:{publisher:[reference]}},signed=signExtensionManifest(manifest,'publisher',keys.privateKey),bindings={components:{},tools:{lookup:input=>({value:input.value})},providers:{}},initial={id:'demo',schemaVersion:1,revision:0,pages:[]},requirements=()=>({components:[],tools:[],providers:[]});let store;
- try{const registry=new ExtensionRegistry(host,policy),emptyGuard=registry.createPublicationGuard(requirements);registry.registerSigned(signed,bindings,{},bytes);registry.manifests=[];registry.registrations={tools:new Map([['lookup',()=>{throw Error('injected');}]])};registry.host={...host,approved:[]};assert.equal(registry.getManifests().length,1);assert.deepEqual(registry.get('tools','lookup')({value:'test'}),{value:'test'});const guard=registry.createPublicationGuard(requirements);host.approved.length=0;policy.allowedExtensions.publisher.length=0;signed.manifest.tools.length=0;
-  store=new SqliteApplicationStore(path,initial,emptyGuard);store.apply(0,[{op:'setExtensions',extensions:[reference]},{op:'setExtensionOperations',operations:[{extensionId:reference.id,kind:'tool',name:'lookup'}]}]);assert.throws(()=>store.publish(1),/compatibility/i);store.close();store=new SqliteApplicationStore(path,initial,guard);assert.equal(store.publish(1).version,1);store.close();store=undefined;
-  const restoredHost={runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]},restoredPolicy={trustedKeys:{publisher:keys.publicKey},allowedExtensions:{publisher:[reference]}},restored=new ExtensionRegistry(restoredHost,restoredPolicy),fresh=signExtensionManifest(manifest,'publisher',keys.privateKey);restored.registerSigned(fresh,bindings,{},bytes);store=new SqliteApplicationStore(path,initial,restored.createPublicationGuard(requirements));const runtime=createExtensionRuntime(store.getPublished().definition,restored,()=>{},{operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},authorize:actor=>actor.principalId==='allowed',validate:input=>typeof input?.value==='string'}}});assert.deepEqual(await runtime.capabilities.invoke('lookup',{value:'sales'},{tenantId:'tenant',principalId:'allowed',origin:'ui'}),{value:'sales'});await assert.rejects(runtime.capabilities.invoke('lookup',{value:'sales'},{tenantId:'tenant',principalId:'denied',origin:'ui'}),/forbidden/i);store.close();store=undefined;
-  const revoked=new ExtensionRegistry(restoredHost,{trustedKeys:{publisher:other.publicKey},allowedExtensions:{publisher:[reference]}});assert.throws(()=>revoked.registerSigned(fresh,bindings,{},bytes),/Invalid signed extension manifest/);store=new SqliteApplicationStore(path,initial,revoked.createPublicationGuard(requirements));assert.throws(()=>store.publish(1),/compatibility/i);assert.throws(()=>createExtensionRuntime(store.getPublished().definition,revoked,()=>{},{operations:{}}),/compatibility/i);
- }finally{store?.close();await rm(dir,{recursive:true,force:true});}
+test('signed registry snapshots publication policy and rebuilds an authorized runtime after reopening', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'signed-extension-lifecycle-')),
+    path = join(dir, 'app.sqlite'),
+    keys = generateKeyPairSync('ed25519'),
+    other = generateKeyPairSync('ed25519'),
+    bytes = Buffer.from('report package'),
+    manifest = {
+      manifestVersion: 1,
+      id: 'example.report',
+      version: '1.0.0',
+      scope: 'application',
+      runtimeVersions: ['0.1.0'],
+      renderers: ['react'],
+      components: [],
+      tools: ['lookup'],
+      providers: [],
+      permissions: ['read.data'],
+      integrity: computeExtensionIntegrity(bytes)
+    },
+    reference = { id: manifest.id, version: manifest.version, scope: manifest.scope },
+    host = { runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: ['read.data'] }] },
+    policy = { trustedKeys: { publisher: keys.publicKey }, allowedExtensions: { publisher: [reference] } },
+    signed = signExtensionManifest(manifest, 'publisher', keys.privateKey),
+    bindings = { components: {}, tools: { lookup: input => ({ value: input.value }) }, providers: {} },
+    initial = { id: 'demo', schemaVersion: 1, revision: 0, pages: [] },
+    requirements = () => ({ components: [], tools: [], providers: [] });
+  let store;
+  try {
+    const registry = new ExtensionRegistry(host, policy),
+      emptyGuard = registry.createPublicationGuard(requirements);
+    registry.registerSigned(signed, bindings, {}, bytes);
+    registry.manifests = [];
+    registry.registrations = {
+      tools: new Map([
+        [
+          'lookup',
+          () => {
+            throw Error('injected');
+          }
+        ]
+      ])
+    };
+    registry.host = { ...host, approved: [] };
+    assert.equal(registry.getManifests().length, 1);
+    assert.deepEqual(registry.get('tools', 'lookup')({ value: 'test' }), { value: 'test' });
+    const guard = registry.createPublicationGuard(requirements);
+    host.approved.length = 0;
+    policy.allowedExtensions.publisher.length = 0;
+    signed.manifest.tools.length = 0;
+    store = new SqliteApplicationStore(path, initial, emptyGuard);
+    store.apply(0, [
+      { op: 'setExtensions', extensions: [reference] },
+      { op: 'setExtensionOperations', operations: [{ extensionId: reference.id, kind: 'tool', name: 'lookup' }] }
+    ]);
+    assert.throws(() => store.publish(1), /compatibility/i);
+    store.close();
+    store = new SqliteApplicationStore(path, initial, guard);
+    assert.equal(store.publish(1).version, 1);
+    store.close();
+    store = undefined;
+    const restoredHost = { runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: ['read.data'] }] },
+      restoredPolicy = { trustedKeys: { publisher: keys.publicKey }, allowedExtensions: { publisher: [reference] } },
+      restored = new ExtensionRegistry(restoredHost, restoredPolicy),
+      fresh = signExtensionManifest(manifest, 'publisher', keys.privateKey);
+    restored.registerSigned(fresh, bindings, {}, bytes);
+    store = new SqliteApplicationStore(path, initial, restored.createPublicationGuard(requirements));
+    const runtime = createExtensionRuntime(store.getPublished().definition, restored, () => {}, {
+      operations: {
+        lookup: { candidate: { operationId: 'lookup', method: 'GET', path: '/lookup' }, authorize: actor => actor.principalId === 'allowed', validate: input => typeof input?.value === 'string' }
+      }
+    });
+    assert.deepEqual(await runtime.capabilities.invoke('lookup', { value: 'sales' }, { tenantId: 'tenant', principalId: 'allowed', origin: 'ui' }), { value: 'sales' });
+    await assert.rejects(runtime.capabilities.invoke('lookup', { value: 'sales' }, { tenantId: 'tenant', principalId: 'denied', origin: 'ui' }), /forbidden/i);
+    store.close();
+    store = undefined;
+    const revoked = new ExtensionRegistry(restoredHost, { trustedKeys: { publisher: other.publicKey }, allowedExtensions: { publisher: [reference] } });
+    assert.throws(() => revoked.registerSigned(fresh, bindings, {}, bytes), /Invalid signed extension manifest/);
+    store = new SqliteApplicationStore(path, initial, revoked.createPublicationGuard(requirements));
+    assert.throws(() => store.publish(1), /compatibility/i);
+    assert.throws(() => createExtensionRuntime(store.getPublished().definition, revoked, () => {}, { operations: {} }), /compatibility/i);
+  } finally {
+    store?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

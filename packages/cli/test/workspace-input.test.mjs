@@ -1,38 +1,242 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {pathToFileURL} from 'node:url';
-import {runInNewContext} from 'node:vm';
-import {JSDOM} from 'jsdom';
-import {createProject} from '../dist/index.js';
-import {DEVELOPMENT_UI} from '../../core/dist/development-ui.js';
-import {A2UIRenderer,APP_MIXER_CATALOG,basicRegistry} from '../../web/dist/index.js';
-const wait=async predicate=>{for(let n=0;n<200&&!predicate();n++)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate());};
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
+import { createProject } from '../dist/index.js';
+import { DEVELOPMENT_UI } from '../../core/dist/development-ui.js';
+import { A2UIRenderer, APP_MIXER_CATALOG, basicRegistry } from '../../web/dist/index.js';
+const wait = async predicate => {
+  for (let n = 0; n < 200 && !predicate(); n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(predicate());
+};
 
-test('published Input components render editable bound fields and preview consistently',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'workspace-input-'));let dom;try{const target=await createProject('sample-app',dir),{prepareWorkspace}=await import(pathToFileURL(join(target,'workspace.mjs')).href),definition={schemaVersion:1,pages:[{id:'home',title:'Home',route:'/',components:[{id:'field',type:'Input',props:{label:'Notes',path:'/form/notes',variant:'longText'}}]}]},prepared=prepareWorkspace(definition);dom=new JSDOM('<!doctype html><main></main>');const document=dom.window.document,renderer=new A2UIRenderer(document.querySelector('main'),prepared.registry);renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:prepared.components}});const field=document.querySelector('textarea');assert.ok(field);assert.equal(field.parentElement.querySelector('span').textContent,'Notes');field.value='First\nSecond';field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));assert.equal(field.value,'First\nSecond');renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/form/notes',value:'External update'}});assert.equal(document.querySelector('textarea').value,'External update');
-  for(const props of [{label:'x'}, {label:'x',path:'/x',variant:'other'}, {label:'x',path:'/x',extra:true}, {label:1,path:'/x'}])assert.throws(()=>prepareWorkspace({...definition,pages:[{...definition.pages[0],components:[{id:'field',type:'Input',props}]}]}),/Invalid Input/);
-  for(const path of ['/', 'relative', '/__proto__/x', '/bad~2escape']){const bad=prepareWorkspace({...definition,pages:[{...definition.pages[0],components:[{id:'field',type:'Input',props:{label:'Bad',path}}]}]});assert.throws(()=>renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:bad.components}}),/path|pointer|unsafe|TextField/i);assert.equal(document.querySelector('textarea').value,'External update');}
-  const html=DEVELOPMENT_UI,previewDom=new JSDOM(html),previewDoc=previewDom.window.document,script=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm,''),proposalId='00000000-0000-0000-0000-000000000000',calls=[];runInNewContext(script,{document:previewDoc,A2UIRenderer,APP_MIXER_CATALOG,basicRegistry,installedExtensions:[],fetch:async path=>{calls.push(path);return {ok:true,json:async()=>({id:proposalId,status:'pending',patches:[],preview:definition})};}});previewDoc.getElementById('proposal-id').value=proposalId;previewDoc.getElementById('load').click();await wait(()=>!previewDoc.getElementById('approve').disabled);assert.equal(previewDoc.querySelector('#rendered-preview textarea').parentElement.querySelector('span').textContent,'Notes');assert.deepEqual(calls,['/proposals/'+proposalId]);previewDom.window.close();
- }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('published Input components render editable bound fields and preview consistently', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-input-'));
+  let dom;
+  try {
+    const target = await createProject('sample-app', dir),
+      { prepareWorkspace } = await import(pathToFileURL(join(target, 'workspace.mjs')).href),
+      definition = {
+        schemaVersion: 1,
+        pages: [{ id: 'home', title: 'Home', route: '/', components: [{ id: 'field', type: 'Input', props: { label: 'Notes', path: '/form/notes', variant: 'longText' } }] }]
+      },
+      prepared = prepareWorkspace(definition);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const document = dom.window.document,
+      renderer = new A2UIRenderer(document.querySelector('main'), prepared.registry);
+    renderer.apply({ version: 'v0.9.1', createSurface: { surfaceId: 'main', catalogId: APP_MIXER_CATALOG } });
+    renderer.apply({ version: 'v0.9.1', updateComponents: { surfaceId: 'main', components: prepared.components } });
+    const field = document.querySelector('textarea');
+    assert.ok(field);
+    assert.equal(field.parentElement.querySelector('span').textContent, 'Notes');
+    field.value = 'First\nSecond';
+    field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal(field.value, 'First\nSecond');
+    renderer.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'main', path: '/form/notes', value: 'External update' } });
+    assert.equal(document.querySelector('textarea').value, 'External update');
+    for (const props of [{ label: 'x' }, { label: 'x', path: '/x', variant: 'other' }, { label: 'x', path: '/x', extra: true }, { label: 1, path: '/x' }])
+      assert.throws(() => prepareWorkspace({ ...definition, pages: [{ ...definition.pages[0], components: [{ id: 'field', type: 'Input', props }] }] }), /Invalid Input/);
+    for (const path of ['/', 'relative', '/__proto__/x', '/bad~2escape']) {
+      const bad = prepareWorkspace({ ...definition, pages: [{ ...definition.pages[0], components: [{ id: 'field', type: 'Input', props: { label: 'Bad', path } }] }] });
+      assert.throws(() => renderer.apply({ version: 'v0.9.1', updateComponents: { surfaceId: 'main', components: bad.components } }), /path|pointer|unsafe|TextField/i);
+      assert.equal(document.querySelector('textarea').value, 'External update');
+    }
+    const html = DEVELOPMENT_UI,
+      previewDom = new JSDOM(html),
+      previewDoc = previewDom.window.document,
+      script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm, ''),
+      proposalId = '00000000-0000-0000-0000-000000000000',
+      calls = [];
+    runInNewContext(script, {
+      document: previewDoc,
+      A2UIRenderer,
+      APP_MIXER_CATALOG,
+      basicRegistry,
+      installedExtensions: [],
+      fetch: async path => {
+        calls.push(path);
+        return { ok: true, json: async () => ({ id: proposalId, status: 'pending', patches: [], preview: definition }) };
+      }
+    });
+    previewDoc.getElementById('proposal-id').value = proposalId;
+    previewDoc.getElementById('load').click();
+    await wait(() => !previewDoc.getElementById('approve').disabled);
+    assert.equal(previewDoc.querySelector('#rendered-preview textarea').parentElement.querySelector('span').textContent, 'Notes');
+    assert.deepEqual(calls, ['/proposals/' + proposalId]);
+    previewDom.window.close();
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('proposal preview shows version 2 page descriptions and blocks malformed pages',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'workspace-preview-v2-'));let dom;try{const target=await createProject('sample-app',dir),{prepareWorkspace}=await import(pathToFileURL(join(target,'workspace.mjs')).href),definition={schemaVersion:2,pages:[{id:'home',title:'Home',description:'Details <script>unsafe</script>',components:[{id:'field',type:'Input',props:{label:'Name',path:'/name'}}]}]},prepared=prepareWorkspace(definition);dom=new JSDOM(DEVELOPMENT_UI);const document=dom.window.document,script=DEVELOPMENT_UI.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm,''),proposalId='00000000-0000-0000-0000-000000000000';let supplied=definition;runInNewContext(script,{document,A2UIRenderer,APP_MIXER_CATALOG,basicRegistry,installedExtensions:[],fetch:async()=>({ok:true,json:async()=>({id:proposalId,status:'pending',patches:[],preview:supplied})})});document.getElementById('proposal-id').value=proposalId;document.getElementById('load').click();await wait(()=>!document.getElementById('approve').disabled);const preview=document.getElementById('rendered-preview');assert.equal(preview.querySelector('h2').textContent,'Home');assert.equal(preview.children[0].children[0].children[1].textContent,'Details <script>unsafe</script>');assert.equal(preview.querySelector('script'),null);assert.equal(prepared.components[2].text,'Details <script>unsafe</script>');assert.equal(preview.querySelector('input').parentElement.textContent,'Name');supplied={...definition,pages:[{...definition.pages[0],description:42}]};document.getElementById('load').click();await wait(()=>document.getElementById('status').textContent.startsWith('Cannot approve'));assert.equal(document.getElementById('approve').disabled,true);assert.match(preview.textContent,/Invalid page/);assert.throws(()=>prepareWorkspace(supplied),/Invalid page/);
- }finally{dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('proposal preview shows version 2 page descriptions and blocks malformed pages', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-preview-v2-'));
+  let dom;
+  try {
+    const target = await createProject('sample-app', dir),
+      { prepareWorkspace } = await import(pathToFileURL(join(target, 'workspace.mjs')).href),
+      definition = {
+        schemaVersion: 2,
+        pages: [{ id: 'home', title: 'Home', description: 'Details <script>unsafe</script>', components: [{ id: 'field', type: 'Input', props: { label: 'Name', path: '/name' } }] }]
+      },
+      prepared = prepareWorkspace(definition);
+    dom = new JSDOM(DEVELOPMENT_UI);
+    const document = dom.window.document,
+      script = DEVELOPMENT_UI.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm, ''),
+      proposalId = '00000000-0000-0000-0000-000000000000';
+    let supplied = definition;
+    runInNewContext(script, {
+      document,
+      A2UIRenderer,
+      APP_MIXER_CATALOG,
+      basicRegistry,
+      installedExtensions: [],
+      fetch: async () => ({ ok: true, json: async () => ({ id: proposalId, status: 'pending', patches: [], preview: supplied }) })
+    });
+    document.getElementById('proposal-id').value = proposalId;
+    document.getElementById('load').click();
+    await wait(() => !document.getElementById('approve').disabled);
+    const preview = document.getElementById('rendered-preview');
+    assert.equal(preview.querySelector('h2').textContent, 'Home');
+    assert.equal(preview.children[0].children[0].children[1].textContent, 'Details <script>unsafe</script>');
+    assert.equal(preview.querySelector('script'), null);
+    assert.equal(prepared.components[2].text, 'Details <script>unsafe</script>');
+    assert.equal(preview.querySelector('input').parentElement.textContent, 'Name');
+    supplied = { ...definition, pages: [{ ...definition.pages[0], description: 42 }] };
+    document.getElementById('load').click();
+    await wait(() => document.getElementById('status').textContent.startsWith('Cannot approve'));
+    assert.equal(document.getElementById('approve').disabled, true);
+    assert.match(preview.textContent, /Invalid page/);
+    assert.throws(() => prepareWorkspace(supplied), /Invalid page/);
+  } finally {
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('workspace and preview bind Text to data edited by an Input',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'workspace-bound-text-'));let dom,previewDom;try{const target=await createProject('sample-app',dir),{prepareWorkspace}=await import(pathToFileURL(join(target,'workspace.mjs')).href),definition={schemaVersion:1,pages:[{title:'Home',components:[{id:'field',type:'Input',props:{label:'Name',path:'/name'}},{id:'display',type:'Text',props:{path:'/name',variant:'h3'}}]}]},prepared=prepareWorkspace(definition);dom=new JSDOM('<!doctype html><main></main>');const document=dom.window.document,host=document.querySelector('main'),renderer=new A2UIRenderer(host,prepared.registry);renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:prepared.components}});const input=host.querySelector('input');input.value='<b>Ada</b>';input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));assert.equal(host.querySelector('h3').textContent,'<b>Ada</b>');assert.equal(host.querySelector('b'),null);renderer.apply({version:'v0.9.1',updateDataModel:{surfaceId:'main',path:'/name',value:'Grace'}});assert.equal(host.querySelector('h3').textContent,'Grace');assert.equal(host.querySelector('input').value,'Grace');for(const props of [{path:1},{path:'/x',text:'bad'},{path:'/x',variant:'bad'},{path:'/x',other:'bad'}])assert.throws(()=>prepareWorkspace({...definition,pages:[{...definition.pages[0],components:[{type:'Text',props}]}]}),/Invalid Text/);
- previewDom=new JSDOM(DEVELOPMENT_UI);const previewDoc=previewDom.window.document,script=DEVELOPMENT_UI.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm,''),proposalId='00000000-0000-0000-0000-000000000000';runInNewContext(script,{document:previewDoc,A2UIRenderer,APP_MIXER_CATALOG,basicRegistry,installedExtensions:[],fetch:async()=>({ok:true,json:async()=>({id:proposalId,status:'pending',patches:[],preview:definition})})});previewDoc.getElementById('proposal-id').value=proposalId;previewDoc.getElementById('load').click();await wait(()=>!previewDoc.getElementById('approve').disabled);const preview=previewDoc.getElementById('rendered-preview'),previewInput=preview.querySelector('input');previewInput.value='Preview';previewInput.dispatchEvent(new previewDom.window.Event('input',{bubbles:true}));assert.equal(preview.querySelector('h3').textContent,'Preview');
- }finally{previewDom?.window.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('workspace and preview bind Text to data edited by an Input', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-bound-text-'));
+  let dom, previewDom;
+  try {
+    const target = await createProject('sample-app', dir),
+      { prepareWorkspace } = await import(pathToFileURL(join(target, 'workspace.mjs')).href),
+      definition = {
+        schemaVersion: 1,
+        pages: [
+          {
+            title: 'Home',
+            components: [
+              { id: 'field', type: 'Input', props: { label: 'Name', path: '/name' } },
+              { id: 'display', type: 'Text', props: { path: '/name', variant: 'h3' } }
+            ]
+          }
+        ]
+      },
+      prepared = prepareWorkspace(definition);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const document = dom.window.document,
+      host = document.querySelector('main'),
+      renderer = new A2UIRenderer(host, prepared.registry);
+    renderer.apply({ version: 'v0.9.1', createSurface: { surfaceId: 'main', catalogId: APP_MIXER_CATALOG } });
+    renderer.apply({ version: 'v0.9.1', updateComponents: { surfaceId: 'main', components: prepared.components } });
+    const input = host.querySelector('input');
+    input.value = '<b>Ada</b>';
+    input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal(host.querySelector('h3').textContent, '<b>Ada</b>');
+    assert.equal(host.querySelector('b'), null);
+    renderer.apply({ version: 'v0.9.1', updateDataModel: { surfaceId: 'main', path: '/name', value: 'Grace' } });
+    assert.equal(host.querySelector('h3').textContent, 'Grace');
+    assert.equal(host.querySelector('input').value, 'Grace');
+    for (const props of [{ path: 1 }, { path: '/x', text: 'bad' }, { path: '/x', variant: 'bad' }, { path: '/x', other: 'bad' }])
+      assert.throws(() => prepareWorkspace({ ...definition, pages: [{ ...definition.pages[0], components: [{ type: 'Text', props }] }] }), /Invalid Text/);
+    previewDom = new JSDOM(DEVELOPMENT_UI);
+    const previewDoc = previewDom.window.document,
+      script = DEVELOPMENT_UI.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm, ''),
+      proposalId = '00000000-0000-0000-0000-000000000000';
+    runInNewContext(script, {
+      document: previewDoc,
+      A2UIRenderer,
+      APP_MIXER_CATALOG,
+      basicRegistry,
+      installedExtensions: [],
+      fetch: async () => ({ ok: true, json: async () => ({ id: proposalId, status: 'pending', patches: [], preview: definition }) })
+    });
+    previewDoc.getElementById('proposal-id').value = proposalId;
+    previewDoc.getElementById('load').click();
+    await wait(() => !previewDoc.getElementById('approve').disabled);
+    const preview = previewDoc.getElementById('rendered-preview'),
+      previewInput = preview.querySelector('input');
+    previewInput.value = 'Preview';
+    previewInput.dispatchEvent(new previewDom.window.Event('input', { bubbles: true }));
+    assert.equal(preview.querySelector('h3').textContent, 'Preview');
+  } finally {
+    previewDom?.window.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('generated workspaces and proposal previews render static cards safely',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'workspace-card-'));let dom,previewDom;try{const target=await createProject('sample-app',dir),{prepareWorkspace}=await import(pathToFileURL(join(target,'workspace.mjs')).href),definition={schemaVersion:2,pages:[{title:'Home',description:'Details',components:[{id:'one',type:'Card',props:{title:'<b>Heading</b>',text:'<script>content</script>'}},{id:'two',type:'Card',props:{title:'Second',text:'Description'}}]}]},prepared=prepareWorkspace(definition);dom=new JSDOM('<!doctype html><main></main>');const host=dom.window.document.querySelector('main'),renderer=new A2UIRenderer(host,prepared.registry);renderer.apply({version:'v0.9.1',createSurface:{surfaceId:'main',catalogId:APP_MIXER_CATALOG}});renderer.apply({version:'v0.9.1',updateComponents:{surfaceId:'main',components:prepared.components}});const cards=host.querySelectorAll('section');assert.equal(cards.length,2);assert.equal(cards[0].querySelector('h3').textContent,'<b>Heading</b>');assert.match(cards[0].textContent,/<script>content<\/script>/);assert.equal(cards[0].querySelector('script'),null);assert.equal(cards[0].querySelector('b'),null);assert.match(cards[1].textContent,/SecondDescription/);for(const props of [{title:1},{text:false},{text:'x'.repeat(10001)},{unknown:'x'}])assert.throws(()=>prepareWorkspace({...definition,pages:[{...definition.pages[0],components:[{type:'Card',props}]}]}),/Invalid Card/);
- previewDom=new JSDOM(DEVELOPMENT_UI);const document=previewDom.window.document,script=DEVELOPMENT_UI.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm,''),proposalId='00000000-0000-0000-0000-000000000000';runInNewContext(script,{document,A2UIRenderer,APP_MIXER_CATALOG,basicRegistry,installedExtensions:[],fetch:async()=>({ok:true,json:async()=>({id:proposalId,status:'pending',patches:[],preview:definition})})});document.getElementById('proposal-id').value=proposalId;document.getElementById('load').click();await wait(()=>!document.getElementById('approve').disabled);const preview=document.getElementById('rendered-preview');assert.equal(preview.querySelectorAll('section').length,2);assert.equal(preview.querySelector('section h3').textContent,'<b>Heading</b>');assert.equal(preview.querySelector('script'),null);
- }finally{previewDom?.window.close();dom?.window.close();await rm(dir,{recursive:true,force:true});}
+test('generated workspaces and proposal previews render static cards safely', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspace-card-'));
+  let dom, previewDom;
+  try {
+    const target = await createProject('sample-app', dir),
+      { prepareWorkspace } = await import(pathToFileURL(join(target, 'workspace.mjs')).href),
+      definition = {
+        schemaVersion: 2,
+        pages: [
+          {
+            title: 'Home',
+            description: 'Details',
+            components: [
+              { id: 'one', type: 'Card', props: { title: '<b>Heading</b>', text: '<script>content</script>' } },
+              { id: 'two', type: 'Card', props: { title: 'Second', text: 'Description' } }
+            ]
+          }
+        ]
+      },
+      prepared = prepareWorkspace(definition);
+    dom = new JSDOM('<!doctype html><main></main>');
+    const host = dom.window.document.querySelector('main'),
+      renderer = new A2UIRenderer(host, prepared.registry);
+    renderer.apply({ version: 'v0.9.1', createSurface: { surfaceId: 'main', catalogId: APP_MIXER_CATALOG } });
+    renderer.apply({ version: 'v0.9.1', updateComponents: { surfaceId: 'main', components: prepared.components } });
+    const cards = host.querySelectorAll('section');
+    assert.equal(cards.length, 2);
+    assert.equal(cards[0].querySelector('h3').textContent, '<b>Heading</b>');
+    assert.match(cards[0].textContent, /<script>content<\/script>/);
+    assert.equal(cards[0].querySelector('script'), null);
+    assert.equal(cards[0].querySelector('b'), null);
+    assert.match(cards[1].textContent, /SecondDescription/);
+    for (const props of [{ title: 1 }, { text: false }, { text: 'x'.repeat(10001) }, { unknown: 'x' }])
+      assert.throws(() => prepareWorkspace({ ...definition, pages: [{ ...definition.pages[0], components: [{ type: 'Card', props }] }] }), /Invalid Card/);
+    previewDom = new JSDOM(DEVELOPMENT_UI);
+    const document = previewDom.window.document,
+      script = DEVELOPMENT_UI.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^\s*import [^;]+;\s*/gm, ''),
+      proposalId = '00000000-0000-0000-0000-000000000000';
+    runInNewContext(script, {
+      document,
+      A2UIRenderer,
+      APP_MIXER_CATALOG,
+      basicRegistry,
+      installedExtensions: [],
+      fetch: async () => ({ ok: true, json: async () => ({ id: proposalId, status: 'pending', patches: [], preview: definition }) })
+    });
+    document.getElementById('proposal-id').value = proposalId;
+    document.getElementById('load').click();
+    await wait(() => !document.getElementById('approve').disabled);
+    const preview = document.getElementById('rendered-preview');
+    assert.equal(preview.querySelectorAll('section').length, 2);
+    assert.equal(preview.querySelector('section h3').textContent, '<b>Heading</b>');
+    assert.equal(preview.querySelector('script'), null);
+  } finally {
+    previewDom?.window.close();
+    dom?.window.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

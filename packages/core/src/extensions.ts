@@ -1,16 +1,16 @@
 import { createHash, timingSafeEqual, sign, verify, KeyObject } from 'node:crypto';
 import { isValidExtensionReferences, type ApplicationDefinition, type ExtensionReference, type PublicationGuard } from './index.js';
-import {AppMixerError} from './errors.js';
+import { AppMixerError } from './errors.js';
 
 export type ExtensionConfigRule =
-  | {type:'string'; required:boolean; minLength?:number; maxLength?:number; enum?:string[]; default?:string}
-  | {type:'number'; required:boolean; minimum?:number; maximum?:number; enum?:number[]; default?:number}
-  | {type:'boolean'; required:boolean; enum?:boolean[]; default?:boolean}
-  | {type:'object'; required:boolean; properties:ExtensionConfigSchema; default?:ExtensionConfiguration}
-  | {type:'array'; required:boolean; items:ExtensionConfigRule; maxItems?:number; default?:ExtensionConfigValue[]};
+  | { type: 'string'; required: boolean; minLength?: number; maxLength?: number; enum?: string[]; default?: string }
+  | { type: 'number'; required: boolean; minimum?: number; maximum?: number; enum?: number[]; default?: number }
+  | { type: 'boolean'; required: boolean; enum?: boolean[]; default?: boolean }
+  | { type: 'object'; required: boolean; properties: ExtensionConfigSchema; default?: ExtensionConfiguration }
+  | { type: 'array'; required: boolean; items: ExtensionConfigRule; maxItems?: number; default?: ExtensionConfigValue[] };
 export type ExtensionConfigSchema = Record<string, ExtensionConfigRule>;
 export type ExtensionConfigValue = string | number | boolean | ExtensionConfiguration | ExtensionConfigValue[];
-export type ExtensionConfiguration = {[key:string]:ExtensionConfigValue};
+export type ExtensionConfiguration = { [key: string]: ExtensionConfigValue };
 
 /** Metadata for trusted, statically installed extensions. This is not a code loader. */
 export type ExtensionManifest = {
@@ -37,14 +37,14 @@ export type ExtensionHost = {
   approved: { id: string; version: string; scope: ExtensionManifest['scope']; permissions: string[]; integrity?: string }[];
 };
 export type ExtensionRequirements = { components: string[]; tools: string[]; providers: string[] };
-export type SignedExtensionManifest = {formatVersion:1;keyId:string;manifest:ExtensionManifest;signature:string};
-export type ExtensionSigningPolicy = {trustedKeys:Record<string,KeyObject>;allowedExtensions?:Record<string,ExtensionReference[]>};
+export type SignedExtensionManifest = { formatVersion: 1; keyId: string; manifest: ExtensionManifest; signature: string };
+export type ExtensionSigningPolicy = { trustedKeys: Record<string, KeyObject>; allowedExtensions?: Record<string, ExtensionReference[]> };
 const idPattern = /^[a-z][a-z0-9.-]{0,127}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const integrityPattern = /^sha256-[A-Za-z0-9+/]{43}=$/;
 /** A digest must be the canonical base64 spelling: non-zero padding bits would decode to the same bytes. */
 const validIntegrity = (x: unknown): x is string => typeof x === 'string' && integrityPattern.test(x) && Buffer.from(x.slice(7), 'base64').toString('base64') === x.slice(7);
-const optional = (x: unknown, names: string[]) => record(x) ? names.filter(name => Object.hasOwn(x, name)) : [];
+const optional = (x: unknown, names: string[]) => (record(x) ? names.filter(name => Object.hasOwn(x, name)) : []);
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
 
 /** Compute the SRI-style SHA-256 digest used by `ExtensionManifest.integrity`. */
@@ -56,10 +56,12 @@ export function computeExtensionIntegrity(packageBytes: Uint8Array): string {
 /** Check trusted package bytes against a manifest digest. Returns false for a missing or different digest. */
 export function verifyExtensionIntegrity(integrity: unknown, packageBytes: Uint8Array): boolean {
   if (typeof integrity !== 'string' || !validIntegrity(integrity)) return false;
-  const expected = Buffer.from(integrity.slice(7), 'base64'), actual = Buffer.from(computeExtensionIntegrity(packageBytes).slice(7), 'base64');
+  const expected = Buffer.from(integrity.slice(7), 'base64'),
+    actual = Buffer.from(computeExtensionIntegrity(packageBytes).slice(7), 'base64');
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
-const record = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === 'object' && !Array.isArray(x) && (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);
+const record = (x: unknown): x is Record<string, unknown> =>
+  x !== null && typeof x === 'object' && !Array.isArray(x) && (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);
 function fields(x: unknown, names: string[]): x is Record<string, unknown> {
   return record(x) && Object.keys(x).length === names.length && names.every(name => Object.hasOwn(x, name));
 }
@@ -67,180 +69,349 @@ function list(x: unknown, pattern = idPattern): x is string[] {
   return Array.isArray(x) && x.length <= 256 && x.every(v => typeof v === 'string' && pattern.test(v)) && new Set(x).size === x.length;
 }
 const scope = (x: unknown): x is ExtensionManifest['scope'] => x === 'platform' || x === 'development' || x === 'application';
-const configKey = (x:string) => idPattern.test(x) && !['__proto__','prototype','constructor'].includes(x);
-function validateConfigSchema(schema:unknown): void {
-  let count=0;const ancestors=new Set<object>(),defaults:ExtensionConfigRule[]=[];
-  const fail=():never=>{throw Error('Invalid extension configuration schema');};
-  const visitSchema=(input:unknown,depth:number):void=>{
-    if (!record(input) || depth>10 || Object.keys(input).length>64 || ancestors.has(input)) return fail();
+const configKey = (x: string) => idPattern.test(x) && !['__proto__', 'prototype', 'constructor'].includes(x);
+function validateConfigSchema(schema: unknown): void {
+  let count = 0;
+  const ancestors = new Set<object>(),
+    defaults: ExtensionConfigRule[] = [];
+  const fail = (): never => {
+    throw Error('Invalid extension configuration schema');
+  };
+  const visitSchema = (input: unknown, depth: number): void => {
+    if (!record(input) || depth > 10 || Object.keys(input).length > 64 || ancestors.has(input)) return fail();
     ancestors.add(input);
-    for(const [key,rule] of Object.entries(input)){if(!configKey(key))return fail();visitRule(rule,depth);}
+    for (const [key, rule] of Object.entries(input)) {
+      if (!configKey(key)) return fail();
+      visitRule(rule, depth);
+    }
     ancestors.delete(input);
   };
-  const visitRule=(input:unknown,depth:number):void=>{
-    if (++count>256 || depth>10 || !record(input) || ancestors.has(input) || !Object.hasOwn(input,'type') || !Object.hasOwn(input,'required') || typeof input.required!=='boolean') return fail();
+  const visitRule = (input: unknown, depth: number): void => {
+    if (++count > 256 || depth > 10 || !record(input) || ancestors.has(input) || !Object.hasOwn(input, 'type') || !Object.hasOwn(input, 'required') || typeof input.required !== 'boolean')
+      return fail();
     ancestors.add(input);
-    const type=input.type;
-    const allowed=type==='string'?['type','required','minLength','maxLength','enum','default']:type==='number'?['type','required','minimum','maximum','enum','default']:type==='boolean'?['type','required','enum','default']:type==='object'?['type','required','properties','default']:type==='array'?['type','required','items','maxItems','default']:[];
-    if(!allowed.length || Object.keys(input).some(key=>!allowed.includes(key)) || (input.required && Object.hasOwn(input,'default'))) return fail();
-    if(type==='string'){
-      for(const name of ['minLength','maxLength'])if(Object.hasOwn(input,name)&&(!Number.isSafeInteger(input[name])||(input[name] as number)<0||(input[name] as number)>4096))return fail();
-      if(typeof input.minLength==='number'&&typeof input.maxLength==='number'&&input.minLength>input.maxLength)return fail();
+    const type = input.type;
+    const allowed =
+      type === 'string'
+        ? ['type', 'required', 'minLength', 'maxLength', 'enum', 'default']
+        : type === 'number'
+          ? ['type', 'required', 'minimum', 'maximum', 'enum', 'default']
+          : type === 'boolean'
+            ? ['type', 'required', 'enum', 'default']
+            : type === 'object'
+              ? ['type', 'required', 'properties', 'default']
+              : type === 'array'
+                ? ['type', 'required', 'items', 'maxItems', 'default']
+                : [];
+    if (!allowed.length || Object.keys(input).some(key => !allowed.includes(key)) || (input.required && Object.hasOwn(input, 'default'))) return fail();
+    if (type === 'string') {
+      for (const name of ['minLength', 'maxLength'])
+        if (Object.hasOwn(input, name) && (!Number.isSafeInteger(input[name]) || (input[name] as number) < 0 || (input[name] as number) > 4096)) return fail();
+      if (typeof input.minLength === 'number' && typeof input.maxLength === 'number' && input.minLength > input.maxLength) return fail();
     }
-    if(type==='number'){
-      for(const name of ['minimum','maximum'])if(Object.hasOwn(input,name)&&(typeof input[name]!=='number'||!Number.isFinite(input[name])))return fail();
-      if(typeof input.minimum==='number'&&typeof input.maximum==='number'&&input.minimum>input.maximum)return fail();
+    if (type === 'number') {
+      for (const name of ['minimum', 'maximum']) if (Object.hasOwn(input, name) && (typeof input[name] !== 'number' || !Number.isFinite(input[name]))) return fail();
+      if (typeof input.minimum === 'number' && typeof input.maximum === 'number' && input.minimum > input.maximum) return fail();
     }
-    if(type==='object'){if(!Object.hasOwn(input,'properties'))return fail();visitSchema(input.properties,depth+1);}
-    if(type==='array'){
-      if(!Object.hasOwn(input,'items') || (Object.hasOwn(input,'maxItems')&&(!Number.isSafeInteger(input.maxItems)||(input.maxItems as number)<0||(input.maxItems as number)>256)))return fail();
-      visitRule(input.items,depth+1);
+    if (type === 'object') {
+      if (!Object.hasOwn(input, 'properties')) return fail();
+      visitSchema(input.properties, depth + 1);
     }
-    if(Object.hasOwn(input,'enum')){
-      const values=input.enum;
-      if(!Array.isArray(values)||values.length===0||values.length>64||new Set(values).size!==values.length||values.some(value=>!matchesPrimitive(input as ExtensionConfigRule,value)))return fail();
+    if (type === 'array') {
+      if (!Object.hasOwn(input, 'items') || (Object.hasOwn(input, 'maxItems') && (!Number.isSafeInteger(input.maxItems) || (input.maxItems as number) < 0 || (input.maxItems as number) > 256)))
+        return fail();
+      visitRule(input.items, depth + 1);
     }
-    if(Object.hasOwn(input,'default'))defaults.push(input as ExtensionConfigRule);
+    if (Object.hasOwn(input, 'enum')) {
+      const values = input.enum;
+      if (!Array.isArray(values) || values.length === 0 || values.length > 64 || new Set(values).size !== values.length || values.some(value => !matchesPrimitive(input as ExtensionConfigRule, value)))
+        return fail();
+    }
+    if (Object.hasOwn(input, 'default')) defaults.push(input as ExtensionConfigRule);
     ancestors.delete(input);
   };
-  visitSchema(schema,0);
-  for(const rule of defaults){try{resolveRule(rule,rule.default,{count:0,ancestors:new Set()},0);}catch{return fail();}}
-}
-function matchesPrimitive(rule:ExtensionConfigRule,value:unknown):boolean {
-  if(rule.type==='string')return typeof value==='string'&&value.length<=4096&&value.length>=(rule.minLength??0)&&value.length<=(rule.maxLength??4096);
-  if(rule.type==='number')return typeof value==='number'&&Number.isFinite(value)&&(rule.minimum===undefined||value>=rule.minimum)&&(rule.maximum===undefined||value<=rule.maximum);
-  return rule.type==='boolean'&&typeof value==='boolean';
-}
-type ConfigWalk={count:number;ancestors:Set<object>};
-function resolveSchema(schema:ExtensionConfigSchema,input:unknown,state:ConfigWalk,depth:number):ExtensionConfiguration {
-  if(!record(input)||depth>10||Object.keys(input).length>64||state.ancestors.has(input))throw Error('Invalid extension configuration');
-  state.ancestors.add(input);const output:ExtensionConfiguration={};
-  for(const key of Object.keys(input))if(!Object.hasOwn(schema,key))throw Error('Invalid extension configuration');
-  for(const [key,rule] of Object.entries(schema)){
-    if(Object.hasOwn(input,key))output[key]=resolveRule(rule,input[key],state,depth+1);
-    else if(Object.hasOwn(rule,'default'))output[key]=resolveRule(rule,rule.default,state,depth+1);
-    else if(rule.required)throw Error('Invalid extension configuration');
+  visitSchema(schema, 0);
+  for (const rule of defaults) {
+    try {
+      resolveRule(rule, rule.default, { count: 0, ancestors: new Set() }, 0);
+    } catch {
+      return fail();
+    }
   }
-  state.ancestors.delete(input);return output;
 }
-function resolveRule(rule:ExtensionConfigRule,value:unknown,state:ConfigWalk,depth:number):ExtensionConfigValue {
-  if(++state.count>10000||depth>10)throw Error('Invalid extension configuration');
-  if(rule.type==='object')return resolveSchema(rule.properties,value,state,depth);
-  if(rule.type==='array'){
-    if(!Array.isArray(value)||value.length>(rule.maxItems??256)||state.ancestors.has(value))throw Error('Invalid extension configuration');
-    state.ancestors.add(value);const result:ExtensionConfigValue[]=[];
-    for(let i=0;i<value.length;i++){if(!Object.hasOwn(value,i))throw Error('Invalid extension configuration');result.push(resolveRule(rule.items,value[i],state,depth+1));}
-    state.ancestors.delete(value);return result;
+function matchesPrimitive(rule: ExtensionConfigRule, value: unknown): boolean {
+  if (rule.type === 'string') return typeof value === 'string' && value.length <= 4096 && value.length >= (rule.minLength ?? 0) && value.length <= (rule.maxLength ?? 4096);
+  if (rule.type === 'number')
+    return typeof value === 'number' && Number.isFinite(value) && (rule.minimum === undefined || value >= rule.minimum) && (rule.maximum === undefined || value <= rule.maximum);
+  return rule.type === 'boolean' && typeof value === 'boolean';
+}
+type ConfigWalk = { count: number; ancestors: Set<object> };
+function resolveSchema(schema: ExtensionConfigSchema, input: unknown, state: ConfigWalk, depth: number): ExtensionConfiguration {
+  if (!record(input) || depth > 10 || Object.keys(input).length > 64 || state.ancestors.has(input)) throw Error('Invalid extension configuration');
+  state.ancestors.add(input);
+  const output: ExtensionConfiguration = {};
+  for (const key of Object.keys(input)) if (!Object.hasOwn(schema, key)) throw Error('Invalid extension configuration');
+  for (const [key, rule] of Object.entries(schema)) {
+    if (Object.hasOwn(input, key)) output[key] = resolveRule(rule, input[key], state, depth + 1);
+    else if (Object.hasOwn(rule, 'default')) output[key] = resolveRule(rule, rule.default, state, depth + 1);
+    else if (rule.required) throw Error('Invalid extension configuration');
   }
-  if(!matchesPrimitive(rule,value)||(rule.enum!==undefined&&!(rule.enum as unknown[]).includes(value)))throw Error('Invalid extension configuration');
-  return value as string|number|boolean;
+  state.ancestors.delete(input);
+  return output;
 }
-function validateConfiguration(schema:ExtensionConfigSchema, config:unknown):ExtensionConfiguration {
-  return resolveSchema(schema,config,{count:0,ancestors:new Set()},0);
+function resolveRule(rule: ExtensionConfigRule, value: unknown, state: ConfigWalk, depth: number): ExtensionConfigValue {
+  if (++state.count > 10000 || depth > 10) throw Error('Invalid extension configuration');
+  if (rule.type === 'object') return resolveSchema(rule.properties, value, state, depth);
+  if (rule.type === 'array') {
+    if (!Array.isArray(value) || value.length > (rule.maxItems ?? 256) || state.ancestors.has(value)) throw Error('Invalid extension configuration');
+    state.ancestors.add(value);
+    const result: ExtensionConfigValue[] = [];
+    for (let i = 0; i < value.length; i++) {
+      if (!Object.hasOwn(value, i)) throw Error('Invalid extension configuration');
+      result.push(resolveRule(rule.items, value[i], state, depth + 1));
+    }
+    state.ancestors.delete(value);
+    return result;
+  }
+  if (!matchesPrimitive(rule, value) || (rule.enum !== undefined && !(rule.enum as unknown[]).includes(value))) throw Error('Invalid extension configuration');
+  return value as string | number | boolean;
+}
+function validateConfiguration(schema: ExtensionConfigSchema, config: unknown): ExtensionConfiguration {
+  return resolveSchema(schema, config, { count: 0, ancestors: new Set() }, 0);
 }
 
-function validateManifest(m:unknown):asserts m is ExtensionManifest {
-  if (!fields(m, ['manifestVersion','id','version','scope','runtimeVersions','renderers','components','tools','providers','permissions', ...optional(m,['configSchema','integrity'])]) || (Object.hasOwn(m,'integrity') && (typeof m.integrity !== 'string' || !validIntegrity(m.integrity))) || m.manifestVersion !== 1 || typeof m.id !== 'string' || !idPattern.test(m.id) || typeof m.version !== 'string' || !versionPattern.test(m.version) || !scope(m.scope) || !list(m.runtimeVersions, versionPattern) || !list(m.renderers) || !list(m.components) || !list(m.tools) || !list(m.providers) || !list(m.permissions)) throw Error('Invalid extension manifest');
-  if (Object.hasOwn(m,'configSchema')) validateConfigSchema(m.configSchema);
+function validateManifest(m: unknown): asserts m is ExtensionManifest {
+  if (
+    !fields(m, ['manifestVersion', 'id', 'version', 'scope', 'runtimeVersions', 'renderers', 'components', 'tools', 'providers', 'permissions', ...optional(m, ['configSchema', 'integrity'])]) ||
+    (Object.hasOwn(m, 'integrity') && (typeof m.integrity !== 'string' || !validIntegrity(m.integrity))) ||
+    m.manifestVersion !== 1 ||
+    typeof m.id !== 'string' ||
+    !idPattern.test(m.id) ||
+    typeof m.version !== 'string' ||
+    !versionPattern.test(m.version) ||
+    !scope(m.scope) ||
+    !list(m.runtimeVersions, versionPattern) ||
+    !list(m.renderers) ||
+    !list(m.components) ||
+    !list(m.tools) ||
+    !list(m.providers) ||
+    !list(m.permissions)
+  )
+    throw Error('Invalid extension manifest');
+  if (Object.hasOwn(m, 'configSchema')) validateConfigSchema(m.configSchema);
 }
 
-function canonicalSignedValue(value:unknown,depth=0,budget={size:0}):string {
-  if(depth>30)throw Error('Invalid signed extension manifest');
-  const add=(part:string)=>{budget.size+=part.length;if(budget.size>1000000)throw Error('Invalid signed extension manifest');return part;};
-  if(typeof value==='number'&&Object.is(value,-0))throw Error('Invalid signed extension manifest');
-  if(value===null||typeof value==='string'||typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))return add(JSON.stringify(value));
-  if(Array.isArray(value)){if(Object.keys(value).length!==value.length||Array.from({length:value.length},(_,i)=>Object.hasOwn(value,i)).some(present=>!present))throw Error('Invalid signed extension manifest');return add('[')+value.map((item,index)=>(index?add(','):'')+canonicalSignedValue(item,depth+1,budget)).join('')+add(']');}
-  if(!record(value))throw Error('Invalid signed extension manifest');
-  return add('{')+Object.keys(value).sort().map((key,index)=>(index?add(','):'')+add(JSON.stringify(key))+add(':')+canonicalSignedValue(value[key],depth+1,budget)).join('')+add('}');
-}
-function signingBytes(keyId:string,manifest:ExtensionManifest):Buffer{return Buffer.from('app-mixer-extension-manifest-v1.'+keyId+'.'+canonicalSignedValue(manifest),'utf8');}
-function signingKeys(input:unknown):Map<string,KeyObject>{
-  if(!record(input)||Object.keys(input).length<1||Object.keys(input).length>100)throw Error('Invalid extension signing policy');
-  const keys=new Map<string,KeyObject>();for(const [keyId,key] of Object.entries(input)){if(!idPattern.test(keyId)||!(key instanceof KeyObject)||key.type!=='public'||key.asymmetricKeyType!=='ed25519')throw Error('Invalid extension signing policy');keys.set(keyId,key);}return keys;
-}
-type CheckedSigningPolicy={keys:Map<string,KeyObject>;allowed?:Map<string,Set<string>>};
-const signedReference=(ref:ExtensionReference):string=>JSON.stringify([ref.id,ref.version,ref.scope]);
-function checkedSigningPolicy(input:unknown):CheckedSigningPolicy {
-  if(!fields(input,['trustedKeys',...optional(input,['allowedExtensions'])]))throw Error('Invalid extension signing policy');
-  const keys=signingKeys(input.trustedKeys);if(!Object.hasOwn(input,'allowedExtensions'))return {keys};
-  const configured=input.allowedExtensions;if(!record(configured)||Object.keys(configured).length!==keys.size||Object.keys(configured).some(key=>!keys.has(key)))throw Error('Invalid extension signing policy');
-  const fingerprints=new Set<string>();for(const key of keys.values()){const fingerprint=key.export({format:'der',type:'spki'}).toString('base64');if(fingerprints.has(fingerprint))throw Error('Invalid extension signing policy');fingerprints.add(fingerprint);}
-  const allowed=new Map<string,Set<string>>();for(const [keyId,refs] of Object.entries(configured)){
-    if(!Array.isArray(refs)||refs.length<1||refs.length>256||Object.keys(refs).length!==refs.length)throw Error('Invalid extension signing policy');
-    const entries=new Set<string>();for(const ref of refs){if(!fields(ref,['id','version','scope'])||typeof ref.id!=='string'||!idPattern.test(ref.id)||typeof ref.version!=='string'||!versionPattern.test(ref.version)||!scope(ref.scope))throw Error('Invalid extension signing policy');const entry=signedReference(ref as ExtensionReference);if(entries.has(entry))throw Error('Invalid extension signing policy');entries.add(entry);}allowed.set(keyId,entries);
+function canonicalSignedValue(value: unknown, depth = 0, budget = { size: 0 }): string {
+  if (depth > 30) throw Error('Invalid signed extension manifest');
+  const add = (part: string) => {
+    budget.size += part.length;
+    if (budget.size > 1000000) throw Error('Invalid signed extension manifest');
+    return part;
+  };
+  if (typeof value === 'number' && Object.is(value, -0)) throw Error('Invalid signed extension manifest');
+  if (value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return add(JSON.stringify(value));
+  if (Array.isArray(value)) {
+    if (Object.keys(value).length !== value.length || Array.from({ length: value.length }, (_, i) => Object.hasOwn(value, i)).some(present => !present))
+      throw Error('Invalid signed extension manifest');
+    return add('[') + value.map((item, index) => (index ? add(',') : '') + canonicalSignedValue(item, depth + 1, budget)).join('') + add(']');
   }
-  return {keys,allowed};
+  if (!record(value)) throw Error('Invalid signed extension manifest');
+  return (
+    add('{') +
+    Object.keys(value)
+      .sort()
+      .map((key, index) => (index ? add(',') : '') + add(JSON.stringify(key)) + add(':') + canonicalSignedValue(value[key], depth + 1, budget))
+      .join('') +
+    add('}')
+  );
+}
+function signingBytes(keyId: string, manifest: ExtensionManifest): Buffer {
+  return Buffer.from('app-mixer-extension-manifest-v1.' + keyId + '.' + canonicalSignedValue(manifest), 'utf8');
+}
+function signingKeys(input: unknown): Map<string, KeyObject> {
+  if (!record(input) || Object.keys(input).length < 1 || Object.keys(input).length > 100) throw Error('Invalid extension signing policy');
+  const keys = new Map<string, KeyObject>();
+  for (const [keyId, key] of Object.entries(input)) {
+    if (!idPattern.test(keyId) || !(key instanceof KeyObject) || key.type !== 'public' || key.asymmetricKeyType !== 'ed25519') throw Error('Invalid extension signing policy');
+    keys.set(keyId, key);
+  }
+  return keys;
+}
+type CheckedSigningPolicy = { keys: Map<string, KeyObject>; allowed?: Map<string, Set<string>> };
+const signedReference = (ref: ExtensionReference): string => JSON.stringify([ref.id, ref.version, ref.scope]);
+function checkedSigningPolicy(input: unknown): CheckedSigningPolicy {
+  if (!fields(input, ['trustedKeys', ...optional(input, ['allowedExtensions'])])) throw Error('Invalid extension signing policy');
+  const keys = signingKeys(input.trustedKeys);
+  if (!Object.hasOwn(input, 'allowedExtensions')) return { keys };
+  const configured = input.allowedExtensions;
+  if (!record(configured) || Object.keys(configured).length !== keys.size || Object.keys(configured).some(key => !keys.has(key))) throw Error('Invalid extension signing policy');
+  const fingerprints = new Set<string>();
+  for (const key of keys.values()) {
+    const fingerprint = key.export({ format: 'der', type: 'spki' }).toString('base64');
+    if (fingerprints.has(fingerprint)) throw Error('Invalid extension signing policy');
+    fingerprints.add(fingerprint);
+  }
+  const allowed = new Map<string, Set<string>>();
+  for (const [keyId, refs] of Object.entries(configured)) {
+    if (!Array.isArray(refs) || refs.length < 1 || refs.length > 256 || Object.keys(refs).length !== refs.length) throw Error('Invalid extension signing policy');
+    const entries = new Set<string>();
+    for (const ref of refs) {
+      if (
+        !fields(ref, ['id', 'version', 'scope']) ||
+        typeof ref.id !== 'string' ||
+        !idPattern.test(ref.id) ||
+        typeof ref.version !== 'string' ||
+        !versionPattern.test(ref.version) ||
+        !scope(ref.scope)
+      )
+        throw Error('Invalid extension signing policy');
+      const entry = signedReference(ref as ExtensionReference);
+      if (entries.has(entry)) throw Error('Invalid extension signing policy');
+      entries.add(entry);
+    }
+    allowed.set(keyId, entries);
+  }
+  return { keys, allowed };
 }
 /** Sign a validated, digest-bearing manifest with a host-managed Ed25519 private key. */
-export function signExtensionManifest(manifest:ExtensionManifest,keyId:string,privateKey:KeyObject):SignedExtensionManifest {
-  if(typeof keyId!=='string'||!idPattern.test(keyId)||!(privateKey instanceof KeyObject)||privateKey.type!=='private'||privateKey.asymmetricKeyType!=='ed25519')throw Error('Invalid extension signing configuration');
-  const snapshot=structuredClone(manifest);validateManifest(snapshot);if(!snapshot.integrity)throw Error('Signed extension requires integrity');
-  return {formatVersion:1,keyId,manifest:snapshot,signature:sign(null,signingBytes(keyId,snapshot),privateKey).toString('base64url')};
+export function signExtensionManifest(manifest: ExtensionManifest, keyId: string, privateKey: KeyObject): SignedExtensionManifest {
+  if (typeof keyId !== 'string' || !idPattern.test(keyId) || !(privateKey instanceof KeyObject) || privateKey.type !== 'private' || privateKey.asymmetricKeyType !== 'ed25519')
+    throw Error('Invalid extension signing configuration');
+  const snapshot = structuredClone(manifest);
+  validateManifest(snapshot);
+  if (!snapshot.integrity) throw Error('Signed extension requires integrity');
+  return { formatVersion: 1, keyId, manifest: snapshot, signature: sign(null, signingBytes(keyId, snapshot), privateKey).toString('base64url') };
 }
-function verifySigned(input:unknown,policy:CheckedSigningPolicy,packageBytes:Uint8Array):ExtensionManifest {
-  try{
-    if(!fields(input,['formatVersion','keyId','manifest','signature'])||input.formatVersion!==1||typeof input.keyId!=='string'||!idPattern.test(input.keyId)||typeof input.signature!=='string'||input.signature.length!==86)throw Error('Invalid envelope');
-    const key=policy.keys.get(input.keyId),signature=Buffer.from(input.signature,'base64url'),snapshot=structuredClone(input.manifest);validateManifest(snapshot);
-    if(!key||(policy.allowed&&!policy.allowed.get(input.keyId)?.has(signedReference(snapshot)))||signature.length!==64||signature.toString('base64url')!==input.signature||!snapshot.integrity||!verify(null,signingBytes(input.keyId,snapshot),key,signature)||!verifyExtensionIntegrity(snapshot.integrity,packageBytes))throw Error('Invalid signature');
+function verifySigned(input: unknown, policy: CheckedSigningPolicy, packageBytes: Uint8Array): ExtensionManifest {
+  try {
+    if (
+      !fields(input, ['formatVersion', 'keyId', 'manifest', 'signature']) ||
+      input.formatVersion !== 1 ||
+      typeof input.keyId !== 'string' ||
+      !idPattern.test(input.keyId) ||
+      typeof input.signature !== 'string' ||
+      input.signature.length !== 86
+    )
+      throw Error('Invalid envelope');
+    const key = policy.keys.get(input.keyId),
+      signature = Buffer.from(input.signature, 'base64url'),
+      snapshot = structuredClone(input.manifest);
+    validateManifest(snapshot);
+    if (
+      !key ||
+      (policy.allowed && !policy.allowed.get(input.keyId)?.has(signedReference(snapshot))) ||
+      signature.length !== 64 ||
+      signature.toString('base64url') !== input.signature ||
+      !snapshot.integrity ||
+      !verify(null, signingBytes(input.keyId, snapshot), key, signature) ||
+      !verifyExtensionIntegrity(snapshot.integrity, packageBytes)
+    )
+      throw Error('Invalid signature');
     return snapshot;
-  }catch{throw Error('Invalid signed extension manifest');}
+  } catch {
+    throw Error('Invalid signed extension manifest');
+  }
 }
 /** Verify both publisher signature and package digest against host-selected public keys. */
-export function verifySignedExtensionManifest(input:unknown,policy:ExtensionSigningPolicy,packageBytes:Uint8Array):ExtensionManifest {
-  return verifySigned(input,checkedSigningPolicy(policy),packageBytes);
+export function verifySignedExtensionManifest(input: unknown, policy: ExtensionSigningPolicy, packageBytes: Uint8Array): ExtensionManifest {
+  return verifySigned(input, checkedSigningPolicy(policy), packageBytes);
 }
 
 /** Check metadata against explicit host approval and required registrations. */
 export function checkExtensionCompatibility(manifests: unknown, host: unknown, requirements: unknown): { compatible: boolean; errors: string[] } {
-  if (!Array.isArray(manifests) || manifests.length > 256 || !fields(host, ['runtimeVersion','renderer','approved', ...optional(host,['requireIntegrityPins'])]) || (Object.hasOwn(host,'requireIntegrityPins') && typeof host.requireIntegrityPins !== 'boolean') || typeof host.runtimeVersion !== 'string' || !versionPattern.test(host.runtimeVersion) || typeof host.renderer !== 'string' || !idPattern.test(host.renderer) || !Array.isArray(host.approved) || host.approved.length > 256 || !fields(requirements, ['components','tools','providers']) || !list(requirements.components) || !list(requirements.tools) || !list(requirements.providers)) throw Error('Invalid extension compatibility input');
-  const approvals = new Map<string, {version:string; scope:ExtensionManifest['scope']; permissions:string[]; integrity?:string}>();
+  if (
+    !Array.isArray(manifests) ||
+    manifests.length > 256 ||
+    !fields(host, ['runtimeVersion', 'renderer', 'approved', ...optional(host, ['requireIntegrityPins'])]) ||
+    (Object.hasOwn(host, 'requireIntegrityPins') && typeof host.requireIntegrityPins !== 'boolean') ||
+    typeof host.runtimeVersion !== 'string' ||
+    !versionPattern.test(host.runtimeVersion) ||
+    typeof host.renderer !== 'string' ||
+    !idPattern.test(host.renderer) ||
+    !Array.isArray(host.approved) ||
+    host.approved.length > 256 ||
+    !fields(requirements, ['components', 'tools', 'providers']) ||
+    !list(requirements.components) ||
+    !list(requirements.tools) ||
+    !list(requirements.providers)
+  )
+    throw Error('Invalid extension compatibility input');
+  const approvals = new Map<string, { version: string; scope: ExtensionManifest['scope']; permissions: string[]; integrity?: string }>();
   for (const a of host.approved) {
-    if (!fields(a, ['id','version','scope','permissions', ...optional(a,['integrity'])]) || (Object.hasOwn(a,'integrity') && (typeof a.integrity !== 'string' || !validIntegrity(a.integrity))) || typeof a.id !== 'string' || !idPattern.test(a.id) || typeof a.version !== 'string' || !versionPattern.test(a.version) || !scope(a.scope) || !list(a.permissions) || approvals.has(a.id)) throw Error('Invalid extension approval');
-    approvals.set(a.id, {version:a.version,scope:a.scope,permissions:a.permissions,integrity:a.integrity as string|undefined});
+    if (
+      !fields(a, ['id', 'version', 'scope', 'permissions', ...optional(a, ['integrity'])]) ||
+      (Object.hasOwn(a, 'integrity') && (typeof a.integrity !== 'string' || !validIntegrity(a.integrity))) ||
+      typeof a.id !== 'string' ||
+      !idPattern.test(a.id) ||
+      typeof a.version !== 'string' ||
+      !versionPattern.test(a.version) ||
+      !scope(a.scope) ||
+      !list(a.permissions) ||
+      approvals.has(a.id)
+    )
+      throw Error('Invalid extension approval');
+    approvals.set(a.id, { version: a.version, scope: a.scope, permissions: a.permissions, integrity: a.integrity as string | undefined });
   }
-  const errors:string[] = [], ids = new Set<string>();
-  const registrations = {components:new Set<string>(),tools:new Set<string>(),providers:new Set<string>()};
+  const errors: string[] = [],
+    ids = new Set<string>();
+  const registrations = { components: new Set<string>(), tools: new Set<string>(), providers: new Set<string>() };
   for (const m of manifests) {
     validateManifest(m);
-    if (ids.has(m.id)) { errors.push(`Duplicate extension: ${m.id}`); continue; }
-    ids.add(m.id);
-    const approval=approvals.get(m.id);
-    if (!approval || approval.version !== m.version || approval.scope !== m.scope || m.permissions.some(p => !approval.permissions.includes(p)) || (host.requireIntegrityPins === true && approval.integrity === undefined) || (approval.integrity !== undefined && approval.integrity !== m.integrity)) errors.push(`Extension not approved: ${m.id}`);
-    if (!m.runtimeVersions.includes(host.runtimeVersion) || !m.renderers.includes(host.renderer)) errors.push(`Incompatible extension: ${m.id}`);
-    for (const kind of ['components','tools','providers'] as const) for (const name of m[kind] as string[]) {
-      if (registrations[kind].has(name)) errors.push(`Duplicate ${kind} registration: ${name}`);
-      registrations[kind].add(name);
+    if (ids.has(m.id)) {
+      errors.push(`Duplicate extension: ${m.id}`);
+      continue;
     }
+    ids.add(m.id);
+    const approval = approvals.get(m.id);
+    if (
+      !approval ||
+      approval.version !== m.version ||
+      approval.scope !== m.scope ||
+      m.permissions.some(p => !approval.permissions.includes(p)) ||
+      (host.requireIntegrityPins === true && approval.integrity === undefined) ||
+      (approval.integrity !== undefined && approval.integrity !== m.integrity)
+    )
+      errors.push(`Extension not approved: ${m.id}`);
+    if (!m.runtimeVersions.includes(host.runtimeVersion) || !m.renderers.includes(host.renderer)) errors.push(`Incompatible extension: ${m.id}`);
+    for (const kind of ['components', 'tools', 'providers'] as const)
+      for (const name of m[kind] as string[]) {
+        if (registrations[kind].has(name)) errors.push(`Duplicate ${kind} registration: ${name}`);
+        registrations[kind].add(name);
+      }
   }
-  for (const kind of ['components','tools','providers'] as const) for (const name of requirements[kind] as string[]) if (!registrations[kind].has(name)) errors.push(`Missing ${kind} registration: ${name}`);
-  return {compatible:errors.length===0, errors};
+  for (const kind of ['components', 'tools', 'providers'] as const)
+    for (const name of requirements[kind] as string[]) if (!registrations[kind].has(name)) errors.push(`Missing ${kind} registration: ${name}`);
+  return { compatible: errors.length === 0, errors };
 }
 
 /** Build a synchronous publication guard from trusted static metadata and a host-owned requirement selector. */
 export function createExtensionPublicationGuard(manifests: ExtensionManifest[], host: ExtensionHost, requirementsFor: (draft: ApplicationDefinition) => ExtensionRequirements): PublicationGuard {
   if (typeof requirementsFor !== 'function') throw Error('Invalid extension requirements selector');
   // Snapshot configuration so callers cannot silently alter approvals after guard creation.
-  const installed = structuredClone(manifests), target = structuredClone(host);
+  const installed = structuredClone(manifests),
+    target = structuredClone(host);
   // Validate configuration even when there are no application requirements.
-  checkExtensionCompatibility(installed, target, {components:[], tools:[], providers:[]});
+  checkExtensionCompatibility(installed, target, { components: [], tools: [], providers: [] });
   return draft => {
     for (const ref of draft.extensions ?? []) {
-      if (!installed.some(manifest => manifest.id === ref.id && manifest.version === ref.version && manifest.scope === ref.scope)) throw new AppMixerError('conflict','Extension compatibility failed');
+      if (!installed.some(manifest => manifest.id === ref.id && manifest.version === ref.version && manifest.scope === ref.scope))
+        throw new AppMixerError('conflict', 'Extension compatibility failed');
     }
-    for (const page of draft.pages) for (const component of page.components) {
-      if (component.type !== 'Extension') continue;
-      const ref = draft.extensions?.find(item => item.id === component.extensionId);
-      const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
-      if (!manifest || !manifest.components.includes(component.name)) throw new AppMixerError('conflict','Extension compatibility failed');
-    }
+    for (const page of draft.pages)
+      for (const component of page.components) {
+        if (component.type !== 'Extension') continue;
+        const ref = draft.extensions?.find(item => item.id === component.extensionId);
+        const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
+        if (!manifest || !manifest.components.includes(component.name)) throw new AppMixerError('conflict', 'Extension compatibility failed');
+      }
     for (const operation of draft.extensionOperations ?? []) {
       const ref = draft.extensions?.find(item => item.id === operation.extensionId);
       const manifest = ref && installed.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
-      if (!manifest || !manifest[operation.kind === 'tool' ? 'tools' : 'providers'].includes(operation.name)) throw new AppMixerError('conflict','Extension compatibility failed');
+      if (!manifest || !manifest[operation.kind === 'tool' ? 'tools' : 'providers'].includes(operation.name)) throw new AppMixerError('conflict', 'Extension compatibility failed');
     }
     const requirements = requirementsFor(structuredClone(draft));
     const result = checkExtensionCompatibility(installed, target, requirements);
-    if (!result.compatible) throw new AppMixerError('conflict','Extension compatibility failed');
+    if (!result.compatible) throw new AppMixerError('conflict', 'Extension compatibility failed');
     return true;
   };
 }
@@ -257,99 +428,109 @@ type RegistrationKind = keyof ExtensionBindings;
 export class ExtensionRegistry {
   readonly #manifests: ExtensionManifest[] = [];
   readonly #registrations: Record<RegistrationKind, Map<string, ExtensionImplementation>> = {
-    components: new Map(), tools: new Map(), providers: new Map()
+    components: new Map(),
+    tools: new Map(),
+    providers: new Map()
   };
   readonly #host: ExtensionHost;
-  readonly #signingPolicy?:CheckedSigningPolicy;
+  readonly #signingPolicy?: CheckedSigningPolicy;
   readonly #configurations = new Map<string, ExtensionConfiguration>();
 
-  constructor(host: ExtensionHost, policy?:ExtensionSigningPolicy) {
+  constructor(host: ExtensionHost, policy?: ExtensionSigningPolicy) {
     this.#host = structuredClone(host);
-    checkExtensionCompatibility([], this.#host, {components:[], tools:[], providers:[]});
-    if(policy!==undefined)this.#signingPolicy=checkedSigningPolicy(policy);
+    checkExtensionCompatibility([], this.#host, { components: [], tools: [], providers: [] });
+    if (policy !== undefined) this.#signingPolicy = checkedSigningPolicy(policy);
   }
 
   /** When the manifest declares `integrity`, `options.packageBytes` must contain the trusted package bytes with that digest. */
-  register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}, options: {packageBytes?: Uint8Array} = {}): void {
-    if(this.#signingPolicy)throw Error('Signed extension required');
-    this.#install(manifest,bindings,configuration,options);
+  register(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration = {}, options: { packageBytes?: Uint8Array } = {}): void {
+    if (this.#signingPolicy) throw Error('Signed extension required');
+    this.#install(manifest, bindings, configuration, options);
   }
 
   /** A signing policy requires all registrations to use this verified path. */
-  registerSigned(signed:SignedExtensionManifest,bindings:ExtensionBindings,configuration:ExtensionConfiguration,packageBytes:Uint8Array):void {
-    if(!this.#signingPolicy)throw Error('Extension signing policy required');
-    const manifest=verifySigned(signed,this.#signingPolicy,packageBytes);this.#install(manifest,bindings,configuration,{packageBytes});
+  registerSigned(signed: SignedExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration, packageBytes: Uint8Array): void {
+    if (!this.#signingPolicy) throw Error('Extension signing policy required');
+    const manifest = verifySigned(signed, this.#signingPolicy, packageBytes);
+    this.#install(manifest, bindings, configuration, { packageBytes });
   }
 
-  #install(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration, options: {packageBytes?: Uint8Array}): void {
+  #install(manifest: ExtensionManifest, bindings: ExtensionBindings, configuration: ExtensionConfiguration, options: { packageBytes?: Uint8Array }): void {
     const snapshot = structuredClone(manifest);
-    const result = checkExtensionCompatibility([...this.#manifests, snapshot], this.#host, {components:[], tools:[], providers:[]});
-    if (!result.compatible) throw new AppMixerError('conflict','Extension compatibility failed');
-    if (!fields(options, optional(options,['packageBytes']))) throw Error('Invalid extension registration options');
+    const result = checkExtensionCompatibility([...this.#manifests, snapshot], this.#host, { components: [], tools: [], providers: [] });
+    if (!result.compatible) throw new AppMixerError('conflict', 'Extension compatibility failed');
+    if (!fields(options, optional(options, ['packageBytes']))) throw Error('Invalid extension registration options');
     if (snapshot.integrity !== undefined || options.packageBytes !== undefined) {
-      if (snapshot.integrity === undefined || !(options.packageBytes instanceof Uint8Array) || !verifyExtensionIntegrity(snapshot.integrity, options.packageBytes)) throw Error('Extension integrity failed');
+      if (snapshot.integrity === undefined || !(options.packageBytes instanceof Uint8Array) || !verifyExtensionIntegrity(snapshot.integrity, options.packageBytes))
+        throw Error('Extension integrity failed');
     }
     const configSnapshot = validateConfiguration(snapshot.configSchema ?? {}, configuration);
-    if (!fields(bindings, ['components','tools','providers'])) throw Error('Invalid extension bindings');
-    const pending: {kind:RegistrationKind; name:string; implementation:ExtensionImplementation}[] = [];
-    for (const kind of ['components','tools','providers'] as const) {
+    if (!fields(bindings, ['components', 'tools', 'providers'])) throw Error('Invalid extension bindings');
+    const pending: { kind: RegistrationKind; name: string; implementation: ExtensionImplementation }[] = [];
+    for (const kind of ['components', 'tools', 'providers'] as const) {
       const values = bindings[kind];
-      if (!record(values) || Object.keys(values).length !== snapshot[kind].length ||
-          !snapshot[kind].every(name => Object.hasOwn(values,name) && typeof values[name] === 'function')) throw Error('Extension bindings do not match manifest');
-      for (const name of snapshot[kind]) pending.push({kind,name,implementation:values[name] as ExtensionImplementation});
+      if (!record(values) || Object.keys(values).length !== snapshot[kind].length || !snapshot[kind].every(name => Object.hasOwn(values, name) && typeof values[name] === 'function'))
+        throw Error('Extension bindings do not match manifest');
+      for (const name of snapshot[kind]) pending.push({ kind, name, implementation: values[name] as ExtensionImplementation });
     }
     // Install only after all metadata and bindings have been checked.
     this.#manifests.push(snapshot);
-    this.#configurations.set(snapshot.id,configSnapshot);
-    for (const {kind,name,implementation} of pending) this.#registrations[kind].set(name,implementation);
+    this.#configurations.set(snapshot.id, configSnapshot);
+    for (const { kind, name, implementation } of pending) this.#registrations[kind].set(name, implementation);
   }
 
   get(kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
-    if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
+    if (!['components', 'tools', 'providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
     return this.#registrations[kind].get(name);
   }
 
-  #resolveReferences(references:ExtensionReference[]):ExtensionManifest[] {
+  #resolveReferences(references: ExtensionReference[]): ExtensionManifest[] {
     if (!isValidExtensionReferences(references)) throw Error('Invalid extension references');
     return references.map(ref => {
       const manifest = this.#manifests.find(m => m.id === ref.id && m.version === ref.version && m.scope === ref.scope);
-      if (!manifest) throw new AppMixerError('conflict','Extension compatibility failed');
+      if (!manifest) throw new AppMixerError('conflict', 'Extension compatibility failed');
       return manifest;
     });
   }
 
   /** Check that every application reference is installed in this approved registry. */
-  validateReferences(references:ExtensionReference[]):void { this.#resolveReferences(references); }
+  validateReferences(references: ExtensionReference[]): void {
+    this.#resolveReferences(references);
+  }
 
   /** Resolve only registrations belonging to the application's declared, installed extensions. */
   getForApplication(references: ExtensionReference[], kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
-    if (!['components','tools','providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
+    if (!['components', 'tools', 'providers'].includes(kind) || typeof name !== 'string' || !idPattern.test(name)) throw Error('Invalid extension lookup');
     const selected = this.#resolveReferences(references);
     return selected.some(manifest => manifest[kind].includes(name)) ? this.#registrations[kind].get(name) : undefined;
   }
 
   /** Resolve a name only when its declared owner is installed and selected. */
   getForExtension(references: ExtensionReference[], extensionId: string, kind: RegistrationKind, name: string): ExtensionImplementation | undefined {
-    const implementation=this.getForApplication(references,kind,name);
-    if(typeof extensionId!=='string'||!idPattern.test(extensionId))throw Error('Invalid extension lookup');
-    const ref=references.find(item=>item.id===extensionId);
-    const manifest=ref && this.#manifests.find(item=>item.id===ref.id&&item.version===ref.version&&item.scope===ref.scope);
+    const implementation = this.getForApplication(references, kind, name);
+    if (typeof extensionId !== 'string' || !idPattern.test(extensionId)) throw Error('Invalid extension lookup');
+    const ref = references.find(item => item.id === extensionId);
+    const manifest = ref && this.#manifests.find(item => item.id === ref.id && item.version === ref.version && item.scope === ref.scope);
     return manifest?.[kind].includes(name) ? implementation : undefined;
   }
 
-  getConfiguration(id:string): ExtensionConfiguration | undefined {
+  getConfiguration(id: string): ExtensionConfiguration | undefined {
     if (typeof id !== 'string' || !idPattern.test(id)) throw Error('Invalid extension lookup');
-    const config=this.#configurations.get(id);
+    const config = this.#configurations.get(id);
     return config === undefined ? undefined : structuredClone(config);
   }
 
   /** Snapshot the installed manifests and approvals into a publication guard. */
-  createPublicationGuard(requirementsFor:(draft:ApplicationDefinition)=>ExtensionRequirements):PublicationGuard {
-    return createExtensionPublicationGuard(this.#manifests,this.#host,requirementsFor);
+  createPublicationGuard(requirementsFor: (draft: ApplicationDefinition) => ExtensionRequirements): PublicationGuard {
+    return createExtensionPublicationGuard(this.#manifests, this.#host, requirementsFor);
   }
 
   /** Return the fixed host target without exposing mutable approval data. */
-  getTarget():{runtimeVersion:string;renderer:string} { return {runtimeVersion:this.#host.runtimeVersion,renderer:this.#host.renderer}; }
+  getTarget(): { runtimeVersion: string; renderer: string } {
+    return { runtimeVersion: this.#host.runtimeVersion, renderer: this.#host.renderer };
+  }
 
-  getManifests(): ExtensionManifest[] { return structuredClone(this.#manifests); }
+  getManifests(): ExtensionManifest[] {
+    return structuredClone(this.#manifests);
+  }
 }

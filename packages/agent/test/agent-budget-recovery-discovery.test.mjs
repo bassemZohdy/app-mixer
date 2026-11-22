@@ -1,46 +1,340 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {once} from 'node:events';
-import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {SqliteAgentRuns,SqliteAgentTokenBudget,SqliteAgentBudgetRecoveryDiscovery,registerBudgetRecoveryDiscovery} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},actor={tenantId:'tenant',principalId:'operator'};
-function add(runs,path,selected,runId,count=1){let run=runs.create(selected,runId,{definitionVersion:1,maxAttempts:2,deadline:1000},0);run=runs.claim(selected,runId,run.revision,'worker',100,1);const budget=new SqliteAgentTokenBudget(path,{scope:selected,runId,leaseToken:run.leaseToken,maxTokens:100,clock:()=>2});for(let i=0;i<count;i++)budget.reserve(`private-call-${i}`,10);runs.settle(selected,runId,run.revision,run.leaseToken,'uncertain',3);budget.close();}
-test('budget discovery pages unresolved scoped runs and reflects reconciliation',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'budget-discovery-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,budget;try{add(runs,path,scope,'a',2);add(runs,path,scope,'b');add(runs,path,scope,'c');add(runs,path,{...scope,tenantId:'other'},'foreign');add(runs,path,{...scope,agentId:'other'},'foreign');discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:()=>true});const first=await discovery.list(actor,{limit:2});assert.deepEqual(first,{items:[{runId:'a',runStatus:'uncertain',reserved:2},{runId:'b',runStatus:'uncertain',reserved:1}],nextAfter:'b'});assert.deepEqual(await discovery.list(actor,{after:'b',limit:2}),{items:[{runId:'c',runStatus:'uncertain',reserved:1}]});assert.equal(JSON.stringify(first).includes('private-call'),false);budget=new SqliteAgentTokenBudget(path,{scope,runId:'a',leaseToken:'retired',maxTokens:100,clock:()=>4});budget.reconcile('private-call-0',3);budget.reconcile('private-call-1',4);assert.deepEqual((await discovery.list(actor)).items.map(item=>item.runId),['b','c']);
- }finally{budget?.close();discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { once } from 'node:events';
+import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import { SqliteAgentRuns, SqliteAgentTokenBudget, SqliteAgentBudgetRecoveryDiscovery, registerBudgetRecoveryDiscovery } from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  actor = { tenantId: 'tenant', principalId: 'operator' };
+function add(runs, path, selected, runId, count = 1) {
+  let run = runs.create(selected, runId, { definitionVersion: 1, maxAttempts: 2, deadline: 1000 }, 0);
+  run = runs.claim(selected, runId, run.revision, 'worker', 100, 1);
+  const budget = new SqliteAgentTokenBudget(path, { scope: selected, runId, leaseToken: run.leaseToken, maxTokens: 100, clock: () => 2 });
+  for (let i = 0; i < count; i++) budget.reserve(`private-call-${i}`, 10);
+  runs.settle(selected, runId, run.revision, run.leaseToken, 'uncertain', 3);
+  budget.close();
+}
+test('budget discovery pages unresolved scoped runs and reflects reconciliation', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let discovery, budget;
+  try {
+    add(runs, path, scope, 'a', 2);
+    add(runs, path, scope, 'b');
+    add(runs, path, scope, 'c');
+    add(runs, path, { ...scope, tenantId: 'other' }, 'foreign');
+    add(runs, path, { ...scope, agentId: 'other' }, 'foreign');
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, { scope, authorize: () => true });
+    const first = await discovery.list(actor, { limit: 2 });
+    assert.deepEqual(first, {
+      items: [
+        { runId: 'a', runStatus: 'uncertain', reserved: 2 },
+        { runId: 'b', runStatus: 'uncertain', reserved: 1 }
+      ],
+      nextAfter: 'b'
+    });
+    assert.deepEqual(await discovery.list(actor, { after: 'b', limit: 2 }), { items: [{ runId: 'c', runStatus: 'uncertain', reserved: 1 }] });
+    assert.equal(JSON.stringify(first).includes('private-call'), false);
+    budget = new SqliteAgentTokenBudget(path, { scope, runId: 'a', leaseToken: 'retired', maxTokens: 100, clock: () => 4 });
+    budget.reconcile('private-call-0', 3);
+    budget.reconcile('private-call-1', 4);
+    assert.deepEqual(
+      (await discovery.list(actor)).items.map(item => item.runId),
+      ['b', 'c']
+    );
+  } finally {
+    budget?.close();
+    discovery?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
-test('budget discovery rechecks aggregate authorization and rejects corrupt records',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'budget-discovery-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,db;try{add(runs,path,scope,'a');let checks=0;discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:()=>++checks===1});await assert.rejects(discovery.list(actor),/denied/);assert.equal(checks,2);await assert.rejects(discovery.list({...actor,tenantId:'other'}),/request/);await assert.rejects(discovery.list(actor,{limit:101}),/request/);discovery.close();discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:()=>true});db=new DatabaseSync(path);db.prepare('UPDATE agent_token_calls SET run_id=? WHERE tenant_id=? AND agent_id=?').run('missing','tenant','agent');await assert.rejects(discovery.list(actor),/discovery data/);
- }finally{db?.close();discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('budget discovery rechecks aggregate authorization and rejects corrupt records', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let discovery, db;
+  try {
+    add(runs, path, scope, 'a');
+    let checks = 0;
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, { scope, authorize: () => ++checks === 1 });
+    await assert.rejects(discovery.list(actor), /denied/);
+    assert.equal(checks, 2);
+    await assert.rejects(discovery.list({ ...actor, tenantId: 'other' }), /request/);
+    await assert.rejects(discovery.list(actor, { limit: 101 }), /request/);
+    discovery.close();
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, { scope, authorize: () => true });
+    db = new DatabaseSync(path);
+    db.prepare('UPDATE agent_token_calls SET run_id=? WHERE tenant_id=? AND agent_id=?').run('missing', 'tenant', 'agent');
+    await assert.rejects(discovery.list(actor), /discovery data/);
+  } finally {
+    db?.close();
+    discovery?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
-test('budget discovery capability authenticates and restricts fixed-scope pages',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'budget-discovery-http-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,server,allowed=true;try{add(runs,path,scope,'a');add(runs,path,scope,'b');discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:()=>allowed});const registry=new CapabilityRegistry(()=>{}),config={discovery,scope:{...scope},operationId:'budget_discovery',path:'/budget/discovery',limit:1,authorize:who=>who.principalId==='operator'};registerBudgetRecoveryDiscovery(registry,config);config.scope.tenantId='other';config.limit=100;config.authorize=()=>false;assert.throws(()=>registerBudgetRecoveryDiscovery(registry,{...config,operationId:'bad'}),/Invalid/);server=createCapabilityServer(registry,req=>req.headers.authorization==='Bearer good'?actor:req.headers.authorization==='Bearer other'?{...actor,tenantId:'other'}:undefined,()=>{});server.listen(0,'127.0.0.1');await once(server,'listening');const call=(token,query)=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({origin:'ui',input:{query}})});assert.equal((await call('bad',{})).status,401);assert.equal((await call('other',{})).status,403);assert.equal((await call('good',{limit:100})).status,400);const first=(await (await call('good',{})).json()).result;assert.deepEqual(first,{items:[{runId:'a',runStatus:'uncertain',reserved:1}],nextAfter:'a'});assert.equal((await (await call('good',{after:'a'})).json()).result.items[0].runId,'b');allowed=false;assert.equal((await call('good',{})).status,403);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('budget discovery capability authenticates and restricts fixed-scope pages', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-http-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let discovery,
+    server,
+    allowed = true;
+  try {
+    add(runs, path, scope, 'a');
+    add(runs, path, scope, 'b');
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, { scope, authorize: () => allowed });
+    const registry = new CapabilityRegistry(() => {}),
+      config = { discovery, scope: { ...scope }, operationId: 'budget_discovery', path: '/budget/discovery', limit: 1, authorize: who => who.principalId === 'operator' };
+    registerBudgetRecoveryDiscovery(registry, config);
+    config.scope.tenantId = 'other';
+    config.limit = 100;
+    config.authorize = () => false;
+    assert.throws(() => registerBudgetRecoveryDiscovery(registry, { ...config, operationId: 'bad' }), /Invalid/);
+    server = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === 'Bearer good' ? actor : req.headers.authorization === 'Bearer other' ? { ...actor, tenantId: 'other' } : undefined),
+      () => {}
+    );
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const call = (token, query) =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ origin: 'ui', input: { query } })
+      });
+    assert.equal((await call('bad', {})).status, 401);
+    assert.equal((await call('other', {})).status, 403);
+    assert.equal((await call('good', { limit: 100 })).status, 400);
+    const first = (await (await call('good', {})).json()).result;
+    assert.deepEqual(first, { items: [{ runId: 'a', runStatus: 'uncertain', reserved: 1 }], nextAfter: 'a' });
+    assert.equal((await (await call('good', { after: 'a' })).json()).result.items[0].runId, 'b');
+    allowed = false;
+    assert.equal((await call('good', {})).status, 403);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    discovery?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('budget discovery aborts stalled policy checks and fences late results',async()=>{
- for(const blockAt of [1,2]){const dir=mkdtempSync(join(tmpdir(),'budget-discovery-bound-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,release,signal;try{add(runs,path,scope,'a');let checks=0,entered;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),base={scope,authorize:async(_actor,_scope,received)=>{if(++checks===blockAt){signal=received;entered();await gate;}return true;}};for(const invalid of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:100,maxPending:0}])assert.throws(()=>new SqliteAgentBudgetRecoveryDiscovery(path,{...base,...invalid}),/Invalid/);const config={...base,timeoutMs:100,maxPending:1};discovery=new SqliteAgentBudgetRecoveryDiscovery(path,config);config.timeoutMs=30000;const pending=discovery.list(actor);await ready;await assert.rejects(discovery.list(actor),/unavailable/);await assert.rejects(pending,/unavailable/);assert.equal(signal.aborted,true);await assert.rejects(discovery.list(actor),/unavailable/);release();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual((await discovery.list(actor)).items.map(item=>item.runId),['a']);
- }finally{release?.();discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}}
+test('budget discovery aborts stalled policy checks and fences late results', async () => {
+  for (const blockAt of [1, 2]) {
+    const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-bound-')),
+      path = join(dir, 'db.sqlite'),
+      runs = new SqliteAgentRuns(path);
+    let discovery, release, signal;
+    try {
+      add(runs, path, scope, 'a');
+      let checks = 0,
+        entered;
+      const ready = new Promise(resolve => (entered = resolve)),
+        gate = new Promise(resolve => (release = resolve)),
+        base = {
+          scope,
+          authorize: async (_actor, _scope, received) => {
+            if (++checks === blockAt) {
+              signal = received;
+              entered();
+              await gate;
+            }
+            return true;
+          }
+        };
+      for (const invalid of [{ timeoutMs: 100 }, { maxPending: 1 }, { timeoutMs: 99, maxPending: 1 }, { timeoutMs: 100, maxPending: 0 }])
+        assert.throws(() => new SqliteAgentBudgetRecoveryDiscovery(path, { ...base, ...invalid }), /Invalid/);
+      const config = { ...base, timeoutMs: 100, maxPending: 1 };
+      discovery = new SqliteAgentBudgetRecoveryDiscovery(path, config);
+      config.timeoutMs = 30000;
+      const pending = discovery.list(actor);
+      await ready;
+      await assert.rejects(discovery.list(actor), /unavailable/);
+      await assert.rejects(pending, /unavailable/);
+      assert.equal(signal.aborted, true);
+      await assert.rejects(discovery.list(actor), /unavailable/);
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(
+        (await discovery.list(actor)).items.map(item => item.runId),
+        ['a']
+      );
+    } finally {
+      release?.();
+      discovery?.close();
+      runs.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 });
 
-test('budget discovery capability returns unavailable on a timed-out policy',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'budget-discovery-timeout-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,server,release;try{add(runs,path,scope,'a');const gate=new Promise(resolve=>release=resolve);discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:async()=>{await gate;return true;},timeoutMs:100,maxPending:1});const registry=new CapabilityRegistry(()=>{});registerBudgetRecoveryDiscovery(registry,{discovery,scope,operationId:'budget_discovery',path:'/budget/discovery',limit:5,authorize:()=>true});server=createCapabilityServer(registry,()=>actor,()=>{});server.listen(0,'127.0.0.1');await once(server,'listening');const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{}}})});assert.equal(response.status,503);release();await new Promise(resolve=>setImmediate(resolve));
- }finally{release?.();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('budget discovery capability returns unavailable on a timed-out policy', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-timeout-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let discovery, server, release;
+  try {
+    add(runs, path, scope, 'a');
+    const gate = new Promise(resolve => (release = resolve));
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, {
+      scope,
+      authorize: async () => {
+        await gate;
+        return true;
+      },
+      timeoutMs: 100,
+      maxPending: 1
+    });
+    const registry = new CapabilityRegistry(() => {});
+    registerBudgetRecoveryDiscovery(registry, { discovery, scope, operationId: 'budget_discovery', path: '/budget/discovery', limit: 5, authorize: () => true });
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { query: {} } })
+    });
+    assert.equal(response.status, 503);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+  } finally {
+    release?.();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    discovery?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('budget discovery capability bounds its own authorization without late access',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'budget-discovery-cap-bound-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,server,release,signal;try{add(runs,path,scope,'a');let slow=true,entered,discoveryChecks=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:()=>{discoveryChecks++;return true;}});const registry=new CapabilityRegistry(()=>{}),base={discovery,scope,operationId:'budget_discovery',path:'/budget/discovery',limit:5,authorize:async(_actor,received)=>{if(slow){signal=received;entered();await gate;}return true;}};for(const bad of [{timeoutMs:100},{maxPending:1},{timeoutMs:99,maxPending:1},{timeoutMs:100,maxPending:0}])assert.throws(()=>registerBudgetRecoveryDiscovery(new CapabilityRegistry(()=>{}),{...base,...bad}),/Invalid/);const config={...base,timeoutMs:100,maxPending:1};registerBudgetRecoveryDiscovery(registry,config);config.timeoutMs=30000;server=createCapabilityServer(registry,()=>actor,()=>{});server.listen(0,'127.0.0.1');await once(server,'listening');const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{}}})});const first=call();await ready;assert.equal((await call()).status,503);assert.equal((await first).status,503);assert.equal(signal.aborted,true);assert.equal((await call()).status,503);assert.equal(discoveryChecks,0);slow=false;release();await new Promise(resolve=>setImmediate(resolve));const response=await call();assert.equal(response.status,200);assert.equal((await response.json()).result.items[0].runId,'a');assert.equal(discoveryChecks,2);
- }finally{release?.();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('budget discovery capability bounds its own authorization without late access', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-cap-bound-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let discovery, server, release, signal;
+  try {
+    add(runs, path, scope, 'a');
+    let slow = true,
+      entered,
+      discoveryChecks = 0;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, {
+      scope,
+      authorize: () => {
+        discoveryChecks++;
+        return true;
+      }
+    });
+    const registry = new CapabilityRegistry(() => {}),
+      base = {
+        discovery,
+        scope,
+        operationId: 'budget_discovery',
+        path: '/budget/discovery',
+        limit: 5,
+        authorize: async (_actor, received) => {
+          if (slow) {
+            signal = received;
+            entered();
+            await gate;
+          }
+          return true;
+        }
+      };
+    for (const bad of [{ timeoutMs: 100 }, { maxPending: 1 }, { timeoutMs: 99, maxPending: 1 }, { timeoutMs: 100, maxPending: 0 }])
+      assert.throws(() => registerBudgetRecoveryDiscovery(new CapabilityRegistry(() => {}), { ...base, ...bad }), /Invalid/);
+    const config = { ...base, timeoutMs: 100, maxPending: 1 };
+    registerBudgetRecoveryDiscovery(registry, config);
+    config.timeoutMs = 30000;
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const call = () =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: { query: {} } })
+      });
+    const first = call();
+    await ready;
+    assert.equal((await call()).status, 503);
+    assert.equal((await first).status, 503);
+    assert.equal(signal.aborted, true);
+    assert.equal((await call()).status, 503);
+    assert.equal(discoveryChecks, 0);
+    slow = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    const response = await call();
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).result.items[0].runId, 'a');
+    assert.equal(discoveryChecks, 2);
+  } finally {
+    release?.();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    discovery?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('budget discovery capability rechecks its own policy before returning a page',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'budget-discovery-cap-revoke-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path);let discovery,release;try{add(runs,path,scope,'a');let checks=0,entered,allowed=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);discovery=new SqliteAgentBudgetRecoveryDiscovery(path,{scope,authorize:async()=>{if(++checks===2){entered();await gate;}return true;}});const registry=new CapabilityRegistry(()=>{});registerBudgetRecoveryDiscovery(registry,{discovery,scope,operationId:'budget_discovery',path:'/budget/discovery',limit:5,authorize:()=>allowed,timeoutMs:1000,maxPending:1});const pending=registry.invoke('budget_discovery',{query:{}},{...actor,origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);
- }finally{release?.();discovery?.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('budget discovery capability rechecks its own policy before returning a page', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'budget-discovery-cap-revoke-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path);
+  let discovery, release;
+  try {
+    add(runs, path, scope, 'a');
+    let checks = 0,
+      entered,
+      allowed = true;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    discovery = new SqliteAgentBudgetRecoveryDiscovery(path, {
+      scope,
+      authorize: async () => {
+        if (++checks === 2) {
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    });
+    const registry = new CapabilityRegistry(() => {});
+    registerBudgetRecoveryDiscovery(registry, { discovery, scope, operationId: 'budget_discovery', path: '/budget/discovery', limit: 5, authorize: () => allowed, timeoutMs: 1000, maxPending: 1 });
+    const pending = registry.invoke('budget_discovery', { query: {} }, { ...actor, origin: 'ui' });
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /forbidden/);
+  } finally {
+    release?.();
+    discovery?.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

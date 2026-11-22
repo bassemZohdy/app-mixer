@@ -1,72 +1,627 @@
-import {createHash} from 'node:crypto';
-import {checkedMemoryScope,validMemoryId,safeMemoryJSON,MemoryAccessDenied,type AgentMemoryScope as Scope,type AgentMemoryActor as Actor,type AgentMemoryAction as Action,type AgentMemoryRecord as RecordValue,type AgentMemoryAuditEvent as AuditEvent,type AgentMemoryProvenance as Provenance} from './agent-memory.js';
+import { createHash } from 'node:crypto';
+import {
+  checkedMemoryScope,
+  validMemoryId,
+  safeMemoryJSON,
+  MemoryAccessDenied,
+  type AgentMemoryScope as Scope,
+  type AgentMemoryActor as Actor,
+  type AgentMemoryAction as Action,
+  type AgentMemoryRecord as RecordValue,
+  type AgentMemoryAuditEvent as AuditEvent,
+  type AgentMemoryProvenance as Provenance
+} from './agent-memory.js';
 
-type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
-type Options={enabled:true;maxTtlMs:number;maxEntries:number;authorize:(actor:Actor,scope:Scope,action:Action,id?:string)=>boolean|Promise<boolean>;clock?:()=>number;audit?:boolean;textIndex?:boolean;vectorIndex?:{modelId:string;dimensions:number;scope?:Scope};query:Query;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>};
-const scopeWhere='tenant_id=$1 AND agent_id=$2 AND owner_kind=$3 AND owner_id=$4 AND memory_kind=$5';
+type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+type Options = {
+  enabled: true;
+  maxTtlMs: number;
+  maxEntries: number;
+  authorize: (actor: Actor, scope: Scope, action: Action, id?: string) => boolean | Promise<boolean>;
+  clock?: () => number;
+  audit?: boolean;
+  textIndex?: boolean;
+  vectorIndex?: { modelId: string; dimensions: number; scope?: Scope };
+  query: Query;
+  transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
+};
+const scopeWhere = 'tenant_id=$1 AND agent_id=$2 AND owner_kind=$3 AND owner_id=$4 AND memory_kind=$5';
 /**
  * Index predicates and expressions must hold constants (the planner matches them against the query), so a validated identifier
  * is quoted here, in one place, as a SQL string literal. An identifier outside the memory ID alphabet is refused instead of escaped.
  */
-export const sqlLiteral=(value:unknown):string=>{if(!validMemoryId(value)&&!(typeof value==='string'&&/^[a-z]{1,32}$/.test(value)))throw Error('Invalid SQL identifier');return "'"+value.replaceAll("'","''")+"'";};
-const scopedPredicate=(scope:Scope):string=>`tenant_id=${sqlLiteral(scope.tenantId)} AND agent_id=${sqlLiteral(scope.agentId)} AND owner_kind=${sqlLiteral(scope.owner.kind)} AND owner_id=${sqlLiteral(scope.owner.id)}`;
-const sameScope=(a:Scope,b:Scope):boolean=>a.tenantId===b.tenantId&&a.agentId===b.agentId&&a.owner.kind===b.owner.kind&&a.owner.id===b.owner.id&&a.kind===b.kind;
-const vectorExpression=(dimensions:number,scope?:Scope):string=>{const cast=`((value::jsonb->'vector')::text::public.vector(${dimensions}))`;return scope?`((CASE WHEN ${scopedPredicate(scope)} THEN ${cast} ELSE NULL END)::public.vector(${dimensions}))`:cast;};
+export const sqlLiteral = (value: unknown): string => {
+  if (!validMemoryId(value) && !(typeof value === 'string' && /^[a-z]{1,32}$/.test(value))) throw Error('Invalid SQL identifier');
+  return "'" + value.replaceAll("'", "''") + "'";
+};
+const scopedPredicate = (scope: Scope): string =>
+  `tenant_id=${sqlLiteral(scope.tenantId)} AND agent_id=${sqlLiteral(scope.agentId)} AND owner_kind=${sqlLiteral(scope.owner.kind)} AND owner_id=${sqlLiteral(scope.owner.id)}`;
+const sameScope = (a: Scope, b: Scope): boolean => a.tenantId === b.tenantId && a.agentId === b.agentId && a.owner.kind === b.owner.kind && a.owner.id === b.owner.id && a.kind === b.kind;
+const vectorExpression = (dimensions: number, scope?: Scope): string => {
+  const cast = `((value::jsonb->'vector')::text::public.vector(${dimensions}))`;
+  return scope ? `((CASE WHEN ${scopedPredicate(scope)} THEN ${cast} ELSE NULL END)::public.vector(${dimensions}))` : cast;
+};
 
 /** Shared PostgreSQL memory. The host must provide a real transaction pinned to one connection. */
 export class PostgresAgentMemory {
- private readonly options:Options;
- constructor(options:Options){if(!options||options.enabled!==true||!Number.isSafeInteger(options.maxTtlMs)||options.maxTtlMs<1||options.maxTtlMs>365*86400000||!Number.isSafeInteger(options.maxEntries)||options.maxEntries<1||options.maxEntries>1000||typeof options.authorize!=='function'||typeof options.query!=='function'||typeof options.transaction!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.audit!==undefined&&typeof options.audit!=='boolean')||(options.textIndex!==undefined&&typeof options.textIndex!=='boolean')||(options.vectorIndex!==undefined&&(!options.vectorIndex||!validMemoryId(options.vectorIndex.modelId)||!Number.isSafeInteger(options.vectorIndex.dimensions)||options.vectorIndex.dimensions<1||options.vectorIndex.dimensions>2000)))throw Error('Invalid memory configuration');const vectorScope=options.vectorIndex?.scope===undefined?undefined:checkedMemoryScope({tenantId:options.vectorIndex.scope.tenantId,principalId:'index'},options.vectorIndex.scope).scope;if(vectorScope&&vectorScope.kind!=='semantic')throw Error('Invalid memory configuration');this.options={...options,...(options.vectorIndex?{vectorIndex:{modelId:options.vectorIndex.modelId,dimensions:options.vectorIndex.dimensions,...(vectorScope?{scope:vectorScope}:{})}}:{})};}
- async initialize():Promise<void>{await this.options.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind))',[]);await this.options.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_memories (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,memory_id TEXT COLLATE "C" NOT NULL,revision BIGINT NOT NULL,value TEXT,provenance TEXT,expires_at BIGINT NOT NULL,deleted BOOLEAN NOT NULL DEFAULT FALSE,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id))',[]);await this.options.query('CREATE TABLE IF NOT EXISTS app_mixer_memory_erasure_requests (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,request_id TEXT NOT NULL,actor_id TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,request_id))',[]);await this.options.query("CREATE OR REPLACE FUNCTION app_mixer_memory_erasure_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Memory erasure request is immutable'; END $$",[]);await this.options.query("DO $$ BEGIN CREATE TRIGGER app_mixer_memory_erasure_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_memory_erasure_requests FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_memory_erasure_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$",[]);if(this.options.vectorIndex){const {modelId,dimensions,scope}=this.options.vectorIndex,index='app_mixer_memory_vec_'+createHash('sha256').update(modelId+':'+dimensions+(scope?':'+JSON.stringify(scope):'')).digest('hex').slice(0,20),expression=vectorExpression(dimensions,scope),filter=scope?' AND '+scopedPredicate(scope):'';await this.options.query(`CREATE INDEX IF NOT EXISTS ${index} ON app_mixer_agent_memories USING hnsw (${expression} public.vector_cosine_ops) WHERE memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter}`,[]);} if(this.options.textIndex)await this.options.query("CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_text_idx ON app_mixer_agent_memories USING GIN (to_tsvector('simple'::regconfig, COALESCE(value::jsonb->>'text',''))) WHERE memory_kind='semantic' AND NOT deleted",[]);if(this.options.audit){await this.options.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,memory_id TEXT,revision BIGINT,count INTEGER NOT NULL,observed_at BIGINT NOT NULL)',[]);await this.options.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_audit_scope ON app_mixer_agent_memory_audit(tenant_id,agent_id,owner_kind,owner_id,memory_kind,id)',[]);await this.options.query("CREATE OR REPLACE FUNCTION app_mixer_agent_memory_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Memory audit is immutable'; END $$",[]);await this.options.query("DO $$ BEGIN CREATE TRIGGER app_mixer_agent_memory_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_agent_memory_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_memory_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$",[]);}}
- private args(scope:Scope):string[]{return [scope.tenantId,scope.agentId,scope.owner.kind,scope.owner.id,scope.kind];}
- private now():number{const value=(this.options.clock??Date.now)();if(!Number.isSafeInteger(value)||value<0)throw Error('Invalid clock');return value;}
- private async permit(actor:Actor,scope:Scope,action:Action,id?:string):Promise<void>{if(await this.options.authorize(structuredClone(actor),structuredClone(scope),action,id)!==true)throw new MemoryAccessDenied();}
- private record(row:Record<string,unknown>|undefined,now:number):RecordValue|undefined{if(!row||row.deleted===true||Number(row.expires_at)<=now)return undefined;const revision=Number(row.revision),expiresAt=Number(row.expires_at);if(typeof row.memory_id!=='string'||!validMemoryId(row.memory_id)||typeof row.value!=='string'||typeof row.provenance!=='string'||!Number.isSafeInteger(revision)||revision<1||!Number.isSafeInteger(expiresAt))throw Error('Invalid stored memory');return {id:row.memory_id,revision,value:JSON.parse(row.value),provenance:JSON.parse(row.provenance) as Provenance,expiresAt};}
- private async checkCurrent(scope:Scope,items:{id:string;revision:number}[]):Promise<void>{if(!items.length)return;const result=await this.options.query(`SELECT memory_id,revision,expires_at,deleted FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=ANY($6::text[])`,[...this.args(scope),items.map(item=>item.id)]);if(!Array.isArray(result.rows)||result.rows.length!==items.length)throw Error('Memory changed during read');const now=this.now(),expected=new Map(items.map(item=>[item.id,item.revision])),seen=new Set<string>();for(const row of result.rows){const id=row.memory_id,revision=Number(row.revision),expiresAt=Number(row.expires_at);if(typeof id!=='string'||seen.has(id)||!expected.has(id)||revision!==expected.get(id)||row.deleted!==false||!Number.isSafeInteger(expiresAt)||expiresAt<=now)throw Error('Memory changed during read');seen.add(id);}}
- private async audit(query:Query,actor:Actor,scope:Scope,action:AuditEvent['action'],id:string|null,revision:number|null,count:number,now:number):Promise<void>{if(this.options.audit)await query('INSERT INTO app_mixer_agent_memory_audit (tenant_id,agent_id,owner_kind,owner_id,memory_kind,actor_id,action,memory_id,revision,count,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[...this.args(scope),actor.principalId,action,id,revision,count,now]);}
- private async locked<T>(scope:Scope,operation:(query:Query)=>Promise<T>):Promise<T>{const args=this.args(scope);return this.options.transaction(async query=>{await query('INSERT INTO app_mixer_agent_memory_scopes VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',args);const lock=await query(`SELECT 1 FROM app_mixer_agent_memory_scopes WHERE ${scopeWhere} FOR UPDATE`,args);if(!Array.isArray(lock.rows)||lock.rows.length!==1)throw Error('Invalid memory lock result');return operation(query);});}
- async assertAccess(actor:Actor,scope:Scope,action:Action,id?:string):Promise<void>{const c=checkedMemoryScope(actor,scope);if(!['read','write','delete','list','purge','audit','erase','erase-audit'].includes(action)||(id!==undefined&&!validMemoryId(id))||(['read','write','delete'].includes(action)&&id===undefined))throw Error('Invalid memory access');await this.permit(c.actor,c.scope,action,id);}
- /** Recheck bounded search hits after asynchronous work; fails closed on changed access or data. */
- async verifySearchHits(actor:Actor,scope:Scope,hits:{id:string;revision:number}[]):Promise<void>{const c=checkedMemoryScope(actor,scope);if(!Array.isArray(hits)||hits.length>40||hits.some(hit=>!hit||!validMemoryId(hit.id)||!Number.isSafeInteger(hit.revision)||hit.revision<1))throw Error('Invalid memory result');const unique=new Map<string,number>();for(const hit of hits){if(unique.has(hit.id)&&unique.get(hit.id)!==hit.revision)throw Error('Memory changed during read');unique.set(hit.id,hit.revision);}const safe=[...unique].map(([id,revision])=>({id,revision}));for(const hit of safe)await this.permit(c.actor,c.scope,'read',hit.id);await this.permit(c.actor,c.scope,'list');await this.checkCurrent(c.scope,safe);}
- async get(actor:Actor,scope:Scope,id:string):Promise<RecordValue|undefined>{const c=checkedMemoryScope(actor,scope);if(!validMemoryId(id))throw Error('Invalid memory ID');await this.permit(c.actor,c.scope,'read',id);const args=[...this.args(c.scope),id],sql=`SELECT * FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=$6`,result=await this.options.query(sql,args);if(!Array.isArray(result.rows)||result.rows.length>1)throw Error('Invalid memory result');await this.permit(c.actor,c.scope,'read',id);const initial=this.record(result.rows[0],this.now());if(!initial)return undefined;const latest=await this.options.query(sql,args);if(!Array.isArray(latest.rows)||latest.rows.length>1)throw Error('Invalid memory result');await this.permit(c.actor,c.scope,'read',id);const current=this.record(latest.rows[0],this.now());if(!current||current.revision!==initial.revision)throw Error('Memory changed during read');await this.checkCurrent(c.scope,[current]);return current;}
- async put(actor:Actor,scope:Scope,id:string,value:unknown,options:{expectedRevision:number|null;expiresAt:number;provenance:Provenance}):Promise<RecordValue>{
-  const c=checkedMemoryScope(actor,scope);if(!validMemoryId(id)||!options||(options.expectedRevision!==null&&(!Number.isSafeInteger(options.expectedRevision)||options.expectedRevision<1))||!Number.isSafeInteger(options.expiresAt)||!options.provenance||Object.keys(options.provenance).length!==2||!['run','human','system'].includes(options.provenance.kind)||!validMemoryId(options.provenance.id))throw Error('Invalid memory write');const serialized=safeMemoryJSON(value),provenance=JSON.stringify(options.provenance),expires=options.expiresAt,expected=options.expectedRevision;await this.permit(c.actor,c.scope,'write',id);
-  return this.locked(c.scope,async query=>{await this.permit(c.actor,c.scope,'write',id);const now=this.now();if(expires<=now||expires-now>this.options.maxTtlMs)throw Error('Invalid memory expiration');const args=this.args(c.scope),rows=(await query(`SELECT * FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=$6`,[...args,id])).rows;if(!Array.isArray(rows)||rows.length>1)throw Error('Invalid memory result');const prior=rows[0],live=this.record(prior,now);if((live?.revision??null)!==expected)throw Error('Memory revision conflict');const counts=(await query(`SELECT COUNT(*) AS history,COUNT(*) FILTER (WHERE NOT deleted AND expires_at>$6) AS live FROM app_mixer_agent_memories WHERE ${scopeWhere}`,[...args,now])).rows[0];if(!counts||!Number.isSafeInteger(Number(counts.history))||!Number.isSafeInteger(Number(counts.live))||Number(counts.history)<0||Number(counts.live)<0)throw Error('Invalid memory quota result');if(!prior&&Number(counts.history)>=this.options.maxEntries*10)throw Error('Memory history quota exceeded');if(!live&&Number(counts.live)>=this.options.maxEntries)throw Error('Memory quota exceeded');const revision=(prior?Number(prior.revision):0)+1;if(!Number.isSafeInteger(revision)||revision<1)throw Error('Invalid memory revision');await query('INSERT INTO app_mixer_agent_memories VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE) ON CONFLICT (tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id) DO UPDATE SET revision=EXCLUDED.revision,value=EXCLUDED.value,provenance=EXCLUDED.provenance,expires_at=EXCLUDED.expires_at,deleted=FALSE',[...args,id,revision,serialized,provenance,expires]);await this.audit(query,c.actor,c.scope,'write',id,revision,1,now);return {id,revision,value:JSON.parse(serialized),provenance:JSON.parse(provenance) as Provenance,expiresAt:expires};});
- }
- async delete(actor:Actor,scope:Scope,id:string,expectedRevision:number):Promise<void>{const c=checkedMemoryScope(actor,scope);if(!validMemoryId(id)||!Number.isSafeInteger(expectedRevision)||expectedRevision<1||expectedRevision>=Number.MAX_SAFE_INTEGER)throw Error('Invalid memory delete');await this.permit(c.actor,c.scope,'delete',id);await this.locked(c.scope,async query=>{await this.permit(c.actor,c.scope,'delete',id);const now=this.now(),result=await query(`UPDATE app_mixer_agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND memory_id=$6 AND revision=$7 AND NOT deleted AND expires_at>$8 RETURNING memory_id`,[...this.args(c.scope),id,expectedRevision,now]);if(result.rows.length!==1)throw Error('Memory revision conflict');await this.audit(query,c.actor,c.scope,'delete',id,expectedRevision+1,1,now);});}
- async list(actor:Actor,scope:Scope,options:{after?:string;limit?:number}={}):Promise<{items:RecordValue[];nextAfter?:string}>{const c=checkedMemoryScope(actor,scope),after=options?.after??'',limit=options?.limit??100;if(!options||(after!==''&&!validMemoryId(after))||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid memory listing');await this.permit(c.actor,c.scope,'list');const rows=(await this.options.query(`SELECT memory_id FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id>$6 AND NOT deleted AND expires_at>$7 ORDER BY memory_id`,[...this.args(c.scope),after,this.now()])).rows,items:RecordValue[]= [];let more=false;for(const row of rows){const id=String(row.memory_id);try{const item=await this.get(c.actor,c.scope,id);if(!item)continue;if(items.length===limit){more=true;break;}items.push(item);}catch(error){if(error instanceof MemoryAccessDenied)continue;throw error;}}for(const item of items)await this.permit(c.actor,c.scope,'read',item.id);await this.permit(c.actor,c.scope,'list');await this.checkCurrent(c.scope,items);return {items,...(more?{nextAfter:items.at(-1)!.id}:{})};}
- /** Indexed keyword candidates, filtered by current scope and record authorization. */
- async searchSemanticText(actor:Actor,scope:Scope,text:string,modelId:string,limit=5,maxCandidates=100):Promise<{record:RecordValue;score:number}[]>{
-  const c=checkedMemoryScope(actor,scope);if(!this.options.textIndex||c.scope.kind!=='semantic'||typeof text!=='string'||!text.trim()||text.length>2000||!validMemoryId(modelId)||!Number.isSafeInteger(limit)||limit<1||limit>20||!Number.isSafeInteger(maxCandidates)||maxCandidates<limit||maxCandidates>1000)throw Error('Invalid indexed memory search');await this.permit(c.actor,c.scope,'list');
-  const rows=(await this.options.query(`SELECT memory_id,revision,ts_rank(to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')),plainto_tsquery('simple'::regconfig,$7)) AS score FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=$8 AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$7) ORDER BY score DESC,memory_id LIMIT $9`,[...this.args(c.scope),this.now(),text,modelId,maxCandidates])).rows;if(!Array.isArray(rows)||rows.length>maxCandidates)throw Error('Invalid indexed memory result');const items:{record:RecordValue;score:number}[]=[];
-  for(const row of rows){if(!validMemoryId(row.memory_id)||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1||!Number.isFinite(Number(row.score))||Number(row.score)<0)throw Error('Invalid indexed memory result');try{const record=await this.get(c.actor,c.scope,row.memory_id);if(!record||record.revision!==Number(row.revision))continue;const value=record.value;if(!value||typeof value!=='object'||Array.isArray(value)||(value as Record<string,unknown>).format!=='semantic-v1'||(value as Record<string,unknown>).modelId!==modelId)continue;items.push({record,score:Number(row.score)});if(items.length===limit)break;}catch(error){if(error instanceof MemoryAccessDenied)continue;if(error instanceof Error&&error.message==='Memory changed during read')continue;throw error;}}
-  for(const item of items)await this.permit(c.actor,c.scope,'read',item.record.id);await this.permit(c.actor,c.scope,'list');await this.checkCurrent(c.scope,items.map(item=>item.record));return items;
- }
- supportsVectorIndex(modelId:string,dimensions:number,scope?:Scope):boolean{const config=this.options.vectorIndex;return !!config&&config.modelId===modelId&&config.dimensions===dimensions&&(!config.scope||!!scope&&sameScope(config.scope,scope));}
- /** Approximate pgvector candidates filtered by current host authorization. */
- async searchSemanticVector(actor:Actor,scope:Scope,vector:number[],modelId:string,limit=5,maxCandidates=100):Promise<{record:RecordValue;score:number}[]>{
-  const c=checkedMemoryScope(actor,scope),config=this.options.vectorIndex;if(!config||c.scope.kind!=='semantic'||config.modelId!==modelId||(config.scope&&!sameScope(config.scope,c.scope))||!Array.isArray(vector)||vector.length!==config.dimensions||vector.some(value=>typeof value!=='number'||!Number.isFinite(value)||Math.abs(value)>1000000)||Math.hypot(...vector)===0||!Number.isSafeInteger(limit)||limit<1||limit>20||!Number.isSafeInteger(maxCandidates)||maxCandidates<limit||maxCandidates>1000)throw Error('Invalid indexed memory search');const encoded=JSON.stringify(vector);await this.permit(c.actor,c.scope,'list');
-  const expression=vectorExpression(config.dimensions,config.scope),filter=config.scope?' AND '+scopedPredicate(config.scope):'',distance=`${expression} OPERATOR(public.<=>) $7::public.vector(${config.dimensions})`,rows=await this.options.transaction(async query=>{await query(`SET LOCAL hnsw.ef_search = ${Math.max(40,maxCandidates)}`,[]);await query("SET LOCAL hnsw.iterative_scan = 'strict_order'",[]);return (await query(`SELECT memory_id,revision,${distance} AS distance FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter} AND ${expression} IS NOT NULL ORDER BY ${distance} LIMIT $8`,[...this.args(c.scope),this.now(),encoded,maxCandidates])).rows;});if(!Array.isArray(rows)||rows.length>maxCandidates)throw Error('Invalid indexed memory result');const items:{record:RecordValue;score:number}[]=[];
-  for(const row of rows){const distanceValue=Number(row.distance);if(!validMemoryId(row.memory_id)||!Number.isSafeInteger(Number(row.revision))||Number(row.revision)<1||row.distance===null||!Number.isFinite(distanceValue)||distanceValue<0||distanceValue>2.00001)throw Error('Invalid indexed memory result');try{const record=await this.get(c.actor,c.scope,row.memory_id);if(!record||record.revision!==Number(row.revision))continue;const value=record.value;if(!value||typeof value!=='object'||Array.isArray(value)||(value as Record<string,unknown>).format!=='semantic-v1'||(value as Record<string,unknown>).modelId!==modelId)continue;items.push({record,score:Math.max(-1,Math.min(1,1-distanceValue))});if(items.length===limit)break;}catch(error){if(error instanceof MemoryAccessDenied)continue;if(error instanceof Error&&error.message==='Memory changed during read')continue;throw error;}}
-  for(const item of items)await this.permit(c.actor,c.scope,'read',item.record.id);await this.permit(c.actor,c.scope,'list');await this.checkCurrent(c.scope,items.map(item=>item.record));return items;
- }
- async purgeExpired(actor:Actor,scope:Scope,signal?:AbortSignal):Promise<number>{const c=checkedMemoryScope(actor,scope);if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid memory signal');const check=()=>{if(signal?.aborted)throw Error('Memory purge cancelled');};check();await this.permit(c.actor,c.scope,'purge');check();return this.locked(c.scope,async query=>{check();await this.permit(c.actor,c.scope,'purge');check();const now=this.now(),result=await query(`UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted AND expires_at<=$6 RETURNING memory_id`,[...this.args(c.scope),now]);check();if(result.rows.length)await this.audit(query,c.actor,c.scope,'purge',null,null,result.rows.length,now);check();return result.rows.length;});}
- /** Tombstone every live or expired memory in one scope under the separate `erase` permission; returns how many were erased. */
- async eraseScope(actor:Actor,scope:Scope,signal?:AbortSignal):Promise<number>{const c=checkedMemoryScope(actor,scope);if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid memory signal');const check=()=>{if(signal?.aborted)throw Error('Memory erasure cancelled');};check();await this.permit(c.actor,c.scope,'erase');check();return this.locked(c.scope,async query=>{check();await this.permit(c.actor,c.scope,'erase');check();const now=this.now(),result=await query(`UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted RETURNING memory_id`,[...this.args(c.scope)]);check();if(!Array.isArray(result.rows))throw Error('Invalid memory result');if(result.rows.length)await this.audit(query,c.actor,c.scope,'erase',null,null,result.rows.length,now);check();return result.rows.length;});}
- /** Atomically fence an erasure request so retries cannot erase later writes. */
- async eraseScopeOnce(actor:Actor,scope:Scope,requestId:string,signal?:AbortSignal):Promise<{erased:number;replayed:boolean}>{
-  const c=checkedMemoryScope(actor,scope);if(!validMemoryId(requestId))throw Error('Invalid memory erasure request');if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid memory signal');const check=()=>{if(signal?.aborted)throw Error('Memory erasure cancelled');};check();await this.permit(c.actor,c.scope,'erase');check();return this.locked(c.scope,async query=>{check();await this.permit(c.actor,c.scope,'erase');check();const args=this.args(c.scope),rows=(await query(`SELECT actor_id,count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere} AND request_id=$6`,[...args,requestId])).rows;check();if(!Array.isArray(rows)||rows.length>1)throw Error('Invalid memory erasure request record');if(rows.length){const count=Number(rows[0].count);if(rows[0].actor_id!==c.actor.principalId)throw Error('Memory erasure request conflict');if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid memory erasure request record');return {erased:count,replayed:true};}const totals=(await query(`SELECT COUNT(*) AS count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere}`,args)).rows,total=Number(totals?.[0]?.count);check();if(!Array.isArray(totals)||totals.length!==1||!Number.isSafeInteger(total)||total<0||total>=10000)throw Error('Memory erasure request limit reached');const now=this.now(),result=await query(`UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted RETURNING memory_id`,args);check();if(!Array.isArray(result.rows))throw Error('Invalid memory result');const count=result.rows.length;if(count)await this.audit(query,c.actor,c.scope,'erase',null,null,count,now);check();await query('INSERT INTO app_mixer_memory_erasure_requests VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',[...args,requestId,c.actor.principalId,count]);check();return {erased:count,replayed:false};});
- }
- /** Read one retained erasure request under a separate permission. */
- async getErasureRequest(actor:Actor,scope:Scope,requestId:string,signal?:AbortSignal):Promise<{requestId:string;principalId:string;erased:number}|undefined>{
-  const c=checkedMemoryScope(actor,scope);if(!validMemoryId(requestId))throw Error('Invalid memory erasure request');if(signal!==undefined&&!(signal instanceof AbortSignal))throw Error('Invalid memory signal');const check=()=>{if(signal?.aborted)throw Error('Memory erasure evidence cancelled');};check();await this.permit(c.actor,c.scope,'erase-audit',requestId);check();const result=await this.options.query(`SELECT actor_id,count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere} AND request_id=$6`,[...this.args(c.scope),requestId]);check();if(!Array.isArray(result.rows)||result.rows.length>1)throw Error('Invalid memory erasure request record');await this.permit(c.actor,c.scope,'erase-audit',requestId);check();const row=result.rows[0];if(!row)return undefined;const count=Number(row.count);if(!validMemoryId(row.actor_id)||!Number.isSafeInteger(count)||count<0)throw Error('Invalid memory erasure request record');return {requestId,principalId:row.actor_id,erased:count};
- }
- async auditHistory(actor:Actor,scope:Scope,options:{after?:number;limit?:number}={}):Promise<{items:AuditEvent[];nextAfter?:number}>{
-  const c=checkedMemoryScope(actor,scope),after=options?.after??0,limit=options?.limit??50;if(!this.options.audit||!options||!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid memory audit listing');await this.permit(c.actor,c.scope,'audit');
-  const rows=(await this.options.query(`SELECT id,actor_id,action,memory_id,revision,count,observed_at FROM app_mixer_agent_memory_audit WHERE ${scopeWhere} AND id>$6 ORDER BY id LIMIT $7`,[...this.args(c.scope),after,limit+1])).rows;if(!Array.isArray(rows)||rows.length>limit+1)throw Error('Invalid memory audit result');const items:AuditEvent[]=[];
-  for(const row of rows.slice(0,limit)){const id=Number(row.id),revision=row.revision===null?null:Number(row.revision),count=Number(row.count),observedAt=Number(row.observed_at),memoryId=row.memory_id===null?null:row.memory_id;if(!Number.isSafeInteger(id)||id<1||!validMemoryId(row.actor_id)||!['write','delete','purge','erase'].includes(String(row.action))||(memoryId!==null&&!validMemoryId(memoryId))||(revision!==null&&(!Number.isSafeInteger(revision)||revision<1))||!Number.isSafeInteger(count)||count<1||!Number.isSafeInteger(observedAt)||observedAt<0)throw Error('Invalid memory audit result');try{await this.permit(c.actor,c.scope,'audit',memoryId??undefined);}catch(error){if(error instanceof MemoryAccessDenied)continue;throw error;}items.push({id,actorId:row.actor_id,action:row.action as AuditEvent['action'],memoryId,revision,count,observedAt});}
-  for(const item of items)await this.permit(c.actor,c.scope,'audit',item.memoryId??undefined);await this.permit(c.actor,c.scope,'audit');return {items,...(rows.length>limit?{nextAfter:Number(rows[limit-1].id)}:{})};
- }
-
+  private readonly options: Options;
+  constructor(options: Options) {
+    if (
+      !options ||
+      options.enabled !== true ||
+      !Number.isSafeInteger(options.maxTtlMs) ||
+      options.maxTtlMs < 1 ||
+      options.maxTtlMs > 365 * 86400000 ||
+      !Number.isSafeInteger(options.maxEntries) ||
+      options.maxEntries < 1 ||
+      options.maxEntries > 1000 ||
+      typeof options.authorize !== 'function' ||
+      typeof options.query !== 'function' ||
+      typeof options.transaction !== 'function' ||
+      (options.clock !== undefined && typeof options.clock !== 'function') ||
+      (options.audit !== undefined && typeof options.audit !== 'boolean') ||
+      (options.textIndex !== undefined && typeof options.textIndex !== 'boolean') ||
+      (options.vectorIndex !== undefined &&
+        (!options.vectorIndex ||
+          !validMemoryId(options.vectorIndex.modelId) ||
+          !Number.isSafeInteger(options.vectorIndex.dimensions) ||
+          options.vectorIndex.dimensions < 1 ||
+          options.vectorIndex.dimensions > 2000))
+    )
+      throw Error('Invalid memory configuration');
+    const vectorScope =
+      options.vectorIndex?.scope === undefined ? undefined : checkedMemoryScope({ tenantId: options.vectorIndex.scope.tenantId, principalId: 'index' }, options.vectorIndex.scope).scope;
+    if (vectorScope && vectorScope.kind !== 'semantic') throw Error('Invalid memory configuration');
+    this.options = {
+      ...options,
+      ...(options.vectorIndex ? { vectorIndex: { modelId: options.vectorIndex.modelId, dimensions: options.vectorIndex.dimensions, ...(vectorScope ? { scope: vectorScope } : {}) } } : {})
+    };
+  }
+  async initialize(): Promise<void> {
+    await this.options.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind))',
+      []
+    );
+    await this.options.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_memories (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,memory_id TEXT COLLATE "C" NOT NULL,revision BIGINT NOT NULL,value TEXT,provenance TEXT,expires_at BIGINT NOT NULL,deleted BOOLEAN NOT NULL DEFAULT FALSE,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id))',
+      []
+    );
+    await this.options.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_memory_erasure_requests (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,request_id TEXT NOT NULL,actor_id TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,owner_kind,owner_id,memory_kind,request_id))',
+      []
+    );
+    await this.options.query(
+      "CREATE OR REPLACE FUNCTION app_mixer_memory_erasure_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Memory erasure request is immutable'; END $$",
+      []
+    );
+    await this.options.query(
+      'DO $$ BEGIN CREATE TRIGGER app_mixer_memory_erasure_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_memory_erasure_requests FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_memory_erasure_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+      []
+    );
+    if (this.options.vectorIndex) {
+      const { modelId, dimensions, scope } = this.options.vectorIndex,
+        index =
+          'app_mixer_memory_vec_' +
+          createHash('sha256')
+            .update(modelId + ':' + dimensions + (scope ? ':' + JSON.stringify(scope) : ''))
+            .digest('hex')
+            .slice(0, 20),
+        expression = vectorExpression(dimensions, scope),
+        filter = scope ? ' AND ' + scopedPredicate(scope) : '';
+      await this.options.query(
+        `CREATE INDEX IF NOT EXISTS ${index} ON app_mixer_agent_memories USING hnsw (${expression} public.vector_cosine_ops) WHERE memory_kind='semantic' AND NOT deleted AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter}`,
+        []
+      );
+    }
+    if (this.options.textIndex)
+      await this.options.query(
+        "CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_text_idx ON app_mixer_agent_memories USING GIN (to_tsvector('simple'::regconfig, COALESCE(value::jsonb->>'text',''))) WHERE memory_kind='semantic' AND NOT deleted",
+        []
+      );
+    if (this.options.audit) {
+      await this.options.query(
+        'CREATE TABLE IF NOT EXISTS app_mixer_agent_memory_audit (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,memory_kind TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,memory_id TEXT,revision BIGINT,count INTEGER NOT NULL,observed_at BIGINT NOT NULL)',
+        []
+      );
+      await this.options.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_memory_audit_scope ON app_mixer_agent_memory_audit(tenant_id,agent_id,owner_kind,owner_id,memory_kind,id)', []);
+      await this.options.query(
+        "CREATE OR REPLACE FUNCTION app_mixer_agent_memory_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Memory audit is immutable'; END $$",
+        []
+      );
+      await this.options.query(
+        'DO $$ BEGIN CREATE TRIGGER app_mixer_agent_memory_audit_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON app_mixer_agent_memory_audit FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_memory_audit_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+        []
+      );
+    }
+  }
+  private args(scope: Scope): string[] {
+    return [scope.tenantId, scope.agentId, scope.owner.kind, scope.owner.id, scope.kind];
+  }
+  private now(): number {
+    const value = (this.options.clock ?? Date.now)();
+    if (!Number.isSafeInteger(value) || value < 0) throw Error('Invalid clock');
+    return value;
+  }
+  private async permit(actor: Actor, scope: Scope, action: Action, id?: string): Promise<void> {
+    if ((await this.options.authorize(structuredClone(actor), structuredClone(scope), action, id)) !== true) throw new MemoryAccessDenied();
+  }
+  private record(row: Record<string, unknown> | undefined, now: number): RecordValue | undefined {
+    if (!row || row.deleted === true || Number(row.expires_at) <= now) return undefined;
+    const revision = Number(row.revision),
+      expiresAt = Number(row.expires_at);
+    if (
+      typeof row.memory_id !== 'string' ||
+      !validMemoryId(row.memory_id) ||
+      typeof row.value !== 'string' ||
+      typeof row.provenance !== 'string' ||
+      !Number.isSafeInteger(revision) ||
+      revision < 1 ||
+      !Number.isSafeInteger(expiresAt)
+    )
+      throw Error('Invalid stored memory');
+    return { id: row.memory_id, revision, value: JSON.parse(row.value), provenance: JSON.parse(row.provenance) as Provenance, expiresAt };
+  }
+  private async checkCurrent(scope: Scope, items: { id: string; revision: number }[]): Promise<void> {
+    if (!items.length) return;
+    const result = await this.options.query(`SELECT memory_id,revision,expires_at,deleted FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=ANY($6::text[])`, [
+      ...this.args(scope),
+      items.map(item => item.id)
+    ]);
+    if (!Array.isArray(result.rows) || result.rows.length !== items.length) throw Error('Memory changed during read');
+    const now = this.now(),
+      expected = new Map(items.map(item => [item.id, item.revision])),
+      seen = new Set<string>();
+    for (const row of result.rows) {
+      const id = row.memory_id,
+        revision = Number(row.revision),
+        expiresAt = Number(row.expires_at);
+      if (typeof id !== 'string' || seen.has(id) || !expected.has(id) || revision !== expected.get(id) || row.deleted !== false || !Number.isSafeInteger(expiresAt) || expiresAt <= now)
+        throw Error('Memory changed during read');
+      seen.add(id);
+    }
+  }
+  private async audit(query: Query, actor: Actor, scope: Scope, action: AuditEvent['action'], id: string | null, revision: number | null, count: number, now: number): Promise<void> {
+    if (this.options.audit)
+      await query(
+        'INSERT INTO app_mixer_agent_memory_audit (tenant_id,agent_id,owner_kind,owner_id,memory_kind,actor_id,action,memory_id,revision,count,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+        [...this.args(scope), actor.principalId, action, id, revision, count, now]
+      );
+  }
+  private async locked<T>(scope: Scope, operation: (query: Query) => Promise<T>): Promise<T> {
+    const args = this.args(scope);
+    return this.options.transaction(async query => {
+      await query('INSERT INTO app_mixer_agent_memory_scopes VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', args);
+      const lock = await query(`SELECT 1 FROM app_mixer_agent_memory_scopes WHERE ${scopeWhere} FOR UPDATE`, args);
+      if (!Array.isArray(lock.rows) || lock.rows.length !== 1) throw Error('Invalid memory lock result');
+      return operation(query);
+    });
+  }
+  async assertAccess(actor: Actor, scope: Scope, action: Action, id?: string): Promise<void> {
+    const c = checkedMemoryScope(actor, scope);
+    if (
+      !['read', 'write', 'delete', 'list', 'purge', 'audit', 'erase', 'erase-audit'].includes(action) ||
+      (id !== undefined && !validMemoryId(id)) ||
+      (['read', 'write', 'delete'].includes(action) && id === undefined)
+    )
+      throw Error('Invalid memory access');
+    await this.permit(c.actor, c.scope, action, id);
+  }
+  /** Recheck bounded search hits after asynchronous work; fails closed on changed access or data. */
+  async verifySearchHits(actor: Actor, scope: Scope, hits: { id: string; revision: number }[]): Promise<void> {
+    const c = checkedMemoryScope(actor, scope);
+    if (!Array.isArray(hits) || hits.length > 40 || hits.some(hit => !hit || !validMemoryId(hit.id) || !Number.isSafeInteger(hit.revision) || hit.revision < 1)) throw Error('Invalid memory result');
+    const unique = new Map<string, number>();
+    for (const hit of hits) {
+      if (unique.has(hit.id) && unique.get(hit.id) !== hit.revision) throw Error('Memory changed during read');
+      unique.set(hit.id, hit.revision);
+    }
+    const safe = [...unique].map(([id, revision]) => ({ id, revision }));
+    for (const hit of safe) await this.permit(c.actor, c.scope, 'read', hit.id);
+    await this.permit(c.actor, c.scope, 'list');
+    await this.checkCurrent(c.scope, safe);
+  }
+  async get(actor: Actor, scope: Scope, id: string): Promise<RecordValue | undefined> {
+    const c = checkedMemoryScope(actor, scope);
+    if (!validMemoryId(id)) throw Error('Invalid memory ID');
+    await this.permit(c.actor, c.scope, 'read', id);
+    const args = [...this.args(c.scope), id],
+      sql = `SELECT * FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=$6`,
+      result = await this.options.query(sql, args);
+    if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid memory result');
+    await this.permit(c.actor, c.scope, 'read', id);
+    const initial = this.record(result.rows[0], this.now());
+    if (!initial) return undefined;
+    const latest = await this.options.query(sql, args);
+    if (!Array.isArray(latest.rows) || latest.rows.length > 1) throw Error('Invalid memory result');
+    await this.permit(c.actor, c.scope, 'read', id);
+    const current = this.record(latest.rows[0], this.now());
+    if (!current || current.revision !== initial.revision) throw Error('Memory changed during read');
+    await this.checkCurrent(c.scope, [current]);
+    return current;
+  }
+  async put(actor: Actor, scope: Scope, id: string, value: unknown, options: { expectedRevision: number | null; expiresAt: number; provenance: Provenance }): Promise<RecordValue> {
+    const c = checkedMemoryScope(actor, scope);
+    if (
+      !validMemoryId(id) ||
+      !options ||
+      (options.expectedRevision !== null && (!Number.isSafeInteger(options.expectedRevision) || options.expectedRevision < 1)) ||
+      !Number.isSafeInteger(options.expiresAt) ||
+      !options.provenance ||
+      Object.keys(options.provenance).length !== 2 ||
+      !['run', 'human', 'system'].includes(options.provenance.kind) ||
+      !validMemoryId(options.provenance.id)
+    )
+      throw Error('Invalid memory write');
+    const serialized = safeMemoryJSON(value),
+      provenance = JSON.stringify(options.provenance),
+      expires = options.expiresAt,
+      expected = options.expectedRevision;
+    await this.permit(c.actor, c.scope, 'write', id);
+    return this.locked(c.scope, async query => {
+      await this.permit(c.actor, c.scope, 'write', id);
+      const now = this.now();
+      if (expires <= now || expires - now > this.options.maxTtlMs) throw Error('Invalid memory expiration');
+      const args = this.args(c.scope),
+        rows = (await query(`SELECT * FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=$6`, [...args, id])).rows;
+      if (!Array.isArray(rows) || rows.length > 1) throw Error('Invalid memory result');
+      const prior = rows[0],
+        live = this.record(prior, now);
+      if ((live?.revision ?? null) !== expected) throw Error('Memory revision conflict');
+      const counts = (await query(`SELECT COUNT(*) AS history,COUNT(*) FILTER (WHERE NOT deleted AND expires_at>$6) AS live FROM app_mixer_agent_memories WHERE ${scopeWhere}`, [...args, now]))
+        .rows[0];
+      if (!counts || !Number.isSafeInteger(Number(counts.history)) || !Number.isSafeInteger(Number(counts.live)) || Number(counts.history) < 0 || Number(counts.live) < 0)
+        throw Error('Invalid memory quota result');
+      if (!prior && Number(counts.history) >= this.options.maxEntries * 10) throw Error('Memory history quota exceeded');
+      if (!live && Number(counts.live) >= this.options.maxEntries) throw Error('Memory quota exceeded');
+      const revision = (prior ? Number(prior.revision) : 0) + 1;
+      if (!Number.isSafeInteger(revision) || revision < 1) throw Error('Invalid memory revision');
+      await query(
+        'INSERT INTO app_mixer_agent_memories VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE) ON CONFLICT (tenant_id,agent_id,owner_kind,owner_id,memory_kind,memory_id) DO UPDATE SET revision=EXCLUDED.revision,value=EXCLUDED.value,provenance=EXCLUDED.provenance,expires_at=EXCLUDED.expires_at,deleted=FALSE',
+        [...args, id, revision, serialized, provenance, expires]
+      );
+      await this.audit(query, c.actor, c.scope, 'write', id, revision, 1, now);
+      return { id, revision, value: JSON.parse(serialized), provenance: JSON.parse(provenance) as Provenance, expiresAt: expires };
+    });
+  }
+  async delete(actor: Actor, scope: Scope, id: string, expectedRevision: number): Promise<void> {
+    const c = checkedMemoryScope(actor, scope);
+    if (!validMemoryId(id) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || expectedRevision >= Number.MAX_SAFE_INTEGER) throw Error('Invalid memory delete');
+    await this.permit(c.actor, c.scope, 'delete', id);
+    await this.locked(c.scope, async query => {
+      await this.permit(c.actor, c.scope, 'delete', id);
+      const now = this.now(),
+        result = await query(
+          `UPDATE app_mixer_agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND memory_id=$6 AND revision=$7 AND NOT deleted AND expires_at>$8 RETURNING memory_id`,
+          [...this.args(c.scope), id, expectedRevision, now]
+        );
+      if (result.rows.length !== 1) throw Error('Memory revision conflict');
+      await this.audit(query, c.actor, c.scope, 'delete', id, expectedRevision + 1, 1, now);
+    });
+  }
+  async list(actor: Actor, scope: Scope, options: { after?: string; limit?: number } = {}): Promise<{ items: RecordValue[]; nextAfter?: string }> {
+    const c = checkedMemoryScope(actor, scope),
+      after = options?.after ?? '',
+      limit = options?.limit ?? 100;
+    if (!options || (after !== '' && !validMemoryId(after)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid memory listing');
+    await this.permit(c.actor, c.scope, 'list');
+    const rows = (
+        await this.options.query(`SELECT memory_id FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id>$6 AND NOT deleted AND expires_at>$7 ORDER BY memory_id`, [
+          ...this.args(c.scope),
+          after,
+          this.now()
+        ])
+      ).rows,
+      items: RecordValue[] = [];
+    let more = false;
+    for (const row of rows) {
+      const id = String(row.memory_id);
+      try {
+        const item = await this.get(c.actor, c.scope, id);
+        if (!item) continue;
+        if (items.length === limit) {
+          more = true;
+          break;
+        }
+        items.push(item);
+      } catch (error) {
+        if (error instanceof MemoryAccessDenied) continue;
+        throw error;
+      }
+    }
+    for (const item of items) await this.permit(c.actor, c.scope, 'read', item.id);
+    await this.permit(c.actor, c.scope, 'list');
+    await this.checkCurrent(c.scope, items);
+    return { items, ...(more ? { nextAfter: items.at(-1)!.id } : {}) };
+  }
+  /** Indexed keyword candidates, filtered by current scope and record authorization. */
+  async searchSemanticText(actor: Actor, scope: Scope, text: string, modelId: string, limit = 5, maxCandidates = 100): Promise<{ record: RecordValue; score: number }[]> {
+    const c = checkedMemoryScope(actor, scope);
+    if (
+      !this.options.textIndex ||
+      c.scope.kind !== 'semantic' ||
+      typeof text !== 'string' ||
+      !text.trim() ||
+      text.length > 2000 ||
+      !validMemoryId(modelId) ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 20 ||
+      !Number.isSafeInteger(maxCandidates) ||
+      maxCandidates < limit ||
+      maxCandidates > 1000
+    )
+      throw Error('Invalid indexed memory search');
+    await this.permit(c.actor, c.scope, 'list');
+    const rows = (
+      await this.options.query(
+        `SELECT memory_id,revision,ts_rank(to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')),plainto_tsquery('simple'::regconfig,$7)) AS score FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=$8 AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$7) ORDER BY score DESC,memory_id LIMIT $9`,
+        [...this.args(c.scope), this.now(), text, modelId, maxCandidates]
+      )
+    ).rows;
+    if (!Array.isArray(rows) || rows.length > maxCandidates) throw Error('Invalid indexed memory result');
+    const items: { record: RecordValue; score: number }[] = [];
+    for (const row of rows) {
+      if (!validMemoryId(row.memory_id) || !Number.isSafeInteger(Number(row.revision)) || Number(row.revision) < 1 || !Number.isFinite(Number(row.score)) || Number(row.score) < 0)
+        throw Error('Invalid indexed memory result');
+      try {
+        const record = await this.get(c.actor, c.scope, row.memory_id);
+        if (!record || record.revision !== Number(row.revision)) continue;
+        const value = record.value;
+        if (!value || typeof value !== 'object' || Array.isArray(value) || (value as Record<string, unknown>).format !== 'semantic-v1' || (value as Record<string, unknown>).modelId !== modelId)
+          continue;
+        items.push({ record, score: Number(row.score) });
+        if (items.length === limit) break;
+      } catch (error) {
+        if (error instanceof MemoryAccessDenied) continue;
+        if (error instanceof Error && error.message === 'Memory changed during read') continue;
+        throw error;
+      }
+    }
+    for (const item of items) await this.permit(c.actor, c.scope, 'read', item.record.id);
+    await this.permit(c.actor, c.scope, 'list');
+    await this.checkCurrent(
+      c.scope,
+      items.map(item => item.record)
+    );
+    return items;
+  }
+  supportsVectorIndex(modelId: string, dimensions: number, scope?: Scope): boolean {
+    const config = this.options.vectorIndex;
+    return !!config && config.modelId === modelId && config.dimensions === dimensions && (!config.scope || (!!scope && sameScope(config.scope, scope)));
+  }
+  /** Approximate pgvector candidates filtered by current host authorization. */
+  async searchSemanticVector(actor: Actor, scope: Scope, vector: number[], modelId: string, limit = 5, maxCandidates = 100): Promise<{ record: RecordValue; score: number }[]> {
+    const c = checkedMemoryScope(actor, scope),
+      config = this.options.vectorIndex;
+    if (
+      !config ||
+      c.scope.kind !== 'semantic' ||
+      config.modelId !== modelId ||
+      (config.scope && !sameScope(config.scope, c.scope)) ||
+      !Array.isArray(vector) ||
+      vector.length !== config.dimensions ||
+      vector.some(value => typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1000000) ||
+      Math.hypot(...vector) === 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 20 ||
+      !Number.isSafeInteger(maxCandidates) ||
+      maxCandidates < limit ||
+      maxCandidates > 1000
+    )
+      throw Error('Invalid indexed memory search');
+    const encoded = JSON.stringify(vector);
+    await this.permit(c.actor, c.scope, 'list');
+    const expression = vectorExpression(config.dimensions, config.scope),
+      filter = config.scope ? ' AND ' + scopedPredicate(config.scope) : '',
+      distance = `${expression} OPERATOR(public.<=>) $7::public.vector(${config.dimensions})`,
+      rows = await this.options.transaction(async query => {
+        await query(`SET LOCAL hnsw.ef_search = ${Math.max(40, maxCandidates)}`, []);
+        await query("SET LOCAL hnsw.iterative_scan = 'strict_order'", []);
+        return (
+          await query(
+            `SELECT memory_id,revision,${distance} AS distance FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=${sqlLiteral(modelId)}${filter} AND ${expression} IS NOT NULL ORDER BY ${distance} LIMIT $8`,
+            [...this.args(c.scope), this.now(), encoded, maxCandidates]
+          )
+        ).rows;
+      });
+    if (!Array.isArray(rows) || rows.length > maxCandidates) throw Error('Invalid indexed memory result');
+    const items: { record: RecordValue; score: number }[] = [];
+    for (const row of rows) {
+      const distanceValue = Number(row.distance);
+      if (
+        !validMemoryId(row.memory_id) ||
+        !Number.isSafeInteger(Number(row.revision)) ||
+        Number(row.revision) < 1 ||
+        row.distance === null ||
+        !Number.isFinite(distanceValue) ||
+        distanceValue < 0 ||
+        distanceValue > 2.00001
+      )
+        throw Error('Invalid indexed memory result');
+      try {
+        const record = await this.get(c.actor, c.scope, row.memory_id);
+        if (!record || record.revision !== Number(row.revision)) continue;
+        const value = record.value;
+        if (!value || typeof value !== 'object' || Array.isArray(value) || (value as Record<string, unknown>).format !== 'semantic-v1' || (value as Record<string, unknown>).modelId !== modelId)
+          continue;
+        items.push({ record, score: Math.max(-1, Math.min(1, 1 - distanceValue)) });
+        if (items.length === limit) break;
+      } catch (error) {
+        if (error instanceof MemoryAccessDenied) continue;
+        if (error instanceof Error && error.message === 'Memory changed during read') continue;
+        throw error;
+      }
+    }
+    for (const item of items) await this.permit(c.actor, c.scope, 'read', item.record.id);
+    await this.permit(c.actor, c.scope, 'list');
+    await this.checkCurrent(
+      c.scope,
+      items.map(item => item.record)
+    );
+    return items;
+  }
+  async purgeExpired(actor: Actor, scope: Scope, signal?: AbortSignal): Promise<number> {
+    const c = checkedMemoryScope(actor, scope);
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid memory signal');
+    const check = () => {
+      if (signal?.aborted) throw Error('Memory purge cancelled');
+    };
+    check();
+    await this.permit(c.actor, c.scope, 'purge');
+    check();
+    return this.locked(c.scope, async query => {
+      check();
+      await this.permit(c.actor, c.scope, 'purge');
+      check();
+      const now = this.now(),
+        result = await query(
+          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted AND expires_at<=$6 RETURNING memory_id`,
+          [...this.args(c.scope), now]
+        );
+      check();
+      if (result.rows.length) await this.audit(query, c.actor, c.scope, 'purge', null, null, result.rows.length, now);
+      check();
+      return result.rows.length;
+    });
+  }
+  /** Tombstone every live or expired memory in one scope under the separate `erase` permission; returns how many were erased. */
+  async eraseScope(actor: Actor, scope: Scope, signal?: AbortSignal): Promise<number> {
+    const c = checkedMemoryScope(actor, scope);
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid memory signal');
+    const check = () => {
+      if (signal?.aborted) throw Error('Memory erasure cancelled');
+    };
+    check();
+    await this.permit(c.actor, c.scope, 'erase');
+    check();
+    return this.locked(c.scope, async query => {
+      check();
+      await this.permit(c.actor, c.scope, 'erase');
+      check();
+      const now = this.now(),
+        result = await query(
+          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted RETURNING memory_id`,
+          [...this.args(c.scope)]
+        );
+      check();
+      if (!Array.isArray(result.rows)) throw Error('Invalid memory result');
+      if (result.rows.length) await this.audit(query, c.actor, c.scope, 'erase', null, null, result.rows.length, now);
+      check();
+      return result.rows.length;
+    });
+  }
+  /** Atomically fence an erasure request so retries cannot erase later writes. */
+  async eraseScopeOnce(actor: Actor, scope: Scope, requestId: string, signal?: AbortSignal): Promise<{ erased: number; replayed: boolean }> {
+    const c = checkedMemoryScope(actor, scope);
+    if (!validMemoryId(requestId)) throw Error('Invalid memory erasure request');
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid memory signal');
+    const check = () => {
+      if (signal?.aborted) throw Error('Memory erasure cancelled');
+    };
+    check();
+    await this.permit(c.actor, c.scope, 'erase');
+    check();
+    return this.locked(c.scope, async query => {
+      check();
+      await this.permit(c.actor, c.scope, 'erase');
+      check();
+      const args = this.args(c.scope),
+        rows = (await query(`SELECT actor_id,count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere} AND request_id=$6`, [...args, requestId])).rows;
+      check();
+      if (!Array.isArray(rows) || rows.length > 1) throw Error('Invalid memory erasure request record');
+      if (rows.length) {
+        const count = Number(rows[0].count);
+        if (rows[0].actor_id !== c.actor.principalId) throw Error('Memory erasure request conflict');
+        if (!Number.isSafeInteger(count) || count < 0) throw Error('Invalid memory erasure request record');
+        return { erased: count, replayed: true };
+      }
+      const totals = (await query(`SELECT COUNT(*) AS count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere}`, args)).rows,
+        total = Number(totals?.[0]?.count);
+      check();
+      if (!Array.isArray(totals) || totals.length !== 1 || !Number.isSafeInteger(total) || total < 0 || total >= 10000) throw Error('Memory erasure request limit reached');
+      const now = this.now(),
+        result = await query(
+          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND NOT deleted RETURNING memory_id`,
+          args
+        );
+      check();
+      if (!Array.isArray(result.rows)) throw Error('Invalid memory result');
+      const count = result.rows.length;
+      if (count) await this.audit(query, c.actor, c.scope, 'erase', null, null, count, now);
+      check();
+      await query('INSERT INTO app_mixer_memory_erasure_requests VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [...args, requestId, c.actor.principalId, count]);
+      check();
+      return { erased: count, replayed: false };
+    });
+  }
+  /** Read one retained erasure request under a separate permission. */
+  async getErasureRequest(actor: Actor, scope: Scope, requestId: string, signal?: AbortSignal): Promise<{ requestId: string; principalId: string; erased: number } | undefined> {
+    const c = checkedMemoryScope(actor, scope);
+    if (!validMemoryId(requestId)) throw Error('Invalid memory erasure request');
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw Error('Invalid memory signal');
+    const check = () => {
+      if (signal?.aborted) throw Error('Memory erasure evidence cancelled');
+    };
+    check();
+    await this.permit(c.actor, c.scope, 'erase-audit', requestId);
+    check();
+    const result = await this.options.query(`SELECT actor_id,count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere} AND request_id=$6`, [...this.args(c.scope), requestId]);
+    check();
+    if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid memory erasure request record');
+    await this.permit(c.actor, c.scope, 'erase-audit', requestId);
+    check();
+    const row = result.rows[0];
+    if (!row) return undefined;
+    const count = Number(row.count);
+    if (!validMemoryId(row.actor_id) || !Number.isSafeInteger(count) || count < 0) throw Error('Invalid memory erasure request record');
+    return { requestId, principalId: row.actor_id, erased: count };
+  }
+  async auditHistory(actor: Actor, scope: Scope, options: { after?: number; limit?: number } = {}): Promise<{ items: AuditEvent[]; nextAfter?: number }> {
+    const c = checkedMemoryScope(actor, scope),
+      after = options?.after ?? 0,
+      limit = options?.limit ?? 50;
+    if (!this.options.audit || !options || !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid memory audit listing');
+    await this.permit(c.actor, c.scope, 'audit');
+    const rows = (
+      await this.options.query(`SELECT id,actor_id,action,memory_id,revision,count,observed_at FROM app_mixer_agent_memory_audit WHERE ${scopeWhere} AND id>$6 ORDER BY id LIMIT $7`, [
+        ...this.args(c.scope),
+        after,
+        limit + 1
+      ])
+    ).rows;
+    if (!Array.isArray(rows) || rows.length > limit + 1) throw Error('Invalid memory audit result');
+    const items: AuditEvent[] = [];
+    for (const row of rows.slice(0, limit)) {
+      const id = Number(row.id),
+        revision = row.revision === null ? null : Number(row.revision),
+        count = Number(row.count),
+        observedAt = Number(row.observed_at),
+        memoryId = row.memory_id === null ? null : row.memory_id;
+      if (
+        !Number.isSafeInteger(id) ||
+        id < 1 ||
+        !validMemoryId(row.actor_id) ||
+        !['write', 'delete', 'purge', 'erase'].includes(String(row.action)) ||
+        (memoryId !== null && !validMemoryId(memoryId)) ||
+        (revision !== null && (!Number.isSafeInteger(revision) || revision < 1)) ||
+        !Number.isSafeInteger(count) ||
+        count < 1 ||
+        !Number.isSafeInteger(observedAt) ||
+        observedAt < 0
+      )
+        throw Error('Invalid memory audit result');
+      try {
+        await this.permit(c.actor, c.scope, 'audit', memoryId ?? undefined);
+      } catch (error) {
+        if (error instanceof MemoryAccessDenied) continue;
+        throw error;
+      }
+      items.push({ id, actorId: row.actor_id, action: row.action as AuditEvent['action'], memoryId, revision, count, observedAt });
+    }
+    for (const item of items) await this.permit(c.actor, c.scope, 'audit', item.memoryId ?? undefined);
+    await this.permit(c.actor, c.scope, 'audit');
+    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1].id) } : {}) };
+  }
 }
-export type {Options as PostgresAgentMemoryOptions,Query as PostgresAgentMemoryQuery};
+export type { Options as PostgresAgentMemoryOptions, Query as PostgresAgentMemoryQuery };

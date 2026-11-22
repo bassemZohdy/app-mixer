@@ -1,28 +1,135 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {once} from 'node:events';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {createAgentEventIngress,createTelegramWebhookAdapter,SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentDefinitions} from '../dist/index.js';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createAgentEventIngress, createTelegramWebhookAdapter, SqliteAgentRuns, SqliteAgentTriggers, SqliteAgentDefinitions } from '../dist/index.js';
 
-const scope={tenantId:'tenant',agentId:'agent'},identity={tenantId:'tenant',principalId:'bot-source',sourceId:'telegram'},current='A'.repeat(32),previous='B'.repeat(32),manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:60000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
-const options=()=>({identity:{...identity},agentId:'agent',updateType:'message',secret:current,previousSecrets:[previous]});
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  identity = { tenantId: 'tenant', principalId: 'bot-source', sourceId: 'telegram' },
+  current = 'A'.repeat(32),
+  previous = 'B'.repeat(32),
+  manifest = {
+    manifestVersion: 1,
+    tenantId: 'tenant',
+    agentId: 'agent',
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    model: { provider: 'local', model: 'test' },
+    allowedCapabilities: [],
+    lifecycle: { enabled: true, maxAttempts: 2, runTimeoutMs: 60000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 10 }
+  };
+const options = () => ({ identity: { ...identity }, agentId: 'agent', updateType: 'message', secret: current, previousSecrets: [previous] });
 
-test('Telegram adapter validates and snapshots fixed identity, keys and update type',()=>{
- const input=options(),adapter=createTelegramWebhookAdapter(input),body=Buffer.from(JSON.stringify({update_id:123,message:{chat:{id:1},text:'Hi'}}));input.identity.tenantId='other';input.agentId='other';input.secret='C'.repeat(32);input.previousSecrets[0]='D'.repeat(32);input.updateType='edited_message';
- const req=value=>({rawHeaders:['X-Telegram-Bot-Api-Secret-Token',value]});assert.deepEqual(adapter.authenticateRaw(req(current),body),identity);assert.deepEqual(adapter.authenticateRaw(req(previous),body),identity);assert.equal(adapter.authenticateRaw(req('C'.repeat(32)),body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:['x-telegram-bot-api-secret-token',current,'X-Telegram-Bot-Api-Secret-Token',current]},body),undefined);assert.equal(adapter.authenticateRaw({rawHeaders:[]},body),undefined);assert.deepEqual(adapter.mapAuthenticatedBody(body),{agentId:'agent',eventId:'telegram.123',eventType:'telegram.message',payload:JSON.parse(body)});
- for(const payload of [{update_id:0,message:{}},{update_id:-1,message:{}},{update_id:1.5,message:{}},{update_id:9007199254740992,message:{}},{update_id:1,edited_message:{}},{update_id:1,message:[]},{update_id:1,message:{},edited_message:{}}])assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from(JSON.stringify(payload))),/Invalid/);assert.throws(()=>adapter.mapAuthenticatedBody(Buffer.from([0xff])),/encoded|encoding/i);
- for(const extra of [{secret:'short'},{secret:'!'.repeat(32)},{previousSecrets:[current]},{previousSecrets:[previous,previous]},{updateType:'../message'},{updateType:'update_id'},{identity:{...identity,sourceId:'schedule.invalid'}}])assert.throws(()=>createTelegramWebhookAdapter({...options(),...extra}),/configuration/);
+test('Telegram adapter validates and snapshots fixed identity, keys and update type', () => {
+  const input = options(),
+    adapter = createTelegramWebhookAdapter(input),
+    body = Buffer.from(JSON.stringify({ update_id: 123, message: { chat: { id: 1 }, text: 'Hi' } }));
+  input.identity.tenantId = 'other';
+  input.agentId = 'other';
+  input.secret = 'C'.repeat(32);
+  input.previousSecrets[0] = 'D'.repeat(32);
+  input.updateType = 'edited_message';
+  const req = value => ({ rawHeaders: ['X-Telegram-Bot-Api-Secret-Token', value] });
+  assert.deepEqual(adapter.authenticateRaw(req(current), body), identity);
+  assert.deepEqual(adapter.authenticateRaw(req(previous), body), identity);
+  assert.equal(adapter.authenticateRaw(req('C'.repeat(32)), body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: ['x-telegram-bot-api-secret-token', current, 'X-Telegram-Bot-Api-Secret-Token', current] }, body), undefined);
+  assert.equal(adapter.authenticateRaw({ rawHeaders: [] }, body), undefined);
+  assert.deepEqual(adapter.mapAuthenticatedBody(body), { agentId: 'agent', eventId: 'telegram.123', eventType: 'telegram.message', payload: JSON.parse(body) });
+  for (const payload of [
+    { update_id: 0, message: {} },
+    { update_id: -1, message: {} },
+    { update_id: 1.5, message: {} },
+    { update_id: 9007199254740992, message: {} },
+    { update_id: 1, edited_message: {} },
+    { update_id: 1, message: [] },
+    { update_id: 1, message: {}, edited_message: {} }
+  ])
+    assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from(JSON.stringify(payload))), /Invalid/);
+  assert.throws(() => adapter.mapAuthenticatedBody(Buffer.from([0xff])), /encoded|encoding/i);
+  for (const extra of [
+    { secret: 'short' },
+    { secret: '!'.repeat(32) },
+    { previousSecrets: [current] },
+    { previousSecrets: [previous, previous] },
+    { updateType: '../message' },
+    { updateType: 'update_id' },
+    { identity: { ...identity, sourceId: 'schedule.invalid' } }
+  ])
+    assert.throws(() => createTelegramWebhookAdapter({ ...options(), ...extra }), /configuration/);
 });
 
-test('Telegram HTTP ingress authorizes multiple types, deduplicates and rejects conflicts',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'telegram-ingress-')),path=join(dir,'runs.db'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);let allowed=false,calls=0;const config=options();delete config.updateType;config.updateTypes=['message','edited_message'];const ingress=createAgentEventIngress({triggers,definitions,maxPending:3,...createTelegramWebhookAdapter(config),authorize:(source,event)=>{calls++;const type=event.eventType.slice('telegram.'.length);return allowed&&source.sourceId==='telegram'&&event.payload[type].chat.id===42;}});ingress.listen(0,'127.0.0.1');await once(ingress,'listening');
- try{const endpoint=`http://127.0.0.1:${ingress.address().port}/events`,update={update_id:123,message:{chat:{id:42},text:'hello'}},post=(value=update,key=current)=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-telegram-bot-api-secret-token':key},body:JSON.stringify(value)});assert.equal((await post(update,'X'.repeat(32))).status,401);assert.equal(calls,0);assert.equal((await post()).status,403);allowed=true;const first=await post(update,previous);assert.equal(first.status,202);const accepted=await first.json();assert.equal((await post()).status,200);assert.equal(runs.list(scope).length,1);assert.equal(triggers.get(scope,accepted.runId).eventId,'telegram.123');assert.equal((await post({...update,message:{...update.message,text:'changed'}})).status,409);assert.equal((await post({update_id:123,edited_message:{chat:{id:42}}})).status,409);assert.equal((await post({update_id:124,edited_message:{chat:{id:42}}})).status,202);assert.equal((await post({update_id:125,callback_query:{chat:{id:42}}})).status,400);assert.equal((await post({update_id:126,edited_message:{chat:{id:99}}})).status,403);assert.equal(runs.list(scope).length,2);
- }finally{await new Promise(resolve=>ingress.close(resolve));definitions.close();triggers.close();runs.close();rmSync(dir,{recursive:true,force:true});}
+test('Telegram HTTP ingress authorizes multiple types, deduplicates and rejects conflicts', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'telegram-ingress-')),
+    path = join(dir, 'runs.db'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  let allowed = false,
+    calls = 0;
+  const config = options();
+  delete config.updateType;
+  config.updateTypes = ['message', 'edited_message'];
+  const ingress = createAgentEventIngress({
+    triggers,
+    definitions,
+    maxPending: 3,
+    ...createTelegramWebhookAdapter(config),
+    authorize: (source, event) => {
+      calls++;
+      const type = event.eventType.slice('telegram.'.length);
+      return allowed && source.sourceId === 'telegram' && event.payload[type].chat.id === 42;
+    }
+  });
+  ingress.listen(0, '127.0.0.1');
+  await once(ingress, 'listening');
+  try {
+    const endpoint = `http://127.0.0.1:${ingress.address().port}/events`,
+      update = { update_id: 123, message: { chat: { id: 42 }, text: 'hello' } },
+      post = (value = update, key = current) =>
+        fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': key }, body: JSON.stringify(value) });
+    assert.equal((await post(update, 'X'.repeat(32))).status, 401);
+    assert.equal(calls, 0);
+    assert.equal((await post()).status, 403);
+    allowed = true;
+    const first = await post(update, previous);
+    assert.equal(first.status, 202);
+    const accepted = await first.json();
+    assert.equal((await post()).status, 200);
+    assert.equal(runs.list(scope).length, 1);
+    assert.equal(triggers.get(scope, accepted.runId).eventId, 'telegram.123');
+    assert.equal((await post({ ...update, message: { ...update.message, text: 'changed' } })).status, 409);
+    assert.equal((await post({ update_id: 123, edited_message: { chat: { id: 42 } } })).status, 409);
+    assert.equal((await post({ update_id: 124, edited_message: { chat: { id: 42 } } })).status, 202);
+    assert.equal((await post({ update_id: 125, callback_query: { chat: { id: 42 } } })).status, 400);
+    assert.equal((await post({ update_id: 126, edited_message: { chat: { id: 99 } } })).status, 403);
+    assert.equal(runs.list(scope).length, 2);
+  } finally {
+    await new Promise(resolve => ingress.close(resolve));
+    definitions.close();
+    triggers.close();
+    runs.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-
-test('Telegram update-type lists are bounded, exclusive and snapshotted',()=>{
- const base=options();delete base.updateType;for(const updateTypes of [[],['message','message'],['message','update_id'],['message','../bad'],Array.from({length:33},(_,i)=>`type_${i}`),null,'message'])assert.throws(()=>createTelegramWebhookAdapter({...base,updateTypes}),/configuration/);assert.throws(()=>createTelegramWebhookAdapter({...base,updateType:'message',updateTypes:['message']}),/configuration/);assert.throws(()=>createTelegramWebhookAdapter(base),/configuration/);const types=['message','edited_message'],adapter=createTelegramWebhookAdapter({...base,updateTypes:types});types[1]='callback_query';const body=type=>Buffer.from(JSON.stringify({update_id:1,[type]:{}}));assert.equal(adapter.mapAuthenticatedBody(body('edited_message')).eventType,'telegram.edited_message');assert.throws(()=>adapter.mapAuthenticatedBody(body('callback_query')),/Invalid/);
+test('Telegram update-type lists are bounded, exclusive and snapshotted', () => {
+  const base = options();
+  delete base.updateType;
+  for (const updateTypes of [[], ['message', 'message'], ['message', 'update_id'], ['message', '../bad'], Array.from({ length: 33 }, (_, i) => `type_${i}`), null, 'message'])
+    assert.throws(() => createTelegramWebhookAdapter({ ...base, updateTypes }), /configuration/);
+  assert.throws(() => createTelegramWebhookAdapter({ ...base, updateType: 'message', updateTypes: ['message'] }), /configuration/);
+  assert.throws(() => createTelegramWebhookAdapter(base), /configuration/);
+  const types = ['message', 'edited_message'],
+    adapter = createTelegramWebhookAdapter({ ...base, updateTypes: types });
+  types[1] = 'callback_query';
+  const body = type => Buffer.from(JSON.stringify({ update_id: 1, [type]: {} }));
+  assert.equal(adapter.mapAuthenticatedBody(body('edited_message')).eventType, 'telegram.edited_message');
+  assert.throws(() => adapter.mapAuthenticatedBody(body('callback_query')), /Invalid/);
 });

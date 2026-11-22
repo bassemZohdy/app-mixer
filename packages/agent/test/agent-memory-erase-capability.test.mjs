@@ -1,43 +1,244 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {once} from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import pg from 'pg';
-import {CapabilityRegistry,createCapabilityServer} from '../../core/dist/index.js';
-import {SqliteAgentMemory,PostgresAgentMemory,registerAgentMemoryScopeErase,registerAgentMemoryErasureEvidence} from '../dist/index.js';
+import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
+import { SqliteAgentMemory, PostgresAgentMemory, registerAgentMemoryScopeErase, registerAgentMemoryErasureEvidence } from '../dist/index.js';
 
-const actor={tenantId:'tenant',principalId:'operator'},scope={tenantId:'tenant',agentId:'agent',owner:{kind:'user',id:'alice'},kind:'episodic'},other={...scope,owner:{kind:'user',id:'bob'}},write={expectedRevision:null,expiresAt:500,provenance:{kind:'human',id:'operator'}};
-const transaction=pool=>async operation=>{const client=await pool.connect();try{await client.query('BEGIN');const result=await operation((sql,args)=>client.query(sql,args));await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}};
-async function exercise(memory){
- let allowed=true;const registry=new CapabilityRegistry(()=>{}),chosen=structuredClone(scope),config={memory,scope:chosen,operationId:'erase',path:'/erase',authorize:a=>a.principalId==='operator',authorizeErase:()=>allowed};registerAgentMemoryScopeErase(registry,config);registerAgentMemoryErasureEvidence(registry,{memory,scope:chosen,operationId:'evidence',path:'/evidence',authorize:a=>a.principalId==='operator',authorizeEvidence:(_a,id)=>id!=='denied'});chosen.owner.id='bob';config.authorizeErase=()=>false;
- await memory.put(actor,scope,'one','secret',write);await memory.put(actor,other,'one','keep',write);
- const server=createCapabilityServer(registry,req=>req.headers.authorization==='operator'?actor:req.headers.authorization==='other'?{...actor,tenantId:'other'}:undefined,()=>{});server.listen(0,'127.0.0.1');await once(server,'listening');
- const call=(input,auth='operator',operation='erase')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`,{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})});
- try{
-  assert.equal((await call({query:{confirm:true}},'other')).status,403);assert.equal((await call({query:{confirm:true,owner:'bob'}})).status,400);assert.equal((await call({query:{confirm:false}})).status,400);assert.equal((await call({query:{confirm:true}},'missing')).status,401);
-  allowed=false;assert.equal((await call({query:{confirm:true}})).status,403);allowed=true;
-  const response=await call({query:{confirm:true}});assert.equal(response.status,200);assert.deepEqual((await response.json()).result,{erased:1});assert.equal(await memory.get(actor,scope,'one'),undefined);assert.equal((await memory.get(actor,other,'one')).value,'keep');const audit=(await memory.auditHistory(actor,scope)).items;assert.deepEqual(audit.map(e=>e.action),['write','erase']);assert.equal(audit[1].actorId,'operator');assert.equal((await call({query:{confirm:true}})).status,200);await memory.put(actor,scope,'next','first',write);const first=await call({query:{confirm:true,requestId:'req-1'}});assert.deepEqual((await first.json()).result,{erased:1,replayed:false});await memory.put(actor,scope,'later','must survive',write);const retry=await call({query:{confirm:true,requestId:'req-1'}});assert.deepEqual((await retry.json()).result,{erased:1,replayed:true});assert.equal((await memory.get(actor,scope,'later')).value,'must survive');const evidence=await call({query:{requestId:'req-1'}},'operator','evidence');assert.equal(evidence.status,200);assert.deepEqual((await evidence.json()).result,{requestId:'req-1',principalId:'operator',erased:1});assert.equal(await memory.getErasureRequest(actor,other,'req-1'),undefined);await assert.rejects(memory.getErasureRequest({...actor,tenantId:'other'},scope,'req-1'),/scope/);await assert.rejects(memory.getErasureRequest(actor,scope,'req-1',AbortSignal.abort()),/cancelled/);assert.equal((await (await call({query:{requestId:'unknown'}},'operator','evidence')).json()).result,null);assert.equal((await call({query:{requestId:'req-1'}},'other','evidence')).status,403);assert.equal((await call({query:{requestId:'denied'}},'operator','evidence')).status,403);assert.equal((await call({query:{requestId:'req-1',owner:'bob'}},'operator','evidence')).status,400);assert.equal((await call({query:{confirm:true,requestId:''}})).status,400);await assert.rejects(memory.eraseScopeOnce({...actor,principalId:'another'},scope,'req-1'),/conflict/);assert.equal((await memory.get(actor,scope,'later')).value,'must survive');
- }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+const actor = { tenantId: 'tenant', principalId: 'operator' },
+  scope = { tenantId: 'tenant', agentId: 'agent', owner: { kind: 'user', id: 'alice' }, kind: 'episodic' },
+  other = { ...scope, owner: { kind: 'user', id: 'bob' } },
+  write = { expectedRevision: null, expiresAt: 500, provenance: { kind: 'human', id: 'operator' } };
+const transaction = pool => async operation => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation((sql, args) => client.query(sql, args));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+async function exercise(memory) {
+  let allowed = true;
+  const registry = new CapabilityRegistry(() => {}),
+    chosen = structuredClone(scope),
+    config = { memory, scope: chosen, operationId: 'erase', path: '/erase', authorize: a => a.principalId === 'operator', authorizeErase: () => allowed };
+  registerAgentMemoryScopeErase(registry, config);
+  registerAgentMemoryErasureEvidence(registry, {
+    memory,
+    scope: chosen,
+    operationId: 'evidence',
+    path: '/evidence',
+    authorize: a => a.principalId === 'operator',
+    authorizeEvidence: (_a, id) => id !== 'denied'
+  });
+  chosen.owner.id = 'bob';
+  config.authorizeErase = () => false;
+  await memory.put(actor, scope, 'one', 'secret', write);
+  await memory.put(actor, other, 'one', 'keep', write);
+  const server = createCapabilityServer(
+    registry,
+    req => (req.headers.authorization === 'operator' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
+    () => {}
+  );
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const call = (input, auth = 'operator', operation = 'erase') =>
+    fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input })
+    });
+  try {
+    assert.equal((await call({ query: { confirm: true } }, 'other')).status, 403);
+    assert.equal((await call({ query: { confirm: true, owner: 'bob' } })).status, 400);
+    assert.equal((await call({ query: { confirm: false } })).status, 400);
+    assert.equal((await call({ query: { confirm: true } }, 'missing')).status, 401);
+    allowed = false;
+    assert.equal((await call({ query: { confirm: true } })).status, 403);
+    allowed = true;
+    const response = await call({ query: { confirm: true } });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, { erased: 1 });
+    assert.equal(await memory.get(actor, scope, 'one'), undefined);
+    assert.equal((await memory.get(actor, other, 'one')).value, 'keep');
+    const audit = (await memory.auditHistory(actor, scope)).items;
+    assert.deepEqual(
+      audit.map(e => e.action),
+      ['write', 'erase']
+    );
+    assert.equal(audit[1].actorId, 'operator');
+    assert.equal((await call({ query: { confirm: true } })).status, 200);
+    await memory.put(actor, scope, 'next', 'first', write);
+    const first = await call({ query: { confirm: true, requestId: 'req-1' } });
+    assert.deepEqual((await first.json()).result, { erased: 1, replayed: false });
+    await memory.put(actor, scope, 'later', 'must survive', write);
+    const retry = await call({ query: { confirm: true, requestId: 'req-1' } });
+    assert.deepEqual((await retry.json()).result, { erased: 1, replayed: true });
+    assert.equal((await memory.get(actor, scope, 'later')).value, 'must survive');
+    const evidence = await call({ query: { requestId: 'req-1' } }, 'operator', 'evidence');
+    assert.equal(evidence.status, 200);
+    assert.deepEqual((await evidence.json()).result, { requestId: 'req-1', principalId: 'operator', erased: 1 });
+    assert.equal(await memory.getErasureRequest(actor, other, 'req-1'), undefined);
+    await assert.rejects(memory.getErasureRequest({ ...actor, tenantId: 'other' }, scope, 'req-1'), /scope/);
+    await assert.rejects(memory.getErasureRequest(actor, scope, 'req-1', AbortSignal.abort()), /cancelled/);
+    assert.equal((await (await call({ query: { requestId: 'unknown' } }, 'operator', 'evidence')).json()).result, null);
+    assert.equal((await call({ query: { requestId: 'req-1' } }, 'other', 'evidence')).status, 403);
+    assert.equal((await call({ query: { requestId: 'denied' } }, 'operator', 'evidence')).status, 403);
+    assert.equal((await call({ query: { requestId: 'req-1', owner: 'bob' } }, 'operator', 'evidence')).status, 400);
+    assert.equal((await call({ query: { confirm: true, requestId: '' } })).status, 400);
+    await assert.rejects(memory.eraseScopeOnce({ ...actor, principalId: 'another' }, scope, 'req-1'), /conflict/);
+    assert.equal((await memory.get(actor, scope, 'later')).value, 'must survive');
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 }
-test('fixed-scope memory erasure is authenticated, authorized and audited over HTTP',async()=>{
- const memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:()=>true});try{await exercise(memory);}finally{memory.close();}
+test('fixed-scope memory erasure is authenticated, authorized and audited over HTTP', async () => {
+  const memory = new SqliteAgentMemory(':memory:', { enabled: true, audit: true, maxEntries: 10, maxTtlMs: 1000, clock: () => 100, authorize: () => true });
+  try {
+    await exercise(memory);
+  } finally {
+    memory.close();
+  }
 });
-test('fixed-scope memory erasure uses PostgreSQL authorization and audit over HTTP',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='memory_erase_cap_'+randomUUID().replaceAll('-',''),admin=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL}),pool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL,options:`-c search_path=${schema}`});
- try{await admin.query(`CREATE SCHEMA "${schema}"`);const memory=new PostgresAgentMemory({enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),transaction:transaction(pool)});await memory.initialize();await exercise(memory);}finally{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('fixed-scope memory erasure uses PostgreSQL authorization and audit over HTTP', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'memory_erase_cap_' + randomUUID().replaceAll('-', ''),
+    admin = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL }),
+    pool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL, options: `-c search_path=${schema}` });
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const memory = new PostgresAgentMemory({
+      enabled: true,
+      audit: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => 100,
+      authorize: () => true,
+      query: (sql, args) => pool.query(sql, args),
+      transaction: transaction(pool)
+    });
+    await memory.initialize();
+    await exercise(memory);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
-test('scope erasure rechecks host and store authorization before mutation',async()=>{
- let storeAllowed=true,actionAllowed=true,calls=0;const memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:(_actor,_scope,action)=>action!=='erase'||storeAllowed}),registry=new CapabilityRegistry(()=>{});
- try{await memory.put(actor,scope,'one','secret',write);registerAgentMemoryScopeErase(registry,{memory,scope,operationId:'erase',path:'/erase',authorize:()=>true,authorizeErase:()=>++calls===1?true:actionAllowed});actionAllowed=false;await assert.rejects(registry.invoke('erase',{query:{confirm:true}},{...actor,origin:'ui'}),/forbidden/i);assert.ok(await memory.get(actor,scope,'one'));actionAllowed=true;storeAllowed=false;await assert.rejects(registry.invoke('erase',{query:{confirm:true}},{...actor,origin:'ui'}),/access denied/i);assert.ok(await memory.get(actor,scope,'one'));assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(e=>e.action),['write']);}finally{memory.close();}
+test('scope erasure rechecks host and store authorization before mutation', async () => {
+  let storeAllowed = true,
+    actionAllowed = true,
+    calls = 0;
+  const memory = new SqliteAgentMemory(':memory:', {
+      enabled: true,
+      audit: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => 100,
+      authorize: (_actor, _scope, action) => action !== 'erase' || storeAllowed
+    }),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    await memory.put(actor, scope, 'one', 'secret', write);
+    registerAgentMemoryScopeErase(registry, { memory, scope, operationId: 'erase', path: '/erase', authorize: () => true, authorizeErase: () => (++calls === 1 ? true : actionAllowed) });
+    actionAllowed = false;
+    await assert.rejects(registry.invoke('erase', { query: { confirm: true } }, { ...actor, origin: 'ui' }), /forbidden/i);
+    assert.ok(await memory.get(actor, scope, 'one'));
+    actionAllowed = true;
+    storeAllowed = false;
+    await assert.rejects(registry.invoke('erase', { query: { confirm: true } }, { ...actor, origin: 'ui' }), /access denied/i);
+    assert.ok(await memory.get(actor, scope, 'one'));
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope)).items.map(e => e.action),
+      ['write']
+    );
+  } finally {
+    memory.close();
+  }
 });
 
-test('a failed completion audit reports an uncertain outcome without repeating erasure',async()=>{
- const memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:()=>true}),registry=new CapabilityRegistry(event=>{if(event.outcome==='succeeded')throw Error('audit unavailable');});
- try{await memory.put(actor,scope,'one','secret',write);registerAgentMemoryScopeErase(registry,{memory,scope,operationId:'erase',path:'/erase',authorize:()=>true,authorizeErase:()=>true});await assert.rejects(registry.invoke('erase',{query:{confirm:true}},{...actor,origin:'ui'}),/uncertain/i);assert.equal(await memory.get(actor,scope,'one'),undefined);assert.deepEqual((await memory.auditHistory(actor,scope)).items.map(e=>e.action),['write','erase']);await memory.put(actor,scope,'new','keep',write);assert.equal((await memory.get(actor,scope,'new')).value,'keep');}finally{memory.close();}
+test('a failed completion audit reports an uncertain outcome without repeating erasure', async () => {
+  const memory = new SqliteAgentMemory(':memory:', { enabled: true, audit: true, maxEntries: 10, maxTtlMs: 1000, clock: () => 100, authorize: () => true }),
+    registry = new CapabilityRegistry(event => {
+      if (event.outcome === 'succeeded') throw Error('audit unavailable');
+    });
+  try {
+    await memory.put(actor, scope, 'one', 'secret', write);
+    registerAgentMemoryScopeErase(registry, { memory, scope, operationId: 'erase', path: '/erase', authorize: () => true, authorizeErase: () => true });
+    await assert.rejects(registry.invoke('erase', { query: { confirm: true } }, { ...actor, origin: 'ui' }), /uncertain/i);
+    assert.equal(await memory.get(actor, scope, 'one'), undefined);
+    assert.deepEqual(
+      (await memory.auditHistory(actor, scope)).items.map(e => e.action),
+      ['write', 'erase']
+    );
+    await memory.put(actor, scope, 'new', 'keep', write);
+    assert.equal((await memory.get(actor, scope, 'new')).value, 'keep');
+  } finally {
+    memory.close();
+  }
 });
 
-
-test('erasure evidence rechecks policies and bounds stalled callbacks',async()=>{
- let permit=true,readCalls=0,release,entered,block=false;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),memory=new SqliteAgentMemory(':memory:',{enabled:true,audit:true,maxEntries:10,maxTtlMs:1000,clock:()=>100,authorize:async(_actor,_scope,action)=>{if(action==='erase-audit'&&++readCalls===2)return permit;return true;}}),registry=new CapabilityRegistry(()=>{});
- try{await memory.put(actor,scope,'one','secret',write);await memory.eraseScopeOnce(actor,scope,'req-1');registerAgentMemoryErasureEvidence(registry,{memory,scope,operationId:'evidence',path:'/evidence',timeoutMs:100,maxPending:1,authorize:()=>true,authorizeEvidence:async()=>{if(block){entered();await gate;}return true;}});permit=false;await assert.rejects(registry.invoke('evidence',{query:{requestId:'req-1'}},{...actor,origin:'ui'}),/access denied/i);permit=true;block=true;const pending=registry.invoke('evidence',{query:{requestId:'req-1'}},{...actor,origin:'ui'});await ready;await assert.rejects(pending,/unavailable/i);await assert.rejects(registry.invoke('evidence',{query:{requestId:'req-1'}},{...actor,origin:'ui'}),/unavailable/i);release();block=false;await new Promise(resolve=>setImmediate(resolve));const result=await registry.invoke('evidence',{query:{requestId:'req-1'}},{...actor,origin:'ui'});assert.deepEqual(result,{requestId:'req-1',principalId:'operator',erased:1});}finally{release();memory.close();}
+test('erasure evidence rechecks policies and bounds stalled callbacks', async () => {
+  let permit = true,
+    readCalls = 0,
+    release,
+    entered,
+    block = false;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    memory = new SqliteAgentMemory(':memory:', {
+      enabled: true,
+      audit: true,
+      maxEntries: 10,
+      maxTtlMs: 1000,
+      clock: () => 100,
+      authorize: async (_actor, _scope, action) => {
+        if (action === 'erase-audit' && ++readCalls === 2) return permit;
+        return true;
+      }
+    }),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    await memory.put(actor, scope, 'one', 'secret', write);
+    await memory.eraseScopeOnce(actor, scope, 'req-1');
+    registerAgentMemoryErasureEvidence(registry, {
+      memory,
+      scope,
+      operationId: 'evidence',
+      path: '/evidence',
+      timeoutMs: 100,
+      maxPending: 1,
+      authorize: () => true,
+      authorizeEvidence: async () => {
+        if (block) {
+          entered();
+          await gate;
+        }
+        return true;
+      }
+    });
+    permit = false;
+    await assert.rejects(registry.invoke('evidence', { query: { requestId: 'req-1' } }, { ...actor, origin: 'ui' }), /access denied/i);
+    permit = true;
+    block = true;
+    const pending = registry.invoke('evidence', { query: { requestId: 'req-1' } }, { ...actor, origin: 'ui' });
+    await ready;
+    await assert.rejects(pending, /unavailable/i);
+    await assert.rejects(registry.invoke('evidence', { query: { requestId: 'req-1' } }, { ...actor, origin: 'ui' }), /unavailable/i);
+    release();
+    block = false;
+    await new Promise(resolve => setImmediate(resolve));
+    const result = await registry.invoke('evidence', { query: { requestId: 'req-1' } }, { ...actor, origin: 'ui' });
+    assert.deepEqual(result, { requestId: 'req-1', principalId: 'operator', erased: 1 });
+  } finally {
+    release();
+    memory.close();
+  }
 });

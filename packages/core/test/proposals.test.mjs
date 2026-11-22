@@ -1,62 +1,81 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ApplicationStore,DevelopmentProposals,SqliteApplicationStore} from '../dist/index.js';
-const initial={id:'demo',schemaVersion:1,revision:0,pages:[]};
-const page={id:'home',title:'Home',route:'/',components:[]};
+import { ApplicationStore, DevelopmentProposals, SqliteApplicationStore } from '../dist/index.js';
+const initial = { id: 'demo', schemaVersion: 1, revision: 0, pages: [] };
+const page = { id: 'home', title: 'Home', route: '/', components: [] };
 
-test('proposal preview is isolated until explicitly approved and published',()=>{
-  const repo=new ApplicationStore(initial), proposals=new DevelopmentProposals(repo);
-  const proposal=proposals.propose(0,[{op:'addPage',page}]);
-  assert.equal(proposal.preview.pages[0].title,'Home');
-  assert.equal(repo.getDraft().pages.length,0); assert.equal(repo.getPublished(),undefined);
-  proposal.preview.pages[0].title='tampered'; proposal.patches[0].page.title='tampered';
-  const approved=proposals.approve(proposal.id);
-  assert.equal(approved.status,'approved');assert.equal(approved.approvedRevision,1);
-  assert.equal(repo.getDraft().pages[0].title,'Home');assert.equal(repo.getPublished(),undefined);
+test('proposal preview is isolated until explicitly approved and published', () => {
+  const repo = new ApplicationStore(initial),
+    proposals = new DevelopmentProposals(repo);
+  const proposal = proposals.propose(0, [{ op: 'addPage', page }]);
+  assert.equal(proposal.preview.pages[0].title, 'Home');
+  assert.equal(repo.getDraft().pages.length, 0);
+  assert.equal(repo.getPublished(), undefined);
+  proposal.preview.pages[0].title = 'tampered';
+  proposal.patches[0].page.title = 'tampered';
+  const approved = proposals.approve(proposal.id);
+  assert.equal(approved.status, 'approved');
+  assert.equal(approved.approvedRevision, 1);
+  assert.equal(repo.getDraft().pages[0].title, 'Home');
+  assert.equal(repo.getPublished(), undefined);
   repo.publish(approved.approvedRevision);
-  assert.equal(repo.getPublished().definition.pages[0].title,'Home');
-  assert.throws(()=>proposals.approve(proposal.id),/not pending/);
+  assert.equal(repo.getPublished().definition.pages[0].title, 'Home');
+  assert.throws(() => proposals.approve(proposal.id), /not pending/);
 });
 
-test('invalid, rejected and stale proposals do not mutate the draft',()=>{
-  const repo=new ApplicationStore(initial), proposals=new DevelopmentProposals(repo);
-  assert.throws(()=>proposals.propose(0,[{op:'unknown'}]),/Invalid proposal/);
-  assert.throws(()=>proposals.propose(0,[{op:'addPage',page:{...page,route:'bad'}}]),/invalid page/);
-  const rejected=proposals.propose(0,[{op:'addPage',page}]);
-  proposals.reject(rejected.id);assert.throws(()=>proposals.approve(rejected.id),/not pending/);
-  const stale=proposals.propose(0,[{op:'addPage',page}]);
-  repo.apply(0,[{op:'addPage',page:{...page,id:'other',route:'/other'}}]);
-  assert.throws(()=>proposals.approve(stale.id),/Revision conflict/);
-  assert.equal(repo.getDraft().pages[0].id,'other');
-  assert.equal(proposals.get(stale.id).status,'pending');
+test('invalid, rejected and stale proposals do not mutate the draft', () => {
+  const repo = new ApplicationStore(initial),
+    proposals = new DevelopmentProposals(repo);
+  assert.throws(() => proposals.propose(0, [{ op: 'unknown' }]), /Invalid proposal/);
+  assert.throws(() => proposals.propose(0, [{ op: 'addPage', page: { ...page, route: 'bad' } }]), /invalid page/);
+  const rejected = proposals.propose(0, [{ op: 'addPage', page }]);
+  proposals.reject(rejected.id);
+  assert.throws(() => proposals.approve(rejected.id), /not pending/);
+  const stale = proposals.propose(0, [{ op: 'addPage', page }]);
+  repo.apply(0, [{ op: 'addPage', page: { ...page, id: 'other', route: '/other' } }]);
+  assert.throws(() => proposals.approve(stale.id), /Revision conflict/);
+  assert.equal(repo.getDraft().pages[0].id, 'other');
+  assert.equal(proposals.get(stale.id).status, 'pending');
 });
 
-
-test('proposal approval applies to SQLite without publishing',()=>{
-  const repo=new SqliteApplicationStore(':memory:',initial);
+test('proposal approval applies to SQLite without publishing', () => {
+  const repo = new SqliteApplicationStore(':memory:', initial);
   try {
-    const proposals=new DevelopmentProposals(repo);
-    const p=proposals.propose(0,[{op:'addPage',page}]);
-    assert.equal(repo.getDraft().revision,0);
+    const proposals = new DevelopmentProposals(repo);
+    const p = proposals.propose(0, [{ op: 'addPage', page }]);
+    assert.equal(repo.getDraft().revision, 0);
     proposals.approve(p.id);
-    assert.equal(repo.getDraft().revision,1);
-    assert.equal(repo.getPublished(),undefined);
+    assert.equal(repo.getDraft().revision, 1);
+    assert.equal(repo.getPublished(), undefined);
     repo.publish(1);
-    assert.equal(repo.getPublished().definition.pages[0].id,'home');
-  } finally {repo.close();}
+    assert.equal(repo.getPublished().definition.pages[0].id, 'home');
+  } finally {
+    repo.close();
+  }
 });
 
-test('only pending proposals count toward the limit and settled ones are evicted beyond their bound',()=>{
- const repo=new ApplicationStore(initial),proposals=new DevelopmentProposals(repo,2,2);
- const patch=n=>[{op:'addPage',page:{...page,id:'p'+n,route:'/p'+n}}];
- const a=proposals.propose(0,patch(1)),b=proposals.propose(0,patch(2));
- assert.throws(()=>proposals.propose(0,patch(3)),/limit/,'two pending proposals fill the limit');
- proposals.reject(a.id);const c=proposals.propose(0,patch(3));assert.equal(c.status,'pending','a settled proposal frees its slot');
- proposals.reject(b.id);proposals.reject(c.id);
- // Three settled proposals with a bound of two: the oldest settled one is gone, the newest two stay readable.
- assert.equal(proposals.get(a.id),undefined);assert.equal(proposals.get(b.id).status,'rejected');assert.equal(proposals.get(c.id).status,'rejected');
- assert.throws(()=>proposals.approve(a.id),/not found/);
- for(let n=4;n<20;n++){const p=proposals.propose(0,patch(n));proposals.reject(p.id);}
- const pending=proposals.propose(0,patch(99));assert.equal(proposals.get(pending.id).status,'pending','a long history never blocks new proposals');
- assert.throws(()=>new DevelopmentProposals(repo,1,-1),/Invalid proposal limit/);
+test('only pending proposals count toward the limit and settled ones are evicted beyond their bound', () => {
+  const repo = new ApplicationStore(initial),
+    proposals = new DevelopmentProposals(repo, 2, 2);
+  const patch = n => [{ op: 'addPage', page: { ...page, id: 'p' + n, route: '/p' + n } }];
+  const a = proposals.propose(0, patch(1)),
+    b = proposals.propose(0, patch(2));
+  assert.throws(() => proposals.propose(0, patch(3)), /limit/, 'two pending proposals fill the limit');
+  proposals.reject(a.id);
+  const c = proposals.propose(0, patch(3));
+  assert.equal(c.status, 'pending', 'a settled proposal frees its slot');
+  proposals.reject(b.id);
+  proposals.reject(c.id);
+  // Three settled proposals with a bound of two: the oldest settled one is gone, the newest two stay readable.
+  assert.equal(proposals.get(a.id), undefined);
+  assert.equal(proposals.get(b.id).status, 'rejected');
+  assert.equal(proposals.get(c.id).status, 'rejected');
+  assert.throws(() => proposals.approve(a.id), /not found/);
+  for (let n = 4; n < 20; n++) {
+    const p = proposals.propose(0, patch(n));
+    proposals.reject(p.id);
+  }
+  const pending = proposals.propose(0, patch(99));
+  assert.equal(proposals.get(pending.id).status, 'pending', 'a long history never blocks new proposals');
+  assert.throws(() => new DevelopmentProposals(repo, 1, -1), /Invalid proposal limit/);
 });

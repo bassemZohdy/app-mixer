@@ -1,70 +1,355 @@
-import {validateAgentManifest,type AgentDefinitionVersion,type PersistentAgentManifest} from './persistent-definitions.js';
-import {isIdentifier,isNonNegativeInteger} from './validation.js';
+import { validateAgentManifest, type AgentDefinitionVersion, type PersistentAgentManifest } from './persistent-definitions.js';
+import { isIdentifier, isNonNegativeInteger } from './validation.js';
 
-type Actor={tenantId:string;principalId:string};
-type Action='read'|'list'|'write'|'audit'|'control-audit';
-type Query=(sql:string,args:unknown[])=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;
+type Actor = { tenantId: string; principalId: string };
+type Action = 'read' | 'list' | 'write' | 'audit' | 'control-audit';
+type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 /** Host-set ceilings for one tenant. Omitted fields are unlimited. */
-export type AgentDefinitionTenantLimits={maxAgents?:number;maxVersionsPerAgent?:number;maxConcurrentRuns?:number;maxTokensPerRun?:number;maxRunsPerDay?:number;maxTurns?:number};
-type Options={enabled:boolean;query:Query;queryWithSignal?:(sql:string,args:unknown[],signal:AbortSignal)=>Promise<{rows:Record<string,unknown>[];rowCount?:number|null}>;transaction:<T>(operation:(query:Query)=>Promise<T>)=>Promise<T>;authorize:(actor:Actor,action:Action,agentId?:string,manifest?:PersistentAgentManifest,signal?:AbortSignal)=>boolean|Promise<boolean>;clock?:()=>number;tenantLimits?:(tenantId:string,signal?:AbortSignal)=>AgentDefinitionTenantLimits|Promise<AgentDefinitionTenantLimits>};
-const limitKeys=['maxAgents','maxVersionsPerAgent','maxConcurrentRuns','maxTokensPerRun','maxRunsPerDay','maxTurns'] as const;
-export type AgentDefinitionAudit={agentId:string;version:number;principalId:string;observedAt:number};
-export type AgentDefinitionControlAudit=AgentDefinitionAudit&{action:'enable'|'suspend'};
-class Denied extends Error{constructor(){super('Agent definition access denied');}}
-const id=isIdentifier;
-const number=isNonNegativeInteger;
+export type AgentDefinitionTenantLimits = { maxAgents?: number; maxVersionsPerAgent?: number; maxConcurrentRuns?: number; maxTokensPerRun?: number; maxRunsPerDay?: number; maxTurns?: number };
+type Options = {
+  enabled: boolean;
+  query: Query;
+  queryWithSignal?: (sql: string, args: unknown[], signal: AbortSignal) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+  transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
+  authorize: (actor: Actor, action: Action, agentId?: string, manifest?: PersistentAgentManifest, signal?: AbortSignal) => boolean | Promise<boolean>;
+  clock?: () => number;
+  tenantLimits?: (tenantId: string, signal?: AbortSignal) => AgentDefinitionTenantLimits | Promise<AgentDefinitionTenantLimits>;
+};
+const limitKeys = ['maxAgents', 'maxVersionsPerAgent', 'maxConcurrentRuns', 'maxTokensPerRun', 'maxRunsPerDay', 'maxTurns'] as const;
+export type AgentDefinitionAudit = { agentId: string; version: number; principalId: string; observedAt: number };
+export type AgentDefinitionControlAudit = AgentDefinitionAudit & { action: 'enable' | 'suspend' };
+class Denied extends Error {
+  constructor() {
+    super('Agent definition access denied');
+  }
+}
+const id = isIdentifier;
+const number = isNonNegativeInteger;
 
 /** Shared, versioned definitions. Hosts supply trusted PostgreSQL connections and identity policy. */
 export class PostgresAgentDefinitions {
- private readonly query:Query;private readonly queryWithSignal:Options['queryWithSignal'];private readonly transaction:Options['transaction'];private readonly authorize:Options['authorize'];private readonly clock:()=>number;private readonly tenantLimits:Options['tenantLimits'];
- constructor(options:Options){if(!options||options.enabled!==true||typeof options.query!=='function'||(options.queryWithSignal!==undefined&&typeof options.queryWithSignal!=='function')||typeof options.transaction!=='function'||typeof options.authorize!=='function'||(options.clock!==undefined&&typeof options.clock!=='function')||(options.tenantLimits!==undefined&&typeof options.tenantLimits!=='function'))throw Error('Invalid agent definition configuration');this.query=options.query;this.queryWithSignal=options.queryWithSignal;this.transaction=options.transaction;this.authorize=options.authorize;this.clock=options.clock??Date.now;this.tenantLimits=options.tenantLimits;}
- async initialize():Promise<void>{
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_tenants (tenant_id TEXT PRIMARY KEY)',[]);
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_scopes (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,PRIMARY KEY(tenant_id,agent_id))',[]);
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definitions (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,manifest TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',[]);
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',[]);
-  await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_control_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',[]);
-  await this.query("CREATE OR REPLACE FUNCTION app_mixer_agent_definition_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Agent definition history is immutable'; END $$",[]);
-  for(const table of ['app_mixer_agent_definitions','app_mixer_agent_definition_audit','app_mixer_agent_definition_control_audit'])await this.query(`DO $$ BEGIN CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_definition_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,[]);
- }
- private async limits(tenantId:string,signal?:AbortSignal):Promise<AgentDefinitionTenantLimits|undefined>{
-  signal?.throwIfAborted();if(!this.tenantLimits)return undefined;const value=await this.tenantLimits(tenantId,signal);signal?.throwIfAborted();
-  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!(limitKeys as readonly string[]).includes(key))||limitKeys.some(key=>value[key]!==undefined&&(!Number.isSafeInteger(value[key])||value[key]!<1)))throw Error('Invalid agent definition tenant limits');
-  return {...value};
- }
- private checkManifestLimits(manifest:PersistentAgentManifest,limits:AgentDefinitionTenantLimits|undefined):void{
-  if(!limits)return;for(const key of ['maxConcurrentRuns','maxTokensPerRun','maxRunsPerDay'] as const)if(limits[key]!==undefined&&manifest.quotas[key]>limits[key]!)throw Error('Agent quota exceeds tenant limit');
-  if(limits.maxTurns!==undefined&&(manifest.lifecycle.maxTurns===undefined||manifest.lifecycle.maxTurns>limits.maxTurns))throw Error('Agent model turn limit required or exceeds tenant limit');
- }
- private actor(actor:Actor):Actor{if(!actor||!id(actor.tenantId)||!id(actor.principalId))throw Error('Invalid agent definition actor');return {tenantId:actor.tenantId,principalId:actor.principalId};}
- private async permit(actor:Actor,action:Action,agentId?:string,manifest?:PersistentAgentManifest,signal?:AbortSignal):Promise<void>{signal?.throwIfAborted();const allowed=await this.authorize({...actor},action,agentId,manifest?structuredClone(manifest):undefined,signal);signal?.throwIfAborted();if(allowed!==true)throw new Denied();}
- private parse(row:Record<string,unknown>,tenantId:string,agentId:string):AgentDefinitionVersion{const version=Number(row.version);if(!Number.isSafeInteger(version)||version<1||typeof row.manifest!=='string')throw Error('Invalid stored agent definition');const manifest=validateAgentManifest(JSON.parse(row.manifest));if(manifest.tenantId!==tenantId||manifest.agentId!==agentId)throw Error('Invalid stored agent definition');return {version,manifest};}
- private async read(query:Query,tenantId:string,agentId:string,version?:number):Promise<AgentDefinitionVersion|undefined>{const result=await query('SELECT version,manifest FROM app_mixer_agent_definitions WHERE tenant_id=$1 AND agent_id=$2 AND ($3::bigint IS NULL OR version=$3) ORDER BY version DESC LIMIT 1',[tenantId,agentId,version??null]);if(!Array.isArray(result.rows)||result.rows.length>1)throw Error('Invalid agent definition result');return result.rows[0]?this.parse(result.rows[0],tenantId,agentId):undefined;}
- async get(actor:Actor,agentId:string,version?:number):Promise<AgentDefinitionVersion|undefined>{return this.getChecked(actor,agentId,version);}
- async getWithSignal(actor:Actor,agentId:string,signal:AbortSignal,version?:number):Promise<AgentDefinitionVersion|undefined>{if(!signal||typeof signal.throwIfAborted!=='function')throw Error('Invalid agent definition signal');return this.getChecked(actor,agentId,version,signal);}
- private async getChecked(actor:Actor,agentId:string,version?:number,signal?:AbortSignal):Promise<AgentDefinitionVersion|undefined>{const who=this.actor(actor);if(!id(agentId)||(version!==undefined&&(!number(version)||version<1)))throw Error('Invalid agent scope');const query:Query=signal&&this.queryWithSignal?(sql,args)=>this.queryWithSignal!(sql,args,signal):this.query;await this.permit(who,'read',agentId,undefined,signal);const before=await this.read(query,who.tenantId,agentId,version);signal?.throwIfAborted();await this.permit(who,'read',agentId,before?.manifest,signal);const current=await this.read(query,who.tenantId,agentId,version);signal?.throwIfAborted();await this.permit(who,'read',agentId,current?.manifest,signal);const latest=await this.read(query,who.tenantId,agentId,version);signal?.throwIfAborted();if((before?.version??0)!==(current?.version??0)||(current?.version??0)!==(latest?.version??0))throw Error('Agent definition changed during read');return latest;}
- async list(actor:Actor,options:{after?:string;limit?:number}={}):Promise<{items:AgentDefinitionVersion[];nextAfter?:string}>{const who=this.actor(actor),after=options?.after??'',limit=options?.limit??50;if(!options||(after!==''&&!id(after))||!number(limit)||limit<1||limit>100)throw Error('Invalid agent listing');await this.permit(who,'list');const result=await this.query('SELECT agent_id FROM app_mixer_agent_definition_scopes WHERE tenant_id=$1 AND agent_id>$2 ORDER BY agent_id LIMIT $3',[who.tenantId,after,limit+1]);if(!Array.isArray(result.rows)||result.rows.length>limit+1)throw Error('Invalid agent definition result');const items:AgentDefinitionVersion[]=[];for(const row of result.rows.slice(0,limit)){if(!id(row.agent_id))throw Error('Invalid agent definition result');try{const item=await this.get(who,row.agent_id);if(item)items.push(item);}catch(error){if(!(error instanceof Denied))throw error;}}await this.permit(who,'list');const last=result.rows[limit-1];return {items,...(result.rows.length>limit&&last?{nextAfter:String(last.agent_id)}:{})};}
- async save(actor:Actor,input:unknown,expectedVersion:number,control?:{action:'enable'|'suspend'}):Promise<AgentDefinitionVersion>{const who=this.actor(actor);if(!number(expectedVersion)||expectedVersion>=Number.MAX_SAFE_INTEGER)throw Error('Invalid agent version');if(control!==undefined&&(!control||typeof control!=='object'||Array.isArray(control)||Object.keys(control).length!==1||!Object.hasOwn(control,'action')||!['enable','suspend'].includes(control.action)))throw Error('Invalid agent definition control');const action=control?.action,manifest=validateAgentManifest(input);if(manifest.tenantId!==who.tenantId)throw Error('Agent scope mismatch');await this.permit(who,'write',manifest.agentId,manifest);
-  return this.transaction(async query=>{
-   // New agents serialize on a tenant row first, so concurrent creations cannot exceed maxAgents; updates only lock their own scope.
-   if(this.tenantLimits&&expectedVersion===0){await query('INSERT INTO app_mixer_agent_definition_tenants (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING',[who.tenantId]);const tenant=await query('SELECT tenant_id FROM app_mixer_agent_definition_tenants WHERE tenant_id=$1 FOR UPDATE',[who.tenantId]);if(!Array.isArray(tenant.rows)||tenant.rows.length!==1)throw Error('Invalid agent definition lock');}
-   await query('INSERT INTO app_mixer_agent_definition_scopes (tenant_id,agent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',[who.tenantId,manifest.agentId]);const locked=await query('SELECT agent_id FROM app_mixer_agent_definition_scopes WHERE tenant_id=$1 AND agent_id=$2 FOR UPDATE',[who.tenantId,manifest.agentId]);if(!Array.isArray(locked.rows)||locked.rows.length!==1)throw Error('Invalid agent definition lock');await this.permit(who,'write',manifest.agentId,manifest);const current=await this.read(query,who.tenantId,manifest.agentId);if((current?.version??0)!==expectedVersion)throw Error('Agent version conflict');if(action){if(!current||current.manifest.lifecycle.enabled===(action==='enable'))throw Error('Agent control conflict');const allowed={...current.manifest,lifecycle:{...current.manifest.lifecycle,enabled:action==='enable'}};if(JSON.stringify(allowed)!==JSON.stringify(manifest))throw Error('Agent control conflict');}const version=expectedVersion+1,limits=await this.limits(who.tenantId);
-   if(limits){this.checkManifestLimits(manifest,limits);
-    if(limits.maxVersionsPerAgent!==undefined&&version>limits.maxVersionsPerAgent)throw Error('Agent version limit reached');
-    if(limits.maxAgents!==undefined&&expectedVersion===0){const count=await query('SELECT COUNT(DISTINCT agent_id)::bigint AS count FROM app_mixer_agent_definitions WHERE tenant_id=$1',[who.tenantId]),agents=Number(count.rows?.[0]?.count);if(!Number.isSafeInteger(agents)||agents<0)throw Error('Invalid agent definition count');if(agents>=limits.maxAgents)throw Error('Agent limit reached');}}
-   const now=this.clock();if(!number(now))throw Error('Invalid clock');await query('INSERT INTO app_mixer_agent_definitions (tenant_id,agent_id,version,manifest) VALUES ($1,$2,$3,$4)',[who.tenantId,manifest.agentId,version,JSON.stringify(manifest)]);await query('INSERT INTO app_mixer_agent_definition_audit (tenant_id,agent_id,version,principal_id,observed_at) VALUES ($1,$2,$3,$4,$5)',[who.tenantId,manifest.agentId,version,who.principalId,now]);if(action)await query('INSERT INTO app_mixer_agent_definition_control_audit (tenant_id,agent_id,version,action,principal_id,observed_at) VALUES ($1,$2,$3,$4,$5,$6)',[who.tenantId,manifest.agentId,version,action,who.principalId,now]);return {version,manifest:structuredClone(manifest)};});
- }
- async history(actor:Actor,agentId:string,options:{after?:number;limit?:number}={}):Promise<{items:AgentDefinitionAudit[];nextAfter?:number}>{return this.historyChecked(actor,agentId,options);}
- async historyWithSignal(actor:Actor,agentId:string,options:{after?:number;limit?:number},signal:AbortSignal):Promise<{items:AgentDefinitionAudit[];nextAfter?:number}>{if(!signal||typeof signal.throwIfAborted!=='function')throw Error('Invalid agent definition signal');return this.historyChecked(actor,agentId,options,signal);}
- private async historyChecked(actor:Actor,agentId:string,options:{after?:number;limit?:number},signal?:AbortSignal):Promise<{items:AgentDefinitionAudit[];nextAfter?:number}>{const who=this.actor(actor),after=options?.after??0,limit=options?.limit??50;if(!id(agentId)||!options||!number(after)||!number(limit)||limit<1||limit>100)throw Error('Invalid agent definition history');const query:Query=signal&&this.queryWithSignal?(sql,args)=>this.queryWithSignal!(sql,args,signal):this.query;await this.permit(who,'audit',agentId,undefined,signal);const result=await query('SELECT version,principal_id,observed_at FROM app_mixer_agent_definition_audit WHERE tenant_id=$1 AND agent_id=$2 AND version>$3 ORDER BY version LIMIT $4',[who.tenantId,agentId,after,limit+1]);signal?.throwIfAborted();if(!Array.isArray(result.rows)||result.rows.length>limit+1)throw Error('Invalid agent audit result');const items=result.rows.slice(0,limit).map(row=>{const version=Number(row.version),observedAt=Number(row.observed_at);if(!number(version)||version<1||!id(row.principal_id)||!number(observedAt))throw Error('Invalid agent audit result');return {agentId,version,principalId:row.principal_id,observedAt};});await this.permit(who,'audit',agentId,undefined,signal);return {items,...(result.rows.length>limit?{nextAfter:items.at(-1)!.version}:{})};}
- async controlHistory(actor:Actor,agentId:string,options:{after?:number;limit?:number}={}):Promise<{items:AgentDefinitionControlAudit[];nextAfter?:number}>{return this.controlHistoryChecked(actor,agentId,options);}
- async controlHistoryWithSignal(actor:Actor,agentId:string,options:{after?:number;limit?:number},signal:AbortSignal):Promise<{items:AgentDefinitionControlAudit[];nextAfter?:number}>{if(!signal||typeof signal.throwIfAborted!=='function')throw Error('Invalid agent definition signal');return this.controlHistoryChecked(actor,agentId,options,signal);}
- private async controlHistoryChecked(actor:Actor,agentId:string,options:{after?:number;limit?:number},signal?:AbortSignal):Promise<{items:AgentDefinitionControlAudit[];nextAfter?:number}>{const who=this.actor(actor),after=options?.after??0,limit=options?.limit??50;if(!id(agentId)||!options||!number(after)||!number(limit)||limit<1||limit>100)throw Error('Invalid agent control history');const query:Query=signal&&this.queryWithSignal?(sql,args)=>this.queryWithSignal!(sql,args,signal):this.query;await this.permit(who,'control-audit',agentId,undefined,signal);const result=await query('SELECT version,action,principal_id,observed_at FROM app_mixer_agent_definition_control_audit WHERE tenant_id=$1 AND agent_id=$2 AND version>$3 ORDER BY version LIMIT $4',[who.tenantId,agentId,after,limit+1]);signal?.throwIfAborted();if(!Array.isArray(result.rows)||result.rows.length>limit+1)throw Error('Invalid agent control history result');const items=result.rows.slice(0,limit).map(row=>{const version=Number(row.version),observedAt=Number(row.observed_at);if(!number(version)||version<1||!['enable','suspend'].includes(String(row.action))||!id(row.principal_id)||!number(observedAt))throw Error('Invalid agent control history result');return {agentId,version,action:row.action as 'enable'|'suspend',principalId:row.principal_id,observedAt};});await this.permit(who,'control-audit',agentId,undefined,signal);return {items,...(result.rows.length>limit?{nextAfter:items.at(-1)!.version}:{})};}
- /** Binds a trusted actor for hosts expecting a definition lookup callback. */
- view(actor:Actor,options:{enforceTenantLimits?:boolean}={}):{get:(tenantId:string,agentId:string)=>Promise<AgentDefinitionVersion|undefined>;getWithSignal:(tenantId:string,agentId:string,signal:AbortSignal)=>Promise<AgentDefinitionVersion|undefined>}{
-  const who=this.actor(actor);if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='enforceTenantLimits')||(options.enforceTenantLimits!==undefined&&typeof options.enforceTenantLimits!=='boolean')||(options.enforceTenantLimits===true&&!this.tenantLimits))throw Error('Invalid agent definition view');const enforce=options.enforceTenantLimits===true,check=(tenantId:string)=>{if(tenantId!==who.tenantId)throw Error('Agent scope mismatch');};
-  const read=async(tenantId:string,agentId:string,signal?:AbortSignal)=>{check(tenantId);const first=await this.getChecked(who,agentId,undefined,signal);if(!enforce||!first)return first;this.checkManifestLimits(first.manifest,await this.limits(tenantId,signal));const second=await this.getChecked(who,agentId,undefined,signal);if(!second||second.version!==first.version)throw Error('Agent definition changed during read');this.checkManifestLimits(second.manifest,await this.limits(tenantId,signal));const final=await this.getChecked(who,agentId,undefined,signal);if(!final||final.version!==second.version)throw Error('Agent definition changed during read');return final;};
-  return {get:(tenantId,agentId)=>{check(tenantId);return read(tenantId,agentId);},getWithSignal:(tenantId,agentId,signal)=>{check(tenantId);if(!signal||typeof signal.throwIfAborted!=='function')throw Error('Invalid agent definition signal');return read(tenantId,agentId,signal);}};
- }
+  private readonly query: Query;
+  private readonly queryWithSignal: Options['queryWithSignal'];
+  private readonly transaction: Options['transaction'];
+  private readonly authorize: Options['authorize'];
+  private readonly clock: () => number;
+  private readonly tenantLimits: Options['tenantLimits'];
+  constructor(options: Options) {
+    if (
+      !options ||
+      options.enabled !== true ||
+      typeof options.query !== 'function' ||
+      (options.queryWithSignal !== undefined && typeof options.queryWithSignal !== 'function') ||
+      typeof options.transaction !== 'function' ||
+      typeof options.authorize !== 'function' ||
+      (options.clock !== undefined && typeof options.clock !== 'function') ||
+      (options.tenantLimits !== undefined && typeof options.tenantLimits !== 'function')
+    )
+      throw Error('Invalid agent definition configuration');
+    this.query = options.query;
+    this.queryWithSignal = options.queryWithSignal;
+    this.transaction = options.transaction;
+    this.authorize = options.authorize;
+    this.clock = options.clock ?? Date.now;
+    this.tenantLimits = options.tenantLimits;
+  }
+  async initialize(): Promise<void> {
+    await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_tenants (tenant_id TEXT PRIMARY KEY)', []);
+    await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_scopes (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definitions (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,manifest TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
+      []
+    );
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
+      []
+    );
+    await this.query(
+      'CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_control_audit (tenant_id TEXT NOT NULL,agent_id TEXT COLLATE "C" NOT NULL,version BIGINT NOT NULL,action TEXT NOT NULL,principal_id TEXT NOT NULL,observed_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,version))',
+      []
+    );
+    await this.query(
+      "CREATE OR REPLACE FUNCTION app_mixer_agent_definition_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Agent definition history is immutable'; END $$",
+      []
+    );
+    for (const table of ['app_mixer_agent_definitions', 'app_mixer_agent_definition_audit', 'app_mixer_agent_definition_control_audit'])
+      await this.query(
+        `DO $$ BEGIN CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION app_mixer_agent_definition_immutable(); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+        []
+      );
+  }
+  private async limits(tenantId: string, signal?: AbortSignal): Promise<AgentDefinitionTenantLimits | undefined> {
+    signal?.throwIfAborted();
+    if (!this.tenantLimits) return undefined;
+    const value = await this.tenantLimits(tenantId, signal);
+    signal?.throwIfAborted();
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value).some(key => !(limitKeys as readonly string[]).includes(key)) ||
+      limitKeys.some(key => value[key] !== undefined && (!Number.isSafeInteger(value[key]) || value[key]! < 1))
+    )
+      throw Error('Invalid agent definition tenant limits');
+    return { ...value };
+  }
+  private checkManifestLimits(manifest: PersistentAgentManifest, limits: AgentDefinitionTenantLimits | undefined): void {
+    if (!limits) return;
+    for (const key of ['maxConcurrentRuns', 'maxTokensPerRun', 'maxRunsPerDay'] as const)
+      if (limits[key] !== undefined && manifest.quotas[key] > limits[key]!) throw Error('Agent quota exceeds tenant limit');
+    if (limits.maxTurns !== undefined && (manifest.lifecycle.maxTurns === undefined || manifest.lifecycle.maxTurns > limits.maxTurns))
+      throw Error('Agent model turn limit required or exceeds tenant limit');
+  }
+  private actor(actor: Actor): Actor {
+    if (!actor || !id(actor.tenantId) || !id(actor.principalId)) throw Error('Invalid agent definition actor');
+    return { tenantId: actor.tenantId, principalId: actor.principalId };
+  }
+  private async permit(actor: Actor, action: Action, agentId?: string, manifest?: PersistentAgentManifest, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const allowed = await this.authorize({ ...actor }, action, agentId, manifest ? structuredClone(manifest) : undefined, signal);
+    signal?.throwIfAborted();
+    if (allowed !== true) throw new Denied();
+  }
+  private parse(row: Record<string, unknown>, tenantId: string, agentId: string): AgentDefinitionVersion {
+    const version = Number(row.version);
+    if (!Number.isSafeInteger(version) || version < 1 || typeof row.manifest !== 'string') throw Error('Invalid stored agent definition');
+    const manifest = validateAgentManifest(JSON.parse(row.manifest));
+    if (manifest.tenantId !== tenantId || manifest.agentId !== agentId) throw Error('Invalid stored agent definition');
+    return { version, manifest };
+  }
+  private async read(query: Query, tenantId: string, agentId: string, version?: number): Promise<AgentDefinitionVersion | undefined> {
+    const result = await query('SELECT version,manifest FROM app_mixer_agent_definitions WHERE tenant_id=$1 AND agent_id=$2 AND ($3::bigint IS NULL OR version=$3) ORDER BY version DESC LIMIT 1', [
+      tenantId,
+      agentId,
+      version ?? null
+    ]);
+    if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid agent definition result');
+    return result.rows[0] ? this.parse(result.rows[0], tenantId, agentId) : undefined;
+  }
+  async get(actor: Actor, agentId: string, version?: number): Promise<AgentDefinitionVersion | undefined> {
+    return this.getChecked(actor, agentId, version);
+  }
+  async getWithSignal(actor: Actor, agentId: string, signal: AbortSignal, version?: number): Promise<AgentDefinitionVersion | undefined> {
+    if (!signal || typeof signal.throwIfAborted !== 'function') throw Error('Invalid agent definition signal');
+    return this.getChecked(actor, agentId, version, signal);
+  }
+  private async getChecked(actor: Actor, agentId: string, version?: number, signal?: AbortSignal): Promise<AgentDefinitionVersion | undefined> {
+    const who = this.actor(actor);
+    if (!id(agentId) || (version !== undefined && (!number(version) || version < 1))) throw Error('Invalid agent scope');
+    const query: Query = signal && this.queryWithSignal ? (sql, args) => this.queryWithSignal!(sql, args, signal) : this.query;
+    await this.permit(who, 'read', agentId, undefined, signal);
+    const before = await this.read(query, who.tenantId, agentId, version);
+    signal?.throwIfAborted();
+    await this.permit(who, 'read', agentId, before?.manifest, signal);
+    const current = await this.read(query, who.tenantId, agentId, version);
+    signal?.throwIfAborted();
+    await this.permit(who, 'read', agentId, current?.manifest, signal);
+    const latest = await this.read(query, who.tenantId, agentId, version);
+    signal?.throwIfAborted();
+    if ((before?.version ?? 0) !== (current?.version ?? 0) || (current?.version ?? 0) !== (latest?.version ?? 0)) throw Error('Agent definition changed during read');
+    return latest;
+  }
+  async list(actor: Actor, options: { after?: string; limit?: number } = {}): Promise<{ items: AgentDefinitionVersion[]; nextAfter?: string }> {
+    const who = this.actor(actor),
+      after = options?.after ?? '',
+      limit = options?.limit ?? 50;
+    if (!options || (after !== '' && !id(after)) || !number(limit) || limit < 1 || limit > 100) throw Error('Invalid agent listing');
+    await this.permit(who, 'list');
+    const result = await this.query('SELECT agent_id FROM app_mixer_agent_definition_scopes WHERE tenant_id=$1 AND agent_id>$2 ORDER BY agent_id LIMIT $3', [who.tenantId, after, limit + 1]);
+    if (!Array.isArray(result.rows) || result.rows.length > limit + 1) throw Error('Invalid agent definition result');
+    const items: AgentDefinitionVersion[] = [];
+    for (const row of result.rows.slice(0, limit)) {
+      if (!id(row.agent_id)) throw Error('Invalid agent definition result');
+      try {
+        const item = await this.get(who, row.agent_id);
+        if (item) items.push(item);
+      } catch (error) {
+        if (!(error instanceof Denied)) throw error;
+      }
+    }
+    await this.permit(who, 'list');
+    const last = result.rows[limit - 1];
+    return { items, ...(result.rows.length > limit && last ? { nextAfter: String(last.agent_id) } : {}) };
+  }
+  async save(actor: Actor, input: unknown, expectedVersion: number, control?: { action: 'enable' | 'suspend' }): Promise<AgentDefinitionVersion> {
+    const who = this.actor(actor);
+    if (!number(expectedVersion) || expectedVersion >= Number.MAX_SAFE_INTEGER) throw Error('Invalid agent version');
+    if (
+      control !== undefined &&
+      (!control || typeof control !== 'object' || Array.isArray(control) || Object.keys(control).length !== 1 || !Object.hasOwn(control, 'action') || !['enable', 'suspend'].includes(control.action))
+    )
+      throw Error('Invalid agent definition control');
+    const action = control?.action,
+      manifest = validateAgentManifest(input);
+    if (manifest.tenantId !== who.tenantId) throw Error('Agent scope mismatch');
+    await this.permit(who, 'write', manifest.agentId, manifest);
+    return this.transaction(async query => {
+      // New agents serialize on a tenant row first, so concurrent creations cannot exceed maxAgents; updates only lock their own scope.
+      if (this.tenantLimits && expectedVersion === 0) {
+        await query('INSERT INTO app_mixer_agent_definition_tenants (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING', [who.tenantId]);
+        const tenant = await query('SELECT tenant_id FROM app_mixer_agent_definition_tenants WHERE tenant_id=$1 FOR UPDATE', [who.tenantId]);
+        if (!Array.isArray(tenant.rows) || tenant.rows.length !== 1) throw Error('Invalid agent definition lock');
+      }
+      await query('INSERT INTO app_mixer_agent_definition_scopes (tenant_id,agent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [who.tenantId, manifest.agentId]);
+      const locked = await query('SELECT agent_id FROM app_mixer_agent_definition_scopes WHERE tenant_id=$1 AND agent_id=$2 FOR UPDATE', [who.tenantId, manifest.agentId]);
+      if (!Array.isArray(locked.rows) || locked.rows.length !== 1) throw Error('Invalid agent definition lock');
+      await this.permit(who, 'write', manifest.agentId, manifest);
+      const current = await this.read(query, who.tenantId, manifest.agentId);
+      if ((current?.version ?? 0) !== expectedVersion) throw Error('Agent version conflict');
+      if (action) {
+        if (!current || current.manifest.lifecycle.enabled === (action === 'enable')) throw Error('Agent control conflict');
+        const allowed = { ...current.manifest, lifecycle: { ...current.manifest.lifecycle, enabled: action === 'enable' } };
+        if (JSON.stringify(allowed) !== JSON.stringify(manifest)) throw Error('Agent control conflict');
+      }
+      const version = expectedVersion + 1,
+        limits = await this.limits(who.tenantId);
+      if (limits) {
+        this.checkManifestLimits(manifest, limits);
+        if (limits.maxVersionsPerAgent !== undefined && version > limits.maxVersionsPerAgent) throw Error('Agent version limit reached');
+        if (limits.maxAgents !== undefined && expectedVersion === 0) {
+          const count = await query('SELECT COUNT(DISTINCT agent_id)::bigint AS count FROM app_mixer_agent_definitions WHERE tenant_id=$1', [who.tenantId]),
+            agents = Number(count.rows?.[0]?.count);
+          if (!Number.isSafeInteger(agents) || agents < 0) throw Error('Invalid agent definition count');
+          if (agents >= limits.maxAgents) throw Error('Agent limit reached');
+        }
+      }
+      const now = this.clock();
+      if (!number(now)) throw Error('Invalid clock');
+      await query('INSERT INTO app_mixer_agent_definitions (tenant_id,agent_id,version,manifest) VALUES ($1,$2,$3,$4)', [who.tenantId, manifest.agentId, version, JSON.stringify(manifest)]);
+      await query('INSERT INTO app_mixer_agent_definition_audit (tenant_id,agent_id,version,principal_id,observed_at) VALUES ($1,$2,$3,$4,$5)', [
+        who.tenantId,
+        manifest.agentId,
+        version,
+        who.principalId,
+        now
+      ]);
+      if (action)
+        await query('INSERT INTO app_mixer_agent_definition_control_audit (tenant_id,agent_id,version,action,principal_id,observed_at) VALUES ($1,$2,$3,$4,$5,$6)', [
+          who.tenantId,
+          manifest.agentId,
+          version,
+          action,
+          who.principalId,
+          now
+        ]);
+      return { version, manifest: structuredClone(manifest) };
+    });
+  }
+  async history(actor: Actor, agentId: string, options: { after?: number; limit?: number } = {}): Promise<{ items: AgentDefinitionAudit[]; nextAfter?: number }> {
+    return this.historyChecked(actor, agentId, options);
+  }
+  async historyWithSignal(actor: Actor, agentId: string, options: { after?: number; limit?: number }, signal: AbortSignal): Promise<{ items: AgentDefinitionAudit[]; nextAfter?: number }> {
+    if (!signal || typeof signal.throwIfAborted !== 'function') throw Error('Invalid agent definition signal');
+    return this.historyChecked(actor, agentId, options, signal);
+  }
+  private async historyChecked(actor: Actor, agentId: string, options: { after?: number; limit?: number }, signal?: AbortSignal): Promise<{ items: AgentDefinitionAudit[]; nextAfter?: number }> {
+    const who = this.actor(actor),
+      after = options?.after ?? 0,
+      limit = options?.limit ?? 50;
+    if (!id(agentId) || !options || !number(after) || !number(limit) || limit < 1 || limit > 100) throw Error('Invalid agent definition history');
+    const query: Query = signal && this.queryWithSignal ? (sql, args) => this.queryWithSignal!(sql, args, signal) : this.query;
+    await this.permit(who, 'audit', agentId, undefined, signal);
+    const result = await query('SELECT version,principal_id,observed_at FROM app_mixer_agent_definition_audit WHERE tenant_id=$1 AND agent_id=$2 AND version>$3 ORDER BY version LIMIT $4', [
+      who.tenantId,
+      agentId,
+      after,
+      limit + 1
+    ]);
+    signal?.throwIfAborted();
+    if (!Array.isArray(result.rows) || result.rows.length > limit + 1) throw Error('Invalid agent audit result');
+    const items = result.rows.slice(0, limit).map(row => {
+      const version = Number(row.version),
+        observedAt = Number(row.observed_at);
+      if (!number(version) || version < 1 || !id(row.principal_id) || !number(observedAt)) throw Error('Invalid agent audit result');
+      return { agentId, version, principalId: row.principal_id, observedAt };
+    });
+    await this.permit(who, 'audit', agentId, undefined, signal);
+    return { items, ...(result.rows.length > limit ? { nextAfter: items.at(-1)!.version } : {}) };
+  }
+  async controlHistory(actor: Actor, agentId: string, options: { after?: number; limit?: number } = {}): Promise<{ items: AgentDefinitionControlAudit[]; nextAfter?: number }> {
+    return this.controlHistoryChecked(actor, agentId, options);
+  }
+  async controlHistoryWithSignal(
+    actor: Actor,
+    agentId: string,
+    options: { after?: number; limit?: number },
+    signal: AbortSignal
+  ): Promise<{ items: AgentDefinitionControlAudit[]; nextAfter?: number }> {
+    if (!signal || typeof signal.throwIfAborted !== 'function') throw Error('Invalid agent definition signal');
+    return this.controlHistoryChecked(actor, agentId, options, signal);
+  }
+  private async controlHistoryChecked(
+    actor: Actor,
+    agentId: string,
+    options: { after?: number; limit?: number },
+    signal?: AbortSignal
+  ): Promise<{ items: AgentDefinitionControlAudit[]; nextAfter?: number }> {
+    const who = this.actor(actor),
+      after = options?.after ?? 0,
+      limit = options?.limit ?? 50;
+    if (!id(agentId) || !options || !number(after) || !number(limit) || limit < 1 || limit > 100) throw Error('Invalid agent control history');
+    const query: Query = signal && this.queryWithSignal ? (sql, args) => this.queryWithSignal!(sql, args, signal) : this.query;
+    await this.permit(who, 'control-audit', agentId, undefined, signal);
+    const result = await query(
+      'SELECT version,action,principal_id,observed_at FROM app_mixer_agent_definition_control_audit WHERE tenant_id=$1 AND agent_id=$2 AND version>$3 ORDER BY version LIMIT $4',
+      [who.tenantId, agentId, after, limit + 1]
+    );
+    signal?.throwIfAborted();
+    if (!Array.isArray(result.rows) || result.rows.length > limit + 1) throw Error('Invalid agent control history result');
+    const items = result.rows.slice(0, limit).map(row => {
+      const version = Number(row.version),
+        observedAt = Number(row.observed_at);
+      if (!number(version) || version < 1 || !['enable', 'suspend'].includes(String(row.action)) || !id(row.principal_id) || !number(observedAt)) throw Error('Invalid agent control history result');
+      return { agentId, version, action: row.action as 'enable' | 'suspend', principalId: row.principal_id, observedAt };
+    });
+    await this.permit(who, 'control-audit', agentId, undefined, signal);
+    return { items, ...(result.rows.length > limit ? { nextAfter: items.at(-1)!.version } : {}) };
+  }
+  /** Binds a trusted actor for hosts expecting a definition lookup callback. */
+  view(
+    actor: Actor,
+    options: { enforceTenantLimits?: boolean } = {}
+  ): {
+    get: (tenantId: string, agentId: string) => Promise<AgentDefinitionVersion | undefined>;
+    getWithSignal: (tenantId: string, agentId: string, signal: AbortSignal) => Promise<AgentDefinitionVersion | undefined>;
+  } {
+    const who = this.actor(actor);
+    if (
+      !options ||
+      typeof options !== 'object' ||
+      Array.isArray(options) ||
+      Object.keys(options).some(key => key !== 'enforceTenantLimits') ||
+      (options.enforceTenantLimits !== undefined && typeof options.enforceTenantLimits !== 'boolean') ||
+      (options.enforceTenantLimits === true && !this.tenantLimits)
+    )
+      throw Error('Invalid agent definition view');
+    const enforce = options.enforceTenantLimits === true,
+      check = (tenantId: string) => {
+        if (tenantId !== who.tenantId) throw Error('Agent scope mismatch');
+      };
+    const read = async (tenantId: string, agentId: string, signal?: AbortSignal) => {
+      check(tenantId);
+      const first = await this.getChecked(who, agentId, undefined, signal);
+      if (!enforce || !first) return first;
+      this.checkManifestLimits(first.manifest, await this.limits(tenantId, signal));
+      const second = await this.getChecked(who, agentId, undefined, signal);
+      if (!second || second.version !== first.version) throw Error('Agent definition changed during read');
+      this.checkManifestLimits(second.manifest, await this.limits(tenantId, signal));
+      const final = await this.getChecked(who, agentId, undefined, signal);
+      if (!final || final.version !== second.version) throw Error('Agent definition changed during read');
+      return final;
+    };
+    return {
+      get: (tenantId, agentId) => {
+        check(tenantId);
+        return read(tenantId, agentId);
+      },
+      getWithSignal: (tenantId, agentId, signal) => {
+        check(tenantId);
+        if (!signal || typeof signal.throwIfAborted !== 'function') throw Error('Invalid agent definition signal');
+        return read(tenantId, agentId, signal);
+      }
+    };
+  }
 }
-export type {Options as PostgresAgentDefinitionsOptions,Actor as AgentDefinitionActor,Action as AgentDefinitionAccess,Query as PostgresAgentDefinitionQuery};
+export type { Options as PostgresAgentDefinitionsOptions, Actor as AgentDefinitionActor, Action as AgentDefinitionAccess, Query as PostgresAgentDefinitionQuery };

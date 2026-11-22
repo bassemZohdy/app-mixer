@@ -1,112 +1,716 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {SqliteAgentRuns,SqliteAgentTriggers,SqliteAgentRunHistory,SqliteAgentSchedules,SqliteAgentWakeupRetention,AgentWakeupRetentionWorker,SqliteWakeupRetentionMetrics,SqliteAgentRunMetrics} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},other={...scope,tenantId:'other'},event={sourceId:'webhook',principalId:'sender',eventId:'event-1',eventType:'message',payload:{text:'hello',count:1}},config={definitionVersion:1,maxAttempts:3,deadline:1000},triggerConfig={...config,maxPending:10};
-function setup(){const dir=mkdtempSync(join(tmpdir(),'agent-wakeup-')),path=join(dir,'db.sqlite'),runs=new SqliteAgentRuns(path),triggers=new SqliteAgentTriggers(path);return {dir,path,runs,triggers};}
-function close(s){s.triggers.close();s.runs.close();rmSync(s.dir,{recursive:true,force:true});}
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import {
+  SqliteAgentRuns,
+  SqliteAgentTriggers,
+  SqliteAgentRunHistory,
+  SqliteAgentSchedules,
+  SqliteAgentWakeupRetention,
+  AgentWakeupRetentionWorker,
+  SqliteWakeupRetentionMetrics,
+  SqliteAgentRunMetrics
+} from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  other = { ...scope, tenantId: 'other' },
+  event = { sourceId: 'webhook', principalId: 'sender', eventId: 'event-1', eventType: 'message', payload: { text: 'hello', count: 1 } },
+  config = { definitionVersion: 1, maxAttempts: 3, deadline: 1000 },
+  triggerConfig = { ...config, maxPending: 10 };
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-wakeup-')),
+    path = join(dir, 'db.sqlite'),
+    runs = new SqliteAgentRuns(path),
+    triggers = new SqliteAgentTriggers(path);
+  return { dir, path, runs, triggers };
+}
+function close(s) {
+  s.triggers.close();
+  s.runs.close();
+  rmSync(s.dir, { recursive: true, force: true });
+}
 
-test('wakeup retention bounds all policy callbacks and rejects their late results',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,release;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);for(const bad of [{authorizationTimeoutMs:100},{maxPendingAuthorizations:1},{authorizationTimeoutMs:99,maxPendingAuthorizations:1},{authorizationTimeoutMs:100,maxPendingAuthorizations:0}])assert.throws(()=>new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,...bad}),/Invalid/);
-  for(const phase of ['scope','discovery','target']){let pendingSignal,block=true,calls=0;const gate=new Promise(resolve=>release=resolve),decide=(name,signal)=>{if(name!==phase||!block)return true;calls++;pendingSignal=signal;return gate;};retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizationTimeoutMs:100,maxPendingAuthorizations:1,authorizeScope:(_actor,_scope,signal)=>decide('scope',signal),authorizeDiscovery:(_actor,_scope,signal)=>decide('discovery',signal),authorize:(_actor,_action,_target,signal)=>decide('target',signal)});const request=()=>phase==='discovery'?retention.listCandidates(actor):retention.redact(actor,'webhook','event-1',10);await assert.rejects(request(),/authorization unavailable/);assert.equal(pendingSignal.aborted,true);await assert.rejects(request(),/authorization unavailable/);assert.equal(calls,1);assert.deepEqual(s.runs.getWakeup(scope,'webhook','event-1').payload,event.payload);block=false;release(true);await new Promise(resolve=>setImmediate(resolve));assert.equal((await retention.listCandidates(actor)).items.length,1);retention.close();retention=undefined;}
- }finally{release?.();retention?.close();close(s);}
+test('wakeup retention bounds all policy callbacks and rejects their late results', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention, release;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    for (const bad of [
+      { authorizationTimeoutMs: 100 },
+      { maxPendingAuthorizations: 1 },
+      { authorizationTimeoutMs: 99, maxPendingAuthorizations: 1 },
+      { authorizationTimeoutMs: 100, maxPendingAuthorizations: 0 }
+    ])
+      assert.throws(() => new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true, ...bad }), /Invalid/);
+    for (const phase of ['scope', 'discovery', 'target']) {
+      let pendingSignal,
+        block = true,
+        calls = 0;
+      const gate = new Promise(resolve => (release = resolve)),
+        decide = (name, signal) => {
+          if (name !== phase || !block) return true;
+          calls++;
+          pendingSignal = signal;
+          return gate;
+        };
+      retention = new SqliteAgentWakeupRetention(s.path, {
+        scope,
+        authorizationTimeoutMs: 100,
+        maxPendingAuthorizations: 1,
+        authorizeScope: (_actor, _scope, signal) => decide('scope', signal),
+        authorizeDiscovery: (_actor, _scope, signal) => decide('discovery', signal),
+        authorize: (_actor, _action, _target, signal) => decide('target', signal)
+      });
+      const request = () => (phase === 'discovery' ? retention.listCandidates(actor) : retention.redact(actor, 'webhook', 'event-1', 10));
+      await assert.rejects(request(), /authorization unavailable/);
+      assert.equal(pendingSignal.aborted, true);
+      await assert.rejects(request(), /authorization unavailable/);
+      assert.equal(calls, 1);
+      assert.deepEqual(s.runs.getWakeup(scope, 'webhook', 'event-1').payload, event.payload);
+      block = false;
+      release(true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal((await retention.listCandidates(actor)).items.length, 1);
+      retention.close();
+      retention = undefined;
+    }
+  } finally {
+    release?.();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('wakeup worker bounds stalled candidate authorization and fences late decisions',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,release;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>true});let signal,block=true,calls=0;const gate=new Promise(resolve=>release=resolve),errors=[];const options={retention,actor,minAgeMs:1,maxPerPass:1,pollMs:100,clock:()=>10,authorize:(_actor,_candidate,received)=>{calls++;signal=received;return block?gate:true;},onError:e=>errors.push(e.message)};for(const bad of [{authorizationTimeoutMs:100},{maxPendingAuthorizations:1},{authorizationTimeoutMs:99,maxPendingAuthorizations:1},{authorizationTimeoutMs:100,maxPendingAuthorizations:0}])assert.throws(()=>new AgentWakeupRetentionWorker({...options,...bad}),/Invalid/);const worker=new AgentWakeupRetentionWorker({...options,authorizationTimeoutMs:100,maxPendingAuthorizations:1});assert.equal(await worker.runOnce(),0);assert.equal(signal.aborted,true);assert.equal(await worker.runOnce(),0);assert.equal(calls,1);assert.equal(errors.length,2);assert.deepEqual(s.runs.getWakeup(scope,'webhook','event-1').payload,event.payload);block=false;release(true);await new Promise(resolve=>setImmediate(resolve));assert.equal(await worker.runOnce(),1);assert.equal(calls,2);await worker.stop();}finally{release?.();retention?.close();close(s);}
+test('wakeup worker bounds stalled candidate authorization and fences late decisions', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention, release;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true, authorizeDiscovery: () => true });
+    let signal,
+      block = true,
+      calls = 0;
+    const gate = new Promise(resolve => (release = resolve)),
+      errors = [];
+    const options = {
+      retention,
+      actor,
+      minAgeMs: 1,
+      maxPerPass: 1,
+      pollMs: 100,
+      clock: () => 10,
+      authorize: (_actor, _candidate, received) => {
+        calls++;
+        signal = received;
+        return block ? gate : true;
+      },
+      onError: e => errors.push(e.message)
+    };
+    for (const bad of [
+      { authorizationTimeoutMs: 100 },
+      { maxPendingAuthorizations: 1 },
+      { authorizationTimeoutMs: 99, maxPendingAuthorizations: 1 },
+      { authorizationTimeoutMs: 100, maxPendingAuthorizations: 0 }
+    ])
+      assert.throws(() => new AgentWakeupRetentionWorker({ ...options, ...bad }), /Invalid/);
+    const worker = new AgentWakeupRetentionWorker({ ...options, authorizationTimeoutMs: 100, maxPendingAuthorizations: 1 });
+    assert.equal(await worker.runOnce(), 0);
+    assert.equal(signal.aborted, true);
+    assert.equal(await worker.runOnce(), 0);
+    assert.equal(calls, 1);
+    assert.equal(errors.length, 2);
+    assert.deepEqual(s.runs.getWakeup(scope, 'webhook', 'event-1').payload, event.payload);
+    block = false;
+    release(true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(calls, 2);
+    await worker.stop();
+  } finally {
+    release?.();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('wakeup retention metrics count only scoped unredacted terminal records and recheck authorization',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,observed,completion,db;try{
-  const add=(target,runId,eventId,seen,ended)=>{let run=s.runs.create(target,runId,config,1);run=s.runs.request(target,runId,run.revision,'pause',2);run=s.runs.resumeWithTrigger(target,runId,run.revision,{...event,eventId},seen).run;if(ended!==undefined)s.runs.request(target,runId,run.revision,'cancel',ended);};
-  add(scope,'old','old',10,20);add(scope,'recent','recent',70,90);add(scope,'legacy','legacy',11,21);add(scope,'redacted','redacted',12,22);add(scope,'active','active',13);add(other,'foreign','foreign',10,20);
-  retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true});await retention.redact(actor,'webhook','redacted',30);db=new DatabaseSync(s.path);db.exec('DROP TRIGGER agent_run_terminal_no_delete');db.prepare('DELETE FROM agent_run_terminal_times WHERE tenant_id=? AND agent_id=? AND run_id=?').run('tenant','agent','legacy');
-  observed=new SqliteWakeupRetentionMetrics(s.path,{scope,authorize:()=>true,minAgeMs:50,clock:()=>100});completion=new SqliteWakeupRetentionMetrics(s.path,{scope,authorize:()=>true,minAgeMs:50,ageFrom:'completion',clock:()=>100});assert.deepEqual(await observed.snapshot(actor),{eligible:2,notYetEligible:1,unknownAge:0,oldestEligibleSeconds:0.09});assert.deepEqual(await completion.snapshot(actor),{eligible:1,notYetEligible:1,unknownAge:1,oldestEligibleSeconds:0.08});const text=await completion.render(actor);assert.match(text,/app_mixer_wakeup_retention_candidates\{state="unknown_age"\} 1/);for(const secret of ['tenant','operator','recent','hello'])assert.equal(text.includes(secret),false);await assert.rejects(completion.snapshot({...actor,tenantId:'other'}),/Invalid agent metrics actor/);
-  let calls=0;const revoked=new SqliteWakeupRetentionMetrics(s.path,{scope,authorize:()=>++calls===1,minAgeMs:50,clock:()=>100});try{await assert.rejects(revoked.snapshot(actor),/access denied/);await assert.rejects(revoked.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);}finally{revoked.close();}
- }finally{db?.close();completion?.close();observed?.close();retention?.close();close(s);}
+test('wakeup retention metrics count only scoped unredacted terminal records and recheck authorization', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention, observed, completion, db;
+  try {
+    const add = (target, runId, eventId, seen, ended) => {
+      let run = s.runs.create(target, runId, config, 1);
+      run = s.runs.request(target, runId, run.revision, 'pause', 2);
+      run = s.runs.resumeWithTrigger(target, runId, run.revision, { ...event, eventId }, seen).run;
+      if (ended !== undefined) s.runs.request(target, runId, run.revision, 'cancel', ended);
+    };
+    add(scope, 'old', 'old', 10, 20);
+    add(scope, 'recent', 'recent', 70, 90);
+    add(scope, 'legacy', 'legacy', 11, 21);
+    add(scope, 'redacted', 'redacted', 12, 22);
+    add(scope, 'active', 'active', 13);
+    add(other, 'foreign', 'foreign', 10, 20);
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true });
+    await retention.redact(actor, 'webhook', 'redacted', 30);
+    db = new DatabaseSync(s.path);
+    db.exec('DROP TRIGGER agent_run_terminal_no_delete');
+    db.prepare('DELETE FROM agent_run_terminal_times WHERE tenant_id=? AND agent_id=? AND run_id=?').run('tenant', 'agent', 'legacy');
+    observed = new SqliteWakeupRetentionMetrics(s.path, { scope, authorize: () => true, minAgeMs: 50, clock: () => 100 });
+    completion = new SqliteWakeupRetentionMetrics(s.path, { scope, authorize: () => true, minAgeMs: 50, ageFrom: 'completion', clock: () => 100 });
+    assert.deepEqual(await observed.snapshot(actor), { eligible: 2, notYetEligible: 1, unknownAge: 0, oldestEligibleSeconds: 0.09 });
+    assert.deepEqual(await completion.snapshot(actor), { eligible: 1, notYetEligible: 1, unknownAge: 1, oldestEligibleSeconds: 0.08 });
+    const text = await completion.render(actor);
+    assert.match(text, /app_mixer_wakeup_retention_candidates\{state="unknown_age"\} 1/);
+    for (const secret of ['tenant', 'operator', 'recent', 'hello']) assert.equal(text.includes(secret), false);
+    await assert.rejects(completion.snapshot({ ...actor, tenantId: 'other' }), /Invalid agent metrics actor/);
+    let calls = 0;
+    const revoked = new SqliteWakeupRetentionMetrics(s.path, { scope, authorize: () => ++calls === 1, minAgeMs: 50, clock: () => 100 });
+    try {
+      await assert.rejects(revoked.snapshot(actor), /access denied/);
+      await assert.rejects(revoked.renderWithSignal(actor, AbortSignal.abort()), /unavailable/);
+    } finally {
+      revoked.close();
+    }
+  } finally {
+    db?.close();
+    completion?.close();
+    observed?.close();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('run metrics optionally include wakeup retention in the same clocked snapshot',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let metrics;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);let clocks=0,policies=0;const options={scope,authorize:()=>{policies++;return true;},includeOperational:true,wakeupRetentionBacklog:{minAgeMs:10,ageFrom:'completion'},clock:()=>{clocks++;return 100;}};metrics=new SqliteAgentRunMetrics(s.path,options);options.wakeupRetentionBacklog.minAgeMs=1000;const text=await metrics.render(actor);assert.match(text,/app_mixer_wakeup_retention_candidates\{state="eligible"\} 1/);assert.match(text,/app_mixer_agent_runs\{status="cancelled",archived="false"\} 1/);assert.equal(clocks,1);assert.equal(policies,2);assert.equal(text.includes('hello'),false);await assert.rejects(metrics.render({...actor,tenantId:'other'}),/Invalid/);for(const bad of [{minAgeMs:0},{minAgeMs:1,ageFrom:'other'}])assert.throws(()=>new SqliteAgentRunMetrics(s.path,{scope,authorize:()=>true,wakeupRetentionBacklog:bad}),/Invalid/);
- }finally{metrics?.close();close(s);}
+test('run metrics optionally include wakeup retention in the same clocked snapshot', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let metrics;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    let clocks = 0,
+      policies = 0;
+    const options = {
+      scope,
+      authorize: () => {
+        policies++;
+        return true;
+      },
+      includeOperational: true,
+      wakeupRetentionBacklog: { minAgeMs: 10, ageFrom: 'completion' },
+      clock: () => {
+        clocks++;
+        return 100;
+      }
+    };
+    metrics = new SqliteAgentRunMetrics(s.path, options);
+    options.wakeupRetentionBacklog.minAgeMs = 1000;
+    const text = await metrics.render(actor);
+    assert.match(text, /app_mixer_wakeup_retention_candidates\{state="eligible"\} 1/);
+    assert.match(text, /app_mixer_agent_runs\{status="cancelled",archived="false"\} 1/);
+    assert.equal(clocks, 1);
+    assert.equal(policies, 2);
+    assert.equal(text.includes('hello'), false);
+    await assert.rejects(metrics.render({ ...actor, tenantId: 'other' }), /Invalid/);
+    for (const bad of [{ minAgeMs: 0 }, { minAgeMs: 1, ageFrom: 'other' }])
+      assert.throws(() => new SqliteAgentRunMetrics(s.path, { scope, authorize: () => true, wakeupRetentionBacklog: bad }), /Invalid/);
+  } finally {
+    metrics?.close();
+    close(s);
+  }
 });
 
-test('wakeup retention worker enforces age again at redaction and retries denied candidates',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention;try{
-  let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;run=s.runs.request(scope,'run',run.revision,'pause',4);run=s.runs.resumeWithTrigger(scope,'run',run.revision,{...event,eventId:'event-2'},5).run;s.runs.request(scope,'run',run.revision,'cancel',7);
-  retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>true});let now=20,allow=false;const errors=[];const worker=new AgentWakeupRetentionWorker({retention,actor,minAgeMs:10,maxPerPass:1,pollMs:100,clock:()=>now,authorize:()=>allow,onError:e=>errors.push(e)});
-  assert.equal(await worker.runOnce(),0);assert.equal(await worker.runOnce(),0);allow=true;assert.equal(await worker.runOnce(),1);assert.equal(await worker.runOnce(),1);assert.equal(errors.length,0);
-  let next=s.runs.create(scope,'next',config,1);next=s.runs.request(scope,'next',next.revision,'pause',2);next=s.runs.resumeWithTrigger(scope,'next',next.revision,{...event,eventId:'next'},10).run;s.runs.request(scope,'next',next.revision,'cancel',11);now=30;
-  const rollback=new AgentWakeupRetentionWorker({retention,actor,minAgeMs:10,maxPerPass:10,pollMs:100,clock:()=>now,authorize:()=>{now=20;return true;},onError:e=>errors.push(e)});assert.equal(await rollback.runOnce(),0);assert.deepEqual(s.runs.getWakeup(scope,'webhook','next').payload,event.payload);
-  assert.equal(await retention.redact(actor,'webhook','next',30,undefined,{minAgeMs:10,clock:()=>20}),false);assert.equal(await retention.redact(actor,'webhook','next',30,undefined,{minAgeMs:10,clock:()=>21,basis:'completion'}),false);assert.equal(await retention.redact(actor,'webhook','next',30,undefined,{minAgeMs:10,clock:()=>22,basis:'completion'}),true);
- }finally{retention?.close();close(s);}
+test('wakeup retention worker enforces age again at redaction and retries denied candidates', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 4);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, { ...event, eventId: 'event-2' }, 5).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 7);
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true, authorizeDiscovery: () => true });
+    let now = 20,
+      allow = false;
+    const errors = [];
+    const worker = new AgentWakeupRetentionWorker({ retention, actor, minAgeMs: 10, maxPerPass: 1, pollMs: 100, clock: () => now, authorize: () => allow, onError: e => errors.push(e) });
+    assert.equal(await worker.runOnce(), 0);
+    assert.equal(await worker.runOnce(), 0);
+    allow = true;
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(await worker.runOnce(), 1);
+    assert.equal(errors.length, 0);
+    let next = s.runs.create(scope, 'next', config, 1);
+    next = s.runs.request(scope, 'next', next.revision, 'pause', 2);
+    next = s.runs.resumeWithTrigger(scope, 'next', next.revision, { ...event, eventId: 'next' }, 10).run;
+    s.runs.request(scope, 'next', next.revision, 'cancel', 11);
+    now = 30;
+    const rollback = new AgentWakeupRetentionWorker({
+      retention,
+      actor,
+      minAgeMs: 10,
+      maxPerPass: 10,
+      pollMs: 100,
+      clock: () => now,
+      authorize: () => {
+        now = 20;
+        return true;
+      },
+      onError: e => errors.push(e)
+    });
+    assert.equal(await rollback.runOnce(), 0);
+    assert.deepEqual(s.runs.getWakeup(scope, 'webhook', 'next').payload, event.payload);
+    assert.equal(await retention.redact(actor, 'webhook', 'next', 30, undefined, { minAgeMs: 10, clock: () => 20 }), false);
+    assert.equal(await retention.redact(actor, 'webhook', 'next', 30, undefined, { minAgeMs: 10, clock: () => 21, basis: 'completion' }), false);
+    assert.equal(await retention.redact(actor, 'webhook', 'next', 30, undefined, { minAgeMs: 10, clock: () => 22, basis: 'completion' }), true);
+  } finally {
+    retention?.close();
+    close(s);
+  }
 });
 
-test('stopping a wakeup retention worker fences late authorization',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>true});let release,entered;const waiting=new Promise(resolve=>entered=resolve),decision=new Promise(resolve=>release=resolve);const worker=new AgentWakeupRetentionWorker({retention,actor,minAgeMs:1,maxPerPass:1,pollMs:100,clock:()=>10,authorize:()=>{entered();return decision;},onError:()=>{}});const pending=worker.runOnce();await waiting;const stopping=worker.stop();release(true);await stopping;assert.equal(await pending,0);assert.deepEqual(s.runs.getWakeup(scope,'webhook','event-1').payload,event.payload);}finally{retention?.close();close(s);}
+test('stopping a wakeup retention worker fences late authorization', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true, authorizeDiscovery: () => true });
+    let release, entered;
+    const waiting = new Promise(resolve => (entered = resolve)),
+      decision = new Promise(resolve => (release = resolve));
+    const worker = new AgentWakeupRetentionWorker({
+      retention,
+      actor,
+      minAgeMs: 1,
+      maxPerPass: 1,
+      pollMs: 100,
+      clock: () => 10,
+      authorize: () => {
+        entered();
+        return decision;
+      },
+      onError: () => {}
+    });
+    const pending = worker.runOnce();
+    await waiting;
+    const stopping = worker.stop();
+    release(true);
+    await stopping;
+    assert.equal(await pending, 0);
+    assert.deepEqual(s.runs.getWakeup(scope, 'webhook', 'event-1').payload, event.payload);
+  } finally {
+    retention?.close();
+    close(s);
+  }
 });
 
-test('wakeup discovery requires separate permission and lists only eligible scoped records',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,denied;try{
-  let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;run=s.runs.request(scope,'run',run.revision,'pause',4);run=s.runs.resumeWithTrigger(scope,'run',run.revision,{...event,eventId:'event-2'},5).run;run=s.runs.request(scope,'run',run.revision,'cancel',7);
-  let foreign=s.runs.create(other,'run',config,1);foreign=s.runs.request(other,'run',foreign.revision,'pause',2);foreign=s.runs.resumeWithTrigger(other,'run',foreign.revision,event,3).run;s.runs.request(other,'run',foreign.revision,'cancel',7);
-  let active=s.runs.create(scope,'active',config,1);active=s.runs.request(scope,'active',active.revision,'pause',2);s.runs.resumeWithTrigger(scope,'active',active.revision,{...event,eventId:'active'},3);
-  denied=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true});await assert.rejects(denied.listCandidates(actor),/discovery/);
-  let allowed=true;retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>allowed});const first=await retention.listCandidates(actor,{limit:1});assert.deepEqual(first.items.map(x=>x.eventId),['event-1']);assert.equal('observedAt' in first.items[0],false);assert.equal('payload' in first.items[0],false);const second=await retention.listCandidates(actor,{after:first.nextAfter,limit:1,includeObservedAt:true,includeCompletedAt:true});assert.equal(second.items[0].eventId,'event-2');assert.equal(second.items[0].observedAt,5);assert.equal(second.items[0].completedAt,7);assert.equal(second.nextAfter,undefined);
-  assert.equal((await retention.listCandidates(actor,{observedBefore:5})).items.length,1);assert.equal((await retention.listCandidates(actor,{completedBefore:7})).items.length,0);await retention.redact(actor,'webhook','event-1',8);assert.deepEqual((await retention.listCandidates(actor)).items.map(x=>x.eventId),['event-2']);allowed=false;await assert.rejects(retention.listCandidates(actor),/access denied/);await assert.rejects(retention.listCandidates({...actor,tenantId:'other'}),/Invalid/);await assert.rejects(retention.listCandidates(actor,{limit:101}),/Invalid/);
-  let checks=0;const revoked=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true,authorizeDiscovery:()=>++checks===1});try{await assert.rejects(revoked.listCandidates(actor),/access denied/);}finally{revoked.close();}
- }finally{retention?.close();denied?.close();close(s);}
+test('wakeup discovery requires separate permission and lists only eligible scoped records', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention, denied;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 4);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, { ...event, eventId: 'event-2' }, 5).run;
+    run = s.runs.request(scope, 'run', run.revision, 'cancel', 7);
+    let foreign = s.runs.create(other, 'run', config, 1);
+    foreign = s.runs.request(other, 'run', foreign.revision, 'pause', 2);
+    foreign = s.runs.resumeWithTrigger(other, 'run', foreign.revision, event, 3).run;
+    s.runs.request(other, 'run', foreign.revision, 'cancel', 7);
+    let active = s.runs.create(scope, 'active', config, 1);
+    active = s.runs.request(scope, 'active', active.revision, 'pause', 2);
+    s.runs.resumeWithTrigger(scope, 'active', active.revision, { ...event, eventId: 'active' }, 3);
+    denied = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true });
+    await assert.rejects(denied.listCandidates(actor), /discovery/);
+    let allowed = true;
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true, authorizeDiscovery: () => allowed });
+    const first = await retention.listCandidates(actor, { limit: 1 });
+    assert.deepEqual(
+      first.items.map(x => x.eventId),
+      ['event-1']
+    );
+    assert.equal('observedAt' in first.items[0], false);
+    assert.equal('payload' in first.items[0], false);
+    const second = await retention.listCandidates(actor, { after: first.nextAfter, limit: 1, includeObservedAt: true, includeCompletedAt: true });
+    assert.equal(second.items[0].eventId, 'event-2');
+    assert.equal(second.items[0].observedAt, 5);
+    assert.equal(second.items[0].completedAt, 7);
+    assert.equal(second.nextAfter, undefined);
+    assert.equal((await retention.listCandidates(actor, { observedBefore: 5 })).items.length, 1);
+    assert.equal((await retention.listCandidates(actor, { completedBefore: 7 })).items.length, 0);
+    await retention.redact(actor, 'webhook', 'event-1', 8);
+    assert.deepEqual(
+      (await retention.listCandidates(actor)).items.map(x => x.eventId),
+      ['event-2']
+    );
+    allowed = false;
+    await assert.rejects(retention.listCandidates(actor), /access denied/);
+    await assert.rejects(retention.listCandidates({ ...actor, tenantId: 'other' }), /Invalid/);
+    await assert.rejects(retention.listCandidates(actor, { limit: 101 }), /Invalid/);
+    let checks = 0;
+    const revoked = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true, authorizeDiscovery: () => ++checks === 1 });
+    try {
+      await assert.rejects(revoked.listCandidates(actor), /access denied/);
+    } finally {
+      revoked.close();
+    }
+  } finally {
+    retention?.close();
+    denied?.close();
+    close(s);
+  }
 });
 
-test('wakeup atomically resumes a paused run, retains payload and deduplicates across retries',async()=>{
- const s=setup();let history,db;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);let foreign=s.runs.create(other,'run',config,1);foreign=s.runs.request(other,'run',foreign.revision,'pause',2);history=new SqliteAgentRunHistory(s.path,{scope,authorize:()=>true});const first=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3);assert.equal(first.duplicate,false);assert.equal(first.run.status,'queued');assert.equal(first.run.revision,run.revision+1);assert.deepEqual(s.runs.getWakeup(scope,'webhook','event-1'),{sourceId:'webhook',eventId:'event-1',principalId:'sender',eventType:'message',payload:{count:1,text:'hello'},runId:'run',observedAt:3});const replay=s.runs.resumeWithTrigger(scope,'run',run.revision,{...event,payload:{count:1,text:'hello'}},8);assert.equal(replay.duplicate,true);assert.equal(replay.run.revision,first.run.revision);assert.deepEqual(s.runs.get(other,'run'),foreign);assert.equal(s.runs.getWakeup(other,'webhook','event-1'),undefined);assert.deepEqual(s.runs.listWakeups(scope,'run').items.map(item=>item.payload),[{count:1,text:'hello'}]);const changes=await history.list({tenantId:'tenant',principalId:'reviewer'});assert.deepEqual(changes.items.map(item=>item.status),['queued','paused','queued']);
-  for(const changed of [{...event,principalId:'other'},{...event,eventType:'different'},{...event,payload:{text:'changed'}}])assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision,changed,4),/identity conflict/);assert.throws(()=>s.runs.resumeWithTrigger(scope,'other-run',run.revision,event,4),/identity conflict/);assert.throws(()=>s.triggers.enqueue(scope,event,triggerConfig,4),/identity conflict/);db=new DatabaseSync(s.path);for(const sql of ['UPDATE agent_run_wakeups SET payload=\'null\'','DELETE FROM agent_run_wakeups','INSERT OR REPLACE INTO agent_run_wakeups SELECT * FROM agent_run_wakeups'])assert.throws(()=>db.exec(sql),/immutable/);
- }finally{db?.close();history?.close();close(s);}
+test('wakeup atomically resumes a paused run, retains payload and deduplicates across retries', async () => {
+  const s = setup();
+  let history, db;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    let foreign = s.runs.create(other, 'run', config, 1);
+    foreign = s.runs.request(other, 'run', foreign.revision, 'pause', 2);
+    history = new SqliteAgentRunHistory(s.path, { scope, authorize: () => true });
+    const first = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3);
+    assert.equal(first.duplicate, false);
+    assert.equal(first.run.status, 'queued');
+    assert.equal(first.run.revision, run.revision + 1);
+    assert.deepEqual(s.runs.getWakeup(scope, 'webhook', 'event-1'), {
+      sourceId: 'webhook',
+      eventId: 'event-1',
+      principalId: 'sender',
+      eventType: 'message',
+      payload: { count: 1, text: 'hello' },
+      runId: 'run',
+      observedAt: 3
+    });
+    const replay = s.runs.resumeWithTrigger(scope, 'run', run.revision, { ...event, payload: { count: 1, text: 'hello' } }, 8);
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.run.revision, first.run.revision);
+    assert.deepEqual(s.runs.get(other, 'run'), foreign);
+    assert.equal(s.runs.getWakeup(other, 'webhook', 'event-1'), undefined);
+    assert.deepEqual(
+      s.runs.listWakeups(scope, 'run').items.map(item => item.payload),
+      [{ count: 1, text: 'hello' }]
+    );
+    const changes = await history.list({ tenantId: 'tenant', principalId: 'reviewer' });
+    assert.deepEqual(
+      changes.items.map(item => item.status),
+      ['queued', 'paused', 'queued']
+    );
+    for (const changed of [
+      { ...event, principalId: 'other' },
+      { ...event, eventType: 'different' },
+      { ...event, payload: { text: 'changed' } }
+    ])
+      assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision, changed, 4), /identity conflict/);
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'other-run', run.revision, event, 4), /identity conflict/);
+    assert.throws(() => s.triggers.enqueue(scope, event, triggerConfig, 4), /identity conflict/);
+    db = new DatabaseSync(s.path);
+    for (const sql of ["UPDATE agent_run_wakeups SET payload='null'", 'DELETE FROM agent_run_wakeups', 'INSERT OR REPLACE INTO agent_run_wakeups SELECT * FROM agent_run_wakeups'])
+      assert.throws(() => db.exec(sql), /immutable/);
+  } finally {
+    db?.close();
+    history?.close();
+    close(s);
+  }
 });
 
-test('wakeup honors approval, delegation, revision, deadline and rollback gates',()=>{
- const s=setup();let db;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);db=new DatabaseSync(s.path);db.exec("CREATE TABLE agent_approvals (tenant_id TEXT,agent_id TEXT,run_id TEXT,action_id TEXT,status TEXT,expires_at INTEGER,definition_version INTEGER); CREATE TABLE agent_delegations (tenant_id TEXT,agent_id TEXT,run_id TEXT,grant_id TEXT,principal_id TEXT,revision INTEGER,revoked INTEGER,expires_at INTEGER);");db.prepare('INSERT INTO agent_approval_waits VALUES (?,?,?,?)').run('tenant','agent','run','action');db.prepare('INSERT INTO agent_approvals VALUES (?,?,?,?,?,?,?)').run('tenant','agent','run','action','pending',900,1);db.prepare('INSERT INTO agent_delegation_waits VALUES (?,?,?,?,?,?)').run('tenant','agent','run','grant',1,'user');db.prepare('INSERT INTO agent_delegations VALUES (?,?,?,?,?,?,?,?)').run('tenant','agent','run','grant','user',1,0,900);
-  assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision,event,3),/Approval required/);assert.equal(s.runs.getWakeup(scope,'webhook','event-1'),undefined);db.exec("UPDATE agent_approvals SET status='approved'");assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision,event,3),/Delegation renewal required/);assert.equal(s.runs.get(scope,'run').approvalWait.actionId,'action');db.exec('UPDATE agent_delegations SET revision=2');assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision-1,event,3),/revision conflict/);assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision,event,1000),/deadline/);db.exec("CREATE TRIGGER reject_wakeup BEFORE INSERT ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'wakeup unavailable'); END");assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision,event,3),/wakeup unavailable/);assert.equal(s.runs.get(scope,'run').status,'paused');assert.ok(s.runs.get(scope,'run').approvalWait);assert.ok(s.runs.get(scope,'run').delegationWait);db.exec('DROP TRIGGER reject_wakeup');const resumed=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3);assert.equal(resumed.run.status,'queued');assert.equal(resumed.run.approvalWait,null);assert.equal(resumed.run.delegationWait,null);
- }finally{db?.close();close(s);}
+test('wakeup honors approval, delegation, revision, deadline and rollback gates', () => {
+  const s = setup();
+  let db;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    db = new DatabaseSync(s.path);
+    db.exec(
+      'CREATE TABLE agent_approvals (tenant_id TEXT,agent_id TEXT,run_id TEXT,action_id TEXT,status TEXT,expires_at INTEGER,definition_version INTEGER); CREATE TABLE agent_delegations (tenant_id TEXT,agent_id TEXT,run_id TEXT,grant_id TEXT,principal_id TEXT,revision INTEGER,revoked INTEGER,expires_at INTEGER);'
+    );
+    db.prepare('INSERT INTO agent_approval_waits VALUES (?,?,?,?)').run('tenant', 'agent', 'run', 'action');
+    db.prepare('INSERT INTO agent_approvals VALUES (?,?,?,?,?,?,?)').run('tenant', 'agent', 'run', 'action', 'pending', 900, 1);
+    db.prepare('INSERT INTO agent_delegation_waits VALUES (?,?,?,?,?,?)').run('tenant', 'agent', 'run', 'grant', 1, 'user');
+    db.prepare('INSERT INTO agent_delegations VALUES (?,?,?,?,?,?,?,?)').run('tenant', 'agent', 'run', 'grant', 'user', 1, 0, 900);
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3), /Approval required/);
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1'), undefined);
+    db.exec("UPDATE agent_approvals SET status='approved'");
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3), /Delegation renewal required/);
+    assert.equal(s.runs.get(scope, 'run').approvalWait.actionId, 'action');
+    db.exec('UPDATE agent_delegations SET revision=2');
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision - 1, event, 3), /revision conflict/);
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 1000), /deadline/);
+    db.exec("CREATE TRIGGER reject_wakeup BEFORE INSERT ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'wakeup unavailable'); END");
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3), /wakeup unavailable/);
+    assert.equal(s.runs.get(scope, 'run').status, 'paused');
+    assert.ok(s.runs.get(scope, 'run').approvalWait);
+    assert.ok(s.runs.get(scope, 'run').delegationWait);
+    db.exec('DROP TRIGGER reject_wakeup');
+    const resumed = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3);
+    assert.equal(resumed.run.status, 'queued');
+    assert.equal(resumed.run.approvalWait, null);
+    assert.equal(resumed.run.delegationWait, null);
+  } finally {
+    db?.close();
+    close(s);
+  }
 });
 
-test('wakeup and new-run inbox reject the same event identity in either direction',()=>{
- const s=setup();try{const queued=s.triggers.enqueue(scope,event,triggerConfig,1);let target=s.runs.create(scope,'target',config,1);target=s.runs.request(scope,'target',target.revision,'pause',2);assert.throws(()=>s.runs.resumeWithTrigger(scope,'target',target.revision,event,3),/identity conflict/);const another={...event,eventId:'wake'};s.runs.resumeWithTrigger(scope,'target',target.revision,another,3);assert.throws(()=>s.triggers.enqueue(scope,another,triggerConfig,4),/identity conflict/);assert.equal(s.runs.get(scope,queued.runId).status,'queued');assert.throws(()=>s.runs.resumeWithTrigger(scope,'target',target.revision,{...event,eventId:'bad',payload:{x:Infinity}},3),/Invalid trigger payload/);assert.throws(()=>s.runs.listWakeups(scope,'target',{limit:101}),/Invalid run wakeup query/);
- }finally{close(s);}
+test('wakeup and new-run inbox reject the same event identity in either direction', () => {
+  const s = setup();
+  try {
+    const queued = s.triggers.enqueue(scope, event, triggerConfig, 1);
+    let target = s.runs.create(scope, 'target', config, 1);
+    target = s.runs.request(scope, 'target', target.revision, 'pause', 2);
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'target', target.revision, event, 3), /identity conflict/);
+    const another = { ...event, eventId: 'wake' };
+    s.runs.resumeWithTrigger(scope, 'target', target.revision, another, 3);
+    assert.throws(() => s.triggers.enqueue(scope, another, triggerConfig, 4), /identity conflict/);
+    assert.equal(s.runs.get(scope, queued.runId).status, 'queued');
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'target', target.revision, { ...event, eventId: 'bad', payload: { x: Infinity } }, 3), /Invalid trigger payload/);
+    assert.throws(() => s.runs.listWakeups(scope, 'target', { limit: 101 }), /Invalid run wakeup query/);
+  } finally {
+    close(s);
+  }
 });
 
-
-test('wakeup history pages a run in creation order and checks scheduled event identity',()=>{
- const s=setup();let schedules;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);let wake=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3);run=s.runs.request(scope,'run',wake.run.revision,'pause',4);wake=s.runs.resumeWithTrigger(scope,'run',run.revision,{...event,eventId:'event-2'},5);const first=s.runs.listWakeups(scope,'run',{limit:1}),second=s.runs.listWakeups(scope,'run',{after:first.nextAfter,limit:1});assert.deepEqual(first.items.map(item=>item.eventId),['event-1']);assert.deepEqual(second.items.map(item=>item.eventId),['event-2']);assert.equal(second.nextAfter,undefined);
-  schedules=new SqliteAgentSchedules(s.path);const schedule=schedules.save(scope,'timer',{enabled:true,principalId:'scheduler',rule:{kind:'interval',intervalMs:1000}},0,0),sourceId='schedule.'+createHash('sha256').update('timer').digest('hex'),scheduleEvent={sourceId,principalId:'scheduler',eventId:'g1:t1000',eventType:'schedule.tick',payload:{}};run=s.runs.request(scope,'run',wake.run.revision,'pause',6);s.runs.resumeWithTrigger(scope,'run',run.revision,scheduleEvent,7);assert.throws(()=>schedules.fire(scope,'timer',schedule.revision,{definitionVersion:1,maxAttempts:2,runTimeoutMs:10000,maxPending:10},1000),/identity conflict/);assert.equal(schedules.get(scope,'timer').revision,schedule.revision);assert.equal(schedules.getOccurrence(scope,'timer',1,1000),undefined);
- }finally{schedules?.close();close(s);}
+test('wakeup history pages a run in creation order and checks scheduled event identity', () => {
+  const s = setup();
+  let schedules;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    let wake = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3);
+    run = s.runs.request(scope, 'run', wake.run.revision, 'pause', 4);
+    wake = s.runs.resumeWithTrigger(scope, 'run', run.revision, { ...event, eventId: 'event-2' }, 5);
+    const first = s.runs.listWakeups(scope, 'run', { limit: 1 }),
+      second = s.runs.listWakeups(scope, 'run', { after: first.nextAfter, limit: 1 });
+    assert.deepEqual(
+      first.items.map(item => item.eventId),
+      ['event-1']
+    );
+    assert.deepEqual(
+      second.items.map(item => item.eventId),
+      ['event-2']
+    );
+    assert.equal(second.nextAfter, undefined);
+    schedules = new SqliteAgentSchedules(s.path);
+    const schedule = schedules.save(scope, 'timer', { enabled: true, principalId: 'scheduler', rule: { kind: 'interval', intervalMs: 1000 } }, 0, 0),
+      sourceId = 'schedule.' + createHash('sha256').update('timer').digest('hex'),
+      scheduleEvent = { sourceId, principalId: 'scheduler', eventId: 'g1:t1000', eventType: 'schedule.tick', payload: {} };
+    run = s.runs.request(scope, 'run', wake.run.revision, 'pause', 6);
+    s.runs.resumeWithTrigger(scope, 'run', run.revision, scheduleEvent, 7);
+    assert.throws(() => schedules.fire(scope, 'timer', schedule.revision, { definitionVersion: 1, maxAttempts: 2, runTimeoutMs: 10000, maxPending: 10 }, 1000), /identity conflict/);
+    assert.equal(schedules.get(scope, 'timer').revision, schedule.revision);
+    assert.equal(schedules.getOccurrence(scope, 'timer', 1, 1000), undefined);
+  } finally {
+    schedules?.close();
+    close(s);
+  }
 });
 
-
-test('terminal wakeup payloads can be redacted without losing replay protection',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,db;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;let foreign=s.runs.create(other,'run',config,1);foreign=s.runs.request(other,'run',foreign.revision,'pause',2);s.runs.resumeWithTrigger(other,'run',foreign.revision,event,3);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:who=>who.principalId==='operator',authorize:(_who,_action,target)=>target.runId==='run'});await assert.rejects(retention.redact(actor,'webhook','event-1',4),/not terminal/);await assert.rejects(retention.redact({...actor,principalId:'denied'},'webhook','event-1',4),/access denied/);await assert.rejects(retention.redact({...actor,tenantId:'other'},'webhook','event-1',4),/Invalid/);run=s.runs.request(scope,'run',run.revision,'cancel',4);assert.equal(await retention.redact(actor,'webhook','event-1',5),true);assert.equal(await retention.redact(actor,'webhook','event-1',6),false);assert.deepEqual(await retention.getRedaction(actor,'webhook','event-1'),{actorId:'operator',redactedAt:5});const value=s.runs.getWakeup(scope,'webhook','event-1');assert.equal(value.payload,null);assert.equal(value.payloadRedacted,true);assert.equal(s.runs.listWakeups(scope,'run').items[0].payloadRedacted,true);assert.deepEqual(s.runs.getWakeup(other,'webhook','event-1').payload,{count:1,text:'hello'});assert.equal(s.runs.resumeWithTrigger(scope,'run',run.revision,event,6).duplicate,true);assert.throws(()=>s.runs.resumeWithTrigger(scope,'run',run.revision,{...event,payload:{text:'different'}},6),/identity conflict/);assert.throws(()=>s.triggers.enqueue(scope,event,triggerConfig,6),/identity conflict/);db=new DatabaseSync(s.path);for(const sql of ["UPDATE agent_run_wakeups SET payload='changed'","UPDATE agent_run_wakeups SET principal_id='forged'","UPDATE agent_run_wakeup_redactions SET actor_id='forged'",'DELETE FROM agent_run_wakeup_redactions','INSERT OR REPLACE INTO agent_run_wakeup_redactions SELECT * FROM agent_run_wakeup_redactions'])assert.throws(()=>db.exec(sql),/immutable/);
- }finally{db?.close();retention?.close();close(s);}
+test('terminal wakeup payloads can be redacted without losing replay protection', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention, db;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    let foreign = s.runs.create(other, 'run', config, 1);
+    foreign = s.runs.request(other, 'run', foreign.revision, 'pause', 2);
+    s.runs.resumeWithTrigger(other, 'run', foreign.revision, event, 3);
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: who => who.principalId === 'operator', authorize: (_who, _action, target) => target.runId === 'run' });
+    await assert.rejects(retention.redact(actor, 'webhook', 'event-1', 4), /not terminal/);
+    await assert.rejects(retention.redact({ ...actor, principalId: 'denied' }, 'webhook', 'event-1', 4), /access denied/);
+    await assert.rejects(retention.redact({ ...actor, tenantId: 'other' }, 'webhook', 'event-1', 4), /Invalid/);
+    run = s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    assert.equal(await retention.redact(actor, 'webhook', 'event-1', 5), true);
+    assert.equal(await retention.redact(actor, 'webhook', 'event-1', 6), false);
+    assert.deepEqual(await retention.getRedaction(actor, 'webhook', 'event-1'), { actorId: 'operator', redactedAt: 5 });
+    const value = s.runs.getWakeup(scope, 'webhook', 'event-1');
+    assert.equal(value.payload, null);
+    assert.equal(value.payloadRedacted, true);
+    assert.equal(s.runs.listWakeups(scope, 'run').items[0].payloadRedacted, true);
+    assert.deepEqual(s.runs.getWakeup(other, 'webhook', 'event-1').payload, { count: 1, text: 'hello' });
+    assert.equal(s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 6).duplicate, true);
+    assert.throws(() => s.runs.resumeWithTrigger(scope, 'run', run.revision, { ...event, payload: { text: 'different' } }, 6), /identity conflict/);
+    assert.throws(() => s.triggers.enqueue(scope, event, triggerConfig, 6), /identity conflict/);
+    db = new DatabaseSync(s.path);
+    for (const sql of [
+      "UPDATE agent_run_wakeups SET payload='changed'",
+      "UPDATE agent_run_wakeups SET principal_id='forged'",
+      "UPDATE agent_run_wakeup_redactions SET actor_id='forged'",
+      'DELETE FROM agent_run_wakeup_redactions',
+      'INSERT OR REPLACE INTO agent_run_wakeup_redactions SELECT * FROM agent_run_wakeup_redactions'
+    ])
+      assert.throws(() => db.exec(sql), /immutable/);
+  } finally {
+    db?.close();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('wakeup redaction and evidence roll back together and distinguish genuine null payloads',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'},nullEvent={...event,payload:null};let retention,db;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,nullEvent,3).run;assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payloadRedacted,undefined);s.runs.request(scope,'run',run.revision,'cancel',4);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true});db=new DatabaseSync(s.path);db.exec("CREATE TRIGGER reject_wakeup_redaction BEFORE UPDATE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'payload unavailable'); END");await assert.rejects(retention.redact(actor,'webhook','event-1',5),/payload unavailable/);assert.equal(await retention.getRedaction(actor,'webhook','event-1'),undefined);assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payloadRedacted,undefined);db.exec('DROP TRIGGER reject_wakeup_redaction');assert.equal(await retention.redact(actor,'webhook','event-1',5),true);assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payloadRedacted,true);
- }finally{db?.close();retention?.close();close(s);}
+test('wakeup redaction and evidence roll back together and distinguish genuine null payloads', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' },
+    nullEvent = { ...event, payload: null };
+  let retention, db;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, nullEvent, 3).run;
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payloadRedacted, undefined);
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true });
+    db = new DatabaseSync(s.path);
+    db.exec("CREATE TRIGGER reject_wakeup_redaction BEFORE UPDATE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'payload unavailable'); END");
+    await assert.rejects(retention.redact(actor, 'webhook', 'event-1', 5), /payload unavailable/);
+    assert.equal(await retention.getRedaction(actor, 'webhook', 'event-1'), undefined);
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payloadRedacted, undefined);
+    db.exec('DROP TRIGGER reject_wakeup_redaction');
+    assert.equal(await retention.redact(actor, 'webhook', 'event-1', 5), true);
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payloadRedacted, true);
+  } finally {
+    db?.close();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('wakeup redaction rechecks permission and respects cancellation',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,entered,release,allowed=true,calls=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:async(_who,action)=>{if(action==='redact'&&++calls===2){entered();await gate;}return allowed;}});const controller=new AbortController(),pending=retention.redact(actor,'webhook','event-1',5,controller.signal);await ready;allowed=false;controller.abort();release();await assert.rejects(pending,/cancelled/);assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payload.text,'hello');assert.equal(await retention.getRedaction(actor,'webhook','event-1').catch(()=>undefined),undefined);
- }finally{release();retention?.close();close(s);}
+test('wakeup redaction rechecks permission and respects cancellation', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention,
+    entered,
+    release,
+    allowed = true,
+    calls = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    retention = new SqliteAgentWakeupRetention(s.path, {
+      scope,
+      authorizeScope: () => true,
+      authorize: async (_who, action) => {
+        if (action === 'redact' && ++calls === 2) {
+          entered();
+          await gate;
+        }
+        return allowed;
+      }
+    });
+    const controller = new AbortController(),
+      pending = retention.redact(actor, 'webhook', 'event-1', 5, controller.signal);
+    await ready;
+    allowed = false;
+    controller.abort();
+    release();
+    await assert.rejects(pending, /cancelled/);
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payload.text, 'hello');
+    assert.equal(await retention.getRedaction(actor, 'webhook', 'event-1').catch(() => undefined), undefined);
+  } finally {
+    release();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('older immutable wakeup tables upgrade safely before redaction',async()=>{
- const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,db;try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);s.runs.close();db=new DatabaseSync(s.path);db.exec("DROP TRIGGER agent_run_wakeups_no_update; DROP TABLE agent_run_wakeup_redactions; CREATE TRIGGER agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;");db.close();db=undefined;s.runs=new SqliteAgentRuns(s.path);assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payload.text,'hello');retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:()=>true,authorize:()=>true});assert.equal(await retention.redact(actor,'webhook','event-1',5),true);assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payloadRedacted,true);assert.equal(s.runs.resumeWithTrigger(scope,'run',run.revision,event,6).duplicate,true);
- }finally{db?.close();retention?.close();close(s);}
+test('older immutable wakeup tables upgrade safely before redaction', async () => {
+  const s = setup(),
+    actor = { tenantId: 'tenant', principalId: 'operator' };
+  let retention, db;
+  try {
+    let run = s.runs.create(scope, 'run', config, 1);
+    run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+    run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+    s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+    s.runs.close();
+    db = new DatabaseSync(s.path);
+    db.exec(
+      "DROP TRIGGER agent_run_wakeups_no_update; DROP TABLE agent_run_wakeup_redactions; CREATE TRIGGER agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;"
+    );
+    db.close();
+    db = undefined;
+    s.runs = new SqliteAgentRuns(s.path);
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payload.text, 'hello');
+    retention = new SqliteAgentWakeupRetention(s.path, { scope, authorizeScope: () => true, authorize: () => true });
+    assert.equal(await retention.redact(actor, 'webhook', 'event-1', 5), true);
+    assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payloadRedacted, true);
+    assert.equal(s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 6).duplicate, true);
+  } finally {
+    db?.close();
+    retention?.close();
+    close(s);
+  }
 });
 
-test('wakeup retention rejects a policy revoked during authorization',async()=>{
- for(const phase of ['scope','target']){const s=setup(),actor={tenantId:'tenant',principalId:'operator'};let retention,entered,release,scopeChecks=0,targetChecks=0,allowed=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);try{let run=s.runs.create(scope,'run',config,1);run=s.runs.request(scope,'run',run.revision,'pause',2);run=s.runs.resumeWithTrigger(scope,'run',run.revision,event,3).run;s.runs.request(scope,'run',run.revision,'cancel',4);retention=new SqliteAgentWakeupRetention(s.path,{scope,authorizeScope:async()=>{if(phase==='scope'&&++scopeChecks===2){entered();await gate;}return phase==='scope'?allowed:true;},authorize:async()=>{if(phase==='target'&&++targetChecks===2){entered();await gate;}return phase==='target'?allowed:true;}});const pending=retention.redact(actor,'webhook','event-1',5);await ready;allowed=false;release();await assert.rejects(pending,/access denied/);assert.equal(s.runs.getWakeup(scope,'webhook','event-1').payload.text,'hello');}finally{release();retention?.close();close(s);}}
+test('wakeup retention rejects a policy revoked during authorization', async () => {
+  for (const phase of ['scope', 'target']) {
+    const s = setup(),
+      actor = { tenantId: 'tenant', principalId: 'operator' };
+    let retention,
+      entered,
+      release,
+      scopeChecks = 0,
+      targetChecks = 0,
+      allowed = true;
+    const ready = new Promise(resolve => (entered = resolve)),
+      gate = new Promise(resolve => (release = resolve));
+    try {
+      let run = s.runs.create(scope, 'run', config, 1);
+      run = s.runs.request(scope, 'run', run.revision, 'pause', 2);
+      run = s.runs.resumeWithTrigger(scope, 'run', run.revision, event, 3).run;
+      s.runs.request(scope, 'run', run.revision, 'cancel', 4);
+      retention = new SqliteAgentWakeupRetention(s.path, {
+        scope,
+        authorizeScope: async () => {
+          if (phase === 'scope' && ++scopeChecks === 2) {
+            entered();
+            await gate;
+          }
+          return phase === 'scope' ? allowed : true;
+        },
+        authorize: async () => {
+          if (phase === 'target' && ++targetChecks === 2) {
+            entered();
+            await gate;
+          }
+          return phase === 'target' ? allowed : true;
+        }
+      });
+      const pending = retention.redact(actor, 'webhook', 'event-1', 5);
+      await ready;
+      allowed = false;
+      release();
+      await assert.rejects(pending, /access denied/);
+      assert.equal(s.runs.getWakeup(scope, 'webhook', 'event-1').payload.text, 'hello');
+    } finally {
+      release();
+      retention?.close();
+      close(s);
+    }
+  }
 });

@@ -1,117 +1,445 @@
-import {execFileSync,spawnSync} from 'node:child_process';
-import {writeFileSync} from 'node:fs';
-import {join} from 'node:path';
-import {setTimeout as delay} from 'node:timers/promises';
-process.on('uncaughtException',error=>{console.log('::error title=Admission policy check::'+String(error.message).replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A').slice(0,1500));process.exit(1);});
-const namespace='app-mixer-test',path=join(process.env.RUNNER_TEMP,'admission-deployment.json'),image='registry.example/app-mixer@sha256:'+'a'.repeat(64);
-const original=JSON.parse(execFileSync('kubectl',['get','deployment','app-mixer-data-plane','-n',namespace,'-o','json'],{encoding:'utf8'}));original.spec.template.spec.containers[0].image=image;
-const apply=object=>{writeFileSync(path,JSON.stringify(object));return spawnSync('kubectl',['replace','--dry-run=server','-f',path],{encoding:'utf8'});};
-let valid;for(let i=0;i<30;i++){valid=apply(original);if(valid.status===0)break;await delay(1000);}if(valid.status!==0){const live=spawnSync('kubectl',['get','validatingadmissionpolicy','app-mixer-data-plane-security','-o','jsonpath={.status}'],{encoding:'utf8'}).stdout;const e0=original.spec.template.spec.containers[0].env;throw Error('Expected approved deployment to pass: '+valid.stderr+' env='+e0.length+' names='+e0.map(e=>e.name).join(',')+' status='+live);}
-const changed=(name,mutate)=>{const object=structuredClone(original),c=object.spec.template.spec.containers[0];mutate(object,c);const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error(`${name} was not denied by the security policy: ${result.stderr}`);};
-const env=(c,name)=>c.env.find(e=>e.name===name);
+import { execFileSync, spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+process.on('uncaughtException', error => {
+  console.log('::error title=Admission policy check::' + String(error.message).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A').slice(0, 1500));
+  process.exit(1);
+});
+const namespace = 'app-mixer-test',
+  path = join(process.env.RUNNER_TEMP, 'admission-deployment.json'),
+  image = 'registry.example/app-mixer@sha256:' + 'a'.repeat(64);
+const original = JSON.parse(execFileSync('kubectl', ['get', 'deployment', 'app-mixer-data-plane', '-n', namespace, '-o', 'json'], { encoding: 'utf8' }));
+original.spec.template.spec.containers[0].image = image;
+const apply = object => {
+  writeFileSync(path, JSON.stringify(object));
+  return spawnSync('kubectl', ['replace', '--dry-run=server', '-f', path], { encoding: 'utf8' });
+};
+let valid;
+for (let i = 0; i < 30; i++) {
+  valid = apply(original);
+  if (valid.status === 0) break;
+  await delay(1000);
+}
+if (valid.status !== 0) {
+  const live = spawnSync('kubectl', ['get', 'validatingadmissionpolicy', 'app-mixer-data-plane-security', '-o', 'jsonpath={.status}'], { encoding: 'utf8' }).stdout;
+  const e0 = original.spec.template.spec.containers[0].env;
+  throw Error('Expected approved deployment to pass: ' + valid.stderr + ' env=' + e0.length + ' names=' + e0.map(e => e.name).join(',') + ' status=' + live);
+}
+const changed = (name, mutate) => {
+  const object = structuredClone(original),
+    c = object.spec.template.spec.containers[0];
+  mutate(object, c);
+  const result = apply(object);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error(`${name} was not denied by the security policy: ${result.stderr}`);
+};
+const env = (c, name) => c.env.find(e => e.name === name);
 // Policy and binding propagation is asynchronous; wait for an unsafe update to
 // be denied before asserting individual rejection cases.
-const unsigned=structuredClone(original);env(unsigned.spec.template.spec.containers[0],'APP_MIXER_PUBLICATION_MODE').value='unsigned';
-let enforced;for(let i=0;i<30;i++){enforced=apply(unsigned);if(enforced.status!==0&&enforced.stderr.includes('app-mixer-data-plane-security'))break;await delay(1000);}if(enforced.status===0||!enforced.stderr.includes('app-mixer-data-plane-security'))throw Error('Admission policy did not become active: '+enforced.stderr);
+const unsigned = structuredClone(original);
+env(unsigned.spec.template.spec.containers[0], 'APP_MIXER_PUBLICATION_MODE').value = 'unsigned';
+let enforced;
+for (let i = 0; i < 30; i++) {
+  enforced = apply(unsigned);
+  if (enforced.status !== 0 && enforced.stderr.includes('app-mixer-data-plane-security')) break;
+  await delay(1000);
+}
+if (enforced.status === 0 || !enforced.stderr.includes('app-mixer-data-plane-security')) throw Error('Admission policy did not become active: ' + enforced.stderr);
 // JWKS reload uses the same approved interval set and rejects duplicates.
-const jwksReload=structuredClone(original);jwksReload.spec.template.spec.containers[0].env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'60000'});const jwksAccepted=apply(jwksReload);if(jwksAccepted.status!==0)throw Error('Expected JWKS reload interval to pass: '+jwksAccepted.stderr);
-changed('unlisted JWKS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'1000'}));
-changed('non-numeric JWKS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'soon'}));
-changed('duplicate JWKS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_JWKS_RELOAD_MS',value:'60000'},{name:'APP_MIXER_JWKS_RELOAD_MS',value:'60000'}));
+const jwksReload = structuredClone(original);
+jwksReload.spec.template.spec.containers[0].env.push({ name: 'APP_MIXER_JWKS_RELOAD_MS', value: '60000' });
+const jwksAccepted = apply(jwksReload);
+if (jwksAccepted.status !== 0) throw Error('Expected JWKS reload interval to pass: ' + jwksAccepted.stderr);
+changed('unlisted JWKS reload interval', (_, c) => c.env.push({ name: 'APP_MIXER_JWKS_RELOAD_MS', value: '1000' }));
+changed('non-numeric JWKS reload interval', (_, c) => c.env.push({ name: 'APP_MIXER_JWKS_RELOAD_MS', value: 'soon' }));
+changed('duplicate JWKS reload interval', (_, c) => c.env.push({ name: 'APP_MIXER_JWKS_RELOAD_MS', value: '60000' }, { name: 'APP_MIXER_JWKS_RELOAD_MS', value: '60000' }));
 // The optional TLS reload interval must be unique and one of the approved values.
-const reload=structuredClone(original);reload.spec.template.spec.containers[0].env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'});const accepted=apply(reload);if(accepted.status!==0){const live=spawnSync('kubectl',['get','validatingadmissionpolicy','app-mixer-data-plane-security','-o','jsonpath={.status}'],{encoding:'utf8'}).stdout;const e0=reload.spec.template.spec.containers[0].env;throw Error('Expected TLS reload interval to pass: '+accepted.stderr+' env='+e0.length+' names='+e0.map(e=>e.name).join(',')+' status='+live);}
-changed('unlisted TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'1000'}));
-changed('non-numeric TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'soon'}));
-changed('duplicate TLS reload interval',(_,c)=>c.env.push({name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'},{name:'APP_MIXER_TLS_RELOAD_MS',value:'60000'}));
-const metrics=structuredClone(original);metrics.spec.template.spec.containers[0].env=metrics.spec.template.spec.containers[0].env.filter(e=>e.name!=='APP_MIXER_METRICS_PORT'&&e.name!=='APP_MIXER_METRICS_BIND');
-const withMetrics=value=>{const object=structuredClone(metrics);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_PORT',value});return object;};
-const withBind=(value,port='39092')=>{const object=withMetrics(port);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value});return object;};
-for(const value of ['127.0.0.1','0.0.0.0']){const result=apply(withBind(value));if(result.status!==0)throw Error('Expected metrics bind '+value+' to pass: '+result.stderr);}
-for(const value of ['10.0.0.5','localhost','::','']){const result=apply(withBind(value));if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('Metrics bind '+value+' was not denied: '+result.stderr);}
-{const object=structuredClone(metrics);object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value:'0.0.0.0'});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('A metrics bind without a metrics port was not denied: '+result.stderr);}
-{const object=withBind('0.0.0.0');object.spec.template.spec.containers[0].env.push({name:'APP_MIXER_METRICS_BIND',value:'127.0.0.1'});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('A duplicate metrics bind was not denied: '+result.stderr);}
-for(const value of ['39092','65535']){const result=apply(withMetrics(value));if(result.status!==0)throw Error('Expected metrics port '+value+' to pass: '+result.stderr);}
-for(const value of ['abc','0','65536','3002','070']){const result=apply(withMetrics(value));if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('Metrics port '+value+' was not denied: '+result.stderr);}
-changed('duplicate metrics port',(_,c)=>c.env.push({name:'APP_MIXER_METRICS_PORT',value:'39093'}));
+const reload = structuredClone(original);
+reload.spec.template.spec.containers[0].env.push({ name: 'APP_MIXER_TLS_RELOAD_MS', value: '60000' });
+const accepted = apply(reload);
+if (accepted.status !== 0) {
+  const live = spawnSync('kubectl', ['get', 'validatingadmissionpolicy', 'app-mixer-data-plane-security', '-o', 'jsonpath={.status}'], { encoding: 'utf8' }).stdout;
+  const e0 = reload.spec.template.spec.containers[0].env;
+  throw Error('Expected TLS reload interval to pass: ' + accepted.stderr + ' env=' + e0.length + ' names=' + e0.map(e => e.name).join(',') + ' status=' + live);
+}
+changed('unlisted TLS reload interval', (_, c) => c.env.push({ name: 'APP_MIXER_TLS_RELOAD_MS', value: '1000' }));
+changed('non-numeric TLS reload interval', (_, c) => c.env.push({ name: 'APP_MIXER_TLS_RELOAD_MS', value: 'soon' }));
+changed('duplicate TLS reload interval', (_, c) => c.env.push({ name: 'APP_MIXER_TLS_RELOAD_MS', value: '60000' }, { name: 'APP_MIXER_TLS_RELOAD_MS', value: '60000' }));
+const metrics = structuredClone(original);
+metrics.spec.template.spec.containers[0].env = metrics.spec.template.spec.containers[0].env.filter(e => e.name !== 'APP_MIXER_METRICS_PORT' && e.name !== 'APP_MIXER_METRICS_BIND');
+const withMetrics = value => {
+  const object = structuredClone(metrics);
+  object.spec.template.spec.containers[0].env.push({ name: 'APP_MIXER_METRICS_PORT', value });
+  return object;
+};
+const withBind = (value, port = '39092') => {
+  const object = withMetrics(port);
+  object.spec.template.spec.containers[0].env.push({ name: 'APP_MIXER_METRICS_BIND', value });
+  return object;
+};
+for (const value of ['127.0.0.1', '0.0.0.0']) {
+  const result = apply(withBind(value));
+  if (result.status !== 0) throw Error('Expected metrics bind ' + value + ' to pass: ' + result.stderr);
+}
+for (const value of ['10.0.0.5', 'localhost', '::', '']) {
+  const result = apply(withBind(value));
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error('Metrics bind ' + value + ' was not denied: ' + result.stderr);
+}
+{
+  const object = structuredClone(metrics);
+  object.spec.template.spec.containers[0].env.push({ name: 'APP_MIXER_METRICS_BIND', value: '0.0.0.0' });
+  const result = apply(object);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error('A metrics bind without a metrics port was not denied: ' + result.stderr);
+}
+{
+  const object = withBind('0.0.0.0');
+  object.spec.template.spec.containers[0].env.push({ name: 'APP_MIXER_METRICS_BIND', value: '127.0.0.1' });
+  const result = apply(object);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error('A duplicate metrics bind was not denied: ' + result.stderr);
+}
+for (const value of ['39092', '65535']) {
+  const result = apply(withMetrics(value));
+  if (result.status !== 0) throw Error('Expected metrics port ' + value + ' to pass: ' + result.stderr);
+}
+for (const value of ['abc', '0', '65536', '3002', '070']) {
+  const result = apply(withMetrics(value));
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error('Metrics port ' + value + ' was not denied: ' + result.stderr);
+}
+changed('duplicate metrics port', (_, c) => c.env.push({ name: 'APP_MIXER_METRICS_PORT', value: '39093' }));
 // The optional release floor anchor: a fixed directory on a claimed volume, present together with its mount and volume or not at all.
-const anchorEnv='APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR',anchored=original.spec.template.spec.containers[0].env.some(e=>e.name===anchorEnv);
-const withoutAnchor=object=>{const c=object.spec.template.spec.containers[0];c.env=c.env.filter(e=>e.name!==anchorEnv);c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');object.spec.template.spec.volumes=object.spec.template.spec.volumes.filter(v=>v.name!=='floor-anchor');return object;};
-const withAnchor=object=>{const c=object.spec.template.spec.containers[0];c.env.push({name:anchorEnv,value:'/floor-anchor'});c.volumeMounts.push({name:'floor-anchor',mountPath:'/floor-anchor'});object.spec.template.spec.volumes.push({name:'floor-anchor',persistentVolumeClaim:{claimName:'app-mixer-floor-anchor'}});return object;};
-const plain=withoutAnchor(structuredClone(original)),accepted_plain=apply(plain);if(accepted_plain.status!==0)throw Error('Expected a deployment without the floor anchor to pass: '+accepted_plain.stderr);
-const anchoredObject=anchored?structuredClone(original):withAnchor(structuredClone(plain)),accepted_anchor=apply(anchoredObject);if(accepted_anchor.status!==0)throw Error('Expected a deployment with the floor anchor to pass: '+accepted_anchor.stderr);
-const denyAnchor=(name,mutate)=>{const object=structuredClone(anchoredObject);mutate(object,object.spec.template.spec.containers[0]);const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error(`${name} was not denied: ${result.stderr}`);};
-denyAnchor('anchor directory outside the approved path',(_,c)=>env(c,anchorEnv).value='/tmp/anchor');
-denyAnchor('anchor directory with a traversal',(_,c)=>env(c,anchorEnv).value='/floor-anchor/../tmp');
-denyAnchor('duplicate anchor variable',(_,c)=>c.env.push({name:anchorEnv,value:'/floor-anchor'}));
-denyAnchor('anchor variable without its mount',(o,c)=>{c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');});
-denyAnchor('anchor variable without its mount and volume',(o,c)=>{c.volumeMounts=c.volumeMounts.filter(m=>m.name!=='floor-anchor');o.spec.template.spec.volumes=o.spec.template.spec.volumes.filter(v=>v.name!=='floor-anchor');});
-denyAnchor('read-only anchor mount',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').readOnly=true;});
-denyAnchor('anchor mount at another path',(_,c)=>{c.volumeMounts.find(m=>m.name==='floor-anchor').mountPath='/tmp';});
-denyAnchor('anchor volume that is not the approved claim',(o)=>{o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor').persistentVolumeClaim.claimName='other';});
-denyAnchor('anchor claim mounted read-only',(o)=>{o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor').persistentVolumeClaim.readOnly=true;});
-denyAnchor('anchor volume from the node filesystem',(o)=>{const volume=o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor');delete volume.persistentVolumeClaim;volume.hostPath={path:'/tmp'};});
-denyAnchor('anchor volume backed by an emptyDir',(o)=>{const volume=o.spec.template.spec.volumes.find(v=>v.name==='floor-anchor');delete volume.persistentVolumeClaim;volume.emptyDir={};});
-{const object=structuredClone(plain);object.spec.template.spec.containers[0].volumeMounts.push({name:'floor-anchor',mountPath:'/floor-anchor'});object.spec.template.spec.volumes.push({name:'floor-anchor',persistentVolumeClaim:{claimName:'app-mixer-floor-anchor'}});const result=apply(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-security'))throw Error('An anchor volume without its variable was not denied: '+result.stderr);}
-for(const [name,values] of [['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS',['100','5000','30000']],['APP_MIXER_PUBLICATION_AUTH_MAX_PENDING',['1','20','100']]])for(const value of values){const object=structuredClone(original);object.spec.template.spec.containers[0].env.push({name,value});const result=apply(object);if(result.status!==0)throw Error('Expected '+name+'='+value+' to pass: '+result.stderr);}
-for(const [name,values] of [['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS',['0','99','30001','0100','1.5','invalid']],['APP_MIXER_PUBLICATION_AUTH_MAX_PENDING',['0','101','01','1.5','invalid']]])for(const value of values)changed('invalid '+name+'='+value,(_,c)=>c.env.push({name,value}));
-for(const name of ['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS','APP_MIXER_PUBLICATION_AUTH_MAX_PENDING'])changed('duplicate '+name,(_,c)=>c.env.push({name,value:name.endsWith('TIMEOUT_MS')?'5000':'20'},{name,value:name.endsWith('TIMEOUT_MS')?'5000':'20'}));
-changed('unapproved extra variable',(_,c)=>c.env.push({name:'APP_MIXER_DEBUG',value:'1'}));
-changed('unsigned publication',(_,c)=>env(c,'APP_MIXER_PUBLICATION_MODE').value='unsigned');
-changed('public access',(_,c)=>env(c,'APP_MIXER_ACCESS_MODE').value='public');
-changed('plaintext transport',(_,c)=>env(c,'APP_MIXER_TRANSPORT').value='http');
-changed('disabled revocation',(_,c)=>env(c,'APP_MIXER_REVOCATION_MODE').value='disabled');
-changed('disabled release floor',(_,c)=>env(c,'APP_MIXER_RELEASE_FLOOR_MODE').value='disabled');
-changed('wrong issuer',(_,c)=>env(c,'APP_MIXER_JWT_ISSUER').value='https://other.example/');
-changed('duplicate security variable',(_,c)=>c.env.push({name:'APP_MIXER_ACCESS_MODE',value:'public'}));
-changed('unapproved image',(_,c)=>c.image='registry.example/app-mixer:latest');
-changed('overridden entrypoint',(_,c)=>c.command=['sh']);
-changed('privileged container',(_,c)=>{c.securityContext.privileged=true;c.securityContext.allowPrivilegeEscalation=true;});
-changed('container user override',(_,c)=>c.securityContext.runAsUser=0);
-changed('host networking',o=>o.spec.template.spec.hostNetwork=true);
-changed('extra sidecar',o=>o.spec.template.spec.containers.push({name:'sidecar',image:'example:latest'}));
-changed('untrusted key mount',o=>o.spec.template.spec.volumes.find(v=>v.name==='release-trust').configMap.name='untrusted');
-changed('select alternate key',o=>o.spec.template.spec.volumes.find(v=>v.name==='release-trust').configMap.items=[{key:'other',path:'keys.json'}]);
-changed('plaintext readiness probe',(_,c)=>c.readinessProbe.httpGet.scheme='HTTP');
-for(const probe of ['readinessProbe','livenessProbe','startupProbe']){changed(probe+' external host',(_,c)=>c[probe].httpGet.host='example.com');changed(probe+' alternate port',(_,c)=>c[probe].httpGet.port=8080);changed(probe+' custom host header',(_,c)=>c[probe].httpGet.httpHeaders=[{name:'Host',value:'other.example'}]);}
+const anchorEnv = 'APP_MIXER_RELEASE_FLOOR_ANCHOR_DIR',
+  anchored = original.spec.template.spec.containers[0].env.some(e => e.name === anchorEnv);
+const withoutAnchor = object => {
+  const c = object.spec.template.spec.containers[0];
+  c.env = c.env.filter(e => e.name !== anchorEnv);
+  c.volumeMounts = c.volumeMounts.filter(m => m.name !== 'floor-anchor');
+  object.spec.template.spec.volumes = object.spec.template.spec.volumes.filter(v => v.name !== 'floor-anchor');
+  return object;
+};
+const withAnchor = object => {
+  const c = object.spec.template.spec.containers[0];
+  c.env.push({ name: anchorEnv, value: '/floor-anchor' });
+  c.volumeMounts.push({ name: 'floor-anchor', mountPath: '/floor-anchor' });
+  object.spec.template.spec.volumes.push({ name: 'floor-anchor', persistentVolumeClaim: { claimName: 'app-mixer-floor-anchor' } });
+  return object;
+};
+const plain = withoutAnchor(structuredClone(original)),
+  accepted_plain = apply(plain);
+if (accepted_plain.status !== 0) throw Error('Expected a deployment without the floor anchor to pass: ' + accepted_plain.stderr);
+const anchoredObject = anchored ? structuredClone(original) : withAnchor(structuredClone(plain)),
+  accepted_anchor = apply(anchoredObject);
+if (accepted_anchor.status !== 0) throw Error('Expected a deployment with the floor anchor to pass: ' + accepted_anchor.stderr);
+const denyAnchor = (name, mutate) => {
+  const object = structuredClone(anchoredObject);
+  mutate(object, object.spec.template.spec.containers[0]);
+  const result = apply(object);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error(`${name} was not denied: ${result.stderr}`);
+};
+denyAnchor('anchor directory outside the approved path', (_, c) => (env(c, anchorEnv).value = '/tmp/anchor'));
+denyAnchor('anchor directory with a traversal', (_, c) => (env(c, anchorEnv).value = '/floor-anchor/../tmp'));
+denyAnchor('duplicate anchor variable', (_, c) => c.env.push({ name: anchorEnv, value: '/floor-anchor' }));
+denyAnchor('anchor variable without its mount', (o, c) => {
+  c.volumeMounts = c.volumeMounts.filter(m => m.name !== 'floor-anchor');
+});
+denyAnchor('anchor variable without its mount and volume', (o, c) => {
+  c.volumeMounts = c.volumeMounts.filter(m => m.name !== 'floor-anchor');
+  o.spec.template.spec.volumes = o.spec.template.spec.volumes.filter(v => v.name !== 'floor-anchor');
+});
+denyAnchor('read-only anchor mount', (_, c) => {
+  c.volumeMounts.find(m => m.name === 'floor-anchor').readOnly = true;
+});
+denyAnchor('anchor mount at another path', (_, c) => {
+  c.volumeMounts.find(m => m.name === 'floor-anchor').mountPath = '/tmp';
+});
+denyAnchor('anchor volume that is not the approved claim', o => {
+  o.spec.template.spec.volumes.find(v => v.name === 'floor-anchor').persistentVolumeClaim.claimName = 'other';
+});
+denyAnchor('anchor claim mounted read-only', o => {
+  o.spec.template.spec.volumes.find(v => v.name === 'floor-anchor').persistentVolumeClaim.readOnly = true;
+});
+denyAnchor('anchor volume from the node filesystem', o => {
+  const volume = o.spec.template.spec.volumes.find(v => v.name === 'floor-anchor');
+  delete volume.persistentVolumeClaim;
+  volume.hostPath = { path: '/tmp' };
+});
+denyAnchor('anchor volume backed by an emptyDir', o => {
+  const volume = o.spec.template.spec.volumes.find(v => v.name === 'floor-anchor');
+  delete volume.persistentVolumeClaim;
+  volume.emptyDir = {};
+});
+{
+  const object = structuredClone(plain);
+  object.spec.template.spec.containers[0].volumeMounts.push({ name: 'floor-anchor', mountPath: '/floor-anchor' });
+  object.spec.template.spec.volumes.push({ name: 'floor-anchor', persistentVolumeClaim: { claimName: 'app-mixer-floor-anchor' } });
+  const result = apply(object);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-security')) throw Error('An anchor volume without its variable was not denied: ' + result.stderr);
+}
+for (const [name, values] of [
+  ['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS', ['100', '5000', '30000']],
+  ['APP_MIXER_PUBLICATION_AUTH_MAX_PENDING', ['1', '20', '100']]
+])
+  for (const value of values) {
+    const object = structuredClone(original);
+    object.spec.template.spec.containers[0].env.push({ name, value });
+    const result = apply(object);
+    if (result.status !== 0) throw Error('Expected ' + name + '=' + value + ' to pass: ' + result.stderr);
+  }
+for (const [name, values] of [
+  ['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS', ['0', '99', '30001', '0100', '1.5', 'invalid']],
+  ['APP_MIXER_PUBLICATION_AUTH_MAX_PENDING', ['0', '101', '01', '1.5', 'invalid']]
+])
+  for (const value of values) changed('invalid ' + name + '=' + value, (_, c) => c.env.push({ name, value }));
+for (const name of ['APP_MIXER_PUBLICATION_AUTH_TIMEOUT_MS', 'APP_MIXER_PUBLICATION_AUTH_MAX_PENDING'])
+  changed('duplicate ' + name, (_, c) => c.env.push({ name, value: name.endsWith('TIMEOUT_MS') ? '5000' : '20' }, { name, value: name.endsWith('TIMEOUT_MS') ? '5000' : '20' }));
+changed('unapproved extra variable', (_, c) => c.env.push({ name: 'APP_MIXER_DEBUG', value: '1' }));
+changed('unsigned publication', (_, c) => (env(c, 'APP_MIXER_PUBLICATION_MODE').value = 'unsigned'));
+changed('public access', (_, c) => (env(c, 'APP_MIXER_ACCESS_MODE').value = 'public'));
+changed('plaintext transport', (_, c) => (env(c, 'APP_MIXER_TRANSPORT').value = 'http'));
+changed('disabled revocation', (_, c) => (env(c, 'APP_MIXER_REVOCATION_MODE').value = 'disabled'));
+changed('disabled release floor', (_, c) => (env(c, 'APP_MIXER_RELEASE_FLOOR_MODE').value = 'disabled'));
+changed('wrong issuer', (_, c) => (env(c, 'APP_MIXER_JWT_ISSUER').value = 'https://other.example/'));
+changed('duplicate security variable', (_, c) => c.env.push({ name: 'APP_MIXER_ACCESS_MODE', value: 'public' }));
+changed('unapproved image', (_, c) => (c.image = 'registry.example/app-mixer:latest'));
+changed('overridden entrypoint', (_, c) => (c.command = ['sh']));
+changed('privileged container', (_, c) => {
+  c.securityContext.privileged = true;
+  c.securityContext.allowPrivilegeEscalation = true;
+});
+changed('container user override', (_, c) => (c.securityContext.runAsUser = 0));
+changed('host networking', o => (o.spec.template.spec.hostNetwork = true));
+changed('extra sidecar', o => o.spec.template.spec.containers.push({ name: 'sidecar', image: 'example:latest' }));
+changed('untrusted key mount', o => (o.spec.template.spec.volumes.find(v => v.name === 'release-trust').configMap.name = 'untrusted'));
+changed('select alternate key', o => (o.spec.template.spec.volumes.find(v => v.name === 'release-trust').configMap.items = [{ key: 'other', path: 'keys.json' }]));
+changed('plaintext readiness probe', (_, c) => (c.readinessProbe.httpGet.scheme = 'HTTP'));
+for (const probe of ['readinessProbe', 'livenessProbe', 'startupProbe']) {
+  changed(probe + ' external host', (_, c) => (c[probe].httpGet.host = 'example.com'));
+  changed(probe + ' alternate port', (_, c) => (c[probe].httpGet.port = 8080));
+  changed(probe + ' custom host header', (_, c) => (c[probe].httpGet.httpHeaders = [{ name: 'Host', value: 'other.example' }]));
+}
 // Probe timing bounds prevent very delayed readiness/recovery and short per-probe grace overrides.
-for(const [probe,settings] of [['readinessProbe',{periodSeconds:5,timeoutSeconds:5,failureThreshold:2,successThreshold:1,initialDelaySeconds:5}],['livenessProbe',{periodSeconds:30,timeoutSeconds:5,failureThreshold:6,successThreshold:1,initialDelaySeconds:30,terminationGracePeriodSeconds:10}],['startupProbe',{periodSeconds:10,timeoutSeconds:5,failureThreshold:30,successThreshold:1,initialDelaySeconds:30,terminationGracePeriodSeconds:10}]]){const object=structuredClone(original);Object.assign(object.spec.template.spec.containers[0][probe],settings);const result=apply(object);if(result.status!==0)throw Error('Expected bounded '+probe+' settings to pass: '+result.stderr);}
-for(const [probe,field,value] of [['readinessProbe','periodSeconds',6],['readinessProbe','timeoutSeconds',6],['readinessProbe','failureThreshold',3],['readinessProbe','successThreshold',2],['readinessProbe','initialDelaySeconds',6],['livenessProbe','periodSeconds',31],['livenessProbe','timeoutSeconds',6],['livenessProbe','failureThreshold',7],['livenessProbe','initialDelaySeconds',31],['livenessProbe','terminationGracePeriodSeconds',1],['startupProbe','periodSeconds',11],['startupProbe','timeoutSeconds',6],['startupProbe','failureThreshold',61],['startupProbe','initialDelaySeconds',31],['startupProbe','terminationGracePeriodSeconds',1]])changed(probe+' '+field,(_,c)=>c[probe][field]=value);
-changed('excessive startup window',(_,c)=>{c.startupProbe.periodSeconds=10;c.startupProbe.failureThreshold=31;});
-for(const probe of ['livenessProbe','startupProbe']){const object=structuredClone(original);object.spec.template.spec.containers[0][probe].terminationGracePeriodSeconds=10;const result=apply(object);if(result.status!==0)throw Error('Expected approved '+probe+' termination grace to pass: '+result.stderr);}
-for(const replicas of [0,1])changed('insufficient replicas '+replicas,o=>o.spec.replicas=replicas);
-for(const [field,value] of [['paused',true],['minReadySeconds',61],['progressDeadlineSeconds',59],['progressDeadlineSeconds',1801]])changed('unsafe rollout '+field,o=>o.spec[field]=value);
-for(const [minReadySeconds,progressDeadlineSeconds] of [[0,60],[60,61],[60,1800]]){const object=structuredClone(original);object.spec.minReadySeconds=minReadySeconds;object.spec.progressDeadlineSeconds=progressDeadlineSeconds;const result=apply(object);if(result.status!==0)throw Error('Expected bounded rollout timing to pass: '+result.stderr);}
-changed('recreate deployment',o=>o.spec.strategy={type:'Recreate'});
-changed('unavailable rolling update',o=>o.spec.strategy.rollingUpdate.maxUnavailable='100%');
-changed('unapproved surge',o=>o.spec.strategy.rollingUpdate.maxSurge=2);
-changed('short shutdown grace',o=>o.spec.template.spec.terminationGracePeriodSeconds=1);
-changed('alternate listener port',(_,c)=>c.ports[0].containerPort=8080);
-changed('host listener port',(_,c)=>c.ports[0].hostPort=3002);
-changed('extra listener port',(_,c)=>c.ports.push({name:'other',containerPort:8080,protocol:'TCP'}));
+for (const [probe, settings] of [
+  ['readinessProbe', { periodSeconds: 5, timeoutSeconds: 5, failureThreshold: 2, successThreshold: 1, initialDelaySeconds: 5 }],
+  ['livenessProbe', { periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 6, successThreshold: 1, initialDelaySeconds: 30, terminationGracePeriodSeconds: 10 }],
+  ['startupProbe', { periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 30, successThreshold: 1, initialDelaySeconds: 30, terminationGracePeriodSeconds: 10 }]
+]) {
+  const object = structuredClone(original);
+  Object.assign(object.spec.template.spec.containers[0][probe], settings);
+  const result = apply(object);
+  if (result.status !== 0) throw Error('Expected bounded ' + probe + ' settings to pass: ' + result.stderr);
+}
+for (const [probe, field, value] of [
+  ['readinessProbe', 'periodSeconds', 6],
+  ['readinessProbe', 'timeoutSeconds', 6],
+  ['readinessProbe', 'failureThreshold', 3],
+  ['readinessProbe', 'successThreshold', 2],
+  ['readinessProbe', 'initialDelaySeconds', 6],
+  ['livenessProbe', 'periodSeconds', 31],
+  ['livenessProbe', 'timeoutSeconds', 6],
+  ['livenessProbe', 'failureThreshold', 7],
+  ['livenessProbe', 'initialDelaySeconds', 31],
+  ['livenessProbe', 'terminationGracePeriodSeconds', 1],
+  ['startupProbe', 'periodSeconds', 11],
+  ['startupProbe', 'timeoutSeconds', 6],
+  ['startupProbe', 'failureThreshold', 61],
+  ['startupProbe', 'initialDelaySeconds', 31],
+  ['startupProbe', 'terminationGracePeriodSeconds', 1]
+])
+  changed(probe + ' ' + field, (_, c) => (c[probe][field] = value));
+changed('excessive startup window', (_, c) => {
+  c.startupProbe.periodSeconds = 10;
+  c.startupProbe.failureThreshold = 31;
+});
+for (const probe of ['livenessProbe', 'startupProbe']) {
+  const object = structuredClone(original);
+  object.spec.template.spec.containers[0][probe].terminationGracePeriodSeconds = 10;
+  const result = apply(object);
+  if (result.status !== 0) throw Error('Expected approved ' + probe + ' termination grace to pass: ' + result.stderr);
+}
+for (const replicas of [0, 1]) changed('insufficient replicas ' + replicas, o => (o.spec.replicas = replicas));
+for (const [field, value] of [
+  ['paused', true],
+  ['minReadySeconds', 61],
+  ['progressDeadlineSeconds', 59],
+  ['progressDeadlineSeconds', 1801]
+])
+  changed('unsafe rollout ' + field, o => (o.spec[field] = value));
+for (const [minReadySeconds, progressDeadlineSeconds] of [
+  [0, 60],
+  [60, 61],
+  [60, 1800]
+]) {
+  const object = structuredClone(original);
+  object.spec.minReadySeconds = minReadySeconds;
+  object.spec.progressDeadlineSeconds = progressDeadlineSeconds;
+  const result = apply(object);
+  if (result.status !== 0) throw Error('Expected bounded rollout timing to pass: ' + result.stderr);
+}
+changed('recreate deployment', o => (o.spec.strategy = { type: 'Recreate' }));
+changed('unavailable rolling update', o => (o.spec.strategy.rollingUpdate.maxUnavailable = '100%'));
+changed('unapproved surge', o => (o.spec.strategy.rollingUpdate.maxSurge = 2));
+changed('short shutdown grace', o => (o.spec.template.spec.terminationGracePeriodSeconds = 1));
+changed('alternate listener port', (_, c) => (c.ports[0].containerPort = 8080));
+changed('host listener port', (_, c) => (c.ports[0].hostPort = 3002));
+changed('extra listener port', (_, c) => c.ports.push({ name: 'other', containerPort: 8080, protocol: 'TCP' }));
 // Protect the named deployment from individual and bulk deletion while leaving other deployments alone.
-for(const args of [['deployment','app-mixer-data-plane'],['deployment','--all']]){let result;for(let i=0;i<30;i++){result=spawnSync('kubectl',['delete',...args,'-n',namespace,'--dry-run=server'],{encoding:'utf8'});if(result.status!==0&&result.stderr.includes('app-mixer-data-plane-deletion'))break;await delay(1000);}if(result.status===0||!result.stderr.includes('app-mixer-data-plane-deletion'))throw Error('Deployment deletion was not denied: '+result.stderr);}
-const unrelatedPath=join(process.env.RUNNER_TEMP,'admission-unrelated.json');writeFileSync(unrelatedPath,JSON.stringify({apiVersion:'apps/v1',kind:'Deployment',metadata:{name:'unrelated-deletion-test',namespace},spec:{replicas:1,selector:{matchLabels:{app:'unrelated-deletion-test'}},template:{metadata:{labels:{app:'unrelated-deletion-test'}},spec:{containers:[{name:'test',image:'example.invalid/test'}]}}}}));execFileSync('kubectl',['create','-f',unrelatedPath]);try{const result=spawnSync('kubectl',['delete','deployment','unrelated-deletion-test','-n',namespace,'--dry-run=server'],{encoding:'utf8'});if(result.status!==0)throw Error('Unrelated deployment deletion was denied: '+result.stderr);}finally{execFileSync('kubectl',['delete','deployment','unrelated-deletion-test','-n',namespace,'--wait=false']);}
+for (const args of [
+  ['deployment', 'app-mixer-data-plane'],
+  ['deployment', '--all']
+]) {
+  let result;
+  for (let i = 0; i < 30; i++) {
+    result = spawnSync('kubectl', ['delete', ...args, '-n', namespace, '--dry-run=server'], { encoding: 'utf8' });
+    if (result.status !== 0 && result.stderr.includes('app-mixer-data-plane-deletion')) break;
+    await delay(1000);
+  }
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-deletion')) throw Error('Deployment deletion was not denied: ' + result.stderr);
+}
+const unrelatedPath = join(process.env.RUNNER_TEMP, 'admission-unrelated.json');
+writeFileSync(
+  unrelatedPath,
+  JSON.stringify({
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
+    metadata: { name: 'unrelated-deletion-test', namespace },
+    spec: {
+      replicas: 1,
+      selector: { matchLabels: { app: 'unrelated-deletion-test' } },
+      template: { metadata: { labels: { app: 'unrelated-deletion-test' } }, spec: { containers: [{ name: 'test', image: 'example.invalid/test' }] } }
+    }
+  })
+);
+execFileSync('kubectl', ['create', '-f', unrelatedPath]);
+try {
+  const result = spawnSync('kubectl', ['delete', 'deployment', 'unrelated-deletion-test', '-n', namespace, '--dry-run=server'], { encoding: 'utf8' });
+  if (result.status !== 0) throw Error('Unrelated deployment deletion was denied: ' + result.stderr);
+} finally {
+  execFileSync('kubectl', ['delete', 'deployment', 'unrelated-deletion-test', '-n', namespace, '--wait=false']);
+}
 // Scale updates use a separate admission resource and must preserve the same minimum.
-const scale=replicas=>spawnSync('kubectl',['scale','deployment','app-mixer-data-plane','-n',namespace,`--replicas=${replicas}`,'--dry-run=server'],{encoding:'utf8'});
-for(const replicas of [2,3]){const result=scale(replicas);if(result.status!==0)throw Error(`Expected scale to ${replicas} to pass: ${result.stderr}`);}
-for(const replicas of [0,1]){const result=scale(replicas);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-scale'))throw Error(`Scale to ${replicas} was not denied by the scale policy: ${result.stderr}`);}
+const scale = replicas => spawnSync('kubectl', ['scale', 'deployment', 'app-mixer-data-plane', '-n', namespace, `--replicas=${replicas}`, '--dry-run=server'], { encoding: 'utf8' });
+for (const replicas of [2, 3]) {
+  const result = scale(replicas);
+  if (result.status !== 0) throw Error(`Expected scale to ${replicas} to pass: ${result.stderr}`);
+}
+for (const replicas of [0, 1]) {
+  const result = scale(replicas);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-scale')) throw Error(`Scale to ${replicas} was not denied by the scale policy: ${result.stderr}`);
+}
 // The named Service must keep its internal listener and exact selector, and cannot be deleted.
-const servicePath=join(process.env.RUNNER_TEMP,'admission-service.json');
-const service=()=>JSON.parse(execFileSync('kubectl',['get','service','app-mixer-data-plane','-n',namespace,'-o','json'],{encoding:'utf8'}));
-const applyService=object=>{writeFileSync(servicePath,JSON.stringify(object));return spawnSync('kubectl',['replace','--dry-run=server','-f',servicePath],{encoding:'utf8'});};
-let serviceAccepted;for(let i=0;i<30;i++){serviceAccepted=applyService(service());if(serviceAccepted.status===0)break;await delay(1000);}if(serviceAccepted.status!==0)throw Error('Expected approved Service to pass: '+serviceAccepted.stderr);
-for(const [name,mutate] of [['wrong selector',o=>o.spec.selector['app.kubernetes.io/component']='other'],['extra selector',o=>o.spec.selector.extra='value'],['wrong port',o=>o.spec.ports[0].port=3003],['wrong target',o=>o.spec.ports[0].targetPort=3002],['external IP',o=>o.spec.externalIPs=['192.0.2.1']],['external service',o=>o.spec.type='NodePort'],['node-local routing',o=>o.spec.internalTrafficPolicy='Local'],['unready endpoints',o=>o.spec.publishNotReadyAddresses=true]]){const object=service();mutate(object);let result;for(let i=0;i<30;i++){result=applyService(object);if(result.status!==0&&result.stderr.includes('app-mixer-data-plane-service'))break;await delay(1000);}if(result.status===0||!result.stderr.includes('app-mixer-data-plane-service'))throw Error(name+' Service was not denied: '+result.stderr);}
-for(const args of [['service','app-mixer-data-plane'],['service','--all']]){const result=spawnSync('kubectl',['delete',...args,'-n',namespace,'--dry-run=server'],{encoding:'utf8'});if(result.status===0||!result.stderr.includes('app-mixer-data-plane-service'))throw Error('Service deletion was not denied: '+result.stderr);}
-execFileSync('kubectl',['create','service','clusterip','unrelated-service-test','--tcp=8080:8080','-n',namespace]);try{const result=spawnSync('kubectl',['delete','service','unrelated-service-test','-n',namespace,'--dry-run=server'],{encoding:'utf8'});if(result.status!==0)throw Error('Unrelated Service deletion was denied: '+result.stderr);}finally{execFileSync('kubectl',['delete','service','unrelated-service-test','-n',namespace,'--wait=false']);}
+const servicePath = join(process.env.RUNNER_TEMP, 'admission-service.json');
+const service = () => JSON.parse(execFileSync('kubectl', ['get', 'service', 'app-mixer-data-plane', '-n', namespace, '-o', 'json'], { encoding: 'utf8' }));
+const applyService = object => {
+  writeFileSync(servicePath, JSON.stringify(object));
+  return spawnSync('kubectl', ['replace', '--dry-run=server', '-f', servicePath], { encoding: 'utf8' });
+};
+let serviceAccepted;
+for (let i = 0; i < 30; i++) {
+  serviceAccepted = applyService(service());
+  if (serviceAccepted.status === 0) break;
+  await delay(1000);
+}
+if (serviceAccepted.status !== 0) throw Error('Expected approved Service to pass: ' + serviceAccepted.stderr);
+for (const [name, mutate] of [
+  ['wrong selector', o => (o.spec.selector['app.kubernetes.io/component'] = 'other')],
+  ['extra selector', o => (o.spec.selector.extra = 'value')],
+  ['wrong port', o => (o.spec.ports[0].port = 3003)],
+  ['wrong target', o => (o.spec.ports[0].targetPort = 3002)],
+  ['external IP', o => (o.spec.externalIPs = ['192.0.2.1'])],
+  ['external service', o => (o.spec.type = 'NodePort')],
+  ['node-local routing', o => (o.spec.internalTrafficPolicy = 'Local')],
+  ['unready endpoints', o => (o.spec.publishNotReadyAddresses = true)]
+]) {
+  const object = service();
+  mutate(object);
+  let result;
+  for (let i = 0; i < 30; i++) {
+    result = applyService(object);
+    if (result.status !== 0 && result.stderr.includes('app-mixer-data-plane-service')) break;
+    await delay(1000);
+  }
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-service')) throw Error(name + ' Service was not denied: ' + result.stderr);
+}
+for (const args of [
+  ['service', 'app-mixer-data-plane'],
+  ['service', '--all']
+]) {
+  const result = spawnSync('kubectl', ['delete', ...args, '-n', namespace, '--dry-run=server'], { encoding: 'utf8' });
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-service')) throw Error('Service deletion was not denied: ' + result.stderr);
+}
+execFileSync('kubectl', ['create', 'service', 'clusterip', 'unrelated-service-test', '--tcp=8080:8080', '-n', namespace]);
+try {
+  const result = spawnSync('kubectl', ['delete', 'service', 'unrelated-service-test', '-n', namespace, '--dry-run=server'], { encoding: 'utf8' });
+  if (result.status !== 0) throw Error('Unrelated Service deletion was denied: ' + result.stderr);
+} finally {
+  execFileSync('kubectl', ['delete', 'service', 'unrelated-service-test', '-n', namespace, '--wait=false']);
+}
 // A fixed budget must select the intended pods and cannot be deleted while enforced.
-const budgetPath=join(process.env.RUNNER_TEMP,'admission-budget.json');
-const budget=()=>JSON.parse(execFileSync('kubectl',['get','pdb','app-mixer-data-plane','-n',namespace,'-o','json'],{encoding:'utf8'}));
-const applyBudget=object=>{writeFileSync(budgetPath,JSON.stringify(object));return spawnSync('kubectl',['replace','--dry-run=server','-f',budgetPath],{encoding:'utf8'});};
-const acceptedBudget=applyBudget(budget());if(acceptedBudget.status!==0)throw Error('Expected approved disruption budget to pass: '+acceptedBudget.stderr);
-for(const [name,mutate] of [['zero minimum',o=>o.spec.minAvailable=0],['percentage minimum',o=>o.spec.minAvailable='50%'],['different selector',o=>o.spec.selector.matchLabels['app.kubernetes.io/component']='other'],['empty selector',o=>o.spec.selector={}],['extra selector',o=>o.spec.selector.matchLabels.extra='value'],['selector expression',o=>o.spec.selector.matchExpressions=[{key:'team',operator:'Exists'}]],['maximum unavailable',o=>{delete o.spec.minAvailable;o.spec.maxUnavailable=1;}]]){const object=budget();mutate(object);const result=applyBudget(object);if(result.status===0||!result.stderr.includes('app-mixer-data-plane-disruption-budget'))throw Error(name+' disruption budget was not denied: '+result.stderr);}
-const deleteBudget=spawnSync('kubectl',['delete','pdb','app-mixer-data-plane','-n',namespace,'--dry-run=server'],{encoding:'utf8'});if(deleteBudget.status===0||!deleteBudget.stderr.includes('app-mixer-data-plane-disruption-budget'))throw Error('Disruption budget deletion was not denied: '+deleteBudget.stderr);
-const deleteAllBudgets=spawnSync('kubectl',['delete','pdb','--all','-n',namespace,'--dry-run=server'],{encoding:'utf8'});if(deleteAllBudgets.status===0||!deleteAllBudgets.stderr.includes('app-mixer-data-plane-disruption-budget'))throw Error('Bulk disruption budget deletion was not denied: '+deleteAllBudgets.stderr);
-const createNamespace='app-mixer-budget-create-test';execFileSync('kubectl',['create','namespace',createNamespace]);
-try{execFileSync('kubectl',['label','namespace',createNamespace,'app-mixer.dev/enforce-data-plane=true']);const object={apiVersion:'policy/v1',kind:'PodDisruptionBudget',metadata:{name:'app-mixer-data-plane',namespace:createNamespace},spec:{minAvailable:1,selector:{matchLabels:{'app.kubernetes.io/name':'app-mixer','app.kubernetes.io/component':'data-plane'}}}},create=value=>{writeFileSync(budgetPath,JSON.stringify(value));return spawnSync('kubectl',['create','--dry-run=server','-f',budgetPath],{encoding:'utf8'});};object.spec.minAvailable=0;let result;for(let i=0;i<30;i++){result=create(object);if(result.status!==0&&result.stderr.includes('app-mixer-data-plane-disruption-budget'))break;await delay(1000);}if(result.status===0||!result.stderr.includes('app-mixer-data-plane-disruption-budget'))throw Error('Unsafe budget creation was not denied: '+result.stderr);object.spec.minAvailable=1;result=create(object);if(result.status!==0)throw Error('Expected approved budget creation to pass: '+result.stderr);object.spec.minAvailable=0;object.metadata.name='other-service';result=create(object);if(result.status!==0)throw Error('Unrelated disruption budget was denied: '+result.stderr);}finally{execFileSync('kubectl',['delete','namespace',createNamespace,'--wait=false']);}
-execFileSync('kubectl',['delete','configmap','app-mixer-security-policy','-n',namespace]);const missing=apply(original);if(missing.status===0||!missing.stderr.includes('app-mixer-data-plane-security'))throw Error('Missing policy parameters did not fail closed: '+missing.stderr);
+const budgetPath = join(process.env.RUNNER_TEMP, 'admission-budget.json');
+const budget = () => JSON.parse(execFileSync('kubectl', ['get', 'pdb', 'app-mixer-data-plane', '-n', namespace, '-o', 'json'], { encoding: 'utf8' }));
+const applyBudget = object => {
+  writeFileSync(budgetPath, JSON.stringify(object));
+  return spawnSync('kubectl', ['replace', '--dry-run=server', '-f', budgetPath], { encoding: 'utf8' });
+};
+const acceptedBudget = applyBudget(budget());
+if (acceptedBudget.status !== 0) throw Error('Expected approved disruption budget to pass: ' + acceptedBudget.stderr);
+for (const [name, mutate] of [
+  ['zero minimum', o => (o.spec.minAvailable = 0)],
+  ['percentage minimum', o => (o.spec.minAvailable = '50%')],
+  ['different selector', o => (o.spec.selector.matchLabels['app.kubernetes.io/component'] = 'other')],
+  ['empty selector', o => (o.spec.selector = {})],
+  ['extra selector', o => (o.spec.selector.matchLabels.extra = 'value')],
+  ['selector expression', o => (o.spec.selector.matchExpressions = [{ key: 'team', operator: 'Exists' }])],
+  [
+    'maximum unavailable',
+    o => {
+      delete o.spec.minAvailable;
+      o.spec.maxUnavailable = 1;
+    }
+  ]
+]) {
+  const object = budget();
+  mutate(object);
+  const result = applyBudget(object);
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-disruption-budget')) throw Error(name + ' disruption budget was not denied: ' + result.stderr);
+}
+const deleteBudget = spawnSync('kubectl', ['delete', 'pdb', 'app-mixer-data-plane', '-n', namespace, '--dry-run=server'], { encoding: 'utf8' });
+if (deleteBudget.status === 0 || !deleteBudget.stderr.includes('app-mixer-data-plane-disruption-budget')) throw Error('Disruption budget deletion was not denied: ' + deleteBudget.stderr);
+const deleteAllBudgets = spawnSync('kubectl', ['delete', 'pdb', '--all', '-n', namespace, '--dry-run=server'], { encoding: 'utf8' });
+if (deleteAllBudgets.status === 0 || !deleteAllBudgets.stderr.includes('app-mixer-data-plane-disruption-budget'))
+  throw Error('Bulk disruption budget deletion was not denied: ' + deleteAllBudgets.stderr);
+const createNamespace = 'app-mixer-budget-create-test';
+execFileSync('kubectl', ['create', 'namespace', createNamespace]);
+try {
+  execFileSync('kubectl', ['label', 'namespace', createNamespace, 'app-mixer.dev/enforce-data-plane=true']);
+  const object = {
+      apiVersion: 'policy/v1',
+      kind: 'PodDisruptionBudget',
+      metadata: { name: 'app-mixer-data-plane', namespace: createNamespace },
+      spec: { minAvailable: 1, selector: { matchLabels: { 'app.kubernetes.io/name': 'app-mixer', 'app.kubernetes.io/component': 'data-plane' } } }
+    },
+    create = value => {
+      writeFileSync(budgetPath, JSON.stringify(value));
+      return spawnSync('kubectl', ['create', '--dry-run=server', '-f', budgetPath], { encoding: 'utf8' });
+    };
+  object.spec.minAvailable = 0;
+  let result;
+  for (let i = 0; i < 30; i++) {
+    result = create(object);
+    if (result.status !== 0 && result.stderr.includes('app-mixer-data-plane-disruption-budget')) break;
+    await delay(1000);
+  }
+  if (result.status === 0 || !result.stderr.includes('app-mixer-data-plane-disruption-budget')) throw Error('Unsafe budget creation was not denied: ' + result.stderr);
+  object.spec.minAvailable = 1;
+  result = create(object);
+  if (result.status !== 0) throw Error('Expected approved budget creation to pass: ' + result.stderr);
+  object.spec.minAvailable = 0;
+  object.metadata.name = 'other-service';
+  result = create(object);
+  if (result.status !== 0) throw Error('Unrelated disruption budget was denied: ' + result.stderr);
+} finally {
+  execFileSync('kubectl', ['delete', 'namespace', createNamespace, '--wait=false']);
+}
+execFileSync('kubectl', ['delete', 'configmap', 'app-mixer-security-policy', '-n', namespace]);
+const missing = apply(original);
+if (missing.status === 0 || !missing.stderr.includes('app-mixer-data-plane-security')) throw Error('Missing policy parameters did not fail closed: ' + missing.stderr);
 console.log('Admission policy accepted the approved deployment and denied unsafe changes and missing parameters.');

@@ -1,61 +1,610 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID,randomBytes,generateKeyPairSync} from 'node:crypto';
-import {once} from 'node:events';
-import {fork} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import { randomUUID, randomBytes, generateKeyPairSync } from 'node:crypto';
+import { once } from 'node:events';
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import pg from 'pg';
-import {ApplicationStore,SqliteApplicationStore,PostgresRemoteRollout,RemoteRolloutPoller,RemoteRolloutMetrics,CapabilityRegistry,registerRemoteRolloutStatusCapability,registerRemoteRolloutPollerCapability,registerRemoteRolloutRecoveryCapability,registerRemoteRolloutEvidenceCapability,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from '../dist/index.js';
+import {
+  ApplicationStore,
+  SqliteApplicationStore,
+  PostgresRemoteRollout,
+  RemoteRolloutPoller,
+  RemoteRolloutMetrics,
+  CapabilityRegistry,
+  registerRemoteRolloutStatusCapability,
+  registerRemoteRolloutPollerCapability,
+  registerRemoteRolloutRecoveryCapability,
+  registerRemoteRolloutEvidenceCapability,
+  createControlPlane,
+  createRemoteControlConnector,
+  signPromotionPackage,
+  createSignedPromotionVerifier,
+  RemoteControlImportCancelledError,
+  RemoteControlImportPreflightUnavailableError,
+  RemoteControlImportUncertainError
+} from '../dist/index.js';
 
-const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
-async function waitFor(check){for(let i=0;i<300;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Timed out waiting for rollout');}
+const definition = { id: 'demo', schemaVersion: 1, revision: 0, pages: [] },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  token = 'source-secret-at-least-32-characters-long';
+async function waitFor(check) {
+  for (let i = 0; i < 300; i++) {
+    if (check()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw Error('Timed out waiting for rollout');
+}
 
-test('shared rollout rejects invalid configuration and malformed state',async()=>{
- assert.throws(()=>new PostgresRemoteRollout({}),/configuration/);
- const connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPublished(){},getPromotionFloor(){}},discoverLatest(){},importPublication(){}};
- const rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query:async()=>({rows:[{phase:'idle',token:'unexpected',source_version:null,expected_version:null}],rowCount:1})});await assert.rejects(rollout.getState(),/Invalid rollout state/);
+test('shared rollout rejects invalid configuration and malformed state', async () => {
+  assert.throws(() => new PostgresRemoteRollout({}), /configuration/);
+  const connector = {
+    rolloutConfig: { safe: true, applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rolloutRepository: { getPublished() {}, getPromotionFloor() {} },
+    discoverLatest() {},
+    importPublication() {}
+  };
+  const rollout = new PostgresRemoteRollout({
+    enabled: true,
+    connector,
+    actor,
+    query: async () => ({ rows: [{ phase: 'idle', token: 'unexpected', source_version: null, expected_version: null }], rowCount: 1 })
+  });
+  await assert.rejects(rollout.getState(), /Invalid rollout state/);
 });
 
-test('shared rollout fences cancellation before and during the import transition',async()=>{
- for(const phase of ['discovery','transition']){let release,started,imports=0,claimed=false,marked=false;const entered=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController();const connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:async()=>0,getPublished:async()=>undefined},discoverLatest:async()=>{if(phase==='discovery'){started();await gate;}return {applicationId:'demo',sourceVersion:1};},importPublication:async()=>{imports++;return {version:1};}};const query=async sql=>{if(sql.includes("SET phase='running'")){claimed=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='importing'")){marked=true;started();await gate;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='idle'")){claimed=false;return {rows:[{id:'one'}]};}throw Error('unexpected query');};const rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query});const pending=rollout.runOnce(controller.signal);await entered;controller.abort();release();await assert.rejects(pending,/cancelled/);assert.equal(imports,0);assert.equal(claimed,false);assert.equal(marked,phase==='transition');}
+test('shared rollout fences cancellation before and during the import transition', async () => {
+  for (const phase of ['discovery', 'transition']) {
+    let release,
+      started,
+      imports = 0,
+      claimed = false,
+      marked = false;
+    const entered = new Promise(resolve => (started = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      controller = new AbortController();
+    const connector = {
+      rolloutConfig: { safe: true, applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      rolloutRepository: { getPromotionFloor: async () => 0, getPublished: async () => undefined },
+      discoverLatest: async () => {
+        if (phase === 'discovery') {
+          started();
+          await gate;
+        }
+        return { applicationId: 'demo', sourceVersion: 1 };
+      },
+      importPublication: async () => {
+        imports++;
+        return { version: 1 };
+      }
+    };
+    const query = async sql => {
+      if (sql.includes("SET phase='running'")) {
+        claimed = true;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='importing'")) {
+        marked = true;
+        started();
+        await gate;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='idle'")) {
+        claimed = false;
+        return { rows: [{ id: 'one' }] };
+      }
+      throw Error('unexpected query');
+    };
+    const rollout = new PostgresRemoteRollout({ enabled: true, connector, actor, query });
+    const pending = rollout.runOnce(controller.signal);
+    await entered;
+    controller.abort();
+    release();
+    await assert.rejects(pending, /cancelled/);
+    assert.equal(imports, 0);
+    assert.equal(claimed, false);
+    assert.equal(marked, phase === 'transition');
+  }
 });
 
-test('shared rollout keeps custom connector cancellation uncertain',async()=>{
- let release,started,claimed=false,marked=false;const entered=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),controller=new AbortController(),connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:async()=>0,getPublished:async()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async(_input,signal)=>{started();await gate;if(signal.aborted)throw new RemoteControlImportCancelledError();throw Error('unexpected import');}},query=async sql=>{if(sql.includes("SET phase='running'")){claimed=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='importing'")){marked=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='idle'")){claimed=false;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='uncertain'"))return {rows:[]};throw Error('unexpected query');};const rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query}),pending=rollout.runOnce(controller.signal);await entered;controller.abort();release();await assert.rejects(pending,RemoteControlImportCancelledError);assert.equal(marked,true);assert.equal(claimed,true);
+test('shared rollout keeps custom connector cancellation uncertain', async () => {
+  let release,
+    started,
+    claimed = false,
+    marked = false;
+  const entered = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    controller = new AbortController(),
+    connector = {
+      rolloutConfig: { safe: true, applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      rolloutRepository: { getPromotionFloor: async () => 0, getPublished: async () => undefined },
+      discoverLatest: async () => ({ applicationId: 'demo', sourceVersion: 1 }),
+      importPublication: async (_input, signal) => {
+        started();
+        await gate;
+        if (signal.aborted) throw new RemoteControlImportCancelledError();
+        throw Error('unexpected import');
+      }
+    },
+    query = async sql => {
+      if (sql.includes("SET phase='running'")) {
+        claimed = true;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='importing'")) {
+        marked = true;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='idle'")) {
+        claimed = false;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='uncertain'")) return { rows: [] };
+      throw Error('unexpected query');
+    };
+  const rollout = new PostgresRemoteRollout({ enabled: true, connector, actor, query }),
+    pending = rollout.runOnce(controller.signal);
+  await entered;
+  controller.abort();
+  release();
+  await assert.rejects(pending, RemoteControlImportCancelledError);
+  assert.equal(marked, true);
+  assert.equal(claimed, true);
 });
 
-test('shared rollout keeps custom connector timeout uncertain',async()=>{
- let claimed=false,marked=false;const connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:async()=>0,getPublished:async()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async()=>{throw new RemoteControlImportPreflightUnavailableError();}},query=async sql=>{if(sql.includes("SET phase='running'")){claimed=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='importing'")){marked=true;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='idle'")){claimed=false;return {rows:[{id:'one'}]};}if(sql.includes("SET phase='uncertain'"))return {rows:[]};throw Error('unexpected query');};const rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query});await assert.rejects(rollout.runOnce(),RemoteControlImportPreflightUnavailableError);assert.equal(marked,true);assert.equal(claimed,true);
+test('shared rollout keeps custom connector timeout uncertain', async () => {
+  let claimed = false,
+    marked = false;
+  const connector = {
+      rolloutConfig: { safe: true, applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      rolloutRepository: { getPromotionFloor: async () => 0, getPublished: async () => undefined },
+      discoverLatest: async () => ({ applicationId: 'demo', sourceVersion: 1 }),
+      importPublication: async () => {
+        throw new RemoteControlImportPreflightUnavailableError();
+      }
+    },
+    query = async sql => {
+      if (sql.includes("SET phase='running'")) {
+        claimed = true;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='importing'")) {
+        marked = true;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='idle'")) {
+        claimed = false;
+        return { rows: [{ id: 'one' }] };
+      }
+      if (sql.includes("SET phase='uncertain'")) return { rows: [] };
+      throw Error('unexpected query');
+    };
+  const rollout = new PostgresRemoteRollout({ enabled: true, connector, actor, query });
+  await assert.rejects(rollout.runOnce(), RemoteControlImportPreflightUnavailableError);
+  assert.equal(marked, true);
+  assert.equal(claimed, true);
 });
 
-test('PostgreSQL retains the recovery gate after a completion audit timeout',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
- const schema='app_mixer_audit_timeout_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),dir=mkdtempSync(join(tmpdir(),'app-mixer-audit-pg-')),source=new ApplicationStore(definition),target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),server=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);let release,seen;const gate=new Promise(resolve=>release=resolve);try{
-  server.listen(0,'127.0.0.1');await once(server,'listening');await admin.query(`CREATE SCHEMA "${schema}"`);const connector=createRemoteControlConnector({sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},auditWithSignal:(event,signal)=>{if(event.phase==='completed'){seen=signal;return gate;}},completionAuditTimeoutMs:100,maxPendingCompletionAudits:1,discovery:{authorize:()=>true,audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence}),first=new PostgresRemoteRollout({enabled:true,connector,actor,query:(sql,args)=>pool.query(sql,args)}),other=new PostgresRemoteRollout({enabled:true,connector,actor,query:(sql,args)=>pool.query(sql,args)});await first.initialize();const metrics=new RemoteRolloutMetrics(other,{scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,timeoutMs:1000,maxPending:2});assert.deepEqual(await metrics.snapshot(actor),{phase:'idle'});await assert.rejects(first.runOnce(),RemoteControlImportUncertainError);assert.match(await metrics.render(actor),/phase="uncertain"} 1/);assert.equal(seen.aborted,true);assert.equal(target.getPublished().version,1);assert.equal((await other.getState()).phase,'uncertain');await assert.rejects(other.runOnce(),/recovery/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await other.getState()).phase,'uncertain');await other.recover(state=>state.sourceVersion===target.getPublicationProvenance(1).sourceVersion);assert.equal((await first.runOnce()).status,'unchanged');
- }finally{release();server.closeAllConnections();if(server.listening)await new Promise(resolve=>server.close(resolve));target.close();rmSync(dir,{recursive:true,force:true});await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL retains the recovery gate after a completion audit timeout', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 60000 }, async () => {
+  const schema = 'app_mixer_audit_timeout_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    dir = mkdtempSync(join(tmpdir(), 'app-mixer-audit-pg-')),
+    source = new ApplicationStore(definition),
+    target = new SqliteApplicationStore(join(dir, 'target.sqlite'), definition);
+  source.publish(0);
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
+    signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
+    verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
+    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+  let release, seen;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const connector = createRemoteControlConnector({
+        sourceOrigin: `http://127.0.0.1:${server.address().port}`,
+        sourceToken: token,
+        sourceEnvironment: 'dev',
+        targetEnvironment: 'prod',
+        applicationId: 'demo',
+        repository: target,
+        allowLoopbackHttp: true,
+        authorize: () => true,
+        audit: () => {},
+        auditWithSignal: (event, signal) => {
+          if (event.phase === 'completed') {
+            seen = signal;
+            return gate;
+          }
+        },
+        completionAuditTimeoutMs: 100,
+        maxPendingCompletionAudits: 1,
+        discovery: { authorize: () => true, audit: () => {} },
+        requireAdvancingSource: true,
+        verifyWithEvidence: verifier.verifyWithEvidence
+      }),
+      first = new PostgresRemoteRollout({ enabled: true, connector, actor, query: (sql, args) => pool.query(sql, args) }),
+      other = new PostgresRemoteRollout({ enabled: true, connector, actor, query: (sql, args) => pool.query(sql, args) });
+    await first.initialize();
+    const metrics = new RemoteRolloutMetrics(other, {
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      timeoutMs: 1000,
+      maxPending: 2
+    });
+    assert.deepEqual(await metrics.snapshot(actor), { phase: 'idle' });
+    await assert.rejects(first.runOnce(), RemoteControlImportUncertainError);
+    assert.match(await metrics.render(actor), /phase="uncertain"} 1/);
+    assert.equal(seen.aborted, true);
+    assert.equal(target.getPublished().version, 1);
+    assert.equal((await other.getState()).phase, 'uncertain');
+    await assert.rejects(other.runOnce(), /recovery/);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await other.getState()).phase, 'uncertain');
+    await other.recover(state => state.sourceVersion === target.getPublicationProvenance(1).sourceVersion);
+    assert.equal((await first.runOnce()).status, 'unchanged');
+  } finally {
+    release();
+    server.closeAllConnections();
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    target.close();
+    rmSync(dir, { recursive: true, force: true });
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
-test('PostgreSQL gates recovery when a worker dies after publication',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
- const schema='app_mixer_commit_crash_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),dir=mkdtempSync(join(tmpdir(),'app-mixer-commit-crash-')),source=new ApplicationStore(definition);let target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),server=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);let child;try{
-  server.listen(0,'127.0.0.1');await once(server,'listening');await admin.query(`CREATE SCHEMA "${schema}"`);const connector=createRemoteControlConnector({sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},discovery:{authorize:()=>true,audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence}),rollout=new PostgresRemoteRollout({enabled:true,connector,actor,query:(sql,args)=>pool.query(sql,args)}),other=new PostgresRemoteRollout({enabled:true,connector,actor:{...actor,tenantId:'other'},query:(sql,args)=>pool.query(sql,args)});await rollout.initialize();await other.initialize();child=fork(fileURLToPath(new URL('./fixtures/postgres-rollout-crash.mjs',import.meta.url)),[],{env:{...process.env,TEST_SCHEMA:schema,TEST_TARGET:join(dir,'target.sqlite'),TEST_ORIGIN:`http://127.0.0.1:${server.address().port}`,TEST_TOKEN:token,TEST_PUBLIC_KEY:publicKey.export({type:'spki',format:'pem'}),TEST_BARRIER:'completed'},stdio:['ignore','ignore','pipe','ipc']});let reached=false;await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Worker did not reach completion audit')),15000);child.once('message',message=>{clearTimeout(timer);if(message==='completed'){reached=true;resolve();}else reject(Error(String(message?.error??message)));});child.once('exit',()=>{clearTimeout(timer);if(!reached)reject(Error('Worker exited before completion audit'));});});assert.equal(target.getPublished().version,1);assert.equal((await rollout.getState()).phase,'importing');const exited=once(child,'exit');child.kill('SIGKILL');await exited;target.close();target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);const reopenedConnector=createRemoteControlConnector({sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},discovery:{authorize:()=>true,audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence}),reopened=new PostgresRemoteRollout({enabled:true,connector:reopenedConnector,actor,query:(sql,args)=>pool.query(sql,args)});assert.equal((await reopened.getState()).phase,'importing');assert.equal((await other.getState()).phase,'idle');await assert.rejects(reopened.runOnce(),/recovery/);await reopened.recover(state=>state.sourceVersion===target.getPublicationProvenance(1).sourceVersion);assert.equal((await reopened.runOnce()).status,'unchanged');assert.equal(target.getPublished().version,1);
- }finally{if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}server.closeAllConnections();if(server.listening)await new Promise(resolve=>server.close(resolve));target.close();rmSync(dir,{recursive:true,force:true});await pool.end();await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+test('PostgreSQL gates recovery when a worker dies after publication', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 60000 }, async () => {
+  const schema = 'app_mixer_commit_crash_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    dir = mkdtempSync(join(tmpdir(), 'app-mixer-commit-crash-')),
+    source = new ApplicationStore(definition);
+  let target = new SqliteApplicationStore(join(dir, 'target.sqlite'), definition);
+  source.publish(0);
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
+    signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
+    verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
+    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+  let child;
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const connector = createRemoteControlConnector({
+        sourceOrigin: `http://127.0.0.1:${server.address().port}`,
+        sourceToken: token,
+        sourceEnvironment: 'dev',
+        targetEnvironment: 'prod',
+        applicationId: 'demo',
+        repository: target,
+        allowLoopbackHttp: true,
+        authorize: () => true,
+        audit: () => {},
+        discovery: { authorize: () => true, audit: () => {} },
+        requireAdvancingSource: true,
+        verifyWithEvidence: verifier.verifyWithEvidence
+      }),
+      rollout = new PostgresRemoteRollout({ enabled: true, connector, actor, query: (sql, args) => pool.query(sql, args) }),
+      other = new PostgresRemoteRollout({ enabled: true, connector, actor: { ...actor, tenantId: 'other' }, query: (sql, args) => pool.query(sql, args) });
+    await rollout.initialize();
+    await other.initialize();
+    child = fork(fileURLToPath(new URL('./fixtures/postgres-rollout-crash.mjs', import.meta.url)), [], {
+      env: {
+        ...process.env,
+        TEST_SCHEMA: schema,
+        TEST_TARGET: join(dir, 'target.sqlite'),
+        TEST_ORIGIN: `http://127.0.0.1:${server.address().port}`,
+        TEST_TOKEN: token,
+        TEST_PUBLIC_KEY: publicKey.export({ type: 'spki', format: 'pem' }),
+        TEST_BARRIER: 'completed'
+      },
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc']
+    });
+    let reached = false;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('Worker did not reach completion audit')), 15000);
+      child.once('message', message => {
+        clearTimeout(timer);
+        if (message === 'completed') {
+          reached = true;
+          resolve();
+        } else reject(Error(String(message?.error ?? message)));
+      });
+      child.once('exit', () => {
+        clearTimeout(timer);
+        if (!reached) reject(Error('Worker exited before completion audit'));
+      });
+    });
+    assert.equal(target.getPublished().version, 1);
+    assert.equal((await rollout.getState()).phase, 'importing');
+    const exited = once(child, 'exit');
+    child.kill('SIGKILL');
+    await exited;
+    target.close();
+    target = new SqliteApplicationStore(join(dir, 'target.sqlite'), definition);
+    const reopenedConnector = createRemoteControlConnector({
+        sourceOrigin: `http://127.0.0.1:${server.address().port}`,
+        sourceToken: token,
+        sourceEnvironment: 'dev',
+        targetEnvironment: 'prod',
+        applicationId: 'demo',
+        repository: target,
+        allowLoopbackHttp: true,
+        authorize: () => true,
+        audit: () => {},
+        discovery: { authorize: () => true, audit: () => {} },
+        requireAdvancingSource: true,
+        verifyWithEvidence: verifier.verifyWithEvidence
+      }),
+      reopened = new PostgresRemoteRollout({ enabled: true, connector: reopenedConnector, actor, query: (sql, args) => pool.query(sql, args) });
+    assert.equal((await reopened.getState()).phase, 'importing');
+    assert.equal((await other.getState()).phase, 'idle');
+    await assert.rejects(reopened.runOnce(), /recovery/);
+    await reopened.recover(state => state.sourceVersion === target.getPublicationProvenance(1).sourceVersion);
+    assert.equal((await reopened.runOnce()).status, 'unchanged');
+    assert.equal(target.getPublished().version, 1);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill('SIGKILL');
+      await exited;
+    }
+    server.closeAllConnections();
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    target.close();
+    rmSync(dir, { recursive: true, force: true });
+    await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });
 
 // FIX-029: an unchanged draft publishes no new version, so every further version in these tests follows a draft change.
-const publishNext=store=>{const draft=store.getDraft();store.apply(draft.revision,[{op:'addPage',page:{id:`page-${draft.revision}`,route:`/page-${draft.revision}`,title:`Page ${draft.revision}`,components:[]}}]);return store.publish(draft.revision+1);};
-test('PostgreSQL rollout coordinates competing hosts and gates uncertain imports',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:60000},async()=>{
- const schema='app_mixer_rollout_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,admin=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),dir=mkdtempSync(join(tmpdir(),'app-mixer-rollout-pg-')),source=new ApplicationStore(definition),target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);source.publish(0);
- const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),server=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);let release,started,blocked=true,failAudit=false;const entered=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);
- try{
-  server.listen(0,'127.0.0.1');await once(server,'listening');await admin.query(`CREATE SCHEMA "${schema}"`);
-  const connector=createRemoteControlConnector({sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:event=>{if(failAudit&&event.phase==='completed')throw Error('audit unavailable')},discovery:{authorize:async()=>{if(blocked){started();await gate;}return true},audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence});
-  const first=new PostgresRemoteRollout({enabled:true,connector,actor,query:(sql,args)=>a.query(sql,args)}),second=new PostgresRemoteRollout({enabled:true,connector,actor,query:(sql,args)=>b.query(sql,args)}),other=new PostgresRemoteRollout({enabled:true,connector,actor:{...actor,tenantId:'other'},query:(sql,args)=>a.query(sql,args)});await first.initialize();await second.initialize();await other.initialize();const registry=new CapabilityRegistry(()=>{}),statusScope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};registerRemoteRolloutStatusCapability(registry,second,{candidate:{operationId:'rollout.status',method:'GET',path:'/rollout'},scope:statusScope,authorize:()=>true,authorizeStatus:()=>true});const status=()=>registry.invoke('rollout.status',{}, {...actor,origin:'ui'});assert.deepEqual(await status(),{phase:'idle',sourceVersion:null,expectedVersion:null});await assert.rejects(registry.invoke('rollout.status',{}, {tenantId:'other',principalId:'operator',origin:'ui'}),/forbidden/);
-  const controller=new AbortController(),pending=first.runOnce(controller.signal);await entered;assert.equal((await second.getState()).phase,'running');assert.equal((await status()).phase,'running');assert.equal((await other.getState()).phase,'idle');await assert.rejects(second.runOnce(),/recovery/);await assert.rejects(first.recover(()=>true),/recovery/);controller.abort();blocked=false;release();await assert.rejects(pending,/cancelled/);assert.equal((await second.getState()).phase,'idle');assert.equal(target.getPublished(),undefined);assert.equal((await first.runOnce()).status,'imported');assert.equal((await second.getState()).phase,'idle');assert.equal((await second.runOnce()).status,'unchanged');
-  publishNext(source);failAudit=true;await assert.rejects(second.runOnce(),RemoteControlImportUncertainError);const state=await first.getState();assert.equal(state.phase,'uncertain');assert.equal(state.sourceVersion,2);assert.equal(state.expectedVersion,1);const controlPoller=new RemoteRolloutPoller({rollout:second,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});registerRemoteRolloutPollerCapability(registry,second,controlPoller,{candidate:{operationId:'rollout.control',method:'POST',path:'/control'},scope:statusScope,authorize:()=>true,authorizeControl:()=>true});await assert.rejects(registry.invoke('rollout.control',{action:'start'},{...actor,origin:'ui'}),/requires review/);assert.equal(controlPoller.isRunning(),false);assert.deepEqual(await status(),{phase:'uncertain',sourceVersion:2,expectedVersion:1});assert.equal(target.getPublished().version,2);await assert.rejects(first.runOnce(),/recovery/);await assert.rejects(first.recover(()=>false),/denied/);registerRemoteRolloutRecoveryCapability(registry,first,{candidate:{operationId:'rollout.recover',method:'POST',path:'/recover'},scope:statusScope,authorize:()=>true,authorizeRecovery:()=>true,verifyRecovery:(_actor,_scope,current,reference)=>reference==='verified'&&current.sourceVersion===target.getPublicationProvenance(2).sourceVersion});await assert.rejects(registry.invoke('rollout.recover',{reference:'wrong'}, {...actor,origin:'ui'}),/not verified/);assert.equal((await second.getState()).phase,'uncertain');await a.query("CREATE FUNCTION reject_rollout_evidence() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'evidence unavailable'; END $$");await a.query('CREATE TRIGGER reject_rollout_evidence BEFORE INSERT ON app_mixer_remote_rollout_recovery_events FOR EACH ROW EXECUTE FUNCTION reject_rollout_evidence()');await assert.rejects(registry.invoke('rollout.recover',{reference:'verified'}, {...actor,origin:'ui'}),/evidence unavailable/);assert.equal((await second.getState()).phase,'uncertain');assert.deepEqual((await second.listRecoveryEvidence()).items,[]);await a.query('DROP TRIGGER reject_rollout_evidence ON app_mixer_remote_rollout_recovery_events');assert.deepEqual(await registry.invoke('rollout.recover',{reference:'verified'}, {...actor,origin:'ui'}),{recovered:true});assert.equal((await second.getState()).phase,'idle');const recoveryEvents=(await second.listRecoveryEvidence()).items;assert.equal(recoveryEvents.length,1);assert.equal(recoveryEvents[0].principalId,'operator');assert.equal(recoveryEvents[0].reference,'verified');assert.equal(recoveryEvents[0].phase,'uncertain');assert.deepEqual((await other.listRecoveryEvidence()).items,[]);registerRemoteRolloutEvidenceCapability(registry,second,{candidate:{operationId:'rollout.evidence',method:'GET',path:'/evidence'},scope:statusScope,cursorKey:randomBytes(32),authorize:()=>true,authorizeEvidence:()=>true});const evidencePage=await registry.invoke('rollout.evidence',{}, {...actor,origin:'ui'});assert.equal(evidencePage.items.length,1);assert.equal(evidencePage.items[0].reference,'verified');assert.equal(Object.hasOwn(evidencePage.items[0],'id'),false);await assert.rejects(registry.invoke('rollout.evidence',{}, {tenantId:'other',principalId:'operator',origin:'ui'}),/forbidden/);await assert.rejects(a.query("UPDATE app_mixer_remote_rollout_recovery_events SET reference='forged'"),/immutable/);await assert.rejects(a.query('DELETE FROM app_mixer_remote_rollout_recovery_events'),/immutable/);await assert.rejects(a.query('TRUNCATE app_mixer_remote_rollout_recovery_events'),/immutable/);failAudit=false;
-  const results=[],errors=[],poller=new RemoteRolloutPoller({rollout:second,intervalMs:100,maxBackoffMs:200,onResult:value=>results.push(value),onError:(error,review)=>errors.push({error,review})});try{poller.start();await waitFor(()=>results.length>0);assert.equal(results[0].status,'unchanged');assert.deepEqual(errors,[]);}finally{await poller.stop();}
-  const failing=new PostgresRemoteRollout({enabled:true,connector,actor,query:async()=>{throw Error('database unavailable')}}),failures=[],stopping=new RemoteRolloutPoller({rollout:failing,intervalMs:100,maxBackoffMs:200,onResult:()=>{},onError:(error,review)=>failures.push({error,review})});try{stopping.start();await waitFor(()=>failures.length>0);assert.equal(failures[0].review,true);assert.equal(stopping.isRunning(),false);}finally{await stopping.stop();}
-  publishNext(source);const child=fork(fileURLToPath(new URL('./fixtures/postgres-rollout-crash.mjs',import.meta.url)),[],{env:{...process.env,TEST_SCHEMA:schema,TEST_TARGET:join(dir,'target.sqlite'),TEST_ORIGIN:`http://127.0.0.1:${server.address().port}`,TEST_TOKEN:token,TEST_PUBLIC_KEY:publicKey.export({type:'spki',format:'pem'})},stdio:['ignore','ignore','pipe','ipc']});let reached=false;try{await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Worker did not reach import')),15000);child.once('message',message=>{clearTimeout(timer);if(message==='importing'){reached=true;resolve();}else reject(Error(String(message?.error??message)));});child.once('exit',()=>{clearTimeout(timer);if(!reached)reject(Error('Worker exited before import'));});});const exited=once(child,'exit');child.kill('SIGKILL');const [,signal]=await exited;assert.equal(signal,'SIGKILL');assert.equal((await second.getState()).phase,'importing');assert.equal(target.getPublished().version,2);await assert.rejects(second.runOnce(),/recovery/);await second.recover(state=>state.sourceVersion===3&&target.getPublished().version===2);assert.equal((await first.runOnce()).status,'imported');assert.equal(target.getPublished().version,3);}finally{if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}}
- }finally{release?.();server.closeAllConnections();if(server.listening)await new Promise(resolve=>server.close(resolve));target.close();rmSync(dir,{recursive:true,force:true});await Promise.allSettled([a.end(),b.end()]);await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await admin.end();}
+const publishNext = store => {
+  const draft = store.getDraft();
+  store.apply(draft.revision, [{ op: 'addPage', page: { id: `page-${draft.revision}`, route: `/page-${draft.revision}`, title: `Page ${draft.revision}`, components: [] } }]);
+  return store.publish(draft.revision + 1);
+};
+test('PostgreSQL rollout coordinates competing hosts and gates uncertain imports', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 60000 }, async () => {
+  const schema = 'app_mixer_rollout_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    admin = new pg.Pool({ connectionString: url }),
+    a = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    b = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    dir = mkdtempSync(join(tmpdir(), 'app-mixer-rollout-pg-')),
+    source = new ApplicationStore(definition),
+    target = new SqliteApplicationStore(join(dir, 'target.sqlite'), definition);
+  source.publish(0);
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
+    signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
+    verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
+    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+  let release,
+    started,
+    blocked = true,
+    failAudit = false;
+  const entered = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const connector = createRemoteControlConnector({
+      sourceOrigin: `http://127.0.0.1:${server.address().port}`,
+      sourceToken: token,
+      sourceEnvironment: 'dev',
+      targetEnvironment: 'prod',
+      applicationId: 'demo',
+      repository: target,
+      allowLoopbackHttp: true,
+      authorize: () => true,
+      audit: event => {
+        if (failAudit && event.phase === 'completed') throw Error('audit unavailable');
+      },
+      discovery: {
+        authorize: async () => {
+          if (blocked) {
+            started();
+            await gate;
+          }
+          return true;
+        },
+        audit: () => {}
+      },
+      requireAdvancingSource: true,
+      verifyWithEvidence: verifier.verifyWithEvidence
+    });
+    const first = new PostgresRemoteRollout({ enabled: true, connector, actor, query: (sql, args) => a.query(sql, args) }),
+      second = new PostgresRemoteRollout({ enabled: true, connector, actor, query: (sql, args) => b.query(sql, args) }),
+      other = new PostgresRemoteRollout({ enabled: true, connector, actor: { ...actor, tenantId: 'other' }, query: (sql, args) => a.query(sql, args) });
+    await first.initialize();
+    await second.initialize();
+    await other.initialize();
+    const registry = new CapabilityRegistry(() => {}),
+      statusScope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+    registerRemoteRolloutStatusCapability(registry, second, {
+      candidate: { operationId: 'rollout.status', method: 'GET', path: '/rollout' },
+      scope: statusScope,
+      authorize: () => true,
+      authorizeStatus: () => true
+    });
+    const status = () => registry.invoke('rollout.status', {}, { ...actor, origin: 'ui' });
+    assert.deepEqual(await status(), { phase: 'idle', sourceVersion: null, expectedVersion: null });
+    await assert.rejects(registry.invoke('rollout.status', {}, { tenantId: 'other', principalId: 'operator', origin: 'ui' }), /forbidden/);
+    const controller = new AbortController(),
+      pending = first.runOnce(controller.signal);
+    await entered;
+    assert.equal((await second.getState()).phase, 'running');
+    assert.equal((await status()).phase, 'running');
+    assert.equal((await other.getState()).phase, 'idle');
+    await assert.rejects(second.runOnce(), /recovery/);
+    await assert.rejects(
+      first.recover(() => true),
+      /recovery/
+    );
+    controller.abort();
+    blocked = false;
+    release();
+    await assert.rejects(pending, /cancelled/);
+    assert.equal((await second.getState()).phase, 'idle');
+    assert.equal(target.getPublished(), undefined);
+    assert.equal((await first.runOnce()).status, 'imported');
+    assert.equal((await second.getState()).phase, 'idle');
+    assert.equal((await second.runOnce()).status, 'unchanged');
+    publishNext(source);
+    failAudit = true;
+    await assert.rejects(second.runOnce(), RemoteControlImportUncertainError);
+    const state = await first.getState();
+    assert.equal(state.phase, 'uncertain');
+    assert.equal(state.sourceVersion, 2);
+    assert.equal(state.expectedVersion, 1);
+    const controlPoller = new RemoteRolloutPoller({ rollout: second, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+    registerRemoteRolloutPollerCapability(registry, second, controlPoller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/control' },
+      scope: statusScope,
+      authorize: () => true,
+      authorizeControl: () => true
+    });
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, { ...actor, origin: 'ui' }), /requires review/);
+    assert.equal(controlPoller.isRunning(), false);
+    assert.deepEqual(await status(), { phase: 'uncertain', sourceVersion: 2, expectedVersion: 1 });
+    assert.equal(target.getPublished().version, 2);
+    await assert.rejects(first.runOnce(), /recovery/);
+    await assert.rejects(
+      first.recover(() => false),
+      /denied/
+    );
+    registerRemoteRolloutRecoveryCapability(registry, first, {
+      candidate: { operationId: 'rollout.recover', method: 'POST', path: '/recover' },
+      scope: statusScope,
+      authorize: () => true,
+      authorizeRecovery: () => true,
+      verifyRecovery: (_actor, _scope, current, reference) => reference === 'verified' && current.sourceVersion === target.getPublicationProvenance(2).sourceVersion
+    });
+    await assert.rejects(registry.invoke('rollout.recover', { reference: 'wrong' }, { ...actor, origin: 'ui' }), /not verified/);
+    assert.equal((await second.getState()).phase, 'uncertain');
+    await a.query("CREATE FUNCTION reject_rollout_evidence() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'evidence unavailable'; END $$");
+    await a.query('CREATE TRIGGER reject_rollout_evidence BEFORE INSERT ON app_mixer_remote_rollout_recovery_events FOR EACH ROW EXECUTE FUNCTION reject_rollout_evidence()');
+    await assert.rejects(registry.invoke('rollout.recover', { reference: 'verified' }, { ...actor, origin: 'ui' }), /evidence unavailable/);
+    assert.equal((await second.getState()).phase, 'uncertain');
+    assert.deepEqual((await second.listRecoveryEvidence()).items, []);
+    await a.query('DROP TRIGGER reject_rollout_evidence ON app_mixer_remote_rollout_recovery_events');
+    assert.deepEqual(await registry.invoke('rollout.recover', { reference: 'verified' }, { ...actor, origin: 'ui' }), { recovered: true });
+    assert.equal((await second.getState()).phase, 'idle');
+    const recoveryEvents = (await second.listRecoveryEvidence()).items;
+    assert.equal(recoveryEvents.length, 1);
+    assert.equal(recoveryEvents[0].principalId, 'operator');
+    assert.equal(recoveryEvents[0].reference, 'verified');
+    assert.equal(recoveryEvents[0].phase, 'uncertain');
+    assert.deepEqual((await other.listRecoveryEvidence()).items, []);
+    registerRemoteRolloutEvidenceCapability(registry, second, {
+      candidate: { operationId: 'rollout.evidence', method: 'GET', path: '/evidence' },
+      scope: statusScope,
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeEvidence: () => true
+    });
+    const evidencePage = await registry.invoke('rollout.evidence', {}, { ...actor, origin: 'ui' });
+    assert.equal(evidencePage.items.length, 1);
+    assert.equal(evidencePage.items[0].reference, 'verified');
+    assert.equal(Object.hasOwn(evidencePage.items[0], 'id'), false);
+    await assert.rejects(registry.invoke('rollout.evidence', {}, { tenantId: 'other', principalId: 'operator', origin: 'ui' }), /forbidden/);
+    await assert.rejects(a.query("UPDATE app_mixer_remote_rollout_recovery_events SET reference='forged'"), /immutable/);
+    await assert.rejects(a.query('DELETE FROM app_mixer_remote_rollout_recovery_events'), /immutable/);
+    await assert.rejects(a.query('TRUNCATE app_mixer_remote_rollout_recovery_events'), /immutable/);
+    failAudit = false;
+    const results = [],
+      errors = [],
+      poller = new RemoteRolloutPoller({ rollout: second, intervalMs: 100, maxBackoffMs: 200, onResult: value => results.push(value), onError: (error, review) => errors.push({ error, review }) });
+    try {
+      poller.start();
+      await waitFor(() => results.length > 0);
+      assert.equal(results[0].status, 'unchanged');
+      assert.deepEqual(errors, []);
+    } finally {
+      await poller.stop();
+    }
+    const failing = new PostgresRemoteRollout({
+        enabled: true,
+        connector,
+        actor,
+        query: async () => {
+          throw Error('database unavailable');
+        }
+      }),
+      failures = [],
+      stopping = new RemoteRolloutPoller({ rollout: failing, intervalMs: 100, maxBackoffMs: 200, onResult: () => {}, onError: (error, review) => failures.push({ error, review }) });
+    try {
+      stopping.start();
+      await waitFor(() => failures.length > 0);
+      assert.equal(failures[0].review, true);
+      assert.equal(stopping.isRunning(), false);
+    } finally {
+      await stopping.stop();
+    }
+    publishNext(source);
+    const child = fork(fileURLToPath(new URL('./fixtures/postgres-rollout-crash.mjs', import.meta.url)), [], {
+      env: {
+        ...process.env,
+        TEST_SCHEMA: schema,
+        TEST_TARGET: join(dir, 'target.sqlite'),
+        TEST_ORIGIN: `http://127.0.0.1:${server.address().port}`,
+        TEST_TOKEN: token,
+        TEST_PUBLIC_KEY: publicKey.export({ type: 'spki', format: 'pem' })
+      },
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc']
+    });
+    let reached = false;
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(Error('Worker did not reach import')), 15000);
+        child.once('message', message => {
+          clearTimeout(timer);
+          if (message === 'importing') {
+            reached = true;
+            resolve();
+          } else reject(Error(String(message?.error ?? message)));
+        });
+        child.once('exit', () => {
+          clearTimeout(timer);
+          if (!reached) reject(Error('Worker exited before import'));
+        });
+      });
+      const exited = once(child, 'exit');
+      child.kill('SIGKILL');
+      const [, signal] = await exited;
+      assert.equal(signal, 'SIGKILL');
+      assert.equal((await second.getState()).phase, 'importing');
+      assert.equal(target.getPublished().version, 2);
+      await assert.rejects(second.runOnce(), /recovery/);
+      await second.recover(state => state.sourceVersion === 3 && target.getPublished().version === 2);
+      assert.equal((await first.runOnce()).status, 'imported');
+      assert.equal(target.getPublished().version, 3);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
+    }
+  } finally {
+    release?.();
+    server.closeAllConnections();
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    target.close();
+    rmSync(dir, { recursive: true, force: true });
+    await Promise.allSettled([a.end(), b.end()]);
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+  }
 });

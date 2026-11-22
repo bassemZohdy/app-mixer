@@ -1,0 +1,10 @@
+node_modules/
+**/dist/
+**/node_modules/
+package-lock.json
+**/catalog/**/*.json
+**/signed-plan.json
+packages/web/test/fixtures/
+packages/web/test/legacy-clients/
+*.mdpackages/core/src/data-editor-preview.ts
+packages/core/src/staged-editor-preview.ts

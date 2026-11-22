@@ -9,7 +9,7 @@ spec:
       image: app-mixer-agent-recovery:test
       imagePullPolicy: Never
       args: [node, deploy/kubernetes/test-support/agent-recovery/budget-recovery.mjs, hold, PHASE]
-      volumeMounts: [{name: state, mountPath: /data}]
+      volumeMounts: [{ name: state, mountPath: /data }]
   volumes:
     - name: state
-      persistentVolumeClaim: {claimName: agent-recovery-test}
+      persistentVolumeClaim: { claimName: agent-recovery-test }

@@ -1,329 +1,778 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
-import {NativeSurfaceStore,APP_MIXER_CATALOG} from '../dist/index.js';
-import {A2UIRenderer} from '../../web/dist/index.js';
+import { readFile } from 'node:fs/promises';
+import { NativeSurfaceStore, APP_MIXER_CATALOG } from '../dist/index.js';
+import { A2UIRenderer } from '../../web/dist/index.js';
 
 class Element {
- constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.style={};this.dataset={};this.attributes={};this.textContent='';this.parent=null;this.listeners={};this.value='';}
- setAttribute(name,value){this.attributes[name]=String(value);}
- getAttribute(name){return this.attributes[name]??null;}
- removeAttribute(name){delete this.attributes[name];}
- appendChild(child){child.parent=this;this.children.push(child);return child;}
- replaceChildren(...children){this.children=[];for(const child of children)this.appendChild(child);}
- remove(){if(this.parent)this.parent.children=this.parent.children.filter(x=>x!==this);}
- addEventListener(event,fn){this.listeners[event]=fn;}
+  constructor(tag, doc) {
+    this.tagName = tag;
+    this.ownerDocument = doc;
+    this.children = [];
+    this.style = {};
+    this.dataset = {};
+    this.attributes = {};
+    this.textContent = '';
+    this.parent = null;
+    this.listeners = {};
+    this.value = '';
+  }
+  setAttribute(name, value) {
+    this.attributes[name] = String(value);
+  }
+  getAttribute(name) {
+    return this.attributes[name] ?? null;
+  }
+  removeAttribute(name) {
+    delete this.attributes[name];
+  }
+  appendChild(child) {
+    child.parent = this;
+    this.children.push(child);
+    return child;
+  }
+  replaceChildren(...children) {
+    this.children = [];
+    for (const child of children) this.appendChild(child);
+  }
+  remove() {
+    if (this.parent) this.parent.children = this.parent.children.filter(x => x !== this);
+  }
+  addEventListener(event, fn) {
+    this.listeners[event] = fn;
+  }
 }
-const doc={createElement:tag=>new Element(tag,doc)};
-const domTree=node=>{
- if(node.tagName==='span'&&!node.children.length&&!node.textContent)return undefined;
- const kind=node.tagName==='section'?'Card':node.tagName==='div'?(node.style.flexDirection==='row'?'Row':'Column'):'Text';
- return {kind,...(kind==='Text'?{text:node.textContent}:{}),...(kind==='Row'||kind==='Column'?{justify:node.style.justifyContent??null,align:node.style.alignItems??null}:{}),children:node.children.map(domTree).filter(Boolean)};
+const doc = { createElement: tag => new Element(tag, doc) };
+const domTree = node => {
+  if (node.tagName === 'span' && !node.children.length && !node.textContent) return undefined;
+  const kind = node.tagName === 'section' ? 'Card' : node.tagName === 'div' ? (node.style.flexDirection === 'row' ? 'Row' : 'Column') : 'Text';
+  return {
+    kind,
+    ...(kind === 'Text' ? { text: node.textContent } : {}),
+    ...(kind === 'Row' || kind === 'Column' ? { justify: node.style.justifyContent ?? null, align: node.style.alignItems ?? null } : {}),
+    children: node.children.map(domTree).filter(Boolean)
+  };
 };
-const styleValues={start:'flex-start',center:'center',end:'flex-end',stretch:'stretch',spaceBetween:'space-between',spaceAround:'space-around',spaceEvenly:'space-evenly'};
-const nativeTree=node=>node.kind==='Missing'?undefined:{kind:node.kind,...(node.kind==='Text'?{text:node.text}:{}),...(node.kind==='Row'||node.kind==='Column'?{justify:node.justify?styleValues[node.justify]:null,align:node.align?styleValues[node.align]:null}:{}),children:node.children.map(nativeTree).filter(Boolean)};
-const message=(kind,payload)=>({version:'v0.9.1',[kind]:payload});
+const styleValues = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch', spaceBetween: 'space-between', spaceAround: 'space-around', spaceEvenly: 'space-evenly' };
+const nativeTree = node =>
+  node.kind === 'Missing'
+    ? undefined
+    : {
+        kind: node.kind,
+        ...(node.kind === 'Text' ? { text: node.text } : {}),
+        ...(node.kind === 'Row' || node.kind === 'Column' ? { justify: node.justify ? styleValues[node.justify] : null, align: node.align ? styleValues[node.align] : null } : {}),
+        children: node.children.map(nativeTree).filter(Boolean)
+      };
+const message = (kind, payload) => ({ version: 'v0.9.1', [kind]: payload });
 
-test('web and native render the same supported static component hierarchy across updates',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['heading','card','later'],align:'center'},{id:'heading',component:'Text',text:'Literal <tag>',variant:'h1'},{id:'card',component:'Card',child:'row'},{id:'row',component:'Row',children:['one','two'],justify:'spaceBetween'},{id:'one',component:'Text',text:'One'},{id:'two',component:'Text',text:'Two'}]}));
- const compare=()=>assert.deepEqual(domTree(host.children[0].children[0]),nativeTree(native.snapshot()[0].root));
- compare();apply(message('updateComponents',{surfaceId:'main',components:[{id:'later',component:'Text',text:'Loaded'},{id:'two',component:'Text',text:'Updated'}]}));compare();
- const cyclic=message('updateComponents',{surfaceId:'main',components:[{id:'row',component:'Row',children:['root']}]});
- assert.throws(()=>web.apply(cyclic),/Cyclic/);assert.throws(()=>native.apply(cyclic),/Cyclic/);compare();
- apply(message('deleteSurface',{surfaceId:'main'}));assert.equal(host.children.length,0);assert.deepEqual(native.snapshot(),[]);
+test('web and native render the same supported static component hierarchy across updates', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Column', children: ['heading', 'card', 'later'], align: 'center' },
+        { id: 'heading', component: 'Text', text: 'Literal <tag>', variant: 'h1' },
+        { id: 'card', component: 'Card', child: 'row' },
+        { id: 'row', component: 'Row', children: ['one', 'two'], justify: 'spaceBetween' },
+        { id: 'one', component: 'Text', text: 'One' },
+        { id: 'two', component: 'Text', text: 'Two' }
+      ]
+    })
+  );
+  const compare = () => assert.deepEqual(domTree(host.children[0].children[0]), nativeTree(native.snapshot()[0].root));
+  compare();
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'later', component: 'Text', text: 'Loaded' },
+        { id: 'two', component: 'Text', text: 'Updated' }
+      ]
+    })
+  );
+  compare();
+  const cyclic = message('updateComponents', { surfaceId: 'main', components: [{ id: 'row', component: 'Row', children: ['root'] }] });
+  assert.throws(() => web.apply(cyclic), /Cyclic/);
+  assert.throws(() => native.apply(cyclic), /Cyclic/);
+  compare();
+  apply(message('deleteSurface', { surfaceId: 'main' }));
+  assert.equal(host.children.length, 0);
+  assert.deepEqual(native.snapshot(), []);
 });
 
-test('web and native agree on data-bound text and nested updates',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/form/a~1b'}}]}));
- for(const value of ['Ada','Grace',42]){apply(message('updateDataModel',{surfaceId:'main',path:'/form/a~1b',value}));assert.equal(host.children[0].children[0].textContent,native.snapshot()[0].root.text);}
- apply(message('updateDataModel',{surfaceId:'main',path:'/form/a~1b'}));assert.equal(host.children[0].children[0].textContent,native.snapshot()[0].root.text);
+test('web and native agree on data-bound text and nested updates', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: { path: '/form/a~1b' } }] }));
+  for (const value of ['Ada', 'Grace', 42]) {
+    apply(message('updateDataModel', { surfaceId: 'main', path: '/form/a~1b', value }));
+    assert.equal(host.children[0].children[0].textContent, native.snapshot()[0].root.text);
+  }
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/form/a~1b' }));
+  assert.equal(host.children[0].children[0].textContent, native.snapshot()[0].root.text);
 });
 
-test('web and native text fields update the same bound data',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateDataModel',{surfaceId:'main',value:{form:{name:'Ada'}}}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['field','display']},{id:'field',component:'TextField',label:'Name',value:{path:'/form/name'}},{id:'display',component:'Text',text:{path:'/form/name'}}]}));
- const input=host.children[0].children[0].children[0].children[1];input.value='Grace';input.listeners.input();
- const snapshot=native.snapshot()[0];native.writeField('main','field',snapshot.revision,'Grace');
- assert.equal(host.children[0].children[0].children[1].textContent,native.snapshot()[0].root.children[1].text);
- assert.equal(native.snapshot()[0].root.children[0].value,'Grace');
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'field',component:'TextField',label:'Name',value:{path:'/form/other'}}]}));
- assert.throws(()=>native.writeField('main','field',snapshot.revision,'stale'),/Stale/);
- assert.equal(native.snapshot()[0].root.children[1].text,'Grace');
+test('web and native text fields update the same bound data', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { form: { name: 'Ada' } } }));
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Column', children: ['field', 'display'] },
+        { id: 'field', component: 'TextField', label: 'Name', value: { path: '/form/name' } },
+        { id: 'display', component: 'Text', text: { path: '/form/name' } }
+      ]
+    })
+  );
+  const input = host.children[0].children[0].children[0].children[1];
+  input.value = 'Grace';
+  input.listeners.input();
+  const snapshot = native.snapshot()[0];
+  native.writeField('main', 'field', snapshot.revision, 'Grace');
+  assert.equal(host.children[0].children[0].children[1].textContent, native.snapshot()[0].root.children[1].text);
+  assert.equal(native.snapshot()[0].root.children[0].value, 'Grace');
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'field', component: 'TextField', label: 'Name', value: { path: '/form/other' } }] }));
+  assert.throws(() => native.writeField('main', 'field', snapshot.revision, 'stale'), /Stale/);
+  assert.equal(native.snapshot()[0].root.children[1].text, 'Grace');
 });
 
-test('web and native agree on progress bar values across data updates',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateDataModel',{surfaceId:'main',value:{upload:{percent:40}}}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Progress',label:'Upload',value:{path:'/upload/percent'},max:50}]}));
- const bar=host.children[0].children[0].children[1];
- const compare=wanted=>{const node=native.snapshot()[0].root;assert.equal(node.label,'Upload');assert.equal(node.max,50);assert.equal(node.progress,wanted);assert.equal(bar.attributes.value,wanted===undefined?undefined:String(wanted));};
- compare(40);
- apply(message('updateDataModel',{surfaceId:'main',path:'/upload/percent',value:50}));compare(50);
- apply(message('updateDataModel',{surfaceId:'main',path:'/upload/percent',value:60}));compare(50);
- apply(message('updateDataModel',{surfaceId:'main',path:'/upload/percent',value:'half'}));compare(undefined);
- assert.throws(()=>apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Progress',label:'Upload',value:{path:'/upload/percent'},max:0}]})),/Progress/);
- compare(undefined);
+test('web and native agree on progress bar values across data updates', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { upload: { percent: 40 } } }));
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Progress', label: 'Upload', value: { path: '/upload/percent' }, max: 50 }] }));
+  const bar = host.children[0].children[0].children[1];
+  const compare = wanted => {
+    const node = native.snapshot()[0].root;
+    assert.equal(node.label, 'Upload');
+    assert.equal(node.max, 50);
+    assert.equal(node.progress, wanted);
+    assert.equal(bar.attributes.value, wanted === undefined ? undefined : String(wanted));
+  };
+  compare(40);
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/upload/percent', value: 50 }));
+  compare(50);
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/upload/percent', value: 60 }));
+  compare(50);
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/upload/percent', value: 'half' }));
+  compare(undefined);
+  assert.throws(
+    () => apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Progress', label: 'Upload', value: { path: '/upload/percent' }, max: 0 }] })),
+    /Progress/
+  );
+  compare(undefined);
 });
 
-test('web and native emit matching button action context',()=>{
- const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateDataModel',{surfaceId:'main',value:{form:{name:'Ada',secret:'private'}}}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{name:{path:'/form/name'},source:'screen'}}}},{id:'label',component:'Text',text:'Save'}]}));
- host.children[0].children[0].listeners.click();const nativeAction=native.action('main','root',native.snapshot()[0].revision);
- assert.deepEqual({...events[0].action,timestamp:''},{...nativeAction.action,timestamp:''});
+test('web and native emit matching button action context', () => {
+  const host = doc.createElement('main'),
+    events = [],
+    web = new A2UIRenderer(host, undefined, event => events.push(event)),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { form: { name: 'Ada', secret: 'private' } } }));
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { name: { path: '/form/name' }, source: 'screen' } } } },
+        { id: 'label', component: 'Text', text: 'Save' }
+      ]
+    })
+  );
+  host.children[0].children[0].listeners.click();
+  const nativeAction = native.action('main', 'root', native.snapshot()[0].revision);
+  assert.deepEqual({ ...events[0].action, timestamp: '' }, { ...nativeAction.action, timestamp: '' });
 });
 
-test('shared Flutter fixture matches web and native bindings',async()=>{
- const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/bindings.json',import.meta.url),'utf8'));
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- for(const step of steps){web.apply(step.message);native.apply(step.message);assert.equal(native.snapshot()[0].root?.text??null,step.text);assert.equal(host.children[0].children[0]?.textContent??null,step.text);}
+test('shared Flutter fixture matches web and native bindings', async () => {
+  const steps = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/bindings.json', import.meta.url), 'utf8'));
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  for (const step of steps) {
+    web.apply(step.message);
+    native.apply(step.message);
+    assert.equal(native.snapshot()[0].root?.text ?? null, step.text);
+    assert.equal(host.children[0].children[0]?.textContent ?? null, step.text);
+  }
 });
 
-test('shared Flutter fixture matches web and native action context',async()=>{
- const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/actions.json',import.meta.url),'utf8'));
- const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
- for(const step of fixture.messages){web.apply(step);native.apply(step);}
- host.children[0].children[0].listeners.click();
- const webAction={...events[0].action};delete webAction.timestamp;const nativeAction={...native.action('main','root',native.snapshot()[0].revision).action};delete nativeAction.timestamp;
- assert.deepEqual(webAction,fixture.action);assert.deepEqual(nativeAction,fixture.action);
+test('shared Flutter fixture matches web and native action context', async () => {
+  const fixture = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/actions.json', import.meta.url), 'utf8'));
+  const host = doc.createElement('main'),
+    events = [],
+    web = new A2UIRenderer(host, undefined, event => events.push(event)),
+    native = new NativeSurfaceStore();
+  for (const step of fixture.messages) {
+    web.apply(step);
+    native.apply(step);
+  }
+  host.children[0].children[0].listeners.click();
+  const webAction = { ...events[0].action };
+  delete webAction.timestamp;
+  const nativeAction = { ...native.action('main', 'root', native.snapshot()[0].revision).action };
+  delete nativeAction.timestamp;
+  assert.deepEqual(webAction, fixture.action);
+  assert.deepEqual(nativeAction, fixture.action);
 });
 
-test('shared Flutter fixture matches web and native layout trees',async()=>{
- const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/layout.json',import.meta.url),'utf8'));
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0];const nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?domTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeTree(nativeRoot):null,step.tree);}
+test('shared Flutter fixture matches web and native layout trees', async () => {
+  const steps = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/layout.json', import.meta.url), 'utf8'));
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  for (const step of steps) {
+    web.apply(step.message);
+    native.apply(step.message);
+    const webRoot = host.children[0].children[0];
+    const nativeRoot = native.snapshot()[0].root;
+    assert.deepEqual(webRoot ? domTree(webRoot) : null, step.tree);
+    assert.deepEqual(nativeRoot ? nativeTree(nativeRoot) : null, step.tree);
+  }
 });
 
-test('shared incremental layout fixture retains unresolved child slots until resolution',async()=>{
- const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/assets/incremental-missing-child.json',import.meta.url),'utf8'));
- for(const mode of fixture.modes){
-  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
-  for(const renderer of [web,native])renderer.apply(fixture.create);
-  const root={...fixture.root,justify:mode};for(const renderer of [web,native])renderer.apply(message('updateComponents',{surfaceId:'main',components:[...fixture.children,root]}));
-  const row=host.children[0].children[0],nativeRow=native.snapshot()[0].root,renderRow=native.renderRoot('main');
-  assert.deepEqual(row.children.map(child=>child.tagName),['p','span','p']);assert.deepEqual(nativeRow.children.map(child=>child.kind),['Text','Text']);assert.deepEqual(renderRow.children.map(child=>child.kind),['Text','Missing','Text']);
-  assert.equal(row.children[1].textContent,'');assert.equal(renderRow.children[1].id,'middle');
-  for(const renderer of [web,native])renderer.apply(message('updateComponents',{surfaceId:'main',components:[fixture.resolve]}));
-  assert.deepEqual(host.children[0].children[0].children.map(child=>child.textContent),['Left','Middle','Right']);
-  assert.deepEqual(native.snapshot()[0].root.children.map(child=>child.text),['Left','Middle','Right']);assert.deepEqual(native.renderRoot('main').children.map(child=>child.kind),['Text','Text','Text']);
- }
+test('shared incremental layout fixture retains unresolved child slots until resolution', async () => {
+  const fixture = JSON.parse(await readFile(new URL('../../../adapters/flutter/assets/incremental-missing-child.json', import.meta.url), 'utf8'));
+  for (const mode of fixture.modes) {
+    const host = doc.createElement('main'),
+      web = new A2UIRenderer(host),
+      native = new NativeSurfaceStore();
+    for (const renderer of [web, native]) renderer.apply(fixture.create);
+    const root = { ...fixture.root, justify: mode };
+    for (const renderer of [web, native]) renderer.apply(message('updateComponents', { surfaceId: 'main', components: [...fixture.children, root] }));
+    const row = host.children[0].children[0],
+      nativeRow = native.snapshot()[0].root,
+      renderRow = native.renderRoot('main');
+    assert.deepEqual(
+      row.children.map(child => child.tagName),
+      ['p', 'span', 'p']
+    );
+    assert.deepEqual(
+      nativeRow.children.map(child => child.kind),
+      ['Text', 'Text']
+    );
+    assert.deepEqual(
+      renderRow.children.map(child => child.kind),
+      ['Text', 'Missing', 'Text']
+    );
+    assert.equal(row.children[1].textContent, '');
+    assert.equal(renderRow.children[1].id, 'middle');
+    for (const renderer of [web, native]) renderer.apply(message('updateComponents', { surfaceId: 'main', components: [fixture.resolve] }));
+    assert.deepEqual(
+      host.children[0].children[0].children.map(child => child.textContent),
+      ['Left', 'Middle', 'Right']
+    );
+    assert.deepEqual(
+      native.snapshot()[0].root.children.map(child => child.text),
+      ['Left', 'Middle', 'Right']
+    );
+    assert.deepEqual(
+      native.renderRoot('main').children.map(child => child.kind),
+      ['Text', 'Text', 'Text']
+    );
+  }
 });
 
-test('deep same-axis stretch trees are accepted by web and native',()=>{
- for(const kind of ['Column','Row']){
-  const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
-  const apply=value=>{web.apply(value);native.apply(value);};
-  apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
-  const components=Array.from({length:12},(_,i)=>({id:i===0?'root':`n${i}`,component:kind,children:[i===11?'leaf':`n${i+1}`]}));
-  components.push({id:'leaf',component:'Text',text:`Deep ${kind}`});
-  apply(message('updateComponents',{surfaceId:'main',components}));
-  assert.deepEqual(domTree(host.children[0].children[0]),nativeTree(native.snapshot()[0].root));
- }
+test('deep same-axis stretch trees are accepted by web and native', () => {
+  for (const kind of ['Column', 'Row']) {
+    const host = doc.createElement('main'),
+      web = new A2UIRenderer(host),
+      native = new NativeSurfaceStore();
+    const apply = value => {
+      web.apply(value);
+      native.apply(value);
+    };
+    apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+    const components = Array.from({ length: 12 }, (_, i) => ({ id: i === 0 ? 'root' : `n${i}`, component: kind, children: [i === 11 ? 'leaf' : `n${i + 1}`] }));
+    components.push({ id: 'leaf', component: 'Text', text: `Deep ${kind}` });
+    apply(message('updateComponents', { surfaceId: 'main', components }));
+    assert.deepEqual(domTree(host.children[0].children[0]), nativeTree(native.snapshot()[0].root));
+  }
 });
 
-test('deleted array elements differ from null in action context on web and native',()=>{
- const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateDataModel',{surfaceId:'main',value:{items:[null,'gone']}}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/0'}}}}},{id:'label',component:'Text',text:'Save'}]}));
- host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.value,null);assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.value,null);
- apply(message('updateDataModel',{surfaceId:'main',path:'/items/1'}));
- apply(message('updateDataModel',{surfaceId:'main',path:'/other',value:'updated'}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/1'}}}}}]}));
- assert.throws(()=>host.children[0].children[0].listeners.click(),/not found/);assert.throws(()=>native.action('main','root',native.snapshot()[0].revision),/not found/);
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items'}}}}}]}));
- host.children[0].children[0].listeners.click();const nativeEvent=native.action('main','root',native.snapshot()[0].revision);
- assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).action.context.value)),[null,null]);assert.deepEqual(JSON.parse(JSON.stringify(nativeEvent.action.context.value)),[null,null]);
+test('deleted array elements differ from null in action context on web and native', () => {
+  const host = doc.createElement('main'),
+    events = [],
+    web = new A2UIRenderer(host, undefined, event => events.push(event)),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { items: [null, 'gone'] } }));
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { value: { path: '/items/0' } } } } },
+        { id: 'label', component: 'Text', text: 'Save' }
+      ]
+    })
+  );
+  host.children[0].children[0].listeners.click();
+  assert.equal(events[0].action.context.value, null);
+  assert.equal(native.action('main', 'root', native.snapshot()[0].revision).action.context.value, null);
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/items/1' }));
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/other', value: 'updated' }));
+  apply(
+    message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { value: { path: '/items/1' } } } } }] })
+  );
+  assert.throws(() => host.children[0].children[0].listeners.click(), /not found/);
+  assert.throws(() => native.action('main', 'root', native.snapshot()[0].revision), /not found/);
+  apply(
+    message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { value: { path: '/items' } } } } }] })
+  );
+  host.children[0].children[0].listeners.click();
+  const nativeEvent = native.action('main', 'root', native.snapshot()[0].revision);
+  assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).action.context.value)), [null, null]);
+  assert.deepEqual(JSON.parse(JSON.stringify(nativeEvent.action.context.value)), [null, null]);
 });
 
-test('array bindings expose only canonical element indices across web and native',()=>{
- const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateDataModel',{surfaceId:'main',value:{items:['first','second']}}));
- for(const path of ['/items/length','/items/01','/items/-1','/items/2']){
-  apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path}}}}},{id:'label',component:'Text',text:{path}}]}));
-  assert.equal(host.children[0].children[0].children[0].textContent,'');assert.equal(native.snapshot()[0].root.children[0].text,'');
-  assert.throws(()=>host.children[0].children[0].listeners.click(),/not found/);assert.throws(()=>native.action('main','root',native.snapshot()[0].revision),/not found/);
- }
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'save',context:{value:{path:'/items/1'}}}}},{id:'label',component:'Text',text:{path:'/items/1'}}]}));
- host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.value,'second');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.value,'second');
+test('array bindings expose only canonical element indices across web and native', () => {
+  const host = doc.createElement('main'),
+    events = [],
+    web = new A2UIRenderer(host, undefined, event => events.push(event)),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { items: ['first', 'second'] } }));
+  for (const path of ['/items/length', '/items/01', '/items/-1', '/items/2']) {
+    apply(
+      message('updateComponents', {
+        surfaceId: 'main',
+        components: [
+          { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { value: { path } } } } },
+          { id: 'label', component: 'Text', text: { path } }
+        ]
+      })
+    );
+    assert.equal(host.children[0].children[0].children[0].textContent, '');
+    assert.equal(native.snapshot()[0].root.children[0].text, '');
+    assert.throws(() => host.children[0].children[0].listeners.click(), /not found/);
+    assert.throws(() => native.action('main', 'root', native.snapshot()[0].revision), /not found/);
+  }
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'save', context: { value: { path: '/items/1' } } } } },
+        { id: 'label', component: 'Text', text: { path: '/items/1' } }
+      ]
+    })
+  );
+  host.children[0].children[0].listeners.click();
+  assert.equal(events[0].action.context.value, 'second');
+  assert.equal(native.action('main', 'root', native.snapshot()[0].revision).action.context.value, 'second');
 });
 
-test('web and native reject null paths and optional properties atomically',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]}));
- for(const invalid of [
-  message('updateDataModel',{surfaceId:'main',path:null,value:{x:'bad'}}),
-  ...[{id:'root',component:'Text',text:'bad',variant:null},{id:'root',component:'Column',children:[],align:null},{id:'root',component:'Row',children:[],justify:null},{id:'root',component:'TextField',label:'Name',value:{path:'/x'},variant:null},{id:'root',component:'Button',child:'x',action:{event:{name:'save'}},variant:null}].map(c=>message('updateComponents',{surfaceId:'main',components:[c]}))
- ]){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));}
- assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
+test('web and native reject null paths and optional properties atomically', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: 'Safe' }] }));
+  for (const invalid of [
+    message('updateDataModel', { surfaceId: 'main', path: null, value: { x: 'bad' } }),
+    ...[
+      { id: 'root', component: 'Text', text: 'bad', variant: null },
+      { id: 'root', component: 'Column', children: [], align: null },
+      { id: 'root', component: 'Row', children: [], justify: null },
+      { id: 'root', component: 'TextField', label: 'Name', value: { path: '/x' }, variant: null },
+      { id: 'root', component: 'Button', child: 'x', action: { event: { name: 'save' } }, variant: null }
+    ].map(c => message('updateComponents', { surfaceId: 'main', components: [c] }))
+  ]) {
+    assert.throws(() => web.apply(invalid));
+    assert.throws(() => native.apply(invalid));
+  }
+  assert.equal(host.children[0].children[0].textContent, 'Safe');
+  assert.equal(native.snapshot()[0].root.text, 'Safe');
 });
 
-test('web and native validate components before they are connected to the tree',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]}));
- const invalid=[
-  {id:'unused',component:'Text',text:{path:'/safe',extra:true}},
-  {id:'unused',component:'Text',text:'x'.repeat(10001)},
-  {id:'unused',component:'Row',children:[],align:'invalid'},
-  {id:'unused',component:'Card',child:''},
-  {id:'unused',component:'TextField',label:'Name',value:{path:'/'}},
-  {id:'unused',component:'Button',child:'root',action:{event:{name:'go',context:{value:Infinity}}}}
- ];
- for(const component of invalid){
-  const update=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Changed'},component]});
-  assert.throws(()=>web.apply(update));assert.throws(()=>native.apply(update));
-  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
- }
+test('web and native validate components before they are connected to the tree', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: 'Safe' }] }));
+  const invalid = [
+    { id: 'unused', component: 'Text', text: { path: '/safe', extra: true } },
+    { id: 'unused', component: 'Text', text: 'x'.repeat(10001) },
+    { id: 'unused', component: 'Row', children: [], align: 'invalid' },
+    { id: 'unused', component: 'Card', child: '' },
+    { id: 'unused', component: 'TextField', label: 'Name', value: { path: '/' } },
+    { id: 'unused', component: 'Button', child: 'root', action: { event: { name: 'go', context: { value: Infinity } } } }
+  ];
+  for (const component of invalid) {
+    const update = message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: 'Changed' }, component] });
+    assert.throws(() => web.apply(update));
+    assert.throws(() => native.apply(update));
+    assert.equal(host.children[0].children[0].textContent, 'Safe');
+    assert.equal(native.snapshot()[0].root.text, 'Safe');
+  }
 });
 
-test('web and native reject unsafe or oversized model updates atomically',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateDataModel',{surfaceId:'main',value:{name:'Safe'}}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/name'}}]}));
- const cyclic={};cyclic.self=cyclic;
- let deep='leaf';for(let i=0;i<102;i++)deep={child:deep};
- for(const value of [JSON.parse('{"nested":{"__proto__":"bad"}}'),cyclic,deep,Array(10001).fill(0),Infinity,1n]){
-  const invalid=message('updateDataModel',{surfaceId:'main',value});
-  assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));
-  assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
- }
- apply(message('updateDataModel',{surfaceId:'main',path:'/existing',value:Array(6000).fill(0)}));
- const combined=message('updateDataModel',{surfaceId:'main',path:'/extra',value:Array(5000).fill(0)});
- assert.throws(()=>web.apply(combined));assert.throws(()=>native.apply(combined));
- assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');
- apply(message('updateDataModel',{surfaceId:'main',path:'/name',value:'Still safe'}));
- assert.equal(host.children[0].children[0].textContent,'Still safe');assert.equal(native.snapshot()[0].root.text,'Still safe');
+test('web and native reject unsafe or oversized model updates atomically', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { name: 'Safe' } }));
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: { path: '/name' } }] }));
+  const cyclic = {};
+  cyclic.self = cyclic;
+  let deep = 'leaf';
+  for (let i = 0; i < 102; i++) deep = { child: deep };
+  for (const value of [JSON.parse('{"nested":{"__proto__":"bad"}}'), cyclic, deep, Array(10001).fill(0), Infinity, 1n]) {
+    const invalid = message('updateDataModel', { surfaceId: 'main', value });
+    assert.throws(() => web.apply(invalid));
+    assert.throws(() => native.apply(invalid));
+    assert.equal(host.children[0].children[0].textContent, 'Safe');
+    assert.equal(native.snapshot()[0].root.text, 'Safe');
+  }
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/existing', value: Array(6000).fill(0) }));
+  const combined = message('updateDataModel', { surfaceId: 'main', path: '/extra', value: Array(5000).fill(0) });
+  assert.throws(() => web.apply(combined));
+  assert.throws(() => native.apply(combined));
+  assert.equal(host.children[0].children[0].textContent, 'Safe');
+  assert.equal(native.snapshot()[0].root.text, 'Safe');
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/name', value: 'Still safe' }));
+  assert.equal(host.children[0].children[0].textContent, 'Still safe');
+  assert.equal(native.snapshot()[0].root.text, 'Still safe');
 });
 
-test('shared invalid messages leave web and native surfaces unchanged',async()=>{
- const fixture=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/rejections.json',import.meta.url),'utf8'));
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- for(const value of [message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:'Safe'}]})]){web.apply(value);native.apply(value);}
- for(const invalid of fixture){assert.throws(()=>web.apply(invalid));assert.throws(()=>native.apply(invalid));assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
+test('shared invalid messages leave web and native surfaces unchanged', async () => {
+  const fixture = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/rejections.json', import.meta.url), 'utf8'));
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  for (const value of [
+    message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }),
+    message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: 'Safe' }] })
+  ]) {
+    web.apply(value);
+    native.apply(value);
+  }
+  for (const invalid of fixture) {
+    assert.throws(() => web.apply(invalid));
+    assert.throws(() => native.apply(invalid));
+    assert.equal(host.children[0].children[0].textContent, 'Safe');
+    assert.equal(native.snapshot()[0].root.text, 'Safe');
+  }
 });
 
-test('late children cannot insert an interactive control inside a button',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['button','field']},{id:'button',component:'Button',child:'late',action:{event:{name:'go'}}},{id:'field',component:'TextField',label:'Name',value:{path:'/name'}}]}));
- const invalid=message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Row',children:['field']}]});
- assert.throws(()=>web.apply(invalid),/Interactive component inside button/);assert.throws(()=>native.apply(invalid),/Interactive component inside button/);
- assert.equal(native.snapshot()[0].root.children[0].children.length,0);assert.equal(native.renderRoot('main').children[0].children[0].kind,'Missing');assert.equal(host.children[0].children[0].children[1].tagName,'label');
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'late',component:'Text',text:'Continue'}]}));
- assert.equal(native.snapshot()[0].root.children[0].children[0].text,'Continue');
+test('late children cannot insert an interactive control inside a button', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Column', children: ['button', 'field'] },
+        { id: 'button', component: 'Button', child: 'late', action: { event: { name: 'go' } } },
+        { id: 'field', component: 'TextField', label: 'Name', value: { path: '/name' } }
+      ]
+    })
+  );
+  const invalid = message('updateComponents', { surfaceId: 'main', components: [{ id: 'late', component: 'Row', children: ['field'] }] });
+  assert.throws(() => web.apply(invalid), /Interactive component inside button/);
+  assert.throws(() => native.apply(invalid), /Interactive component inside button/);
+  assert.equal(native.snapshot()[0].root.children[0].children.length, 0);
+  assert.equal(native.renderRoot('main').children[0].children[0].kind, 'Missing');
+  assert.equal(host.children[0].children[0].children[1].tagName, 'label');
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'late', component: 'Text', text: 'Continue' }] }));
+  assert.equal(native.snapshot()[0].root.children[0].children[0].text, 'Continue');
 });
 
-test('web and native reject invalid intermediate array indices for updates and deletions atomically',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore(),apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));apply(message('updateDataModel',{surfaceId:'main',value:{items:[{name:'Safe'}]}}));apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:{path:'/items/0/name'}}]}));
- for(const path of ['/items/01/name','/items/-1/name','/items/1/name','/items/length/name'])for(const remove of [false,true]){const invalid=message('updateDataModel',{surfaceId:'main',path,...(remove?{}:{value:'Changed'})});assert.throws(()=>web.apply(invalid),/array index/);assert.throws(()=>native.apply(invalid),/array index/);assert.equal(host.children[0].children[0].textContent,'Safe');assert.equal(native.snapshot()[0].root.text,'Safe');}
- apply(message('updateDataModel',{surfaceId:'main',path:'/items/0/missing/leaf'}));assert.equal(native.snapshot()[0].root.text,'Safe');apply(message('updateDataModel',{surfaceId:'main',path:'/items/0/name',value:'Updated'}));assert.equal(host.children[0].children[0].textContent,'Updated');assert.equal(native.snapshot()[0].root.text,'Updated');
+test('web and native reject invalid intermediate array indices for updates and deletions atomically', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore(),
+    apply = value => {
+      web.apply(value);
+      native.apply(value);
+    };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(message('updateDataModel', { surfaceId: 'main', value: { items: [{ name: 'Safe' }] } }));
+  apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: { path: '/items/0/name' } }] }));
+  for (const path of ['/items/01/name', '/items/-1/name', '/items/1/name', '/items/length/name'])
+    for (const remove of [false, true]) {
+      const invalid = message('updateDataModel', { surfaceId: 'main', path, ...(remove ? {} : { value: 'Changed' }) });
+      assert.throws(() => web.apply(invalid), /array index/);
+      assert.throws(() => native.apply(invalid), /array index/);
+      assert.equal(host.children[0].children[0].textContent, 'Safe');
+      assert.equal(native.snapshot()[0].root.text, 'Safe');
+    }
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/items/0/missing/leaf' }));
+  assert.equal(native.snapshot()[0].root.text, 'Safe');
+  apply(message('updateDataModel', { surfaceId: 'main', path: '/items/0/name', value: 'Updated' }));
+  assert.equal(host.children[0].children[0].textContent, 'Updated');
+  assert.equal(native.snapshot()[0].root.text, 'Updated');
 });
 
-test('web and native apply the same Unicode code point limit to literal text atomically',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- for(const renderer of [web,native])renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- const text='\u{1F600}'.repeat(10000),update=value=>message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Text',text:value}]});
- for(const renderer of [web,native])renderer.apply(update(text));
- assert.equal(host.children[0].children[0].textContent,text);assert.equal(native.snapshot()[0].root.text,text);
- for(const renderer of [web,native])assert.throws(()=>renderer.apply(update(text+'x')));
- assert.equal(host.children[0].children[0].textContent,text);assert.equal(native.snapshot()[0].root.text,text);
+test('web and native apply the same Unicode code point limit to literal text atomically', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  for (const renderer of [web, native]) renderer.apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  const text = '\u{1F600}'.repeat(10000),
+    update = value => message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Text', text: value }] });
+  for (const renderer of [web, native]) renderer.apply(update(text));
+  assert.equal(host.children[0].children[0].textContent, text);
+  assert.equal(native.snapshot()[0].root.text, text);
+  for (const renderer of [web, native]) assert.throws(() => renderer.apply(update(text + 'x')));
+  assert.equal(host.children[0].children[0].textContent, text);
+  assert.equal(native.snapshot()[0].root.text, text);
 });
 
-test('web and native count Unicode code points in component and action identifiers',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const identifier='\u{1F600}'.repeat(256),tooLong=identifier+'x';
- const update=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:identifier,action:{event:{name:identifier}}},{id:identifier,component:'Text',text:'Safe'}]});
- for(const renderer of [web,native]){renderer.apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));renderer.apply(update);}
- assert.equal(native.action('main','root',native.snapshot()[0].revision).action.name,identifier);
- for(const renderer of [web,native])assert.throws(()=>renderer.apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:identifier,action:{event:{name:tooLong}}}]})));
- assert.equal(native.action('main','root',native.snapshot()[0].revision).action.name,identifier);assert.equal(host.children[0].children[0].children[0].textContent,'Safe');
+test('web and native count Unicode code points in component and action identifiers', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const identifier = '\u{1F600}'.repeat(256),
+    tooLong = identifier + 'x';
+  const update = message('updateComponents', {
+    surfaceId: 'main',
+    components: [
+      { id: 'root', component: 'Button', child: identifier, action: { event: { name: identifier } } },
+      { id: identifier, component: 'Text', text: 'Safe' }
+    ]
+  });
+  for (const renderer of [web, native]) {
+    renderer.apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+    renderer.apply(update);
+  }
+  assert.equal(native.action('main', 'root', native.snapshot()[0].revision).action.name, identifier);
+  for (const renderer of [web, native])
+    assert.throws(() => renderer.apply(message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'Button', child: identifier, action: { event: { name: tooLong } } }] })));
+  assert.equal(native.action('main', 'root', native.snapshot()[0].revision).action.name, identifier);
+  assert.equal(host.children[0].children[0].children[0].textContent, 'Safe');
 });
 
-test('web and native support root value bindings for text and action context',()=>{
- const host=doc.createElement('main'),events=[],web=new A2UIRenderer(host,undefined,event=>events.push(event)),native=new NativeSurfaceStore();
- const messages=[message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateDataModel',{surfaceId:'main',value:'Root value'}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'go',context:{root:{path:''}}}}},{id:'label',component:'Text',text:{path:''}}]})];
- for(const value of messages){web.apply(value);native.apply(value);}
- assert.equal(native.snapshot()[0].root.children[0].text,'Root value');assert.equal(host.children[0].children[0].children[0].textContent,'Root value');
- host.children[0].children[0].listeners.click();assert.equal(events[0].action.context.root,'Root value');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.root,'Root value');
- const slash=message('updateDataModel',{surfaceId:'main',path:'/',value:'Replaced root'});web.apply(slash);native.apply(slash);
- const replacement=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Button',child:'label',action:{event:{name:'go',context:{root:{path:'/'}}}}},{id:'label',component:'Text',text:{path:'/'}}]});web.apply(replacement);native.apply(replacement);
- assert.equal(native.snapshot()[0].root.children[0].text,'Replaced root');assert.equal(host.children[0].children[0].children[0].textContent,'Replaced root');
- host.children[0].children[0].listeners.click();assert.equal(events.at(-1).action.context.root,'Replaced root');assert.equal(native.action('main','root',native.snapshot()[0].revision).action.context.root,'Replaced root');
+test('web and native support root value bindings for text and action context', () => {
+  const host = doc.createElement('main'),
+    events = [],
+    web = new A2UIRenderer(host, undefined, event => events.push(event)),
+    native = new NativeSurfaceStore();
+  const messages = [
+    message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }),
+    message('updateDataModel', { surfaceId: 'main', value: 'Root value' }),
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'go', context: { root: { path: '' } } } } },
+        { id: 'label', component: 'Text', text: { path: '' } }
+      ]
+    })
+  ];
+  for (const value of messages) {
+    web.apply(value);
+    native.apply(value);
+  }
+  assert.equal(native.snapshot()[0].root.children[0].text, 'Root value');
+  assert.equal(host.children[0].children[0].children[0].textContent, 'Root value');
+  host.children[0].children[0].listeners.click();
+  assert.equal(events[0].action.context.root, 'Root value');
+  assert.equal(native.action('main', 'root', native.snapshot()[0].revision).action.context.root, 'Root value');
+  const slash = message('updateDataModel', { surfaceId: 'main', path: '/', value: 'Replaced root' });
+  web.apply(slash);
+  native.apply(slash);
+  const replacement = message('updateComponents', {
+    surfaceId: 'main',
+    components: [
+      { id: 'root', component: 'Button', child: 'label', action: { event: { name: 'go', context: { root: { path: '/' } } } } },
+      { id: 'label', component: 'Text', text: { path: '/' } }
+    ]
+  });
+  web.apply(replacement);
+  native.apply(replacement);
+  assert.equal(native.snapshot()[0].root.children[0].text, 'Replaced root');
+  assert.equal(host.children[0].children[0].children[0].textContent, 'Replaced root');
+  host.children[0].children[0].listeners.click();
+  assert.equal(events.at(-1).action.context.root, 'Replaced root');
+  assert.equal(native.action('main', 'root', native.snapshot()[0].revision).action.context.root, 'Replaced root');
 });
 
-test('web and native fields bind a non-root path containing a line break',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const messages=[message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}),message('updateDataModel',{surfaceId:'main',value:{'\n':'Ada'}}),message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'TextField',label:'Name',value:{path:'/\n'}}]})];
- for(const value of messages){web.apply(value);native.apply(value);}
- assert.equal(native.snapshot()[0].root.value,'Ada');assert.equal(host.children[0].children[0].children[1].value,'Ada');
- const revision=native.snapshot()[0].revision;native.writeField('main','root',revision,'Grace');assert.equal(native.snapshot()[0].root.value,'Grace');
+test('web and native fields bind a non-root path containing a line break', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const messages = [
+    message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }),
+    message('updateDataModel', { surfaceId: 'main', value: { '\n': 'Ada' } }),
+    message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: 'TextField', label: 'Name', value: { path: '/\n' } }] })
+  ];
+  for (const value of messages) {
+    web.apply(value);
+    native.apply(value);
+  }
+  assert.equal(native.snapshot()[0].root.value, 'Ada');
+  assert.equal(host.children[0].children[0].children[1].value, 'Ada');
+  const revision = native.snapshot()[0].revision;
+  native.writeField('main', 'root', revision, 'Grace');
+  assert.equal(native.snapshot()[0].root.value, 'Grace');
 });
 
-test('web and native reject sparse child lists without changing the rendered tree',()=>{
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const apply=value=>{web.apply(value);native.apply(value);};
- apply(message('createSurface',{surfaceId:'main',catalogId:APP_MIXER_CATALOG}));
- apply(message('updateComponents',{surfaceId:'main',components:[{id:'root',component:'Column',children:['one']},{id:'one',component:'Text',text:'One'}]}));
- const before=domTree(host.children[0].children[0]),nativeBefore=nativeTree(native.snapshot()[0].root);
- for(const kind of ['Column','Row']){
-  // Array holes are skipped by Array.prototype.every, so validation must not rely on it alone.
-  const children=['one','one'];delete children[0];const sparse=message('updateComponents',{surfaceId:'main',components:[{id:'root',component:kind,children}]});
-  assert.throws(()=>web.apply(sparse),error=>error instanceof Error&&!(error instanceof TypeError));assert.throws(()=>native.apply(sparse),error=>error instanceof Error&&!(error instanceof TypeError));
-  assert.deepEqual(domTree(host.children[0].children[0]),before);assert.deepEqual(nativeTree(native.snapshot()[0].root),nativeBefore);
- }
+test('web and native reject sparse child lists without changing the rendered tree', () => {
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const apply = value => {
+    web.apply(value);
+    native.apply(value);
+  };
+  apply(message('createSurface', { surfaceId: 'main', catalogId: APP_MIXER_CATALOG }));
+  apply(
+    message('updateComponents', {
+      surfaceId: 'main',
+      components: [
+        { id: 'root', component: 'Column', children: ['one'] },
+        { id: 'one', component: 'Text', text: 'One' }
+      ]
+    })
+  );
+  const before = domTree(host.children[0].children[0]),
+    nativeBefore = nativeTree(native.snapshot()[0].root);
+  for (const kind of ['Column', 'Row']) {
+    // Array holes are skipped by Array.prototype.every, so validation must not rely on it alone.
+    const children = ['one', 'one'];
+    delete children[0];
+    const sparse = message('updateComponents', { surfaceId: 'main', components: [{ id: 'root', component: kind, children }] });
+    assert.throws(
+      () => web.apply(sparse),
+      error => error instanceof Error && !(error instanceof TypeError)
+    );
+    assert.throws(
+      () => native.apply(sparse),
+      error => error instanceof Error && !(error instanceof TypeError)
+    );
+    assert.deepEqual(domTree(host.children[0].children[0]), before);
+    assert.deepEqual(nativeTree(native.snapshot()[0].root), nativeBefore);
+  }
 });
 
-test('shared variants fixture renders every catalog variant and layout value alike on web and native',async()=>{
- const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/variants.json',import.meta.url),'utf8'));
- const textTags={h1:'h1',h2:'h2',h3:'h3',h4:'h4',h5:'h5',small:'caption',p:'body'};
- // Reads the variant back from what the web renderer drew: the heading or paragraph tag, textarea versus input.
- const webTree=node=>{
-  if(node.tagName==='section')return {kind:'Card',children:node.children.map(webTree)};
-  if(node.tagName==='div')return {kind:node.style.flexDirection==='row'?'Row':'Column',justify:node.style.justifyContent??null,align:node.style.alignItems??null,children:node.children.map(webTree)};
-  if(node.tagName==='label')return {kind:'TextField',variant:node.children[1].tagName==='textarea'?'longText':'shortText',label:node.children[0].textContent,children:[]};
-  if(node.tagName==='button')return {kind:'Button',children:node.children.map(webTree)};
-  assert.ok(Object.hasOwn(textTags,node.tagName),'unexpected element '+node.tagName);return {kind:'Text',variant:textTags[node.tagName],text:node.textContent,children:[]};
- };
- const nativeVariants=node=>({kind:node.kind,...(node.kind==='Text'?{variant:node.variant??'body',text:node.text}:{}),...(node.kind==='TextField'?{variant:node.variant??'shortText',label:node.label}:{}),...(node.kind==='Row'||node.kind==='Column'?{justify:node.justify?styleValues[node.justify]:null,align:node.align?styleValues[node.align]:null}:{}),children:node.kind==='TextField'?[]:node.children.map(nativeVariants)});
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- for(const step of steps){web.apply(step.message);native.apply(step.message);const webRoot=host.children[0].children[0],nativeRoot=native.snapshot()[0].root;assert.deepEqual(webRoot?webTree(webRoot):null,step.tree);assert.deepEqual(nativeRoot?nativeVariants(nativeRoot):null,step.tree);}
- // Button variants are accepted and kept by the native store; no adapter draws them differently.
- const buttons=native.snapshot()[0].root.children.filter(node=>node.kind==='Button').map(node=>node.variant??null);assert.deepEqual(buttons,['default','primary','borderless',null]);
+test('shared variants fixture renders every catalog variant and layout value alike on web and native', async () => {
+  const steps = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/variants.json', import.meta.url), 'utf8'));
+  const textTags = { h1: 'h1', h2: 'h2', h3: 'h3', h4: 'h4', h5: 'h5', small: 'caption', p: 'body' };
+  // Reads the variant back from what the web renderer drew: the heading or paragraph tag, textarea versus input.
+  const webTree = node => {
+    if (node.tagName === 'section') return { kind: 'Card', children: node.children.map(webTree) };
+    if (node.tagName === 'div')
+      return { kind: node.style.flexDirection === 'row' ? 'Row' : 'Column', justify: node.style.justifyContent ?? null, align: node.style.alignItems ?? null, children: node.children.map(webTree) };
+    if (node.tagName === 'label') return { kind: 'TextField', variant: node.children[1].tagName === 'textarea' ? 'longText' : 'shortText', label: node.children[0].textContent, children: [] };
+    if (node.tagName === 'button') return { kind: 'Button', children: node.children.map(webTree) };
+    assert.ok(Object.hasOwn(textTags, node.tagName), 'unexpected element ' + node.tagName);
+    return { kind: 'Text', variant: textTags[node.tagName], text: node.textContent, children: [] };
+  };
+  const nativeVariants = node => ({
+    kind: node.kind,
+    ...(node.kind === 'Text' ? { variant: node.variant ?? 'body', text: node.text } : {}),
+    ...(node.kind === 'TextField' ? { variant: node.variant ?? 'shortText', label: node.label } : {}),
+    ...(node.kind === 'Row' || node.kind === 'Column' ? { justify: node.justify ? styleValues[node.justify] : null, align: node.align ? styleValues[node.align] : null } : {}),
+    children: node.kind === 'TextField' ? [] : node.children.map(nativeVariants)
+  });
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  for (const step of steps) {
+    web.apply(step.message);
+    native.apply(step.message);
+    const webRoot = host.children[0].children[0],
+      nativeRoot = native.snapshot()[0].root;
+    assert.deepEqual(webRoot ? webTree(webRoot) : null, step.tree);
+    assert.deepEqual(nativeRoot ? nativeVariants(nativeRoot) : null, step.tree);
+  }
+  // Button variants are accepted and kept by the native store; no adapter draws them differently.
+  const buttons = native
+    .snapshot()[0]
+    .root.children.filter(node => node.kind === 'Button')
+    .map(node => node.variant ?? null);
+  assert.deepEqual(buttons, ['default', 'primary', 'borderless', null]);
 });
 
-
-test('shared Flutter text field fixture matches web and native rendering and input',async()=>{
- const steps=JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/text-field.json',import.meta.url),'utf8'));
- const host=doc.createElement('main'),web=new A2UIRenderer(host),native=new NativeSurfaceStore();
- const webState=()=>{const root=host.children[0]?.children[0];if(!root)return {field:null,text:null};const wrapper=root.children[0],input=wrapper.children[1];return {field:{label:wrapper.children[0].textContent,value:input.value,variant:input.tagName==='textarea'?'longText':null},text:root.children[1].textContent};};
- const nativeState=()=>{const root=native.snapshot()[0].root;if(!root)return {field:null,text:null};const field=root.children[0];return {field:{label:field.label,value:field.value,variant:field.variant??null},text:root.children[1].text};};
- for(const step of steps){
-  if(step.message){web.apply(step.message);native.apply(step.message);}
-  else{const input=host.children[0].children[0].children[0].children[1];input.value=step.input;input.listeners.input();native.writeField('main','field',native.snapshot()[0].revision,step.input);}
-  const expected={field:step.field,text:step.text};assert.deepEqual(webState(),expected,JSON.stringify(step));assert.deepEqual(nativeState(),expected,JSON.stringify(step));
- }
+test('shared Flutter text field fixture matches web and native rendering and input', async () => {
+  const steps = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/text-field.json', import.meta.url), 'utf8'));
+  const host = doc.createElement('main'),
+    web = new A2UIRenderer(host),
+    native = new NativeSurfaceStore();
+  const webState = () => {
+    const root = host.children[0]?.children[0];
+    if (!root) return { field: null, text: null };
+    const wrapper = root.children[0],
+      input = wrapper.children[1];
+    return { field: { label: wrapper.children[0].textContent, value: input.value, variant: input.tagName === 'textarea' ? 'longText' : null }, text: root.children[1].textContent };
+  };
+  const nativeState = () => {
+    const root = native.snapshot()[0].root;
+    if (!root) return { field: null, text: null };
+    const field = root.children[0];
+    return { field: { label: field.label, value: field.value, variant: field.variant ?? null }, text: root.children[1].text };
+  };
+  for (const step of steps) {
+    if (step.message) {
+      web.apply(step.message);
+      native.apply(step.message);
+    } else {
+      const input = host.children[0].children[0].children[0].children[1];
+      input.value = step.input;
+      input.listeners.input();
+      native.writeField('main', 'field', native.snapshot()[0].revision, step.input);
+    }
+    const expected = { field: step.field, text: step.text };
+    assert.deepEqual(webState(), expected, JSON.stringify(step));
+    assert.deepEqual(nativeState(), expected, JSON.stringify(step));
+  }
 });

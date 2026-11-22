@@ -1,71 +1,797 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import {PostgresExtensionApprovals,ExtensionApprovalMetrics,ExtensionRegistry,createExtensionRuntime,CapabilityRegistry,CapabilityOutcomeUncertainError,createCapabilityServer,registerExtensionApprovalDecision,registerExtensionApprovalStatus,registerExtensionApprovalHistory} from '../dist/index.js';
-const scope={tenantId:'tenant',applicationId:'demo'},admin={tenantId:'tenant',principalId:'admin'},service={tenantId:'tenant',principalId:'service'},reference={id:'example.report',version:'1.0.0',scope:'application'},operation={extensionId:'example.report',kind:'tool',name:'lookup'};
+import {
+  PostgresExtensionApprovals,
+  ExtensionApprovalMetrics,
+  ExtensionRegistry,
+  createExtensionRuntime,
+  CapabilityRegistry,
+  CapabilityOutcomeUncertainError,
+  createCapabilityServer,
+  registerExtensionApprovalDecision,
+  registerExtensionApprovalStatus,
+  registerExtensionApprovalHistory
+} from '../dist/index.js';
+const scope = { tenantId: 'tenant', applicationId: 'demo' },
+  admin = { tenantId: 'tenant', principalId: 'admin' },
+  service = { tenantId: 'tenant', principalId: 'service' },
+  reference = { id: 'example.report', version: '1.0.0', scope: 'application' },
+  operation = { extensionId: 'example.report', kind: 'tool', name: 'lookup' };
 
-test('shared extension approvals validate configuration and fail closed',async()=>{
- assert.throws(()=>new PostgresExtensionApprovals({}),/configuration/);const store=new PostgresExtensionApprovals({query:async()=>{throw Error('unexpected database')},authorize:()=>false,clock:()=>100});await assert.rejects(store.decide(admin,scope,reference,operation,{allowed:true,expiresAt:200,expectedRevision:0}),/forbidden/);await assert.rejects(store.isAllowed(service,scope,reference,operation),/forbidden/);await assert.rejects(store.isAllowed({...service,tenantId:'other'},scope,reference,operation),/scope/);assert.throws(()=>store.forRuntime({tenantId:'',applicationId:'demo'}),/scope/);
+test('shared extension approvals validate configuration and fail closed', async () => {
+  assert.throws(() => new PostgresExtensionApprovals({}), /configuration/);
+  const store = new PostgresExtensionApprovals({
+    query: async () => {
+      throw Error('unexpected database');
+    },
+    authorize: () => false,
+    clock: () => 100
+  });
+  await assert.rejects(store.decide(admin, scope, reference, operation, { allowed: true, expiresAt: 200, expectedRevision: 0 }), /forbidden/);
+  await assert.rejects(store.isAllowed(service, scope, reference, operation), /forbidden/);
+  await assert.rejects(store.isAllowed({ ...service, tenantId: 'other' }, scope, reference, operation), /scope/);
+  assert.throws(() => store.forRuntime({ tenantId: '', applicationId: 'demo' }), /scope/);
 });
 
-test('signal-aware shared approval fences further reads and policies after timeout',async()=>{
- let release,seenSignal,queries=0,policies=0,blocked=true,executed=0;const gate=new Promise(resolve=>release=resolve),store=new PostgresExtensionApprovals({clock:()=>100,query:async()=>{throw Error('legacy query called');},authorize:()=>{throw Error('legacy authorization called');},queryWithSignal:async(_sql,_args,signal)=>{queries++;seenSignal=signal;if(blocked)await gate;return {rows:[{revision:1,allowed:true,expires_at:500}],rowCount:1};},authorizeInvokeWithSignal:(_actor,_scope,_reference,_operation,signal)=>{policies++;assert.equal(signal.aborted,false);return true;}});const manifest={manifestVersion:1,id:'example.report',version:'1.0.0',scope:'application',runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:['read.data']},registry=new ExtensionRegistry({runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:['read.data']}]});registry.register(manifest,{components:{},tools:{lookup:()=>{executed++;return 'ok';}},providers:{}});const application={id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[reference],extensionOperations:[operation]},runtime=createExtensionRuntime(application,registry,()=>{},{authorizeExtensionWithSignal:store.forRuntimeWithSignal(scope),operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},authorize:()=>true,validate:()=>true,policyTimeoutMs:100,maxPendingPolicies:1}}}),context={...service,origin:'ui'};try{await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);assert.equal(seenSignal.aborted,true);assert.equal(queries,1);assert.equal(policies,1);await assert.rejects(runtime.capabilities.invoke('lookup',{},context),/Extension policy unavailable/);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(queries,1);assert.equal(policies,1);assert.equal(executed,0);assert.equal(await runtime.capabilities.invoke('lookup',{},context),'ok');assert.equal(executed,1);}finally{release();}
+test('signal-aware shared approval fences further reads and policies after timeout', async () => {
+  let release,
+    seenSignal,
+    queries = 0,
+    policies = 0,
+    blocked = true,
+    executed = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      query: async () => {
+        throw Error('legacy query called');
+      },
+      authorize: () => {
+        throw Error('legacy authorization called');
+      },
+      queryWithSignal: async (_sql, _args, signal) => {
+        queries++;
+        seenSignal = signal;
+        if (blocked) await gate;
+        return { rows: [{ revision: 1, allowed: true, expires_at: 500 }], rowCount: 1 };
+      },
+      authorizeInvokeWithSignal: (_actor, _scope, _reference, _operation, signal) => {
+        policies++;
+        assert.equal(signal.aborted, false);
+        return true;
+      }
+    });
+  const manifest = {
+      manifestVersion: 1,
+      id: 'example.report',
+      version: '1.0.0',
+      scope: 'application',
+      runtimeVersions: ['0.1.0'],
+      renderers: ['react'],
+      components: [],
+      tools: ['lookup'],
+      providers: [],
+      permissions: ['read.data']
+    },
+    registry = new ExtensionRegistry({ runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: ['read.data'] }] });
+  registry.register(manifest, {
+    components: {},
+    tools: {
+      lookup: () => {
+        executed++;
+        return 'ok';
+      }
+    },
+    providers: {}
+  });
+  const application = { id: 'demo', schemaVersion: 1, revision: 0, pages: [], extensions: [reference], extensionOperations: [operation] },
+    runtime = createExtensionRuntime(application, registry, () => {}, {
+      authorizeExtensionWithSignal: store.forRuntimeWithSignal(scope),
+      operations: { lookup: { candidate: { operationId: 'lookup', method: 'GET', path: '/lookup' }, authorize: () => true, validate: () => true, policyTimeoutMs: 100, maxPendingPolicies: 1 } }
+    }),
+    context = { ...service, origin: 'ui' };
+  try {
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension policy unavailable/);
+    assert.equal(seenSignal.aborted, true);
+    assert.equal(queries, 1);
+    assert.equal(policies, 1);
+    await assert.rejects(runtime.capabilities.invoke('lookup', {}, context), /Extension policy unavailable/);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(queries, 1);
+    assert.equal(policies, 1);
+    assert.equal(executed, 0);
+    assert.equal(await runtime.capabilities.invoke('lookup', {}, context), 'ok');
+    assert.equal(executed, 1);
+  } finally {
+    release();
+  }
 });
 
-test('committed extension decision with a lost database response is explicitly uncertain',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_ext_lost_'+randomUUID().replaceAll('-',''),adminPool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL}),pool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL,options:`-c search_path=${schema}`});let server,lose=true;try{await adminPool.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:async(sql,args)=>{const result=await pool.query(sql,args);if(lose&&sql.startsWith('WITH changed AS')){lose=false;throw Error('response lost after commit');}return result;}});await store.initialize();const registry=new CapabilityRegistry(()=>{}),candidate=(operationId,method)=>({operationId,method,path:'/approval'}),base={store,scope,reference,operation,authorize:actor=>actor.principalId==='admin'};registerExtensionApprovalDecision(registry,{...base,candidate:candidate('decide','POST'),authorizeDecision:()=>true});registerExtensionApprovalStatus(registry,{...base,candidate:candidate('status','GET')});registerExtensionApprovalHistory(registry,{...base,candidate:candidate('history','GET')});server=createCapabilityServer(registry,req=>req.headers.authorization==='Bearer admin'?admin:req.headers.authorization==='Bearer other'?{...admin,tenantId:'other'}:undefined,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=(id,input,token='admin')=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/${id}/invoke`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({origin:'ui',input})}),input={query:{allowed:true,expiresAt:500,expectedRevision:0}},lost=await call('decide',input);assert.equal(lost.status,503);assert.deepEqual(await lost.json(),{error:'Capability outcome uncertain',code:'CAPABILITY_OUTCOME_UNCERTAIN'});const state=await (await call('status',{query:{}})).json();assert.deepEqual(state.result,{revision:1,allowed:true,expiresAt:500,active:true});const history=await (await call('history',{query:{}})).json();assert.deepEqual(history.result.items.map(item=>[item.revision,item.allowed,item.actorId]),[[1,true,'admin']]);assert.equal((await call('decide',input)).status,409);assert.equal((await call('status',{query:{}},'other')).status,403);assert.equal((await store.history(admin,scope,reference,operation)).items.length,1);}finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await pool.end();await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await adminPool.end();}
+test('committed extension decision with a lost database response is explicitly uncertain', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_ext_lost_' + randomUUID().replaceAll('-', ''),
+    adminPool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL }),
+    pool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL, options: `-c search_path=${schema}` });
+  let server,
+    lose = true;
+  try {
+    await adminPool.query(`CREATE SCHEMA "${schema}"`);
+    const store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      authorize: () => true,
+      query: async (sql, args) => {
+        const result = await pool.query(sql, args);
+        if (lose && sql.startsWith('WITH changed AS')) {
+          lose = false;
+          throw Error('response lost after commit');
+        }
+        return result;
+      }
+    });
+    await store.initialize();
+    const registry = new CapabilityRegistry(() => {}),
+      candidate = (operationId, method) => ({ operationId, method, path: '/approval' }),
+      base = { store, scope, reference, operation, authorize: actor => actor.principalId === 'admin' };
+    registerExtensionApprovalDecision(registry, { ...base, candidate: candidate('decide', 'POST'), authorizeDecision: () => true });
+    registerExtensionApprovalStatus(registry, { ...base, candidate: candidate('status', 'GET') });
+    registerExtensionApprovalHistory(registry, { ...base, candidate: candidate('history', 'GET') });
+    server = createCapabilityServer(
+      registry,
+      req => (req.headers.authorization === 'Bearer admin' ? admin : req.headers.authorization === 'Bearer other' ? { ...admin, tenantId: 'other' } : undefined),
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = (id, input, token = 'admin') =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/${id}/invoke`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input })
+        }),
+      input = { query: { allowed: true, expiresAt: 500, expectedRevision: 0 } },
+      lost = await call('decide', input);
+    assert.equal(lost.status, 503);
+    assert.deepEqual(await lost.json(), { error: 'Capability outcome uncertain', code: 'CAPABILITY_OUTCOME_UNCERTAIN' });
+    const state = await (await call('status', { query: {} })).json();
+    assert.deepEqual(state.result, { revision: 1, allowed: true, expiresAt: 500, active: true });
+    const history = await (await call('history', { query: {} })).json();
+    assert.deepEqual(
+      history.result.items.map(item => [item.revision, item.allowed, item.actorId]),
+      [[1, true, 'admin']]
+    );
+    assert.equal((await call('decide', input)).status, 409);
+    assert.equal((await call('status', { query: {} }, 'other')).status, 403);
+    assert.equal((await store.history(admin, scope, reference, operation)).items.length, 1);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+    await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await adminPool.end();
+  }
 });
 
-test('administrative approval rechecks decision policy after asynchronous scope authorization',async()=>{
- let scopeChecks=0,allowed=true,release,entered,writes=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:async()=>{writes++;return {rows:[{revision:1}],rowCount:1};}}),registry=new CapabilityRegistry(()=>{});registerExtensionApprovalDecision(registry,{store,scope,reference,operation,candidate:{operationId:'decide',method:'POST',path:'/decide'},authorize:async()=>{if(++scopeChecks===3){entered();await gate;}return true;},authorizeDecision:()=>allowed});const pending=registry.invoke('decide',{query:{allowed:true,expiresAt:500,expectedRevision:0}},{...admin,origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.equal(writes,0);
+test('administrative approval rechecks decision policy after asynchronous scope authorization', async () => {
+  let scopeChecks = 0,
+    allowed = true,
+    release,
+    entered,
+    writes = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      authorize: () => true,
+      query: async () => {
+        writes++;
+        return { rows: [{ revision: 1 }], rowCount: 1 };
+      }
+    }),
+    registry = new CapabilityRegistry(() => {});
+  registerExtensionApprovalDecision(registry, {
+    store,
+    scope,
+    reference,
+    operation,
+    candidate: { operationId: 'decide', method: 'POST', path: '/decide' },
+    authorize: async () => {
+      if (++scopeChecks === 3) {
+        entered();
+        await gate;
+      }
+      return true;
+    },
+    authorizeDecision: () => allowed
+  });
+  const pending = registry.invoke('decide', { query: { allowed: true, expiresAt: 500, expectedRevision: 0 } }, { ...admin, origin: 'ui' });
+  await ready;
+  allowed = false;
+  release();
+  await assert.rejects(pending, /forbidden/);
+  assert.equal(writes, 0);
 });
 
-test('bounded administrative approval policy fences a late decision',async()=>{
- let release,signal,blocked=true,checks=0,writes=0;const gate=new Promise(resolve=>release=resolve),store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:async()=>{writes++;return {rows:[{revision:1}],rowCount:1};}}),registry=new CapabilityRegistry(()=>{}),context={...admin,origin:'ui'},input={query:{allowed:true,expiresAt:500,expectedRevision:0}};try{registerExtensionApprovalDecision(registry,{store,scope,reference,operation,candidate:{operationId:'decide',method:'POST',path:'/decide'},authorize:()=>{throw Error('legacy scope called');},authorizeDecision:()=>{throw Error('legacy decision called');},authorizeWithSignal:()=>true,authorizeDecisionWithSignal:async(_actor,_decision,current)=>{checks++;if(blocked){signal=current;await gate;}return true;},policyTimeoutMs:100,maxPendingPolicies:1});await assert.rejects(registry.invoke('decide',input,context),/Extension decision policy unavailable/);assert.equal(signal.aborted,true);await assert.rejects(registry.invoke('decide',input,context),/Extension decision policy unavailable/);assert.equal(checks,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(writes,0);assert.deepEqual(await registry.invoke('decide',input,context),{revision:1});assert.equal(writes,1);}finally{release();}
+test('bounded administrative approval policy fences a late decision', async () => {
+  let release,
+    signal,
+    blocked = true,
+    checks = 0,
+    writes = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      authorize: () => true,
+      query: async () => {
+        writes++;
+        return { rows: [{ revision: 1 }], rowCount: 1 };
+      }
+    }),
+    registry = new CapabilityRegistry(() => {}),
+    context = { ...admin, origin: 'ui' },
+    input = { query: { allowed: true, expiresAt: 500, expectedRevision: 0 } };
+  try {
+    registerExtensionApprovalDecision(registry, {
+      store,
+      scope,
+      reference,
+      operation,
+      candidate: { operationId: 'decide', method: 'POST', path: '/decide' },
+      authorize: () => {
+        throw Error('legacy scope called');
+      },
+      authorizeDecision: () => {
+        throw Error('legacy decision called');
+      },
+      authorizeWithSignal: () => true,
+      authorizeDecisionWithSignal: async (_actor, _decision, current) => {
+        checks++;
+        if (blocked) {
+          signal = current;
+          await gate;
+        }
+        return true;
+      },
+      policyTimeoutMs: 100,
+      maxPendingPolicies: 1
+    });
+    await assert.rejects(registry.invoke('decide', input, context), /Extension decision policy unavailable/);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(registry.invoke('decide', input, context), /Extension decision policy unavailable/);
+    assert.equal(checks, 1);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(writes, 0);
+    assert.deepEqual(await registry.invoke('decide', input, context), { revision: 1 });
+    assert.equal(writes, 1);
+  } finally {
+    release();
+  }
 });
 
-test('administrative approval policy timeout returns HTTP 503',async()=>{
- let release,writes=0;const gate=new Promise(resolve=>release=resolve),store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:async()=>{writes++;return {rows:[{revision:1}],rowCount:1};}}),registry=new CapabilityRegistry(()=>{});registerExtensionApprovalDecision(registry,{store,scope,reference,operation,candidate:{operationId:'decide',method:'POST',path:'/decide'},authorize:()=>true,authorizeDecision:()=>gate,policyTimeoutMs:100,maxPendingPolicies:1});const server=createCapabilityServer(registry,()=>admin,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/decide/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{query:{allowed:true,expiresAt:500,expectedRevision:0}}})});assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'Extension decision policy unavailable'});assert.equal(writes,0);}finally{release(true);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+test('administrative approval policy timeout returns HTTP 503', async () => {
+  let release,
+    writes = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      authorize: () => true,
+      query: async () => {
+        writes++;
+        return { rows: [{ revision: 1 }], rowCount: 1 };
+      }
+    }),
+    registry = new CapabilityRegistry(() => {});
+  registerExtensionApprovalDecision(registry, {
+    store,
+    scope,
+    reference,
+    operation,
+    candidate: { operationId: 'decide', method: 'POST', path: '/decide' },
+    authorize: () => true,
+    authorizeDecision: () => gate,
+    policyTimeoutMs: 100,
+    maxPendingPolicies: 1
+  });
+  const server = createCapabilityServer(
+    registry,
+    () => admin,
+    () => {}
+  );
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/decide/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { query: { allowed: true, expiresAt: 500, expectedRevision: 0 } } })
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'Extension decision policy unavailable' });
+    assert.equal(writes, 0);
+  } finally {
+    release(true);
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
-for(const kind of ['status','history'])test(`bounded extension approval ${kind} read fences late database results`,async()=>{
- let release,signal,blocked=true,queries=0,storePolicies=0,capabilityPolicies=0;const gate=new Promise(resolve=>release=resolve),store=new PostgresExtensionApprovals({clock:()=>100,query:async()=>{throw Error('legacy query called');},authorize:()=>{throw Error('legacy store policy called');},queryWithSignal:async(_sql,_args,current)=>{queries++;if(blocked){signal=current;await gate;}return {rows:kind==='status'?[{revision:1,allowed:true,expires_at:500}]:[{id:1,actor_id:'admin',revision:1,allowed:true,expires_at:500,observed_at:100}],rowCount:1};},authorizeReadWithSignal:(_actor,action,_scope,_ref,_op,current)=>{storePolicies++;assert.equal(action,kind==='status'?'inspect':'audit');assert.equal(current.aborted,false);return true;}}),registry=new CapabilityRegistry(()=>{}),options={store,scope,reference,operation,candidate:{operationId:'read',method:'GET',path:'/read'},authorize:()=>{throw Error('legacy capability policy called');},authorizeWithSignal:(_actor,current)=>{capabilityPolicies++;assert.equal(current.aborted,false);return true;},readTimeoutMs:100,maxPendingReads:1},context={...admin,origin:'ui'};try{(kind==='status'?registerExtensionApprovalStatus:registerExtensionApprovalHistory)(registry,options);await assert.rejects(registry.invoke('read',{query:{}},context),/Extension approval read unavailable/);assert.equal(signal.aborted,true);await assert.rejects(registry.invoke('read',{query:{}},context),/Extension approval read unavailable/);const previousPolicies=storePolicies,previousCapabilityPolicies=capabilityPolicies;assert.equal(queries,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(queries,1);assert.equal(storePolicies,previousPolicies);assert.equal(capabilityPolicies,previousCapabilityPolicies);const result=await registry.invoke('read',{query:{}},context);assert.equal(kind==='status'?result.revision:result.items[0].revision,1);}finally{release();}
+for (const kind of ['status', 'history'])
+  test(`bounded extension approval ${kind} read fences late database results`, async () => {
+    let release,
+      signal,
+      blocked = true,
+      queries = 0,
+      storePolicies = 0,
+      capabilityPolicies = 0;
+    const gate = new Promise(resolve => (release = resolve)),
+      store = new PostgresExtensionApprovals({
+        clock: () => 100,
+        query: async () => {
+          throw Error('legacy query called');
+        },
+        authorize: () => {
+          throw Error('legacy store policy called');
+        },
+        queryWithSignal: async (_sql, _args, current) => {
+          queries++;
+          if (blocked) {
+            signal = current;
+            await gate;
+          }
+          return {
+            rows: kind === 'status' ? [{ revision: 1, allowed: true, expires_at: 500 }] : [{ id: 1, actor_id: 'admin', revision: 1, allowed: true, expires_at: 500, observed_at: 100 }],
+            rowCount: 1
+          };
+        },
+        authorizeReadWithSignal: (_actor, action, _scope, _ref, _op, current) => {
+          storePolicies++;
+          assert.equal(action, kind === 'status' ? 'inspect' : 'audit');
+          assert.equal(current.aborted, false);
+          return true;
+        }
+      }),
+      registry = new CapabilityRegistry(() => {}),
+      options = {
+        store,
+        scope,
+        reference,
+        operation,
+        candidate: { operationId: 'read', method: 'GET', path: '/read' },
+        authorize: () => {
+          throw Error('legacy capability policy called');
+        },
+        authorizeWithSignal: (_actor, current) => {
+          capabilityPolicies++;
+          assert.equal(current.aborted, false);
+          return true;
+        },
+        readTimeoutMs: 100,
+        maxPendingReads: 1
+      },
+      context = { ...admin, origin: 'ui' };
+    try {
+      (kind === 'status' ? registerExtensionApprovalStatus : registerExtensionApprovalHistory)(registry, options);
+      await assert.rejects(registry.invoke('read', { query: {} }, context), /Extension approval read unavailable/);
+      assert.equal(signal.aborted, true);
+      await assert.rejects(registry.invoke('read', { query: {} }, context), /Extension approval read unavailable/);
+      const previousPolicies = storePolicies,
+        previousCapabilityPolicies = capabilityPolicies;
+      assert.equal(queries, 1);
+      blocked = false;
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(queries, 1);
+      assert.equal(storePolicies, previousPolicies);
+      assert.equal(capabilityPolicies, previousCapabilityPolicies);
+      const result = await registry.invoke('read', { query: {} }, context);
+      assert.equal(kind === 'status' ? result.revision : result.items[0].revision, 1);
+    } finally {
+      release();
+    }
+  });
+
+test('bounded extension approval writes report uncertainty and retain their pending slot', async () => {
+  let release,
+    signal,
+    blocked = true,
+    writes = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      authorize: () => true,
+      query: async () => {
+        throw Error('legacy write called');
+      },
+      queryWriteWithSignal: async (_sql, _args, current) => {
+        writes++;
+        signal = current;
+        if (blocked) await gate;
+        return { rows: [{ revision: 1 }], rowCount: 1 };
+      },
+      writeTimeoutMs: 100,
+      maxPendingWrites: 1
+    }),
+    decision = { allowed: true, expiresAt: 500, expectedRevision: 0 };
+  try {
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), CapabilityOutcomeUncertainError);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), CapabilityOutcomeUncertainError);
+    assert.equal(writes, 1);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(writes, 1);
+    assert.equal(await store.decide(admin, scope, reference, operation, decision), 1);
+    assert.equal(writes, 2);
+    assert.throws(() => new PostgresExtensionApprovals({ query: async () => ({ rows: [], rowCount: 0 }), authorize: () => true, writeTimeoutMs: 100 }), /Invalid extension approval configuration/);
+  } finally {
+    release();
+  }
 });
 
-test('bounded extension approval writes report uncertainty and retain their pending slot',async()=>{
- let release,signal,blocked=true,writes=0;const gate=new Promise(resolve=>release=resolve),store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:async()=>{throw Error('legacy write called');},queryWriteWithSignal:async(_sql,_args,current)=>{writes++;signal=current;if(blocked)await gate;return {rows:[{revision:1}],rowCount:1};},writeTimeoutMs:100,maxPendingWrites:1}),decision={allowed:true,expiresAt:500,expectedRevision:0};try{await assert.rejects(store.decide(admin,scope,reference,operation,decision),CapabilityOutcomeUncertainError);assert.equal(signal.aborted,true);await assert.rejects(store.decide(admin,scope,reference,operation,decision),CapabilityOutcomeUncertainError);assert.equal(writes,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(writes,1);assert.equal(await store.decide(admin,scope,reference,operation,decision),1);assert.equal(writes,2);assert.throws(()=>new PostgresExtensionApprovals({query:async()=>({rows:[],rowCount:0}),authorize:()=>true,writeTimeoutMs:100}),/Invalid extension approval configuration/);}finally{release();}
+test('bounded store manage authorization prevents late writes', async () => {
+  let release,
+    signal,
+    blocked = true,
+    checks = 0,
+    writes = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      query: async () => {
+        writes++;
+        return { rows: [{ revision: 1 }], rowCount: 1 };
+      },
+      authorize: () => {
+        throw Error('legacy manage called');
+      },
+      authorizeManageWithSignal: async (_actor, _scope, _ref, _operation, current) => {
+        checks++;
+        if (blocked) {
+          signal = current;
+          await gate;
+        }
+        return true;
+      },
+      manageTimeoutMs: 100,
+      maxPendingManage: 1
+    }),
+    decision = { allowed: true, expiresAt: 500, expectedRevision: 0 };
+  try {
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), /Extension approval manage unavailable/);
+    assert.equal(signal.aborted, true);
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), /Extension approval manage unavailable/);
+    assert.equal(checks, 1);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(writes, 0);
+    assert.equal(await store.decide(admin, scope, reference, operation, decision), 1);
+    assert.equal(writes, 1);
+    assert.throws(() => new PostgresExtensionApprovals({ query: async () => ({ rows: [], rowCount: 0 }), authorize: () => true, manageTimeoutMs: 100 }), /Invalid extension approval configuration/);
+  } finally {
+    release();
+  }
 });
 
-test('bounded store manage authorization prevents late writes',async()=>{
- let release,signal,blocked=true,checks=0,writes=0;const gate=new Promise(resolve=>release=resolve),store=new PostgresExtensionApprovals({clock:()=>100,query:async()=>{writes++;return {rows:[{revision:1}],rowCount:1};},authorize:()=>{throw Error('legacy manage called');},authorizeManageWithSignal:async(_actor,_scope,_ref,_operation,current)=>{checks++;if(blocked){signal=current;await gate;}return true;},manageTimeoutMs:100,maxPendingManage:1}),decision={allowed:true,expiresAt:500,expectedRevision:0};try{await assert.rejects(store.decide(admin,scope,reference,operation,decision),/Extension approval manage unavailable/);assert.equal(signal.aborted,true);await assert.rejects(store.decide(admin,scope,reference,operation,decision),/Extension approval manage unavailable/);assert.equal(checks,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(writes,0);assert.equal(await store.decide(admin,scope,reference,operation,decision),1);assert.equal(writes,1);assert.throws(()=>new PostgresExtensionApprovals({query:async()=>({rows:[],rowCount:0}),authorize:()=>true,manageTimeoutMs:100}),/Invalid extension approval configuration/);}finally{release();}
+test('store manage permission is rechecked before dispatch', async () => {
+  let checks = 0,
+    writes = 0;
+  const store = new PostgresExtensionApprovals({
+    clock: () => 100,
+    authorize: () => ++checks === 1,
+    query: async () => {
+      writes++;
+      return { rows: [{ revision: 1 }], rowCount: 1 };
+    }
+  });
+  await assert.rejects(store.decide(admin, scope, reference, operation, { allowed: true, expiresAt: 500, expectedRevision: 0 }), /forbidden/);
+  assert.equal(checks, 2);
+  assert.equal(writes, 0);
 });
 
-test('store manage permission is rechecked before dispatch',async()=>{
- let checks=0,writes=0;const store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>++checks===1,query:async()=>{writes++;return {rows:[{revision:1}],rowCount:1};}});await assert.rejects(store.decide(admin,scope,reference,operation,{allowed:true,expiresAt:500,expectedRevision:0}),/forbidden/);assert.equal(checks,2);assert.equal(writes,0);
+test('timed-out PostgreSQL approval write can commit and is reconciled without retry', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_ext_timeout_' + randomUUID().replaceAll('-', ''),
+    adminPool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL }),
+    pool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL, options: `-c search_path=${schema}` });
+  let release,
+    signal,
+    blocked = true,
+    writes = 0;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    await adminPool.query(`CREATE SCHEMA "${schema}"`);
+    const store = new PostgresExtensionApprovals({
+        clock: () => 100,
+        authorize: () => true,
+        query: (sql, args) => pool.query(sql, args),
+        queryWriteWithSignal: async (sql, args, current) => {
+          writes++;
+          const result = await pool.query(sql, args);
+          signal = current;
+          if (blocked) await gate;
+          return result;
+        },
+        writeTimeoutMs: 100,
+        maxPendingWrites: 1
+      }),
+      decision = { allowed: true, expiresAt: 500, expectedRevision: 0 };
+    await store.initialize();
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), CapabilityOutcomeUncertainError);
+    assert.equal(signal.aborted, true);
+    assert.deepEqual(await store.inspect(admin, scope, reference, operation), { revision: 1, allowed: true, expiresAt: 500, active: true });
+    assert.equal((await store.history(admin, scope, reference, operation)).items.length, 1);
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), CapabilityOutcomeUncertainError);
+    assert.equal(writes, 1);
+    blocked = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(store.decide(admin, scope, reference, operation, decision), /revision conflict/);
+    assert.equal((await store.history(admin, scope, reference, operation)).items.length, 1);
+  } finally {
+    release();
+    await pool.end();
+    await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await adminPool.end();
+  }
 });
 
-test('timed-out PostgreSQL approval write can commit and is reconciled without retry',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_ext_timeout_'+randomUUID().replaceAll('-',''),adminPool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL}),pool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL,options:`-c search_path=${schema}`});let release,signal,blocked=true,writes=0;const gate=new Promise(resolve=>release=resolve);try{await adminPool.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args),queryWriteWithSignal:async(sql,args,current)=>{writes++;const result=await pool.query(sql,args);signal=current;if(blocked)await gate;return result;},writeTimeoutMs:100,maxPendingWrites:1}),decision={allowed:true,expiresAt:500,expectedRevision:0};await store.initialize();await assert.rejects(store.decide(admin,scope,reference,operation,decision),CapabilityOutcomeUncertainError);assert.equal(signal.aborted,true);assert.deepEqual(await store.inspect(admin,scope,reference,operation),{revision:1,allowed:true,expiresAt:500,active:true});assert.equal((await store.history(admin,scope,reference,operation)).items.length,1);await assert.rejects(store.decide(admin,scope,reference,operation,decision),CapabilityOutcomeUncertainError);assert.equal(writes,1);blocked=false;release();await new Promise(resolve=>setImmediate(resolve));await assert.rejects(store.decide(admin,scope,reference,operation,decision),/revision conflict/);assert.equal((await store.history(admin,scope,reference,operation)).items.length,1);}finally{release();await pool.end();await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await adminPool.end();}
+test('maximum revision permits one terminal revocation and never permits reapproval', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_ext_terminal_' + randomUUID().replaceAll('-', ''),
+    adminPool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL }),
+    pool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL, options: `-c search_path=${schema}` });
+  try {
+    await adminPool.query(`CREATE SCHEMA "${schema}"`);
+    const store = new PostgresExtensionApprovals({ clock: () => 100, authorize: () => true, query: (sql, args) => pool.query(sql, args) });
+    await store.initialize();
+    await pool.query('INSERT INTO app_mixer_extension_approvals VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [
+      scope.tenantId,
+      scope.applicationId,
+      reference.id,
+      reference.version,
+      reference.scope,
+      operation.kind,
+      operation.name,
+      Number.MAX_SAFE_INTEGER,
+      true,
+      500
+    ]);
+    const other = { tenantId: 'other', applicationId: 'demo' },
+      otherActor = { tenantId: 'other', principalId: 'admin' };
+    await store.decide(otherActor, other, reference, operation, { allowed: true, expiresAt: 500, expectedRevision: 0 });
+    const registry = new CapabilityRegistry(() => {}),
+      base = { store, scope, reference, operation, authorize: () => true };
+    registerExtensionApprovalDecision(registry, { ...base, candidate: { operationId: 'decide', method: 'POST', path: '/decide' }, authorizeDecision: () => true });
+    registerExtensionApprovalStatus(registry, { ...base, candidate: { operationId: 'status', method: 'GET', path: '/status' } });
+    registerExtensionApprovalHistory(registry, { ...base, candidate: { operationId: 'history', method: 'GET', path: '/history' } });
+    const context = { ...admin, origin: 'ui' },
+      input = { query: { allowed: false, expiresAt: 0, expectedRevision: Number.MAX_SAFE_INTEGER } },
+      results = await Promise.allSettled([registry.invoke('decide', input, context), registry.invoke('decide', input, context)]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.deepEqual(results.find(result => result.status === 'fulfilled').value, { revision: Number.MAX_SAFE_INTEGER, terminal: true });
+    assert.match(results.find(result => result.status === 'rejected').reason.message, /revision conflict/);
+    assert.deepEqual(await registry.invoke('status', { query: {} }, context), { revision: Number.MAX_SAFE_INTEGER, allowed: false, expiresAt: 0, active: false, terminal: true });
+    assert.equal(await store.isAllowed(admin, scope, reference, operation), false);
+    const history = await registry.invoke('history', { query: {} }, context);
+    assert.deepEqual(
+      history.items.map(item => [item.revision, item.allowed, item.terminal]),
+      [[Number.MAX_SAFE_INTEGER, false, true]]
+    );
+    await assert.rejects(registry.invoke('decide', { query: { allowed: true, expiresAt: 500, expectedRevision: Number.MAX_SAFE_INTEGER } }, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('decide', input, context), /revision conflict/);
+    assert.equal((await store.inspect(otherActor, other, reference, operation)).active, true);
+    const metrics = new ExtensionApprovalMetrics(store, { scope, reference, operation, authorize: () => true });
+    assert.match(await metrics.render(admin), /app_mixer_extension_approval_terminal 1/);
+  } finally {
+    await pool.end();
+    await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await adminPool.end();
+  }
 });
 
-test('maximum revision permits one terminal revocation and never permits reapproval',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_ext_terminal_'+randomUUID().replaceAll('-',''),adminPool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL}),pool=new pg.Pool({connectionString:process.env.APP_MIXER_TEST_POSTGRES_URL,options:`-c search_path=${schema}`});try{await adminPool.query(`CREATE SCHEMA "${schema}"`);const store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:(sql,args)=>pool.query(sql,args)});await store.initialize();await pool.query('INSERT INTO app_mixer_extension_approvals VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[scope.tenantId,scope.applicationId,reference.id,reference.version,reference.scope,operation.kind,operation.name,Number.MAX_SAFE_INTEGER,true,500]);const other={tenantId:'other',applicationId:'demo'},otherActor={tenantId:'other',principalId:'admin'};await store.decide(otherActor,other,reference,operation,{allowed:true,expiresAt:500,expectedRevision:0});const registry=new CapabilityRegistry(()=>{}),base={store,scope,reference,operation,authorize:()=>true};registerExtensionApprovalDecision(registry,{...base,candidate:{operationId:'decide',method:'POST',path:'/decide'},authorizeDecision:()=>true});registerExtensionApprovalStatus(registry,{...base,candidate:{operationId:'status',method:'GET',path:'/status'}});registerExtensionApprovalHistory(registry,{...base,candidate:{operationId:'history',method:'GET',path:'/history'}});const context={...admin,origin:'ui'},input={query:{allowed:false,expiresAt:0,expectedRevision:Number.MAX_SAFE_INTEGER}},results=await Promise.allSettled([registry.invoke('decide',input,context),registry.invoke('decide',input,context)]);assert.equal(results.filter(result=>result.status==='fulfilled').length,1);assert.deepEqual(results.find(result=>result.status==='fulfilled').value,{revision:Number.MAX_SAFE_INTEGER,terminal:true});assert.match(results.find(result=>result.status==='rejected').reason.message,/revision conflict/);assert.deepEqual(await registry.invoke('status',{query:{}},context),{revision:Number.MAX_SAFE_INTEGER,allowed:false,expiresAt:0,active:false,terminal:true});assert.equal(await store.isAllowed(admin,scope,reference,operation),false);const history=await registry.invoke('history',{query:{}},context);assert.deepEqual(history.items.map(item=>[item.revision,item.allowed,item.terminal]),[[Number.MAX_SAFE_INTEGER,false,true]]);await assert.rejects(registry.invoke('decide',{query:{allowed:true,expiresAt:500,expectedRevision:Number.MAX_SAFE_INTEGER}},context),/Invalid capability input/);await assert.rejects(registry.invoke('decide',input,context),/revision conflict/);assert.equal((await store.inspect(otherActor,other,reference,operation)).active,true);const metrics=new ExtensionApprovalMetrics(store,{scope,reference,operation,authorize:()=>true});assert.match(await metrics.render(admin),/app_mixer_extension_approval_terminal 1/);}finally{await pool.end();await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await adminPool.end();}
+test('PostgreSQL extension approvals coordinate revocation, expiry, audit and live runtime', { skip: !process.env.APP_MIXER_TEST_POSTGRES_URL, timeout: 30000 }, async () => {
+  const schema = 'app_mixer_ext_' + randomUUID().replaceAll('-', ''),
+    url = process.env.APP_MIXER_TEST_POSTGRES_URL,
+    adminPool = new pg.Pool({ connectionString: url }),
+    a = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }),
+    b = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  let now = 100;
+  try {
+    await adminPool.query(`CREATE SCHEMA "${schema}"`);
+    const make = pool =>
+        new PostgresExtensionApprovals({
+          query: (sql, args) => pool.query(sql, args),
+          clock: () => now,
+          authorize: (actor, action) => (action === 'invoke' ? actor.principalId === 'service' : actor.principalId === 'admin'),
+          authorizeManageWithSignal: actor => actor.principalId === 'admin',
+          manageTimeoutMs: 5000,
+          maxPendingManage: 2
+        }),
+      first = make(a),
+      second = make(b);
+    await first.initialize();
+    await second.initialize();
+    const metrics = new ExtensionApprovalMetrics(first, { scope, reference, operation, authorize: () => true });
+    assert.match(await metrics.render(admin), /app_mixer_extension_approval_present 0/);
+    assert.equal(await first.isAllowed(service, scope, reference, operation), false);
+    const administrative = new CapabilityRegistry(() => {}),
+      base = { store: first, scope: structuredClone(scope), reference: structuredClone(reference), operation: structuredClone(operation), authorize: a => a.principalId === 'admin' },
+      manage = { ...base, candidate: { operationId: 'approval.decide', method: 'POST', path: '/approval/decide' }, authorizeDecision: (_actor, d) => d.expiresAt <= 500 };
+    registerExtensionApprovalDecision(administrative, manage);
+    registerExtensionApprovalStatus(administrative, { ...base, candidate: { operationId: 'approval.status', method: 'GET', path: '/approval/status' } });
+    registerExtensionApprovalHistory(administrative, { ...base, candidate: { operationId: 'approval.history', method: 'GET', path: '/approval/history' } });
+    base.scope.applicationId = 'forged';
+    const adminContext = { ...admin, origin: 'ui' };
+    assert.equal(await administrative.invoke('approval.status', { query: {} }, adminContext), null);
+    await assert.rejects(administrative.invoke('approval.decide', { query: { allowed: true, expiresAt: 600, expectedRevision: 0 } }, adminContext), /forbidden/);
+    await assert.rejects(administrative.invoke('approval.decide', { query: { allowed: true, expiresAt: 500, expectedRevision: 0, extensionId: 'forged' } }, adminContext), /invalid/i);
+    await assert.rejects(administrative.invoke('approval.status', { query: {} }, { ...adminContext, tenantId: 'other' }), /forbidden/);
+    assert.deepEqual(await administrative.invoke('approval.decide', { query: { allowed: true, expiresAt: 500, expectedRevision: 0 } }, adminContext), { revision: 1 });
+    assert.deepEqual(await administrative.invoke('approval.status', { query: {} }, adminContext), { revision: 1, allowed: true, expiresAt: 500, active: true });
+    assert.match(await metrics.render(admin), /app_mixer_extension_approval_active 1/);
+    assert.equal(await second.isAllowed(service, scope, reference, operation), true);
+    assert.equal(await second.isAllowed(service, { ...scope, applicationId: 'other' }, reference, operation), false);
+    assert.equal(await second.isAllowed(service, scope, { ...reference, version: '2.0.0' }, operation), false);
+    const manifest = { manifestVersion: 1, ...reference, runtimeVersions: ['0.1.0'], renderers: ['react'], components: [], tools: ['lookup'], providers: [], permissions: [] },
+      host = { runtimeVersion: '0.1.0', renderer: 'react', approved: [{ ...reference, permissions: [] }] },
+      registry = new ExtensionRegistry(host),
+      calls = [];
+    registry.register(manifest, {
+      components: {},
+      tools: {
+        lookup: input => {
+          calls.push(input);
+          return 'ok';
+        }
+      },
+      providers: {}
+    });
+    let entered,
+      release,
+      wait = false;
+    const ready = new Promise(r => (entered = r)),
+      gate = new Promise(r => (release = r)),
+      runtime = createExtensionRuntime({ id: 'demo', schemaVersion: 1, revision: 0, pages: [], extensions: [reference], extensionOperations: [operation] }, registry, () => {}, {
+        authorizeExtensionWithSignal: second.forRuntimeWithSignal(scope),
+        operations: {
+          lookup: {
+            candidate: { operationId: 'lookup', method: 'GET', path: '/lookup' },
+            authorize: actor => actor.principalId === 'service',
+            validate: async () => {
+              if (wait) {
+                entered();
+                await gate;
+              }
+              return true;
+            }
+          }
+        }
+      }),
+      context = { ...service, origin: 'agent' };
+    assert.equal(await runtime.capabilities.invoke('lookup', {}, context), 'ok');
+    wait = true;
+    const pending = runtime.capabilities.invoke('lookup', {}, context);
+    await ready;
+    assert.deepEqual(await administrative.invoke('approval.decide', { query: { allowed: false, expiresAt: 0, expectedRevision: 1 } }, adminContext), { revision: 2 });
+    release();
+    await assert.rejects(pending, /forbidden/);
+    assert.equal(calls.length, 1);
+    const race = await Promise.allSettled([
+      first.decide(admin, scope, reference, operation, { allowed: true, expiresAt: 500, expectedRevision: 2 }),
+      second.decide(admin, scope, reference, operation, { allowed: true, expiresAt: 500, expectedRevision: 2 })
+    ]);
+    assert.equal(race.filter(x => x.status === 'fulfilled').length, 1);
+    assert.match(race.find(x => x.status === 'rejected').reason.message, /revision conflict/);
+    assert.equal(await first.isAllowed(service, scope, reference, operation), true);
+    now = 500;
+    assert.equal(await second.isAllowed(service, scope, reference, operation), false);
+    assert.deepEqual(await administrative.invoke('approval.status', { query: {} }, adminContext), { revision: 3, allowed: true, expiresAt: 500, active: false });
+    assert.match(await metrics.render(admin), /app_mixer_extension_approval_active 0/);
+    const firstPage = await administrative.invoke('approval.history', { query: { limit: 2 } }, adminContext);
+    assert.deepEqual(
+      firstPage.items.map(x => [x.actorId, x.revision, x.allowed]),
+      [
+        ['admin', 1, true],
+        ['admin', 2, false]
+      ]
+    );
+    assert.equal((await first.history(admin, scope, reference, operation, { after: firstPage.nextAfter })).items[0].revision, 3);
+    await assert.rejects(first.history(service, scope, reference, operation), /forbidden/);
+    const descending = await administrative.invoke('approval.history', { query: { order: 'desc', limit: 2 } }, adminContext);
+    assert.deepEqual(
+      descending.items.map(item => item.revision),
+      [3, 2]
+    );
+    assert.ok(descending.nextBefore);
+    await assert.rejects(administrative.invoke('approval.history', { query: { before: 2 } }, adminContext), /Invalid capability input/);
+    await assert.rejects(administrative.invoke('approval.history', { query: { order: 'desc', after: 1 } }, adminContext), /Invalid capability input/);
+    await assert.rejects(a.query("UPDATE app_mixer_extension_approval_audit SET actor_id='forged'"), /immutable/);
+    await assert.rejects(a.query('DELETE FROM app_mixer_extension_approval_audit'), /immutable/);
+    await assert.rejects(a.query('TRUNCATE app_mixer_extension_approval_audit'), /immutable/);
+    await a.query("CREATE FUNCTION reject_ext_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");
+    await a.query('CREATE TRIGGER reject_ext_audit BEFORE INSERT ON app_mixer_extension_approval_audit FOR EACH ROW EXECUTE FUNCTION reject_ext_audit()');
+    await assert.rejects(first.decide(admin, scope, reference, operation, { allowed: false, expiresAt: 0, expectedRevision: 3 }), CapabilityOutcomeUncertainError);
+    await a.query('DROP TRIGGER reject_ext_audit ON app_mixer_extension_approval_audit');
+    assert.equal(await first.decide(admin, scope, reference, operation, { allowed: false, expiresAt: 0, expectedRevision: 3 }), 4);
+    const older = await administrative.invoke('approval.history', { query: { order: 'desc', before: descending.nextBefore, limit: 2 } }, adminContext);
+    assert.deepEqual(
+      older.items.map(item => item.revision),
+      [1]
+    );
+    assert.equal(older.nextBefore, undefined);
+    assert.equal((await first.history(admin, scope, reference, operation, { order: 'desc', limit: 1 })).items[0].revision, 4);
+  } finally {
+    await Promise.allSettled([a.end(), b.end()]);
+    await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await adminPool.end();
+  }
 });
 
-test('PostgreSQL extension approvals coordinate revocation, expiry, audit and live runtime',{skip:!process.env.APP_MIXER_TEST_POSTGRES_URL,timeout:30000},async()=>{
- const schema='app_mixer_ext_'+randomUUID().replaceAll('-',''),url=process.env.APP_MIXER_TEST_POSTGRES_URL,adminPool=new pg.Pool({connectionString:url}),a=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}),b=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});let now=100;
- try{await adminPool.query(`CREATE SCHEMA "${schema}"`);const make=pool=>new PostgresExtensionApprovals({query:(sql,args)=>pool.query(sql,args),clock:()=>now,authorize:(actor,action)=>action==='invoke'?actor.principalId==='service':actor.principalId==='admin',authorizeManageWithSignal:actor=>actor.principalId==='admin',manageTimeoutMs:5000,maxPendingManage:2}),first=make(a),second=make(b);await first.initialize();await second.initialize();const metrics=new ExtensionApprovalMetrics(first,{scope,reference,operation,authorize:()=>true});assert.match(await metrics.render(admin),/app_mixer_extension_approval_present 0/);assert.equal(await first.isAllowed(service,scope,reference,operation),false);const administrative=new CapabilityRegistry(()=>{}),base={store:first,scope:structuredClone(scope),reference:structuredClone(reference),operation:structuredClone(operation),authorize:a=>a.principalId==='admin'},manage={...base,candidate:{operationId:'approval.decide',method:'POST',path:'/approval/decide'},authorizeDecision:(_actor,d)=>d.expiresAt<=500};registerExtensionApprovalDecision(administrative,manage);registerExtensionApprovalStatus(administrative,{...base,candidate:{operationId:'approval.status',method:'GET',path:'/approval/status'}});registerExtensionApprovalHistory(administrative,{...base,candidate:{operationId:'approval.history',method:'GET',path:'/approval/history'}});base.scope.applicationId='forged';const adminContext={...admin,origin:'ui'};assert.equal(await administrative.invoke('approval.status',{query:{}},adminContext),null);await assert.rejects(administrative.invoke('approval.decide',{query:{allowed:true,expiresAt:600,expectedRevision:0}},adminContext),/forbidden/);await assert.rejects(administrative.invoke('approval.decide',{query:{allowed:true,expiresAt:500,expectedRevision:0,extensionId:'forged'}},adminContext),/invalid/i);await assert.rejects(administrative.invoke('approval.status',{query:{}},{...adminContext,tenantId:'other'}),/forbidden/);assert.deepEqual(await administrative.invoke('approval.decide',{query:{allowed:true,expiresAt:500,expectedRevision:0}},adminContext),{revision:1});assert.deepEqual(await administrative.invoke('approval.status',{query:{}},adminContext),{revision:1,allowed:true,expiresAt:500,active:true});assert.match(await metrics.render(admin),/app_mixer_extension_approval_active 1/);assert.equal(await second.isAllowed(service,scope,reference,operation),true);assert.equal(await second.isAllowed(service,{...scope,applicationId:'other'},reference,operation),false);assert.equal(await second.isAllowed(service,scope,{...reference,version:'2.0.0'},operation),false);
-  const manifest={manifestVersion:1,...reference,runtimeVersions:['0.1.0'],renderers:['react'],components:[],tools:['lookup'],providers:[],permissions:[]},host={runtimeVersion:'0.1.0',renderer:'react',approved:[{...reference,permissions:[]}]},registry=new ExtensionRegistry(host),calls=[];registry.register(manifest,{components:{},tools:{lookup:input=>{calls.push(input);return 'ok';}},providers:{}});let entered,release,wait=false;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),runtime=createExtensionRuntime({id:'demo',schemaVersion:1,revision:0,pages:[],extensions:[reference],extensionOperations:[operation]},registry,()=>{},{authorizeExtensionWithSignal:second.forRuntimeWithSignal(scope),operations:{lookup:{candidate:{operationId:'lookup',method:'GET',path:'/lookup'},authorize:actor=>actor.principalId==='service',validate:async()=>{if(wait){entered();await gate;}return true;}}}}),context={...service,origin:'agent'};assert.equal(await runtime.capabilities.invoke('lookup',{},context),'ok');wait=true;const pending=runtime.capabilities.invoke('lookup',{},context);await ready;assert.deepEqual(await administrative.invoke('approval.decide',{query:{allowed:false,expiresAt:0,expectedRevision:1}},adminContext),{revision:2});release();await assert.rejects(pending,/forbidden/);assert.equal(calls.length,1);
-  const race=await Promise.allSettled([first.decide(admin,scope,reference,operation,{allowed:true,expiresAt:500,expectedRevision:2}),second.decide(admin,scope,reference,operation,{allowed:true,expiresAt:500,expectedRevision:2})]);assert.equal(race.filter(x=>x.status==='fulfilled').length,1);assert.match(race.find(x=>x.status==='rejected').reason.message,/revision conflict/);assert.equal(await first.isAllowed(service,scope,reference,operation),true);now=500;assert.equal(await second.isAllowed(service,scope,reference,operation),false);assert.deepEqual(await administrative.invoke('approval.status',{query:{}},adminContext),{revision:3,allowed:true,expiresAt:500,active:false});assert.match(await metrics.render(admin),/app_mixer_extension_approval_active 0/);const firstPage=await administrative.invoke('approval.history',{query:{limit:2}},adminContext);assert.deepEqual(firstPage.items.map(x=>[x.actorId,x.revision,x.allowed]),[['admin',1,true],['admin',2,false]]);assert.equal((await first.history(admin,scope,reference,operation,{after:firstPage.nextAfter})).items[0].revision,3);await assert.rejects(first.history(service,scope,reference,operation),/forbidden/);const descending=await administrative.invoke('approval.history',{query:{order:'desc',limit:2}},adminContext);assert.deepEqual(descending.items.map(item=>item.revision),[3,2]);assert.ok(descending.nextBefore);await assert.rejects(administrative.invoke('approval.history',{query:{before:2}},adminContext),/Invalid capability input/);await assert.rejects(administrative.invoke('approval.history',{query:{order:'desc',after:1}},adminContext),/Invalid capability input/);
-  await assert.rejects(a.query('UPDATE app_mixer_extension_approval_audit SET actor_id=\'forged\''),/immutable/);await assert.rejects(a.query('DELETE FROM app_mixer_extension_approval_audit'),/immutable/);await assert.rejects(a.query('TRUNCATE app_mixer_extension_approval_audit'),/immutable/);await a.query("CREATE FUNCTION reject_ext_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$");await a.query('CREATE TRIGGER reject_ext_audit BEFORE INSERT ON app_mixer_extension_approval_audit FOR EACH ROW EXECUTE FUNCTION reject_ext_audit()');await assert.rejects(first.decide(admin,scope,reference,operation,{allowed:false,expiresAt:0,expectedRevision:3}),CapabilityOutcomeUncertainError);await a.query('DROP TRIGGER reject_ext_audit ON app_mixer_extension_approval_audit');assert.equal(await first.decide(admin,scope,reference,operation,{allowed:false,expiresAt:0,expectedRevision:3}),4);const older=await administrative.invoke('approval.history',{query:{order:'desc',before:descending.nextBefore,limit:2}},adminContext);assert.deepEqual(older.items.map(item=>item.revision),[1]);assert.equal(older.nextBefore,undefined);assert.equal((await first.history(admin,scope,reference,operation,{order:'desc',limit:1})).items[0].revision,4);
- }finally{await Promise.allSettled([a.end(),b.end()]);await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await adminPool.end();}
+test('shared approval reads reject revoked policy and changed revisions during database reads', async () => {
+  let allowed = true,
+    started,
+    release;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r)),
+    store = new PostgresExtensionApprovals({
+      clock: () => 100,
+      authorize: () => allowed,
+      query: async () => {
+        started();
+        await gate;
+        return { rows: [{ revision: 1, allowed: true, expires_at: 500 }], rowCount: 1 };
+      }
+    }),
+    pending = store.isAllowed(service, scope, reference, operation);
+  await ready;
+  allowed = false;
+  release();
+  await assert.rejects(pending, /forbidden/);
+  let revision = 0;
+  const changed = new PostgresExtensionApprovals({ clock: () => 100, authorize: () => true, query: async () => ({ rows: [{ revision: ++revision, allowed: true, expires_at: 500 }], rowCount: 1 }) });
+  assert.equal(await changed.isAllowed(service, scope, reference, operation), false);
 });
 
-test('shared approval reads reject revoked policy and changed revisions during database reads',async()=>{
- let allowed=true,started,release;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),store=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>allowed,query:async()=>{started();await gate;return {rows:[{revision:1,allowed:true,expires_at:500}],rowCount:1};}}),pending=store.isAllowed(service,scope,reference,operation);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);let revision=0;const changed=new PostgresExtensionApprovals({clock:()=>100,authorize:()=>true,query:async()=>({rows:[{revision:++revision,allowed:true,expires_at:500}],rowCount:1})});assert.equal(await changed.isAllowed(service,scope,reference,operation),false);
-});
-
-test('approval capabilities keep the host-selected target and recheck policy after asynchronous authorization',async()=>{
- let allowed=true,started,release,queries=0;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),store=new PostgresExtensionApprovals({query:async()=>{queries++;throw Error('unexpected database')},authorize:()=>true,clock:()=>100}),registry=new CapabilityRegistry(()=>{}),base={store,scope:structuredClone(scope),reference:structuredClone(reference),operation:structuredClone(operation),authorize:()=>allowed},options={...base,candidate:{operationId:'decide',method:'POST',path:'/decide'},authorizeDecision:async(_actor,input)=>{input.allowed=false;started();await gate;return true;}};registerExtensionApprovalDecision(registry,options);base.scope.tenantId='forged';const context={...admin,origin:'ui'},pending=registry.invoke('decide',{query:{allowed:true,expiresAt:500,expectedRevision:0}},context);await ready;allowed=false;release();await assert.rejects(pending,/forbidden/);assert.equal(queries,0);assert.throws(()=>registerExtensionApprovalDecision(new CapabilityRegistry(()=>{}),{...options,candidate:{...options.candidate,method:'GET'}}),/Invalid/);assert.throws(()=>registerExtensionApprovalHistory(new CapabilityRegistry(()=>{}),{...base,scope,candidate:{operationId:'history',method:'POST',path:'/history'}}),/Invalid/);
+test('approval capabilities keep the host-selected target and recheck policy after asynchronous authorization', async () => {
+  let allowed = true,
+    started,
+    release,
+    queries = 0;
+  const ready = new Promise(r => (started = r)),
+    gate = new Promise(r => (release = r)),
+    store = new PostgresExtensionApprovals({
+      query: async () => {
+        queries++;
+        throw Error('unexpected database');
+      },
+      authorize: () => true,
+      clock: () => 100
+    }),
+    registry = new CapabilityRegistry(() => {}),
+    base = { store, scope: structuredClone(scope), reference: structuredClone(reference), operation: structuredClone(operation), authorize: () => allowed },
+    options = {
+      ...base,
+      candidate: { operationId: 'decide', method: 'POST', path: '/decide' },
+      authorizeDecision: async (_actor, input) => {
+        input.allowed = false;
+        started();
+        await gate;
+        return true;
+      }
+    };
+  registerExtensionApprovalDecision(registry, options);
+  base.scope.tenantId = 'forged';
+  const context = { ...admin, origin: 'ui' },
+    pending = registry.invoke('decide', { query: { allowed: true, expiresAt: 500, expectedRevision: 0 } }, context);
+  await ready;
+  allowed = false;
+  release();
+  await assert.rejects(pending, /forbidden/);
+  assert.equal(queries, 0);
+  assert.throws(() => registerExtensionApprovalDecision(new CapabilityRegistry(() => {}), { ...options, candidate: { ...options.candidate, method: 'GET' } }), /Invalid/);
+  assert.throws(() => registerExtensionApprovalHistory(new CapabilityRegistry(() => {}), { ...base, scope, candidate: { operationId: 'history', method: 'POST', path: '/history' } }), /Invalid/);
 });

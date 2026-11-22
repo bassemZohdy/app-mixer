@@ -1,47 +1,348 @@
-import {createCipheriv,createDecipheriv,createHash,randomBytes} from 'node:crypto';
-import {CapabilityRegistry,type CapabilityCandidate} from './capabilities.js';
-import {checkKey,type DataProvider,type DataRecord} from './data-provider.js';
-import {createBoundedOperation} from './bounded-operation.js';
-import {AppMixerError} from './errors.js';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { CapabilityRegistry, type CapabilityCandidate } from './capabilities.js';
+import { checkKey, type DataProvider, type DataRecord } from './data-provider.js';
+import { createBoundedOperation } from './bounded-operation.js';
+import { AppMixerError } from './errors.js';
 
-type Actor={tenantId:string;principalId:string};
-type Options={candidate:CapabilityCandidate;applicationId:string;collection:string;cursorKey:Uint8Array;filterFields?:string[];rangeFilterFields?:string[];prefixFilterFields?:string[];containsFilterFields?:string[];arrayContainsFilterFields?:string[];existsFilterFields?:string[];notEqualFilterFields?:string[];allowIdPrefix?:boolean;allowAnyFilters?:boolean;policyTimeoutMs?:number;maxPendingPolicies?:number;recheckAuthorization?:boolean;recheckRecords?:boolean;authorize:(actor:Actor,signal:AbortSignal)=>boolean|Promise<boolean>;authorizeItem:(actor:Actor,record:DataRecord,signal:AbortSignal)=>boolean|Promise<boolean>};
-type Filter={field:string;value:string|number|boolean|null;operator?:'neq'|'gt'|'gte'|'lt'|'lte'|'prefix'|'contains'|'arrayContains'|'exists'};
-type FilterSelection=Filter|Filter[];
-const validId=(value:unknown):value is string=>typeof value==='string'&&value.trim().length>0&&value.length<=256&&!/[\u0000-\u001f]/.test(value);
-const SIZE=2048;
-function aad(actor:Actor,applicationId:string,collection:string,operationId:string,version?:number,filter?:FilterSelection,any=false,order:'asc'|'desc'='asc',idPrefix?:string):Buffer{const parts:unknown[]=version===undefined?[actor.tenantId,actor.principalId,applicationId,collection,operationId]:[actor.tenantId,actor.principalId,applicationId,collection,operationId,version];if(filter){const encode=(item:Filter)=>item.operator?[item.field,item.value,item.operator]:[item.field,item.value];parts.push(Array.isArray(filter)?{filters:filter.map(encode)}:{filter:encode(filter)});}if(any)parts.push({filterMode:'any'});if(order==='desc')parts.push({order:'desc'});if(idPrefix!==undefined)parts.push({idPrefix});return createHash('sha256').update(JSON.stringify(parts)).digest();}
-function seal(key:Buffer,actor:Actor,applicationId:string,collection:string,operationId:string,after:string,version?:number,filter?:FilterSelection,any=false,order:'asc'|'desc'='asc',idPrefix?:string):string{const payload=Buffer.from(JSON.stringify({version:1,after}));if(payload.length>SIZE-2)throw Error('Invalid data cursor');const plain=Buffer.alloc(SIZE);plain.writeUInt16BE(payload.length);payload.copy(plain,2);const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);cipher.setAAD(aad(actor,applicationId,collection,operationId,version,filter,any,order,idPrefix));const body=Buffer.concat([cipher.update(plain),cipher.final()]);return Buffer.concat([iv,body,cipher.getAuthTag()]).toString('base64url');}
-function unseal(key:Buffer,actor:Actor,applicationId:string,collection:string,operationId:string,cursor:string,version?:number,filter?:FilterSelection,any=false,order:'asc'|'desc'='asc',idPrefix?:string):string{try{if(!/^[A-Za-z0-9_-]+$/.test(cursor))throw Error();const bytes=Buffer.from(cursor,'base64url');if(bytes.length!==SIZE+28||bytes.toString('base64url')!==cursor)throw Error();const cipher=createDecipheriv('aes-256-gcm',key,bytes.subarray(0,12));cipher.setAAD(aad(actor,applicationId,collection,operationId,version,filter,any,order,idPrefix));cipher.setAuthTag(bytes.subarray(-16));const plain=Buffer.concat([cipher.update(bytes.subarray(12,-16)),cipher.final()]),length=plain.readUInt16BE();if(length<1||length>SIZE-2)throw Error();const value:unknown=JSON.parse(plain.subarray(2,2+length).toString('utf8'));if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==2||(value as {version?:unknown}).version!==1||!validId((value as {after?:unknown}).after))throw Error();return (value as {after:string}).after;}catch{throw new AppMixerError('invalid','Invalid capability input');}}
-/** Host-authorized list with per-record filtering and opaque actor-bound cursors. */
-export function registerDataListCapability(registry:CapabilityRegistry,provider:DataProvider,options:Options):void{
- if(!(registry instanceof CapabilityRegistry)||!provider||typeof provider.list!=='function'||!options||!options.candidate||typeof options.candidate.operationId!=='string'||!(options.cursorKey instanceof Uint8Array)||options.cursorKey.byteLength!==32||typeof options.authorize!=='function'||typeof options.authorizeItem!=='function')throw Error('Invalid data list capability');
- if(options.filterFields!==undefined&&(!Array.isArray(options.filterFields)||options.filterFields.length>40||new Set(options.filterFields).size!==options.filterFields.length||!options.filterFields.every(field=>typeof field==='string'&&field.length<=128&&!/[\x00-\x1f\x7f]/.test(field)&&!['__proto__','prototype','constructor'].includes(field))))throw Error('Invalid data list capability');
- const allowed=new Set(options.filterFields??[]);
- if(options.rangeFilterFields!==undefined&&(!Array.isArray(options.rangeFilterFields)||new Set(options.rangeFilterFields).size!==options.rangeFilterFields.length||!options.rangeFilterFields.every(field=>typeof field==='string'&&allowed.has(field))))throw Error('Invalid data list capability');
- const rangeAllowed=new Set(options.rangeFilterFields??[]);
- if(options.prefixFilterFields!==undefined&&(!Array.isArray(options.prefixFilterFields)||new Set(options.prefixFilterFields).size!==options.prefixFilterFields.length||!options.prefixFilterFields.every(field=>typeof field==='string'&&allowed.has(field))))throw Error('Invalid data list capability');
- const prefixAllowed=new Set(options.prefixFilterFields??[]);
- if(options.containsFilterFields!==undefined&&(!Array.isArray(options.containsFilterFields)||new Set(options.containsFilterFields).size!==options.containsFilterFields.length||!options.containsFilterFields.every(field=>typeof field==='string'&&allowed.has(field))))throw Error('Invalid data list capability');
- const containsAllowed=new Set(options.containsFilterFields??[]);
- if(options.arrayContainsFilterFields!==undefined&&(!Array.isArray(options.arrayContainsFilterFields)||new Set(options.arrayContainsFilterFields).size!==options.arrayContainsFilterFields.length||!options.arrayContainsFilterFields.every(field=>typeof field==='string'&&allowed.has(field))))throw Error('Invalid data list capability');
- const arrayContainsAllowed=new Set(options.arrayContainsFilterFields??[]);
- if(options.existsFilterFields!==undefined&&(!Array.isArray(options.existsFilterFields)||new Set(options.existsFilterFields).size!==options.existsFilterFields.length||!options.existsFilterFields.every(field=>typeof field==='string'&&allowed.has(field))))throw Error('Invalid data list capability');
- const existsAllowed=new Set(options.existsFilterFields??[]);
- if(options.notEqualFilterFields!==undefined&&(!Array.isArray(options.notEqualFilterFields)||new Set(options.notEqualFilterFields).size!==options.notEqualFilterFields.length||!options.notEqualFilterFields.every(field=>typeof field==='string'&&allowed.has(field))))throw Error('Invalid data list capability');
- const notEqualAllowed=new Set(options.notEqualFilterFields??[]);
- const parseFilter=(value:unknown):Filter|undefined=>{if(!value||typeof value!=='object'||Array.isArray(value))return;const f=value as Record<string,unknown>;if(!Object.keys(f).every(key=>['field','value','operator'].includes(key))||typeof f.field!=='string'||!allowed.has(f.field)||!Object.hasOwn(f,'value')||!(f.value===null||typeof f.value==='boolean'||(typeof f.value==='number'&&Number.isFinite(f.value))||(typeof f.value==='string'&&f.value.length<=1024)))return;const operator=f.operator;if(operator!==undefined&&(typeof operator!=='string'||!['eq','neq','gt','gte','lt','lte','prefix','contains','arrayContains','exists'].includes(operator)))return;if(operator==='neq'&&!notEqualAllowed.has(f.field))return;if(operator==='prefix'&&(!prefixAllowed.has(f.field)||typeof f.value!=='string'))return;if(operator==='contains'&&(!containsAllowed.has(f.field)||typeof f.value!=='string'))return;if(operator==='arrayContains'&&!arrayContainsAllowed.has(f.field))return;if(operator==='exists'&&(!existsAllowed.has(f.field)||typeof f.value!=='boolean'))return;if(operator!==undefined&&operator!=='eq'&&operator!=='neq'&&operator!=='prefix'&&operator!=='contains'&&operator!=='arrayContains'&&operator!=='exists'&&(!rangeAllowed.has(f.field)||typeof f.value!=='number'||!Number.isFinite(f.value)))return;return {field:f.field,value:f.value as Filter['value'],...(operator===undefined||operator==='eq'?{}:{operator:operator as Filter['operator']})};};
- const parseFilters=(value:unknown,any=false):Filter[]|undefined=>{if(!Array.isArray(value)||value.length<1||value.length>10)return;const filters=value.map(parseFilter);if(filters.some(item=>!item))return;const checked=filters as Filter[];if(new Set(checked.map(item=>JSON.stringify([item.field,item.operator??'eq',any||item.operator==='arrayContains'||item.operator==='neq'?item.value:null]))).size!==checked.length)return;return checked.sort((a,b)=>{if(a.field!==b.field)return a.field<b.field?-1:1;const left=a.operator??'eq',right=b.operator??'eq';if(left!==right)return left<right?-1:1;if(any||left==='arrayContains'||left==='neq'){const x=JSON.stringify(a.value),y=JSON.stringify(b.value);return x<y?-1:x>y?1:0;}return 0;});};
- const matches=(value:Record<string,unknown>,rule:Filter):boolean=>{if(rule.operator==='exists')return Object.hasOwn(value,rule.field)===rule.value;if(!Object.hasOwn(value,rule.field))return false;const actual=value[rule.field];if(!rule.operator)return actual===rule.value;if(rule.operator==='neq')return (actual===null||typeof actual==='string'||typeof actual==='number'&&Number.isFinite(actual)||typeof actual==='boolean')&&actual!==rule.value;if(rule.operator==='prefix')return typeof actual==='string'&&typeof rule.value==='string'&&actual.startsWith(rule.value);if(rule.operator==='contains')return typeof actual==='string'&&typeof rule.value==='string'&&actual.includes(rule.value);if(rule.operator==='arrayContains')return Array.isArray(actual)&&actual.some(item=>item===rule.value);if(typeof actual!=='number'||!Number.isFinite(actual)||typeof rule.value!=='number')return false;switch(rule.operator){case 'gt':return actual>rule.value;case 'gte':return actual>=rule.value;case 'lt':return actual<rule.value;case 'lte':return actual<=rule.value;}};
- if(options.allowIdPrefix!==undefined&&typeof options.allowIdPrefix!=='boolean')throw Error('Invalid data list capability');
- const allowIdPrefix=options.allowIdPrefix===true;
- if(options.allowAnyFilters!==undefined&&typeof options.allowAnyFilters!=='boolean')throw Error('Invalid data list capability');
- const allowAnyFilters=options.allowAnyFilters===true;
- if(options.recheckAuthorization!==undefined&&typeof options.recheckAuthorization!=='boolean')throw Error('Invalid data list capability');
- if(options.recheckRecords!==undefined&&typeof options.recheckRecords!=='boolean'||options.recheckRecords===true&&typeof provider.verifyListPage!=='function')throw Error('Invalid data list capability');
- const verifyPage=provider.verifyListPage?.bind(provider);
- const {applicationId,collection,authorize,authorizeItem,recheckAuthorization,recheckRecords}=options,operationId=options.candidate.operationId,key=Buffer.from(options.cursorKey),list=provider.list.bind(provider),runPolicy=createBoundedOperation(options.policyTimeoutMs,options.maxPendingPolicies,'Invalid data list capability','Data list unavailable');
- const policy=(callback:(signal:AbortSignal)=>boolean|Promise<boolean>)=>runPolicy(async signal=>{const result=await callback(signal);if(signal.aborted)throw new AppMixerError('unavailable','Data list unavailable');return result===true;});checkKey({tenantId:'validation',applicationId},collection,'validation');
- registry.register(options.candidate,{authorize:actor=>policy(signal=>authorize(actor,signal)),validate:input=>{if(!input||typeof input!=='object'||Array.isArray(input))return false;const value=input as Record<string,unknown>;return Object.keys(value).every(k=>['cursor','limit','expectedSchemaVersion','filter','filters','filterMode','order','idPrefix'].includes(k))&&!(value.filter!==undefined&&value.filters!==undefined)&&(value.filterMode===undefined||(value.filters!==undefined&&(value.filterMode==='all'||value.filterMode==='any'&&allowAnyFilters)))&&(value.filter===undefined||!!parseFilter(value.filter))&&(value.filters===undefined||!!parseFilters(value.filters,value.filterMode==='any'))&&(value.order===undefined||value.order==='asc'||value.order==='desc')&&(value.idPrefix===undefined||(allowIdPrefix&&typeof value.idPrefix==='string'&&value.idPrefix.length<=256&&!/[\u0000-\u001f]/.test(value.idPrefix)))&&(value.cursor===undefined||(typeof value.cursor==='string'&&value.cursor.length<=3000))&&(value.limit===undefined||(Number.isSafeInteger(value.limit)&&Number(value.limit)>=1&&Number(value.limit)<=100))&&(value.expectedSchemaVersion===undefined||(Number.isSafeInteger(value.expectedSchemaVersion)&&Number(value.expectedSchemaVersion)>=0));},execute:async(input,actor)=>{const value=input as {cursor?:string;limit?:number;expectedSchemaVersion?:number;filter?:unknown;filters?:unknown;filterMode?:unknown;order?:'asc'|'desc';idPrefix?:string},filter=value.filters!==undefined?parseFilters(value.filters,value.filterMode==='any'):value.filter===undefined?undefined:parseFilter(value.filter);if((value.filter!==undefined||value.filters!==undefined)&&!filter)throw new AppMixerError('invalid','Invalid capability input');if(value.filterMode!==undefined&&(!Array.isArray(filter)||(value.filterMode!=='all'&&value.filterMode!=='any')||(value.filterMode==='any'&&!allowAnyFilters)))throw new AppMixerError('invalid','Invalid capability input');const any=value.filterMode==='any',order=value.order??'asc';if(order==='desc'&&provider.supportsReverseList!==true)throw new AppMixerError('unavailable','Data reverse listing unavailable');if(value.idPrefix!==undefined&&provider.supportsIdPrefix!==true)throw new AppMixerError('unavailable','Data ID prefix listing unavailable');if(value.expectedSchemaVersion!==undefined&&provider.supportsSchemaRead!==true)throw new AppMixerError('unavailable','Data schema guard unavailable');const after=value.cursor===undefined?undefined:unseal(key,actor,applicationId,collection,operationId,value.cursor,value.expectedSchemaVersion,filter,any,order,value.idPrefix),page=list({tenantId:actor.tenantId,applicationId},collection,{...(after===undefined?{}:{after}),limit:value.limit??50,...(order==='desc'?{order}:{}),...(value.idPrefix===undefined?{}:{idPrefix:value.idPrefix}),...(value.expectedSchemaVersion===undefined?{}:{expectedSchemaVersion:value.expectedSchemaVersion})});const items:DataRecord[]=[];for(const item of page.items){const safe=structuredClone(item);if(await policy(signal=>authorizeItem({...actor},structuredClone(safe),signal))&&(!filter||(any?(filter as Filter[]).some(rule=>matches(safe.value,rule)):(Array.isArray(filter)?filter:[filter]).every(rule=>matches(safe.value,rule)))))items.push(safe);}if(recheckAuthorization){if(!await policy(signal=>authorize({...actor},signal)))throw new AppMixerError('denied','Capability forbidden');for(const item of items)if(!await policy(signal=>authorizeItem({...actor},structuredClone(item),signal)))throw new AppMixerError('denied','Capability forbidden');if(!await policy(signal=>authorize({...actor},signal)))throw new AppMixerError('denied','Capability forbidden');for(const item of items)if(!await policy(signal=>authorizeItem({...actor},structuredClone(item),signal)))throw new AppMixerError('denied','Capability forbidden');}if(recheckRecords){const verified:unknown=verifyPage!({tenantId:actor.tenantId,applicationId},collection,structuredClone(items),value.expectedSchemaVersion);if(verified instanceof Promise)verified.catch(()=>{});if(verified!==true)throw new AppMixerError('conflict','Data list changed');}return {items,...(page.nextAfter?{nextCursor:seal(key,actor,applicationId,collection,operationId,page.nextAfter,value.expectedSchemaVersion,filter,any,order,value.idPrefix)}:{})};}});
+type Actor = { tenantId: string; principalId: string };
+type Options = {
+  candidate: CapabilityCandidate;
+  applicationId: string;
+  collection: string;
+  cursorKey: Uint8Array;
+  filterFields?: string[];
+  rangeFilterFields?: string[];
+  prefixFilterFields?: string[];
+  containsFilterFields?: string[];
+  arrayContainsFilterFields?: string[];
+  existsFilterFields?: string[];
+  notEqualFilterFields?: string[];
+  allowIdPrefix?: boolean;
+  allowAnyFilters?: boolean;
+  policyTimeoutMs?: number;
+  maxPendingPolicies?: number;
+  recheckAuthorization?: boolean;
+  recheckRecords?: boolean;
+  authorize: (actor: Actor, signal: AbortSignal) => boolean | Promise<boolean>;
+  authorizeItem: (actor: Actor, record: DataRecord, signal: AbortSignal) => boolean | Promise<boolean>;
+};
+type Filter = { field: string; value: string | number | boolean | null; operator?: 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'prefix' | 'contains' | 'arrayContains' | 'exists' };
+type FilterSelection = Filter | Filter[];
+const validId = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\u0000-\u001f]/.test(value);
+const SIZE = 2048;
+function aad(
+  actor: Actor,
+  applicationId: string,
+  collection: string,
+  operationId: string,
+  version?: number,
+  filter?: FilterSelection,
+  any = false,
+  order: 'asc' | 'desc' = 'asc',
+  idPrefix?: string
+): Buffer {
+  const parts: unknown[] =
+    version === undefined ? [actor.tenantId, actor.principalId, applicationId, collection, operationId] : [actor.tenantId, actor.principalId, applicationId, collection, operationId, version];
+  if (filter) {
+    const encode = (item: Filter) => (item.operator ? [item.field, item.value, item.operator] : [item.field, item.value]);
+    parts.push(Array.isArray(filter) ? { filters: filter.map(encode) } : { filter: encode(filter) });
+  }
+  if (any) parts.push({ filterMode: 'any' });
+  if (order === 'desc') parts.push({ order: 'desc' });
+  if (idPrefix !== undefined) parts.push({ idPrefix });
+  return createHash('sha256').update(JSON.stringify(parts)).digest();
 }
-export type {Options as DataListCapabilityOptions};
+function seal(
+  key: Buffer,
+  actor: Actor,
+  applicationId: string,
+  collection: string,
+  operationId: string,
+  after: string,
+  version?: number,
+  filter?: FilterSelection,
+  any = false,
+  order: 'asc' | 'desc' = 'asc',
+  idPrefix?: string
+): string {
+  const payload = Buffer.from(JSON.stringify({ version: 1, after }));
+  if (payload.length > SIZE - 2) throw Error('Invalid data cursor');
+  const plain = Buffer.alloc(SIZE);
+  plain.writeUInt16BE(payload.length);
+  payload.copy(plain, 2);
+  const iv = randomBytes(12),
+    cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(aad(actor, applicationId, collection, operationId, version, filter, any, order, idPrefix));
+  const body = Buffer.concat([cipher.update(plain), cipher.final()]);
+  return Buffer.concat([iv, body, cipher.getAuthTag()]).toString('base64url');
+}
+function unseal(
+  key: Buffer,
+  actor: Actor,
+  applicationId: string,
+  collection: string,
+  operationId: string,
+  cursor: string,
+  version?: number,
+  filter?: FilterSelection,
+  any = false,
+  order: 'asc' | 'desc' = 'asc',
+  idPrefix?: string
+): string {
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw Error();
+    const bytes = Buffer.from(cursor, 'base64url');
+    if (bytes.length !== SIZE + 28 || bytes.toString('base64url') !== cursor) throw Error();
+    const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+    cipher.setAAD(aad(actor, applicationId, collection, operationId, version, filter, any, order, idPrefix));
+    cipher.setAuthTag(bytes.subarray(-16));
+    const plain = Buffer.concat([cipher.update(bytes.subarray(12, -16)), cipher.final()]),
+      length = plain.readUInt16BE();
+    if (length < 1 || length > SIZE - 2) throw Error();
+    const value: unknown = JSON.parse(plain.subarray(2, 2 + length).toString('utf8'));
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value).length !== 2 ||
+      (value as { version?: unknown }).version !== 1 ||
+      !validId((value as { after?: unknown }).after)
+    )
+      throw Error();
+    return (value as { after: string }).after;
+  } catch {
+    throw new AppMixerError('invalid', 'Invalid capability input');
+  }
+}
+/** Host-authorized list with per-record filtering and opaque actor-bound cursors. */
+export function registerDataListCapability(registry: CapabilityRegistry, provider: DataProvider, options: Options): void {
+  if (
+    !(registry instanceof CapabilityRegistry) ||
+    !provider ||
+    typeof provider.list !== 'function' ||
+    !options ||
+    !options.candidate ||
+    typeof options.candidate.operationId !== 'string' ||
+    !(options.cursorKey instanceof Uint8Array) ||
+    options.cursorKey.byteLength !== 32 ||
+    typeof options.authorize !== 'function' ||
+    typeof options.authorizeItem !== 'function'
+  )
+    throw Error('Invalid data list capability');
+  if (
+    options.filterFields !== undefined &&
+    (!Array.isArray(options.filterFields) ||
+      options.filterFields.length > 40 ||
+      new Set(options.filterFields).size !== options.filterFields.length ||
+      !options.filterFields.every(field => typeof field === 'string' && field.length <= 128 && !/[\x00-\x1f\x7f]/.test(field) && !['__proto__', 'prototype', 'constructor'].includes(field)))
+  )
+    throw Error('Invalid data list capability');
+  const allowed = new Set(options.filterFields ?? []);
+  if (
+    options.rangeFilterFields !== undefined &&
+    (!Array.isArray(options.rangeFilterFields) ||
+      new Set(options.rangeFilterFields).size !== options.rangeFilterFields.length ||
+      !options.rangeFilterFields.every(field => typeof field === 'string' && allowed.has(field)))
+  )
+    throw Error('Invalid data list capability');
+  const rangeAllowed = new Set(options.rangeFilterFields ?? []);
+  if (
+    options.prefixFilterFields !== undefined &&
+    (!Array.isArray(options.prefixFilterFields) ||
+      new Set(options.prefixFilterFields).size !== options.prefixFilterFields.length ||
+      !options.prefixFilterFields.every(field => typeof field === 'string' && allowed.has(field)))
+  )
+    throw Error('Invalid data list capability');
+  const prefixAllowed = new Set(options.prefixFilterFields ?? []);
+  if (
+    options.containsFilterFields !== undefined &&
+    (!Array.isArray(options.containsFilterFields) ||
+      new Set(options.containsFilterFields).size !== options.containsFilterFields.length ||
+      !options.containsFilterFields.every(field => typeof field === 'string' && allowed.has(field)))
+  )
+    throw Error('Invalid data list capability');
+  const containsAllowed = new Set(options.containsFilterFields ?? []);
+  if (
+    options.arrayContainsFilterFields !== undefined &&
+    (!Array.isArray(options.arrayContainsFilterFields) ||
+      new Set(options.arrayContainsFilterFields).size !== options.arrayContainsFilterFields.length ||
+      !options.arrayContainsFilterFields.every(field => typeof field === 'string' && allowed.has(field)))
+  )
+    throw Error('Invalid data list capability');
+  const arrayContainsAllowed = new Set(options.arrayContainsFilterFields ?? []);
+  if (
+    options.existsFilterFields !== undefined &&
+    (!Array.isArray(options.existsFilterFields) ||
+      new Set(options.existsFilterFields).size !== options.existsFilterFields.length ||
+      !options.existsFilterFields.every(field => typeof field === 'string' && allowed.has(field)))
+  )
+    throw Error('Invalid data list capability');
+  const existsAllowed = new Set(options.existsFilterFields ?? []);
+  if (
+    options.notEqualFilterFields !== undefined &&
+    (!Array.isArray(options.notEqualFilterFields) ||
+      new Set(options.notEqualFilterFields).size !== options.notEqualFilterFields.length ||
+      !options.notEqualFilterFields.every(field => typeof field === 'string' && allowed.has(field)))
+  )
+    throw Error('Invalid data list capability');
+  const notEqualAllowed = new Set(options.notEqualFilterFields ?? []);
+  const parseFilter = (value: unknown): Filter | undefined => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const f = value as Record<string, unknown>;
+    if (
+      !Object.keys(f).every(key => ['field', 'value', 'operator'].includes(key)) ||
+      typeof f.field !== 'string' ||
+      !allowed.has(f.field) ||
+      !Object.hasOwn(f, 'value') ||
+      !(f.value === null || typeof f.value === 'boolean' || (typeof f.value === 'number' && Number.isFinite(f.value)) || (typeof f.value === 'string' && f.value.length <= 1024))
+    )
+      return;
+    const operator = f.operator;
+    if (operator !== undefined && (typeof operator !== 'string' || !['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'prefix', 'contains', 'arrayContains', 'exists'].includes(operator))) return;
+    if (operator === 'neq' && !notEqualAllowed.has(f.field)) return;
+    if (operator === 'prefix' && (!prefixAllowed.has(f.field) || typeof f.value !== 'string')) return;
+    if (operator === 'contains' && (!containsAllowed.has(f.field) || typeof f.value !== 'string')) return;
+    if (operator === 'arrayContains' && !arrayContainsAllowed.has(f.field)) return;
+    if (operator === 'exists' && (!existsAllowed.has(f.field) || typeof f.value !== 'boolean')) return;
+    if (
+      operator !== undefined &&
+      operator !== 'eq' &&
+      operator !== 'neq' &&
+      operator !== 'prefix' &&
+      operator !== 'contains' &&
+      operator !== 'arrayContains' &&
+      operator !== 'exists' &&
+      (!rangeAllowed.has(f.field) || typeof f.value !== 'number' || !Number.isFinite(f.value))
+    )
+      return;
+    return { field: f.field, value: f.value as Filter['value'], ...(operator === undefined || operator === 'eq' ? {} : { operator: operator as Filter['operator'] }) };
+  };
+  const parseFilters = (value: unknown, any = false): Filter[] | undefined => {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 10) return;
+    const filters = value.map(parseFilter);
+    if (filters.some(item => !item)) return;
+    const checked = filters as Filter[];
+    if (
+      new Set(checked.map(item => JSON.stringify([item.field, item.operator ?? 'eq', any || item.operator === 'arrayContains' || item.operator === 'neq' ? item.value : null]))).size !== checked.length
+    )
+      return;
+    return checked.sort((a, b) => {
+      if (a.field !== b.field) return a.field < b.field ? -1 : 1;
+      const left = a.operator ?? 'eq',
+        right = b.operator ?? 'eq';
+      if (left !== right) return left < right ? -1 : 1;
+      if (any || left === 'arrayContains' || left === 'neq') {
+        const x = JSON.stringify(a.value),
+          y = JSON.stringify(b.value);
+        return x < y ? -1 : x > y ? 1 : 0;
+      }
+      return 0;
+    });
+  };
+  const matches = (value: Record<string, unknown>, rule: Filter): boolean => {
+    if (rule.operator === 'exists') return Object.hasOwn(value, rule.field) === rule.value;
+    if (!Object.hasOwn(value, rule.field)) return false;
+    const actual = value[rule.field];
+    if (!rule.operator) return actual === rule.value;
+    if (rule.operator === 'neq')
+      return (actual === null || typeof actual === 'string' || (typeof actual === 'number' && Number.isFinite(actual)) || typeof actual === 'boolean') && actual !== rule.value;
+    if (rule.operator === 'prefix') return typeof actual === 'string' && typeof rule.value === 'string' && actual.startsWith(rule.value);
+    if (rule.operator === 'contains') return typeof actual === 'string' && typeof rule.value === 'string' && actual.includes(rule.value);
+    if (rule.operator === 'arrayContains') return Array.isArray(actual) && actual.some(item => item === rule.value);
+    if (typeof actual !== 'number' || !Number.isFinite(actual) || typeof rule.value !== 'number') return false;
+    switch (rule.operator) {
+      case 'gt':
+        return actual > rule.value;
+      case 'gte':
+        return actual >= rule.value;
+      case 'lt':
+        return actual < rule.value;
+      case 'lte':
+        return actual <= rule.value;
+    }
+  };
+  if (options.allowIdPrefix !== undefined && typeof options.allowIdPrefix !== 'boolean') throw Error('Invalid data list capability');
+  const allowIdPrefix = options.allowIdPrefix === true;
+  if (options.allowAnyFilters !== undefined && typeof options.allowAnyFilters !== 'boolean') throw Error('Invalid data list capability');
+  const allowAnyFilters = options.allowAnyFilters === true;
+  if (options.recheckAuthorization !== undefined && typeof options.recheckAuthorization !== 'boolean') throw Error('Invalid data list capability');
+  if ((options.recheckRecords !== undefined && typeof options.recheckRecords !== 'boolean') || (options.recheckRecords === true && typeof provider.verifyListPage !== 'function'))
+    throw Error('Invalid data list capability');
+  const verifyPage = provider.verifyListPage?.bind(provider);
+  const { applicationId, collection, authorize, authorizeItem, recheckAuthorization, recheckRecords } = options,
+    operationId = options.candidate.operationId,
+    key = Buffer.from(options.cursorKey),
+    list = provider.list.bind(provider),
+    runPolicy = createBoundedOperation(options.policyTimeoutMs, options.maxPendingPolicies, 'Invalid data list capability', 'Data list unavailable');
+  const policy = (callback: (signal: AbortSignal) => boolean | Promise<boolean>) =>
+    runPolicy(async signal => {
+      const result = await callback(signal);
+      if (signal.aborted) throw new AppMixerError('unavailable', 'Data list unavailable');
+      return result === true;
+    });
+  checkKey({ tenantId: 'validation', applicationId }, collection, 'validation');
+  registry.register(options.candidate, {
+    authorize: actor => policy(signal => authorize(actor, signal)),
+    validate: input => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+      const value = input as Record<string, unknown>;
+      return (
+        Object.keys(value).every(k => ['cursor', 'limit', 'expectedSchemaVersion', 'filter', 'filters', 'filterMode', 'order', 'idPrefix'].includes(k)) &&
+        !(value.filter !== undefined && value.filters !== undefined) &&
+        (value.filterMode === undefined || (value.filters !== undefined && (value.filterMode === 'all' || (value.filterMode === 'any' && allowAnyFilters)))) &&
+        (value.filter === undefined || !!parseFilter(value.filter)) &&
+        (value.filters === undefined || !!parseFilters(value.filters, value.filterMode === 'any')) &&
+        (value.order === undefined || value.order === 'asc' || value.order === 'desc') &&
+        (value.idPrefix === undefined || (allowIdPrefix && typeof value.idPrefix === 'string' && value.idPrefix.length <= 256 && !/[\u0000-\u001f]/.test(value.idPrefix))) &&
+        (value.cursor === undefined || (typeof value.cursor === 'string' && value.cursor.length <= 3000)) &&
+        (value.limit === undefined || (Number.isSafeInteger(value.limit) && Number(value.limit) >= 1 && Number(value.limit) <= 100)) &&
+        (value.expectedSchemaVersion === undefined || (Number.isSafeInteger(value.expectedSchemaVersion) && Number(value.expectedSchemaVersion) >= 0))
+      );
+    },
+    execute: async (input, actor) => {
+      const value = input as { cursor?: string; limit?: number; expectedSchemaVersion?: number; filter?: unknown; filters?: unknown; filterMode?: unknown; order?: 'asc' | 'desc'; idPrefix?: string },
+        filter = value.filters !== undefined ? parseFilters(value.filters, value.filterMode === 'any') : value.filter === undefined ? undefined : parseFilter(value.filter);
+      if ((value.filter !== undefined || value.filters !== undefined) && !filter) throw new AppMixerError('invalid', 'Invalid capability input');
+      if (value.filterMode !== undefined && (!Array.isArray(filter) || (value.filterMode !== 'all' && value.filterMode !== 'any') || (value.filterMode === 'any' && !allowAnyFilters)))
+        throw new AppMixerError('invalid', 'Invalid capability input');
+      const any = value.filterMode === 'any',
+        order = value.order ?? 'asc';
+      if (order === 'desc' && provider.supportsReverseList !== true) throw new AppMixerError('unavailable', 'Data reverse listing unavailable');
+      if (value.idPrefix !== undefined && provider.supportsIdPrefix !== true) throw new AppMixerError('unavailable', 'Data ID prefix listing unavailable');
+      if (value.expectedSchemaVersion !== undefined && provider.supportsSchemaRead !== true) throw new AppMixerError('unavailable', 'Data schema guard unavailable');
+      const after = value.cursor === undefined ? undefined : unseal(key, actor, applicationId, collection, operationId, value.cursor, value.expectedSchemaVersion, filter, any, order, value.idPrefix),
+        page = list({ tenantId: actor.tenantId, applicationId }, collection, {
+          ...(after === undefined ? {} : { after }),
+          limit: value.limit ?? 50,
+          ...(order === 'desc' ? { order } : {}),
+          ...(value.idPrefix === undefined ? {} : { idPrefix: value.idPrefix }),
+          ...(value.expectedSchemaVersion === undefined ? {} : { expectedSchemaVersion: value.expectedSchemaVersion })
+        });
+      const items: DataRecord[] = [];
+      for (const item of page.items) {
+        const safe = structuredClone(item);
+        if (
+          (await policy(signal => authorizeItem({ ...actor }, structuredClone(safe), signal))) &&
+          (!filter || (any ? (filter as Filter[]).some(rule => matches(safe.value, rule)) : (Array.isArray(filter) ? filter : [filter]).every(rule => matches(safe.value, rule))))
+        )
+          items.push(safe);
+      }
+      if (recheckAuthorization) {
+        if (!(await policy(signal => authorize({ ...actor }, signal)))) throw new AppMixerError('denied', 'Capability forbidden');
+        for (const item of items) if (!(await policy(signal => authorizeItem({ ...actor }, structuredClone(item), signal)))) throw new AppMixerError('denied', 'Capability forbidden');
+        if (!(await policy(signal => authorize({ ...actor }, signal)))) throw new AppMixerError('denied', 'Capability forbidden');
+        for (const item of items) if (!(await policy(signal => authorizeItem({ ...actor }, structuredClone(item), signal)))) throw new AppMixerError('denied', 'Capability forbidden');
+      }
+      if (recheckRecords) {
+        const verified: unknown = verifyPage!({ tenantId: actor.tenantId, applicationId }, collection, structuredClone(items), value.expectedSchemaVersion);
+        if (verified instanceof Promise) verified.catch(() => {});
+        if (verified !== true) throw new AppMixerError('conflict', 'Data list changed');
+      }
+      return {
+        items,
+        ...(page.nextAfter ? { nextCursor: seal(key, actor, applicationId, collection, operationId, page.nextAfter, value.expectedSchemaVersion, filter, any, order, value.idPrefix) } : {})
+      };
+    }
+  });
+}
+export type { Options as DataListCapabilityOptions };

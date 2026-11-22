@@ -1,45 +1,337 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {SqliteAgentRuns,SqliteAgentDefinitions,SqliteAgentTriggers,DurableAgentWorker,DurableAgentDispatcher} from '../dist/index.js';
-const scope={tenantId:'tenant',agentId:'agent'},manifest={manifestVersion:1,tenantId:'tenant',agentId:'agent',name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'test'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:3,runTimeoutMs:10000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:20}};
-const runConfig={definitionVersion:1,maxAttempts:3,deadline:10000};
-function setup(){const runs=new SqliteAgentRuns(':memory:'),definitions=new SqliteAgentDefinitions(':memory:');definitions.save('tenant',manifest,0);return {runs,definitions};}
-const worker=(s,options={})=>new DurableAgentWorker({runs:s.runs,definitions:s.definitions,workerId:'worker',leaseMs:300,pollMs:20,clock:()=>10,authorizeStart:()=>true,execute:async()=> 'succeeded',...options});
-const dispatcher=(s,w,options={})=>new DurableAgentDispatcher({runs:s.runs,worker:w,scope,maxPerPass:1,pollMs:100,onError:()=>{},...options});
-function close(s){s.runs.close();s.definitions.close();}
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SqliteAgentRuns, SqliteAgentDefinitions, SqliteAgentTriggers, DurableAgentWorker, DurableAgentDispatcher } from '../dist/index.js';
+const scope = { tenantId: 'tenant', agentId: 'agent' },
+  manifest = {
+    manifestVersion: 1,
+    tenantId: 'tenant',
+    agentId: 'agent',
+    name: 'Agent',
+    owner: { kind: 'organization', id: 'org' },
+    administrators: ['admin'],
+    servicePrincipalId: 'service',
+    model: { provider: 'local', model: 'test' },
+    allowedCapabilities: [],
+    lifecycle: { enabled: true, maxAttempts: 3, runTimeoutMs: 10000 },
+    quotas: { maxConcurrentRuns: 1, maxTokensPerRun: 100, maxRunsPerDay: 20 }
+  };
+const runConfig = { definitionVersion: 1, maxAttempts: 3, deadline: 10000 };
+function setup() {
+  const runs = new SqliteAgentRuns(':memory:'),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  definitions.save('tenant', manifest, 0);
+  return { runs, definitions };
+}
+const worker = (s, options = {}) =>
+  new DurableAgentWorker({
+    runs: s.runs,
+    definitions: s.definitions,
+    workerId: 'worker',
+    leaseMs: 300,
+    pollMs: 20,
+    clock: () => 10,
+    authorizeStart: () => true,
+    execute: async () => 'succeeded',
+    ...options
+  });
+const dispatcher = (s, w, options = {}) => new DurableAgentDispatcher({ runs: s.runs, worker: w, scope, maxPerPass: 1, pollMs: 100, onError: () => {}, ...options });
+function close(s) {
+  s.runs.close();
+  s.definitions.close();
+}
 
-test('queued run discovery is scoped, paginated and excludes nonqueued runs',()=>{const s=setup();try{for(const id of ['a','b','c'])s.runs.create(scope,id,runConfig,0);s.runs.create({...scope,tenantId:'other'},'hidden',runConfig,0);let run=s.runs.get(scope,'b');s.runs.request(scope,'b',run.revision,'pause',1);const page=s.runs.queuedPage(scope,{limit:1});assert.deepEqual(page,{runIds:['a'],next:'a'});assert.deepEqual(s.runs.queuedPage(scope,{limit:1,after:page.next}),{runIds:['c']});for(const options of [{limit:0},{limit:101},{after:'bad id'}])assert.throws(()=>s.runs.queuedPage(scope,options),/Invalid queued/);}finally{close(s);}});
-
-test('bounded dispatch reaches later runs and never replays uncertain outcomes',async()=>{const s=setup();try{for(const id of ['a','b','c'])s.runs.create(scope,id,runConfig,0);s.runs.create({...scope,tenantId:'other'},'other',runConfig,0);const errors=[],calls=[],w=worker(s,{authorizeStart:run=>run.runId!=='a',execute:async run=>{calls.push(run.runId);return run.runId==='c'?'uncertain':'succeeded';}}),d=dispatcher(s,w,{onError:(e,id)=>errors.push([e.message,id])});assert.equal(await d.runOnce(),0);assert.equal(await d.runOnce(),1);assert.equal(await d.runOnce(),1);assert.deepEqual(calls,['b','c']);assert.equal(s.runs.get(scope,'b').status,'succeeded');assert.equal(s.runs.get(scope,'c').status,'uncertain');assert.equal(s.runs.get({...scope,tenantId:'other'},'other').status,'queued');assert.equal(await d.runOnce(),0);assert.equal(errors.length,2);assert.equal(s.runs.get(scope,'c').attempts,1);}finally{close(s);}});
-
-test('stop waits for an in-flight run and does not start another',async()=>{const s=setup();try{s.runs.create(scope,'a',runConfig,0);s.runs.create(scope,'b',runConfig,0);let started,resume,stopped=false;const ready=new Promise(r=>started=r),gate=new Promise(r=>resume=r),w=worker(s,{execute:async()=>{started();await gate;return 'succeeded';}}),d=dispatcher(s,w,{maxPerPass:2});d.start();await ready;assert.throws(()=>d.runOnce(),/already running/);const pending=d.stop().then(()=>{stopped=true;});await Promise.resolve();assert.equal(stopped,false);resume();await pending;assert.equal(s.runs.get(scope,'a').status,'succeeded');assert.equal(s.runs.get(scope,'b').status,'queued');}finally{close(s);}});
-
-test('competing dispatchers claim a run at most once',async()=>{const s=setup();try{s.runs.create(scope,'a',runConfig,0);let starts=0,resume,readyCount=0,ready;const gate=new Promise(r=>resume=r),both=new Promise(r=>ready=r),authorize=async()=>{if(++readyCount===2)ready();await gate;return true;},make=id=>dispatcher(s,worker(s,{workerId:id,authorizeStart:authorize,execute:async()=>{starts++;return 'succeeded';}}));const a=make('a'),b=make('b'),pa=a.runOnce(),pb=b.runOnce();await both;resume();await Promise.all([pa,pb]);assert.equal(starts,1);assert.equal(s.runs.get(scope,'a').status,'succeeded');assert.equal(s.runs.get(scope,'a').attempts,1);}finally{close(s);}});
-
-test('dispatcher rejects a worker bound to another registry',()=>{const s=setup(),other=setup();try{assert.throws(()=>dispatcher(s,worker(other)),/Invalid agent dispatcher/);}finally{close(s);close(other);}});
-
-
-test('dispatcher consumes a durable event after the process reopens its database',async()=>{const dir=mkdtempSync(join(tmpdir(),'dispatcher-restart-')),path=join(dir,'agent.sqlite'),definitions=new SqliteAgentDefinitions(':memory:');let runs,triggers;try{definitions.save('tenant',manifest,0);runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);const event={sourceId:'webhook',principalId:'sender',eventId:'evt',eventType:'issue.opened',payload:{issue:4}},result=triggers.enqueue(scope,event,{definitionVersion:1,maxAttempts:3,deadline:10000,maxPending:10},0);triggers.close();runs.close();runs=new SqliteAgentRuns(path);triggers=new SqliteAgentTriggers(path);const s={runs,definitions};let received;const w=worker(s,{execute:async run=>{received=triggers.get(scope,run.runId);return 'succeeded';}}),d=dispatcher(s,w);assert.equal(await d.runOnce(),1);assert.equal(received.eventId,'evt');assert.deepEqual(received.payload,{issue:4});assert.equal(runs.get(scope,result.runId).status,'succeeded');assert.deepEqual(triggers.enqueue(scope,event,{definitionVersion:1,maxAttempts:3,deadline:10000,maxPending:10},0),{runId:result.runId,duplicate:true});assert.equal(await d.runOnce(),0);}finally{triggers?.close();runs?.close();definitions.close();rmSync(dir,{recursive:true,force:true});}});
-
-test('stopping a manual dispatcher pass waits for the active run and leaves later runs queued',async()=>{
- const s=setup();try{s.runs.create(scope,'a',runConfig,0);s.runs.create(scope,'b',runConfig,0);let entered,release;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r),w=worker(s,{execute:async run=>{if(run.runId==='a'){entered();await gate;}return 'succeeded';}}),d=dispatcher(s,w,{maxPerPass:2});
-  const pass=d.runOnce();await ready;const stopping=d.stop();release();assert.equal(await pass,1);await stopping;assert.equal(s.runs.get(scope,'a').status,'succeeded');assert.equal(s.runs.get(scope,'b').status,'queued');assert.equal(await d.runOnce(),1);assert.equal(s.runs.get(scope,'b').status,'succeeded');
- }finally{close(s);}
+test('queued run discovery is scoped, paginated and excludes nonqueued runs', () => {
+  const s = setup();
+  try {
+    for (const id of ['a', 'b', 'c']) s.runs.create(scope, id, runConfig, 0);
+    s.runs.create({ ...scope, tenantId: 'other' }, 'hidden', runConfig, 0);
+    let run = s.runs.get(scope, 'b');
+    s.runs.request(scope, 'b', run.revision, 'pause', 1);
+    const page = s.runs.queuedPage(scope, { limit: 1 });
+    assert.deepEqual(page, { runIds: ['a'], next: 'a' });
+    assert.deepEqual(s.runs.queuedPage(scope, { limit: 1, after: page.next }), { runIds: ['c'] });
+    for (const options of [{ limit: 0 }, { limit: 101 }, { after: 'bad id' }]) assert.throws(() => s.runs.queuedPage(scope, options), /Invalid queued/);
+  } finally {
+    close(s);
+  }
 });
 
-test('dispatcher snapshots validated settings and retains its selected worker and error handler',async()=>{
- const s=setup(),other=setup();try{for(const id of ['a','b'])s.runs.create(scope,id,runConfig,0);const errors=[],executed=[],options={runs:s.runs,worker:worker(s,{authorizeStart:run=>run.runId!=='a',execute:async run=>{executed.push(run.runId);return 'succeeded';}}),scope:{...scope},maxPerPass:1,pollMs:100,onError:(error,id)=>errors.push(id)},d=new DurableAgentDispatcher(options);options.runs=other.runs;options.worker=worker(other);options.scope.tenantId='other';options.maxPerPass=1000;options.pollMs=0;options.onError=()=>{throw Error('replacement called');};assert.equal(await d.runOnce(),0);assert.deepEqual(errors,['a']);assert.equal(await d.runOnce(),1);assert.deepEqual(executed,['b']);assert.equal(s.runs.get(scope,'b').status,'succeeded');}finally{close(s);close(other);}
+test('bounded dispatch reaches later runs and never replays uncertain outcomes', async () => {
+  const s = setup();
+  try {
+    for (const id of ['a', 'b', 'c']) s.runs.create(scope, id, runConfig, 0);
+    s.runs.create({ ...scope, tenantId: 'other' }, 'other', runConfig, 0);
+    const errors = [],
+      calls = [],
+      w = worker(s, {
+        authorizeStart: run => run.runId !== 'a',
+        execute: async run => {
+          calls.push(run.runId);
+          return run.runId === 'c' ? 'uncertain' : 'succeeded';
+        }
+      }),
+      d = dispatcher(s, w, { onError: (e, id) => errors.push([e.message, id]) });
+    assert.equal(await d.runOnce(), 0);
+    assert.equal(await d.runOnce(), 1);
+    assert.equal(await d.runOnce(), 1);
+    assert.deepEqual(calls, ['b', 'c']);
+    assert.equal(s.runs.get(scope, 'b').status, 'succeeded');
+    assert.equal(s.runs.get(scope, 'c').status, 'uncertain');
+    assert.equal(s.runs.get({ ...scope, tenantId: 'other' }, 'other').status, 'queued');
+    assert.equal(await d.runOnce(), 0);
+    assert.equal(errors.length, 2);
+    assert.equal(s.runs.get(scope, 'c').attempts, 1);
+  } finally {
+    close(s);
+  }
 });
 
-test('restarting a dispatcher does not revive an earlier polling loop',async()=>{
- const s=setup(),originalSetTimeout=globalThis.setTimeout,originalClearTimeout=globalThis.clearTimeout,scheduled=new Set();let entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
- try{
-  s.runs.create(scope,'a',runConfig,0);const w=worker(s,{execute:async()=>{entered();await gate;return 'succeeded';}}),d=dispatcher(s,w);
-  globalThis.setTimeout=(callback,delay,...args)=>{if(delay!==100)return originalSetTimeout(callback,delay,...args);const handle={callback,args};scheduled.add(handle);return handle;};
-  globalThis.clearTimeout=handle=>{if(scheduled.has(handle))scheduled.delete(handle);else originalClearTimeout(handle);};
-  d.start();await ready;const stopping=d.stop();release();await stopping;d.start();await new Promise(resolve=>setImmediate(resolve));assert.equal(scheduled.size,1);assert.equal(s.runs.get(scope,'a').status,'succeeded');await d.stop();assert.equal(scheduled.size,0);
- }finally{release();globalThis.setTimeout=originalSetTimeout;globalThis.clearTimeout=originalClearTimeout;close(s);}
+test('stop waits for an in-flight run and does not start another', async () => {
+  const s = setup();
+  try {
+    s.runs.create(scope, 'a', runConfig, 0);
+    s.runs.create(scope, 'b', runConfig, 0);
+    let started,
+      resume,
+      stopped = false;
+    const ready = new Promise(r => (started = r)),
+      gate = new Promise(r => (resume = r)),
+      w = worker(s, {
+        execute: async () => {
+          started();
+          await gate;
+          return 'succeeded';
+        }
+      }),
+      d = dispatcher(s, w, { maxPerPass: 2 });
+    d.start();
+    await ready;
+    assert.throws(() => d.runOnce(), /already running/);
+    const pending = d.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    assert.equal(stopped, false);
+    resume();
+    await pending;
+    assert.equal(s.runs.get(scope, 'a').status, 'succeeded');
+    assert.equal(s.runs.get(scope, 'b').status, 'queued');
+  } finally {
+    close(s);
+  }
+});
+
+test('competing dispatchers claim a run at most once', async () => {
+  const s = setup();
+  try {
+    s.runs.create(scope, 'a', runConfig, 0);
+    let starts = 0,
+      resume,
+      readyCount = 0,
+      ready;
+    const gate = new Promise(r => (resume = r)),
+      both = new Promise(r => (ready = r)),
+      authorize = async () => {
+        if (++readyCount === 2) ready();
+        await gate;
+        return true;
+      },
+      make = id =>
+        dispatcher(
+          s,
+          worker(s, {
+            workerId: id,
+            authorizeStart: authorize,
+            execute: async () => {
+              starts++;
+              return 'succeeded';
+            }
+          })
+        );
+    const a = make('a'),
+      b = make('b'),
+      pa = a.runOnce(),
+      pb = b.runOnce();
+    await both;
+    resume();
+    await Promise.all([pa, pb]);
+    assert.equal(starts, 1);
+    assert.equal(s.runs.get(scope, 'a').status, 'succeeded');
+    assert.equal(s.runs.get(scope, 'a').attempts, 1);
+  } finally {
+    close(s);
+  }
+});
+
+test('dispatcher rejects a worker bound to another registry', () => {
+  const s = setup(),
+    other = setup();
+  try {
+    assert.throws(() => dispatcher(s, worker(other)), /Invalid agent dispatcher/);
+  } finally {
+    close(s);
+    close(other);
+  }
+});
+
+test('dispatcher consumes a durable event after the process reopens its database', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatcher-restart-')),
+    path = join(dir, 'agent.sqlite'),
+    definitions = new SqliteAgentDefinitions(':memory:');
+  let runs, triggers;
+  try {
+    definitions.save('tenant', manifest, 0);
+    runs = new SqliteAgentRuns(path);
+    triggers = new SqliteAgentTriggers(path);
+    const event = { sourceId: 'webhook', principalId: 'sender', eventId: 'evt', eventType: 'issue.opened', payload: { issue: 4 } },
+      result = triggers.enqueue(scope, event, { definitionVersion: 1, maxAttempts: 3, deadline: 10000, maxPending: 10 }, 0);
+    triggers.close();
+    runs.close();
+    runs = new SqliteAgentRuns(path);
+    triggers = new SqliteAgentTriggers(path);
+    const s = { runs, definitions };
+    let received;
+    const w = worker(s, {
+        execute: async run => {
+          received = triggers.get(scope, run.runId);
+          return 'succeeded';
+        }
+      }),
+      d = dispatcher(s, w);
+    assert.equal(await d.runOnce(), 1);
+    assert.equal(received.eventId, 'evt');
+    assert.deepEqual(received.payload, { issue: 4 });
+    assert.equal(runs.get(scope, result.runId).status, 'succeeded');
+    assert.deepEqual(triggers.enqueue(scope, event, { definitionVersion: 1, maxAttempts: 3, deadline: 10000, maxPending: 10 }, 0), { runId: result.runId, duplicate: true });
+    assert.equal(await d.runOnce(), 0);
+  } finally {
+    triggers?.close();
+    runs?.close();
+    definitions.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stopping a manual dispatcher pass waits for the active run and leaves later runs queued', async () => {
+  const s = setup();
+  try {
+    s.runs.create(scope, 'a', runConfig, 0);
+    s.runs.create(scope, 'b', runConfig, 0);
+    let entered, release;
+    const ready = new Promise(r => (entered = r)),
+      gate = new Promise(r => (release = r)),
+      w = worker(s, {
+        execute: async run => {
+          if (run.runId === 'a') {
+            entered();
+            await gate;
+          }
+          return 'succeeded';
+        }
+      }),
+      d = dispatcher(s, w, { maxPerPass: 2 });
+    const pass = d.runOnce();
+    await ready;
+    const stopping = d.stop();
+    release();
+    assert.equal(await pass, 1);
+    await stopping;
+    assert.equal(s.runs.get(scope, 'a').status, 'succeeded');
+    assert.equal(s.runs.get(scope, 'b').status, 'queued');
+    assert.equal(await d.runOnce(), 1);
+    assert.equal(s.runs.get(scope, 'b').status, 'succeeded');
+  } finally {
+    close(s);
+  }
+});
+
+test('dispatcher snapshots validated settings and retains its selected worker and error handler', async () => {
+  const s = setup(),
+    other = setup();
+  try {
+    for (const id of ['a', 'b']) s.runs.create(scope, id, runConfig, 0);
+    const errors = [],
+      executed = [],
+      options = {
+        runs: s.runs,
+        worker: worker(s, {
+          authorizeStart: run => run.runId !== 'a',
+          execute: async run => {
+            executed.push(run.runId);
+            return 'succeeded';
+          }
+        }),
+        scope: { ...scope },
+        maxPerPass: 1,
+        pollMs: 100,
+        onError: (error, id) => errors.push(id)
+      },
+      d = new DurableAgentDispatcher(options);
+    options.runs = other.runs;
+    options.worker = worker(other);
+    options.scope.tenantId = 'other';
+    options.maxPerPass = 1000;
+    options.pollMs = 0;
+    options.onError = () => {
+      throw Error('replacement called');
+    };
+    assert.equal(await d.runOnce(), 0);
+    assert.deepEqual(errors, ['a']);
+    assert.equal(await d.runOnce(), 1);
+    assert.deepEqual(executed, ['b']);
+    assert.equal(s.runs.get(scope, 'b').status, 'succeeded');
+  } finally {
+    close(s);
+    close(other);
+  }
+});
+
+test('restarting a dispatcher does not revive an earlier polling loop', async () => {
+  const s = setup(),
+    originalSetTimeout = globalThis.setTimeout,
+    originalClearTimeout = globalThis.clearTimeout,
+    scheduled = new Set();
+  let entered, release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  try {
+    s.runs.create(scope, 'a', runConfig, 0);
+    const w = worker(s, {
+        execute: async () => {
+          entered();
+          await gate;
+          return 'succeeded';
+        }
+      }),
+      d = dispatcher(s, w);
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 100) return originalSetTimeout(callback, delay, ...args);
+      const handle = { callback, args };
+      scheduled.add(handle);
+      return handle;
+    };
+    globalThis.clearTimeout = handle => {
+      if (scheduled.has(handle)) scheduled.delete(handle);
+      else originalClearTimeout(handle);
+    };
+    d.start();
+    await ready;
+    const stopping = d.stop();
+    release();
+    await stopping;
+    d.start();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(scheduled.size, 1);
+    assert.equal(s.runs.get(scope, 'a').status, 'succeeded');
+    await d.stop();
+    assert.equal(scheduled.size, 0);
+  } finally {
+    release();
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    close(s);
+  }
 });

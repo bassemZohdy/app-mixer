@@ -1,251 +1,2338 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {once} from 'node:events';
-import {spawn} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {generateKeyPairSync} from 'node:crypto';
-import {DatabaseSync} from 'node:sqlite';
-import {ApplicationStore,SqliteApplicationStore,SqliteRemoteRollout,RemoteRolloutPoller,RemoteRolloutMetrics,createControlPlane,createRemoteControlConnector,signPromotionPackage,createSignedPromotionVerifier,RemoteControlImportCancelledError,RemoteControlImportPreflightUnavailableError,RemoteControlImportUncertainError} from '../dist/index.js';
+import { once } from 'node:events';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { generateKeyPairSync } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import {
+  ApplicationStore,
+  SqliteApplicationStore,
+  SqliteRemoteRollout,
+  RemoteRolloutPoller,
+  RemoteRolloutMetrics,
+  createControlPlane,
+  createRemoteControlConnector,
+  signPromotionPackage,
+  createSignedPromotionVerifier,
+  RemoteControlImportCancelledError,
+  RemoteControlImportPreflightUnavailableError,
+  RemoteControlImportUncertainError
+} from '../dist/index.js';
 
-const definition={id:'demo',schemaVersion:1,revision:0,pages:[]},actor={tenantId:'tenant',principalId:'operator'},token='source-secret-at-least-32-characters-long';
-async function fixture(){const dir=mkdtempSync(join(tmpdir(),'rollout-')),source=new ApplicationStore(definition),target=new SqliteApplicationStore(join(dir,'target.sqlite'),definition);source.publish(0);const {privateKey,publicKey}=generateKeyPairSync('ed25519'),signer=(pkg,environment,version)=>signPromotionPackage(pkg,environment,'key',privateKey,version),verifier=createSignedPromotionVerifier([{keyId:'key',sourceEnvironment:'dev',publicKey}],'prod',{requireVersionBound:true}),server=createControlPlane(source,token,undefined,undefined,undefined,undefined,signer);server.listen(0,'127.0.0.1');await once(server,'listening');const config={sourceOrigin:`http://127.0.0.1:${server.address().port}`,sourceToken:token,sourceEnvironment:'dev',targetEnvironment:'prod',applicationId:'demo',repository:target,allowLoopbackHttp:true,authorize:()=>true,audit:()=>{},discovery:{authorize:()=>true,audit:()=>{}},requireAdvancingSource:true,verifyWithEvidence:verifier.verifyWithEvidence};return {dir,source,target,server,config,publicKey,path:join(dir,'rollout.sqlite')};}
-async function cleanup(f){f.target.close();if(f.server.listening){f.server.closeAllConnections();await new Promise(resolve=>f.server.close(resolve));}rmSync(f.dir,{recursive:true,force:true});}
-async function waitFor(check){for(let i=0;i<300;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('Timed out waiting for rollout');}
+const definition = { id: 'demo', schemaVersion: 1, revision: 0, pages: [] },
+  actor = { tenantId: 'tenant', principalId: 'operator' },
+  token = 'source-secret-at-least-32-characters-long';
+async function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'rollout-')),
+    source = new ApplicationStore(definition),
+    target = new SqliteApplicationStore(join(dir, 'target.sqlite'), definition);
+  source.publish(0);
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
+    signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
+    verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
+    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const config = {
+    sourceOrigin: `http://127.0.0.1:${server.address().port}`,
+    sourceToken: token,
+    sourceEnvironment: 'dev',
+    targetEnvironment: 'prod',
+    applicationId: 'demo',
+    repository: target,
+    allowLoopbackHttp: true,
+    authorize: () => true,
+    audit: () => {},
+    discovery: { authorize: () => true, audit: () => {} },
+    requireAdvancingSource: true,
+    verifyWithEvidence: verifier.verifyWithEvidence
+  };
+  return { dir, source, target, server, config, publicKey, path: join(dir, 'rollout.sqlite') };
+}
+async function cleanup(f) {
+  f.target.close();
+  if (f.server.listening) {
+    f.server.closeAllConnections();
+    await new Promise(resolve => f.server.close(resolve));
+  }
+  rmSync(f.dir, { recursive: true, force: true });
+}
+async function waitFor(check) {
+  for (let i = 0; i < 300; i++) {
+    if (check()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw Error('Timed out waiting for rollout');
+}
 
-test('rollout metrics are scoped, authorized and report the recovery gate without identifiers',async()=>{
- const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let allow=true;const rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit unavailable');}}),actor),metrics=new RemoteRolloutMetrics(rollout,{scope,authorize:()=>allow});try{assert.deepEqual(await metrics.snapshot(actor),{phase:'idle'});const initial=await metrics.render(actor);assert.match(initial,/phase="idle"} 1/);await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);const text=await metrics.render(actor);assert.match(text,/phase="uncertain"} 1/);assert.match(text,/phase="idle"} 0/);for(const secret of ['tenant','demo','operator','dev','prod',rollout.getState().token])assert.equal(text.includes(secret),false);allow=false;await assert.rejects(metrics.render(actor),/access denied/);await assert.rejects(metrics.render({...actor,tenantId:'other'}),/Invalid rollout metrics actor/);assert.throws(()=>new RemoteRolloutMetrics(rollout,{scope:{...scope,applicationId:'other'},authorize:()=>true}),/Invalid rollout metrics/);}finally{rollout.close();await cleanup(f);}
+test('rollout metrics are scoped, authorized and report the recovery gate without identifiers', async () => {
+  const f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let allow = true;
+  const rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit unavailable');
+        }
+      }),
+      actor
+    ),
+    metrics = new RemoteRolloutMetrics(rollout, { scope, authorize: () => allow });
+  try {
+    assert.deepEqual(await metrics.snapshot(actor), { phase: 'idle' });
+    const initial = await metrics.render(actor);
+    assert.match(initial, /phase="idle"} 1/);
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    const text = await metrics.render(actor);
+    assert.match(text, /phase="uncertain"} 1/);
+    assert.match(text, /phase="idle"} 0/);
+    for (const secret of ['tenant', 'demo', 'operator', 'dev', 'prod', rollout.getState().token]) assert.equal(text.includes(secret), false);
+    allow = false;
+    await assert.rejects(metrics.render(actor), /access denied/);
+    await assert.rejects(metrics.render({ ...actor, tenantId: 'other' }), /Invalid rollout metrics actor/);
+    assert.throws(() => new RemoteRolloutMetrics(rollout, { scope: { ...scope, applicationId: 'other' }, authorize: () => true }), /Invalid rollout metrics/);
+  } finally {
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout metric policy is rechecked and bounded callbacks cannot return late data',async()=>{
- const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor);let release,blocked=true,seen,calls=0;const gate=new Promise(resolve=>release=resolve),metrics=new RemoteRolloutMetrics(rollout,{scope,timeoutMs:100,maxPending:1,authorize:(_actor,_scope,signal)=>{if(blocked){seen=signal;calls++;return gate;}return true;}});try{await assert.rejects(metrics.render(actor),/unavailable/);assert.equal(seen.aborted,true);await assert.rejects(metrics.render(actor),/unavailable/);assert.equal(calls,1);blocked=false;release(true);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(await metrics.snapshot(actor),{phase:'idle'});let checks=0;const revoked=new RemoteRolloutMetrics(rollout,{scope,authorize:()=>++checks===1});await assert.rejects(revoked.snapshot(actor),/access denied/);await assert.rejects(metrics.renderWithSignal(actor,AbortSignal.abort()),/unavailable/);}finally{release();rollout.close();await cleanup(f);}
+test('rollout metric policy is rechecked and bounded callbacks cannot return late data', async () => {
+  const f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor);
+  let release,
+    blocked = true,
+    seen,
+    calls = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    metrics = new RemoteRolloutMetrics(rollout, {
+      scope,
+      timeoutMs: 100,
+      maxPending: 1,
+      authorize: (_actor, _scope, signal) => {
+        if (blocked) {
+          seen = signal;
+          calls++;
+          return gate;
+        }
+        return true;
+      }
+    });
+  try {
+    await assert.rejects(metrics.render(actor), /unavailable/);
+    assert.equal(seen.aborted, true);
+    await assert.rejects(metrics.render(actor), /unavailable/);
+    assert.equal(calls, 1);
+    blocked = false;
+    release(true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(await metrics.snapshot(actor), { phase: 'idle' });
+    let checks = 0;
+    const revoked = new RemoteRolloutMetrics(rollout, { scope, authorize: () => ++checks === 1 });
+    await assert.rejects(revoked.snapshot(actor), /access denied/);
+    await assert.rejects(metrics.renderWithSignal(actor, AbortSignal.abort()), /unavailable/);
+  } finally {
+    release();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout metrics reject malformed gate records instead of reporting healthy states',async()=>{
- const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),metrics=new RemoteRolloutMetrics(rollout,{scope,authorize:()=>true}),db=new DatabaseSync(f.path);try{const update=db.prepare('UPDATE remote_rollouts SET phase=?,token=?,source_version=?,expected_version=?');for(const state of [['idle','stale',null,null],['running',null,null,null],['running','token',1,null],['importing','token',null,0],['uncertain','token',1,-1]]){update.run(...state);await assert.rejects(metrics.snapshot(actor),/Invalid rollout (metrics data|state)/);}update.run('uncertain','token',1,0);assert.deepEqual(await metrics.snapshot(actor),{phase:'uncertain'});}finally{db.close();rollout.close();await cleanup(f);}
+test('rollout metrics reject malformed gate records instead of reporting healthy states', async () => {
+  const f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    metrics = new RemoteRolloutMetrics(rollout, { scope, authorize: () => true }),
+    db = new DatabaseSync(f.path);
+  try {
+    const update = db.prepare('UPDATE remote_rollouts SET phase=?,token=?,source_version=?,expected_version=?');
+    for (const state of [
+      ['idle', 'stale', null, null],
+      ['running', null, null, null],
+      ['running', 'token', 1, null],
+      ['importing', 'token', null, 0],
+      ['uncertain', 'token', 1, -1]
+    ]) {
+      update.run(...state);
+      await assert.rejects(metrics.snapshot(actor), /Invalid rollout (metrics data|state)/);
+    }
+    update.run('uncertain', 'token', 1, 0);
+    assert.deepEqual(await metrics.snapshot(actor), { phase: 'uncertain' });
+  } finally {
+    db.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout metrics reject a gate changed during authorization',async()=>{
- const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),db=new DatabaseSync(f.path);let checks=0;const metrics=new RemoteRolloutMetrics(rollout,{scope,authorize:()=>{if(++checks===2)db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();return true;}});try{await assert.rejects(metrics.render(actor),/Rollout metrics unavailable/);assert.equal(rollout.getState().phase,'uncertain');}finally{db.close();rollout.close();await cleanup(f);}
+test('rollout metrics reject a gate changed during authorization', async () => {
+  const f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    db = new DatabaseSync(f.path);
+  let checks = 0;
+  const metrics = new RemoteRolloutMetrics(rollout, {
+    scope,
+    authorize: () => {
+      if (++checks === 2) db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();
+      return true;
+    }
+  });
+  try {
+    await assert.rejects(metrics.render(actor), /Rollout metrics unavailable/);
+    assert.equal(rollout.getState().phase, 'uncertain');
+  } finally {
+    db.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('SQLite rollout refuses to overwrite a malformed idle claim',async()=>{
- const f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),db=new DatabaseSync(f.path),errors=[],poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:(error,review)=>errors.push({error,review})});try{db.prepare("UPDATE remote_rollouts SET token='stale-claim',source_version=1,expected_version=0 WHERE phase='idle'").run();assert.throws(()=>rollout.getState(),/Invalid rollout state/);await assert.rejects(rollout.runOnce(),/requires recovery/);poller.start();await waitFor(()=>errors.length===1);assert.equal(errors[0].review,true);assert.equal(poller.isRunning(),false);assert.equal(poller.getStatus().reviewRequired,true);assert.equal(f.target.getPublished(),undefined);const row=db.prepare('SELECT phase,token,source_version,expected_version FROM remote_rollouts').get();assert.deepEqual({...row},{phase:'idle',token:'stale-claim',source_version:1,expected_version:0});}finally{await poller.stop();db.close();rollout.close();await cleanup(f);}
+test('SQLite rollout refuses to overwrite a malformed idle claim', async () => {
+  const f = await fixture(),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    db = new DatabaseSync(f.path),
+    errors = [],
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: (error, review) => errors.push({ error, review }) });
+  try {
+    db.prepare("UPDATE remote_rollouts SET token='stale-claim',source_version=1,expected_version=0 WHERE phase='idle'").run();
+    assert.throws(() => rollout.getState(), /Invalid rollout state/);
+    await assert.rejects(rollout.runOnce(), /requires recovery/);
+    poller.start();
+    await waitFor(() => errors.length === 1);
+    assert.equal(errors[0].review, true);
+    assert.equal(poller.isRunning(), false);
+    assert.equal(poller.getStatus().reviewRequired, true);
+    assert.equal(f.target.getPublished(), undefined);
+    const row = db.prepare('SELECT phase,token,source_version,expected_version FROM remote_rollouts').get();
+    assert.deepEqual({ ...row }, { phase: 'idle', token: 'stale-claim', source_version: 1, expected_version: 0 });
+  } finally {
+    await poller.stop();
+    db.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout metrics reject malformed poller state',async()=>{
- const f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),metrics=new RemoteRolloutMetrics(rollout,{scope,poller,authorize:()=>true});try{poller.getStatus=()=>({running:true,inFlight:false,reviewRequired:false,consecutiveFailures:'1\nforged_metric 1'});await assert.rejects(metrics.render(actor),/Invalid rollout metrics data/);poller.getStatus=()=>undefined;await assert.rejects(metrics.render(actor),/Invalid rollout metrics data/);}finally{await poller.stop();rollout.close();await cleanup(f);}
+test('rollout metrics reject malformed poller state', async () => {
+  const f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    metrics = new RemoteRolloutMetrics(rollout, { scope, poller, authorize: () => true });
+  try {
+    poller.getStatus = () => ({ running: true, inFlight: false, reviewRequired: false, consecutiveFailures: '1\nforged_metric 1' });
+    await assert.rejects(metrics.render(actor), /Invalid rollout metrics data/);
+    poller.getStatus = () => undefined;
+    await assert.rejects(metrics.render(actor), /Invalid rollout metrics data/);
+  } finally {
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller backs off on pre-import failure and imports when the source becomes available',async()=>{
- const f=await fixture();let permitted=false;const errors=[],results=[],rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:()=>permitted}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:400,onResult:value=>results.push({value,time:performance.now()}),onError:(error,review)=>errors.push({error,review,time:performance.now()})});
- try{poller.start();assert.throws(()=>poller.start(),/already running/);await waitFor(()=>errors.length===1);assert.equal(errors[0].review,false);assert.equal(poller.getStatus().consecutiveFailures,1);assert.equal(typeof poller.getStatus().lastFailureAt,'number');assert.equal(poller.getStatus().reviewRequired,false);assert.equal(rollout.getState().phase,'idle');permitted=true;await waitFor(()=>results.length>0);assert.equal(results[0].value.status,'imported');assert.equal(poller.getStatus().consecutiveFailures,0);assert.equal(typeof poller.getStatus().lastSuccessAt,'number');assert.ok(results[0].time-errors[0].time>=190);assert.equal(f.target.getPublished().version,1);await poller.stop();assert.equal(poller.isRunning(),false);}finally{await poller.stop();rollout.close();await cleanup(f);}
+test('poller backs off on pre-import failure and imports when the source becomes available', async () => {
+  const f = await fixture();
+  let permitted = false;
+  const errors = [],
+    results = [],
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector({ ...f.config, discovery: { ...f.config.discovery, authorize: () => permitted } }), actor),
+    poller = new RemoteRolloutPoller({
+      rollout,
+      intervalMs: 100,
+      maxBackoffMs: 400,
+      onResult: value => results.push({ value, time: performance.now() }),
+      onError: (error, review) => errors.push({ error, review, time: performance.now() })
+    });
+  try {
+    poller.start();
+    assert.throws(() => poller.start(), /already running/);
+    await waitFor(() => errors.length === 1);
+    assert.equal(errors[0].review, false);
+    assert.equal(poller.getStatus().consecutiveFailures, 1);
+    assert.equal(typeof poller.getStatus().lastFailureAt, 'number');
+    assert.equal(poller.getStatus().reviewRequired, false);
+    assert.equal(rollout.getState().phase, 'idle');
+    permitted = true;
+    await waitFor(() => results.length > 0);
+    assert.equal(results[0].value.status, 'imported');
+    assert.equal(poller.getStatus().consecutiveFailures, 0);
+    assert.equal(typeof poller.getStatus().lastSuccessAt, 'number');
+    assert.ok(results[0].time - errors[0].time >= 190);
+    assert.equal(f.target.getPublished().version, 1);
+    await poller.stop();
+    assert.equal(poller.isRunning(), false);
+  } finally {
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller stops on an uncertain import until an operator reconciles and restarts it',async()=>{
- const f=await fixture();let failAudit=true;const errors=[],results=[],rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(failAudit&&event.phase==='completed')throw Error('audit failed')}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:200,onResult:value=>results.push(value),onError:(error,review)=>errors.push({error,review})});
- try{const scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},metrics=new RemoteRolloutMetrics(rollout,{scope,poller,authorize:()=>true});assert.deepEqual(poller.getStatus(),{running:false,inFlight:false,consecutiveFailures:0,reviewRequired:false,passStartedAt:null,lastSuccessAt:null,lastFailureAt:null});poller.start();await waitFor(()=>errors.length===1);assert.equal(errors[0].review,true);assert.equal(poller.isRunning(),false);assert.equal(poller.getStatus().reviewRequired,true);assert.match(await metrics.render(actor),/app_mixer_remote_rollout_poller_review_required 1/);assert.match(await metrics.render(actor),/app_mixer_remote_rollout_poller_running 0/);assert.equal(rollout.getState().phase,'uncertain');await new Promise(resolve=>setTimeout(resolve,250));assert.equal(errors.length,1);assert.equal(results.length,0);await poller.stop();await rollout.recover(state=>state.sourceVersion===f.target.getPublicationProvenance(1).sourceVersion);failAudit=false;poller.start();await waitFor(()=>results.length===1);assert.equal(results[0].status,'unchanged');assert.equal(poller.getStatus().reviewRequired,false);await poller.stop();}finally{await poller.stop();rollout.close();await cleanup(f);}
+test('poller stops on an uncertain import until an operator reconciles and restarts it', async () => {
+  const f = await fixture();
+  let failAudit = true;
+  const errors = [],
+    results = [],
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (failAudit && event.phase === 'completed') throw Error('audit failed');
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 200, onResult: value => results.push(value), onError: (error, review) => errors.push({ error, review }) });
+  try {
+    const scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      metrics = new RemoteRolloutMetrics(rollout, { scope, poller, authorize: () => true });
+    assert.deepEqual(poller.getStatus(), { running: false, inFlight: false, consecutiveFailures: 0, reviewRequired: false, passStartedAt: null, lastSuccessAt: null, lastFailureAt: null });
+    poller.start();
+    await waitFor(() => errors.length === 1);
+    assert.equal(errors[0].review, true);
+    assert.equal(poller.isRunning(), false);
+    assert.equal(poller.getStatus().reviewRequired, true);
+    assert.match(await metrics.render(actor), /app_mixer_remote_rollout_poller_review_required 1/);
+    assert.match(await metrics.render(actor), /app_mixer_remote_rollout_poller_running 0/);
+    assert.equal(rollout.getState().phase, 'uncertain');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(errors.length, 1);
+    assert.equal(results.length, 0);
+    await poller.stop();
+    await rollout.recover(state => state.sourceVersion === f.target.getPublicationProvenance(1).sourceVersion);
+    failAudit = false;
+    poller.start();
+    await waitFor(() => results.length === 1);
+    assert.equal(results[0].status, 'unchanged');
+    assert.equal(poller.getStatus().reviewRequired, false);
+    await poller.stop();
+  } finally {
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller stop waits for an in-flight pass and prevents another pass',async()=>{
- const f=await fixture();let started,release,passes=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{passes++;started();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});
- try{poller.start();await ready;assert.equal(poller.getStatus().inFlight,true);assert.equal(typeof poller.getStatus().passStartedAt,'number');assert.equal(poller.isFor(rollout),true);let stopped=false;const pending=poller.stop().then(()=>stopped=true);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(stopped,false);release();await pending;await new Promise(resolve=>setTimeout(resolve,150));assert.equal(passes,1);assert.equal(poller.isRunning(),false);assert.equal(poller.getStatus().inFlight,false);assert.equal(poller.getStatus().passStartedAt,null);assert.equal(poller.getStatus().lastFailureAt,null);assert.equal(poller.getStatus().consecutiveFailures,0);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller stop waits for an in-flight pass and prevents another pass', async () => {
+  const f = await fixture();
+  let started,
+    release,
+    passes = 0;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            passes++;
+            started();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+  try {
+    poller.start();
+    await ready;
+    assert.equal(poller.getStatus().inFlight, true);
+    assert.equal(typeof poller.getStatus().passStartedAt, 'number');
+    assert.equal(poller.isFor(rollout), true);
+    let stopped = false;
+    const pending = poller.stop().then(() => (stopped = true));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(stopped, false);
+    release();
+    await pending;
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(passes, 1);
+    assert.equal(poller.isRunning(), false);
+    assert.equal(poller.getStatus().inFlight, false);
+    assert.equal(poller.getStatus().passStartedAt, null);
+    assert.equal(poller.getStatus().lastFailureAt, null);
+    assert.equal(poller.getStatus().consecutiveFailures, 0);
+    assert.equal(f.target.getPublished(), undefined);
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control capability authorizes a fixed scope and never bypasses its recovery gate',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let started,release,allowed=true,checks=0;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{started();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),context={...actor,origin:'ui'};try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>{checks++;return allowed;}});for(const input of [{action:['start']},{action:'invalid'},{action:'start',extra:true},{}])await assert.rejects(registry.invoke('rollout.control',input,context),/Invalid capability input/);await assert.rejects(registry.invoke('rollout.control',{action:'start'},{...context,tenantId:'other'}),/forbidden/);allowed=false;await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/forbidden/);assert.equal(poller.isRunning(),false);allowed=true;const status=await registry.invoke('rollout.control',{action:'start'},context);assert.equal(status.running,true);await ready;assert.equal(rollout.getState().phase,'running');allowed=false;await assert.rejects(registry.invoke('rollout.control',{action:'stop'},context),/forbidden/);assert.equal(poller.isRunning(),true);allowed=true;const stopping=registry.invoke('rollout.control',{action:'stop'},context);await waitFor(()=>!poller.isRunning());release();assert.equal((await stopping).running,false);assert.equal(rollout.getState().phase,'idle');assert.equal(f.target.getPublished(),undefined);const db=new DatabaseSync(f.path);try{db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();}finally{db.close();}await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/requires review/);assert.equal(poller.isRunning(),false);assert.ok(checks>=5);}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller control capability authorizes a fixed scope and never bypasses its recovery gate', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let started,
+    release,
+    allowed = true,
+    checks = 0;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            started();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    context = { ...actor, origin: 'ui' };
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => {
+        checks++;
+        return allowed;
+      }
+    });
+    for (const input of [{ action: ['start'] }, { action: 'invalid' }, { action: 'start', extra: true }, {}])
+      await assert.rejects(registry.invoke('rollout.control', input, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, { ...context, tenantId: 'other' }), /forbidden/);
+    allowed = false;
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /forbidden/);
+    assert.equal(poller.isRunning(), false);
+    allowed = true;
+    const status = await registry.invoke('rollout.control', { action: 'start' }, context);
+    assert.equal(status.running, true);
+    await ready;
+    assert.equal(rollout.getState().phase, 'running');
+    allowed = false;
+    await assert.rejects(registry.invoke('rollout.control', { action: 'stop' }, context), /forbidden/);
+    assert.equal(poller.isRunning(), true);
+    allowed = true;
+    const stopping = registry.invoke('rollout.control', { action: 'stop' }, context);
+    await waitFor(() => !poller.isRunning());
+    release();
+    assert.equal((await stopping).running, false);
+    assert.equal(rollout.getState().phase, 'idle');
+    assert.equal(f.target.getPublished(), undefined);
+    const db = new DatabaseSync(f.path);
+    try {
+      db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();
+    } finally {
+      db.close();
+    }
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /requires review/);
+    assert.equal(poller.isRunning(), false);
+    assert.ok(checks >= 5);
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control rejects revoked and late authorization without starting work',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability,createCapabilityServer}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),context={...actor,origin:'ui'};let release,seen,mode='block',calls=0,server;const gate=new Promise(resolve=>release=resolve);try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,timeoutMs:100,maxPending:1,authorize:()=>true,authorizeControl:(_actor,_scope,_action,signal)=>{calls++;if(mode==='block'){seen=signal;return gate;}return mode==='revoke'?calls===1:true;}});server=createCapabilityServer(registry,()=>actor,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const url=`http://127.0.0.1:${server.address().port}/capabilities/rollout.control/invoke`;await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/unavailable/);assert.equal(seen.aborted,true);const unavailable=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{action:'start'}})});assert.equal(unavailable.status,503);await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/unavailable/);assert.equal(calls,1);assert.equal(poller.isRunning(),false);mode='revoke';release(true);await new Promise(resolve=>setImmediate(resolve));calls=0;await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/forbidden/);assert.equal(poller.isRunning(),false);mode='allow';const db=new DatabaseSync(f.path);try{db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();}finally{db.close();}const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{action:'start'}})});assert.equal(response.status,409);assert.equal(poller.isRunning(),false);}finally{release();if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await poller.stop();rollout.close();await cleanup(f);}
+test('poller control rejects revoked and late authorization without starting work', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability, createCapabilityServer } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    context = { ...actor, origin: 'ui' };
+  let release,
+    seen,
+    mode = 'block',
+    calls = 0,
+    server;
+  const gate = new Promise(resolve => (release = resolve));
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      timeoutMs: 100,
+      maxPending: 1,
+      authorize: () => true,
+      authorizeControl: (_actor, _scope, _action, signal) => {
+        calls++;
+        if (mode === 'block') {
+          seen = signal;
+          return gate;
+        }
+        return mode === 'revoke' ? calls === 1 : true;
+      }
+    });
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/capabilities/rollout.control/invoke`;
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /unavailable/);
+    assert.equal(seen.aborted, true);
+    const unavailable = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: { action: 'start' } }) });
+    assert.equal(unavailable.status, 503);
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /unavailable/);
+    assert.equal(calls, 1);
+    assert.equal(poller.isRunning(), false);
+    mode = 'revoke';
+    release(true);
+    await new Promise(resolve => setImmediate(resolve));
+    calls = 0;
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /forbidden/);
+    assert.equal(poller.isRunning(), false);
+    mode = 'allow';
+    const db = new DatabaseSync(f.path);
+    try {
+      db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();
+    } finally {
+      db.close();
+    }
+    const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: { action: 'start' } }) });
+    assert.equal(response.status, 409);
+    assert.equal(poller.isRunning(), false);
+  } finally {
+    release();
+    if (server?.listening) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control rejects a gate changed during authorization',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),db=new DatabaseSync(f.path);let calls=0;try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>{if(++calls===2)db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();return true;}});await assert.rejects(registry.invoke('rollout.control',{action:'start'},{...actor,origin:'ui'}),/requires review/);assert.equal(poller.isRunning(),false);assert.equal(f.target.getPublished(),undefined);}finally{await poller.stop();db.close();rollout.close();await cleanup(f);}
+test('poller control rejects a gate changed during authorization', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    db = new DatabaseSync(f.path);
+  let calls = 0;
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => {
+        if (++calls === 2) db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();
+        return true;
+      }
+    });
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, { ...actor, origin: 'ui' }), /requires review/);
+    assert.equal(poller.isRunning(), false);
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    await poller.stop();
+    db.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control returns a bounded pending stop and coalesces repeated stops',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let entered,release,stopCalls=0;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{entered();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),originalStop=poller.stop.bind(poller),registry=new CapabilityRegistry(()=>{}),context={...actor,origin:'ui'};poller.stop=()=>{stopCalls++;return originalStop();};try{const options={candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>true,stopWaitTimeoutMs:100};for(const stopWaitTimeoutMs of [99,30001,'100'])assert.throws(()=>registerRemoteRolloutPollerCapability(new CapabilityRegistry(()=>{}),rollout,poller,{...options,stopWaitTimeoutMs}),/Invalid rollout poller capability/);registerRemoteRolloutPollerCapability(registry,rollout,poller,options);assert.equal((await registry.invoke('rollout.control',{action:'start'},context)).stopPending,false);await ready;const first=await registry.invoke('rollout.control',{action:'stop'},context);assert.equal(first.stopPending,true);assert.equal(first.running,false);assert.equal(first.inFlight,true);const second=await registry.invoke('rollout.control',{action:'stop'},context);assert.equal(second.stopPending,true);assert.equal(stopCalls,1);assert.equal(f.target.getPublished(),undefined);release();await waitFor(()=>!poller.getStatus().inFlight);const final=await registry.invoke('rollout.control',{action:'stop'},context);assert.equal(final.stopPending,false);assert.equal(final.running,false);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller control returns a bounded pending stop and coalesces repeated stops', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let entered,
+    release,
+    stopCalls = 0;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            entered();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    originalStop = poller.stop.bind(poller),
+    registry = new CapabilityRegistry(() => {}),
+    context = { ...actor, origin: 'ui' };
+  poller.stop = () => {
+    stopCalls++;
+    return originalStop();
+  };
+  try {
+    const options = { candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' }, scope, authorize: () => true, authorizeControl: () => true, stopWaitTimeoutMs: 100 };
+    for (const stopWaitTimeoutMs of [99, 30001, '100'])
+      assert.throws(() => registerRemoteRolloutPollerCapability(new CapabilityRegistry(() => {}), rollout, poller, { ...options, stopWaitTimeoutMs }), /Invalid rollout poller capability/);
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, options);
+    assert.equal((await registry.invoke('rollout.control', { action: 'start' }, context)).stopPending, false);
+    await ready;
+    const first = await registry.invoke('rollout.control', { action: 'stop' }, context);
+    assert.equal(first.stopPending, true);
+    assert.equal(first.running, false);
+    assert.equal(first.inFlight, true);
+    const second = await registry.invoke('rollout.control', { action: 'stop' }, context);
+    assert.equal(second.stopPending, true);
+    assert.equal(stopCalls, 1);
+    assert.equal(f.target.getPublished(), undefined);
+    release();
+    await waitFor(() => !poller.getStatus().inFlight);
+    const final = await registry.invoke('rollout.control', { action: 'stop' }, context);
+    assert.equal(final.stopPending, false);
+    assert.equal(final.running, false);
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control rechecks permission before returning a pending stop',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let entered,release,allowed=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{entered();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),context={...actor,origin:'ui'};try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>allowed,stopWaitTimeoutMs:100});await registry.invoke('rollout.control',{action:'start'},context);await ready;const pending=registry.invoke('rollout.control',{action:'stop'},context);await waitFor(()=>!poller.isRunning());allowed=false;await assert.rejects(pending,/forbidden/);assert.equal(poller.isRunning(),false);release();await waitFor(()=>!poller.getStatus().inFlight);assert.equal(rollout.getState().phase,'idle');assert.equal(f.target.getPublished(),undefined);}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller control rechecks permission before returning a pending stop', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let entered,
+    release,
+    allowed = true;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            entered();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    context = { ...actor, origin: 'ui' };
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => allowed,
+      stopWaitTimeoutMs: 100
+    });
+    await registry.invoke('rollout.control', { action: 'start' }, context);
+    await ready;
+    const pending = registry.invoke('rollout.control', { action: 'stop' }, context);
+    await waitFor(() => !poller.isRunning());
+    allowed = false;
+    await assert.rejects(pending, /forbidden/);
+    assert.equal(poller.isRunning(), false);
+    release();
+    await waitFor(() => !poller.getStatus().inFlight);
+    assert.equal(rollout.getState().phase, 'idle');
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control audits attempts and fences late or revoked pre-action decisions',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),context={...actor,origin:'ui'};let release,seen,allowed=true,mode='block';const gate=new Promise(resolve=>release=resolve),events=[];try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>allowed,auditTimeoutMs:100,maxPendingAudits:1,auditControl:(event,signal)=>{events.push(structuredClone(event));event.actor.principalId='mutated';event.scope.tenantId='mutated';if(mode==='block'){seen=signal;return gate;}if(mode==='revoke')allowed=false;}});await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/audit unavailable/);assert.equal(seen.aborted,true);assert.equal(poller.isRunning(),false);await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/audit unavailable/);assert.equal(events.length,1);assert.deepEqual(events[0],{phase:'attempt',actor,scope,action:'start'});mode='revoke';release();await new Promise(resolve=>setImmediate(resolve));await assert.rejects(registry.invoke('rollout.control',{action:'start'},context),/forbidden/);assert.equal(poller.isRunning(),false);assert.equal(f.target.getPublished(),undefined);}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller control audits attempts and fences late or revoked pre-action decisions', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    context = { ...actor, origin: 'ui' };
+  let release,
+    seen,
+    allowed = true,
+    mode = 'block';
+  const gate = new Promise(resolve => (release = resolve)),
+    events = [];
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => allowed,
+      auditTimeoutMs: 100,
+      maxPendingAudits: 1,
+      auditControl: (event, signal) => {
+        events.push(structuredClone(event));
+        event.actor.principalId = 'mutated';
+        event.scope.tenantId = 'mutated';
+        if (mode === 'block') {
+          seen = signal;
+          return gate;
+        }
+        if (mode === 'revoke') allowed = false;
+      }
+    });
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /audit unavailable/);
+    assert.equal(seen.aborted, true);
+    assert.equal(poller.isRunning(), false);
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /audit unavailable/);
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0], { phase: 'attempt', actor, scope, action: 'start' });
+    mode = 'revoke';
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /forbidden/);
+    assert.equal(poller.isRunning(), false);
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control rechecks the gate after the attempt audit',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),db=new DatabaseSync(f.path);try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>true,auditControl:event=>{if(event.phase==='attempt')db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();}});await assert.rejects(registry.invoke('rollout.control',{action:'start'},{...actor,origin:'ui'}),/requires review/);assert.equal(poller.isRunning(),false);assert.equal(f.target.getPublished(),undefined);}finally{await poller.stop();db.close();rollout.close();await cleanup(f);}
+test('poller control rechecks the gate after the attempt audit', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    db = new DatabaseSync(f.path);
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => true,
+      auditControl: event => {
+        if (event.phase === 'attempt') db.prepare("UPDATE remote_rollouts SET phase='uncertain',token='claim',source_version=1,expected_version=0").run();
+      }
+    });
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, { ...actor, origin: 'ui' }), /requires review/);
+    assert.equal(poller.isRunning(), false);
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    await poller.stop();
+    db.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control reports uncertain outcome if completion audit fails after start',async()=>{
- const {CapabilityRegistry,CapabilityOutcomeUncertainError,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let entered,release;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{entered();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{}),events=[];try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>true,auditControl:event=>{events.push(event);if(event.phase==='completed')throw Error('audit unavailable');}});await assert.rejects(registry.invoke('rollout.control',{action:'start'},{...actor,origin:'ui'}),CapabilityOutcomeUncertainError);await ready;assert.equal(poller.isRunning(),true);assert.deepEqual(events.map(event=>event.phase),['attempt','completed']);assert.equal(events[1].result.running,true);const stopping=poller.stop();release();await stopping;assert.equal(f.target.getPublished(),undefined);}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller control reports uncertain outcome if completion audit fails after start', async () => {
+  const { CapabilityRegistry, CapabilityOutcomeUncertainError, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let entered, release;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            entered();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {}),
+    events = [];
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => true,
+      auditControl: event => {
+        events.push(event);
+        if (event.phase === 'completed') throw Error('audit unavailable');
+      }
+    });
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, { ...actor, origin: 'ui' }), CapabilityOutcomeUncertainError);
+    await ready;
+    assert.equal(poller.isRunning(), true);
+    assert.deepEqual(
+      events.map(event => event.phase),
+      ['attempt', 'completed']
+    );
+    assert.equal(events[1].result.running, true);
+    const stopping = poller.stop();
+    release();
+    await stopping;
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control does not return status after permission is revoked during completion audit',async()=>{
- const {CapabilityRegistry,CapabilityOutcomeUncertainError,registerRemoteRolloutPollerCapability}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let entered,release,allowed=true;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{entered();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{});try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>allowed,auditControl:event=>{if(event.phase==='completed')allowed=false;}});await assert.rejects(registry.invoke('rollout.control',{action:'start'},{...actor,origin:'ui'}),CapabilityOutcomeUncertainError);await ready;assert.equal(poller.isRunning(),true);const stopping=poller.stop();release();await stopping;assert.equal(f.target.getPublished(),undefined);}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('poller control does not return status after permission is revoked during completion audit', async () => {
+  const { CapabilityRegistry, CapabilityOutcomeUncertainError, registerRemoteRolloutPollerCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let entered,
+    release,
+    allowed = true;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            entered();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => allowed,
+      auditControl: event => {
+        if (event.phase === 'completed') allowed = false;
+      }
+    });
+    await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, { ...actor, origin: 'ui' }), CapabilityOutcomeUncertainError);
+    await ready;
+    assert.equal(poller.isRunning(), true);
+    const stopping = poller.stop();
+    release();
+    await stopping;
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller control HTTP reports an uncertain outcome after action-specific audit failure',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutPollerCapability,createCapabilityServer}=await import('../dist/index.js'),f=await fixture(),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'};let entered,release,server;const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{entered();await gate;return true;}}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}}),registry=new CapabilityRegistry(()=>{});try{registerRemoteRolloutPollerCapability(registry,rollout,poller,{candidate:{operationId:'rollout.control',method:'POST',path:'/rollout'},scope,authorize:()=>true,authorizeControl:()=>true,auditControl:event=>{if(event.phase==='completed')throw Error('audit unavailable');}});server=createCapabilityServer(registry,()=>actor,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/rollout.control/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{action:'start'}})});assert.equal(response.status,503);assert.equal((await response.json()).code,'CAPABILITY_OUTCOME_UNCERTAIN');await ready;assert.equal(poller.isRunning(),true);const stopping=poller.stop();release();await stopping;}finally{release();if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await poller.stop();rollout.close();await cleanup(f);}
+test('poller control HTTP reports an uncertain outcome after action-specific audit failure', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutPollerCapability, createCapabilityServer } = await import('../dist/index.js'),
+    f = await fixture(),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' };
+  let entered, release, server;
+  const ready = new Promise(resolve => (entered = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            entered();
+            await gate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} }),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    registerRemoteRolloutPollerCapability(registry, rollout, poller, {
+      candidate: { operationId: 'rollout.control', method: 'POST', path: '/rollout' },
+      scope,
+      authorize: () => true,
+      authorizeControl: () => true,
+      auditControl: event => {
+        if (event.phase === 'completed') throw Error('audit unavailable');
+      }
+    });
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/rollout.control/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: { action: 'start' } })
+    });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, 'CAPABILITY_OUTCOME_UNCERTAIN');
+    await ready;
+    assert.equal(poller.isRunning(), true);
+    const stopping = poller.stop();
+    release();
+    await stopping;
+  } finally {
+    release();
+    if (server?.listening) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller stop aborts an in-flight discovery request without importing',async()=>{
- const f=await fixture(),originalFetch=globalThis.fetch;let started,seen;const ready=new Promise(resolve=>started=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),errors=[],poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:(error,review)=>errors.push({error,review})});try{globalThis.fetch=(_url,options)=>new Promise((_resolve,reject)=>{seen=options.signal;started();if(seen.aborted)reject(Error('aborted'));else seen.addEventListener('abort',()=>reject(Error('aborted')),{once:true});});poller.start();await ready;await poller.stop();assert.equal(seen.aborted,true);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');assert.match(errors[0].error.message,/cancelled/);assert.equal(errors[0].review,false);}finally{globalThis.fetch=originalFetch;await poller.stop();rollout.close();await cleanup(f);}
+test('poller stop aborts an in-flight discovery request without importing', async () => {
+  const f = await fixture(),
+    originalFetch = globalThis.fetch;
+  let started, seen;
+  const ready = new Promise(resolve => (started = resolve)),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    errors = [],
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: (error, review) => errors.push({ error, review }) });
+  try {
+    globalThis.fetch = (_url, options) =>
+      new Promise((_resolve, reject) => {
+        seen = options.signal;
+        started();
+        if (seen.aborted) reject(Error('aborted'));
+        else seen.addEventListener('abort', () => reject(Error('aborted')), { once: true });
+      });
+    poller.start();
+    await ready;
+    await poller.stop();
+    assert.equal(seen.aborted, true);
+    assert.equal(f.target.getPublished(), undefined);
+    assert.equal(rollout.getState().phase, 'idle');
+    assert.match(errors[0].error.message, /cancelled/);
+    assert.equal(errors[0].review, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('poller stop signals discovery policy and audit callbacks without importing',async()=>{
- for(const phase of ['authorize','audit']){const f=await fixture();let started,seen,legacyCalls=0;const ready=new Promise(resolve=>started=resolve),waitForAbort=signal=>new Promise((_resolve,reject)=>{seen=signal;started();if(signal.aborted)reject(Error('aborted'));else signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true});});const discovery={authorize:()=>{legacyCalls++;return true;},audit:()=>{legacyCalls++;},authorizeWithSignal:(_details,signal)=>phase==='authorize'?waitForAbort(signal):true,auditWithSignal:(event,signal)=>phase==='audit'&&event.phase==='attempt'?waitForAbort(signal):undefined},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;await poller.stop();assert.equal(seen.aborted,true);assert.equal(legacyCalls,0);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');}finally{await poller.stop();rollout.close();await cleanup(f);}}
+test('poller stop signals discovery policy and audit callbacks without importing', async () => {
+  for (const phase of ['authorize', 'audit']) {
+    const f = await fixture();
+    let started,
+      seen,
+      legacyCalls = 0;
+    const ready = new Promise(resolve => (started = resolve)),
+      waitForAbort = signal =>
+        new Promise((_resolve, reject) => {
+          seen = signal;
+          started();
+          if (signal.aborted) reject(Error('aborted'));
+          else signal.addEventListener('abort', () => reject(Error('aborted')), { once: true });
+        });
+    const discovery = {
+        authorize: () => {
+          legacyCalls++;
+          return true;
+        },
+        audit: () => {
+          legacyCalls++;
+        },
+        authorizeWithSignal: (_details, signal) => (phase === 'authorize' ? waitForAbort(signal) : true),
+        auditWithSignal: (event, signal) => (phase === 'audit' && event.phase === 'attempt' ? waitForAbort(signal) : undefined)
+      },
+      rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector({ ...f.config, discovery }), actor),
+      poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+    try {
+      poller.start();
+      await ready;
+      await poller.stop();
+      assert.equal(seen.aborted, true);
+      assert.equal(legacyCalls, 0);
+      assert.equal(f.target.getPublished(), undefined);
+      assert.equal(rollout.getState().phase, 'idle');
+    } finally {
+      await poller.stop();
+      rollout.close();
+      await cleanup(f);
+    }
+  }
 });
 
-test('discovery bounds stalled policy and audit work and retains capacity until settlement',async()=>{
- for(const phase of ['authorize','audit']){const f=await fixture();let release,seen,blocked=true,calls=0;const gate=new Promise(resolve=>release=resolve),discovery={authorize:()=>true,audit:()=>{},callbackTimeoutMs:100,maxPendingCallbacks:1,authorizeWithSignal:(_details,signal)=>{if(phase==='authorize'&&blocked){seen=signal;calls++;return gate;}return true;},auditWithSignal:(event,signal)=>{if(phase==='audit'&&blocked&&event.phase==='attempt'){seen=signal;calls++;return gate;}}},connector=createRemoteControlConnector({...f.config,discovery});try{await assert.rejects(connector.discoverLatest(actor),/discovery unavailable/);assert.equal(seen.aborted,true);await assert.rejects(connector.discoverLatest(actor),/discovery unavailable/);assert.equal(calls,1);blocked=false;release(true);await new Promise(resolve=>setImmediate(resolve));assert.equal((await connector.discoverLatest(actor)).sourceVersion,1);for(const bad of [{callbackTimeoutMs:100,maxPendingCallbacks:undefined},{callbackTimeoutMs:99,maxPendingCallbacks:1},{callbackTimeoutMs:100,maxPendingCallbacks:0}])assert.throws(()=>createRemoteControlConnector({...f.config,discovery:{...discovery,...bad}}),/Invalid remote control configuration/);}finally{release();await cleanup(f);}}
+test('discovery bounds stalled policy and audit work and retains capacity until settlement', async () => {
+  for (const phase of ['authorize', 'audit']) {
+    const f = await fixture();
+    let release,
+      seen,
+      blocked = true,
+      calls = 0;
+    const gate = new Promise(resolve => (release = resolve)),
+      discovery = {
+        authorize: () => true,
+        audit: () => {},
+        callbackTimeoutMs: 100,
+        maxPendingCallbacks: 1,
+        authorizeWithSignal: (_details, signal) => {
+          if (phase === 'authorize' && blocked) {
+            seen = signal;
+            calls++;
+            return gate;
+          }
+          return true;
+        },
+        auditWithSignal: (event, signal) => {
+          if (phase === 'audit' && blocked && event.phase === 'attempt') {
+            seen = signal;
+            calls++;
+            return gate;
+          }
+        }
+      },
+      connector = createRemoteControlConnector({ ...f.config, discovery });
+    try {
+      await assert.rejects(connector.discoverLatest(actor), /discovery unavailable/);
+      assert.equal(seen.aborted, true);
+      await assert.rejects(connector.discoverLatest(actor), /discovery unavailable/);
+      assert.equal(calls, 1);
+      blocked = false;
+      release(true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal((await connector.discoverLatest(actor)).sourceVersion, 1);
+      for (const bad of [
+        { callbackTimeoutMs: 100, maxPendingCallbacks: undefined },
+        { callbackTimeoutMs: 99, maxPendingCallbacks: 1 },
+        { callbackTimeoutMs: 100, maxPendingCallbacks: 0 }
+      ])
+        assert.throws(() => createRemoteControlConnector({ ...f.config, discovery: { ...discovery, ...bad } }), /Invalid remote control configuration/);
+    } finally {
+      release();
+      await cleanup(f);
+    }
+  }
 });
 
-test('stopping during import preflight releases the gate without publishing',async()=>{
- const f=await fixture();let started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,authorize:async()=>{started();await gate;return true;}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;assert.equal(rollout.getState().phase,'importing');const pending=poller.stop();release();await pending;assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('stopping during import preflight releases the gate without publishing', async () => {
+  const f = await fixture();
+  let started, release;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        authorize: async () => {
+          started();
+          await gate;
+          return true;
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+  try {
+    poller.start();
+    await ready;
+    assert.equal(rollout.getState().phase, 'importing');
+    const pending = poller.stop();
+    release();
+    await pending;
+    assert.equal(f.target.getPublished(), undefined);
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('stopping during remote export aborts the request and safely releases the gate',async()=>{
- const f=await fixture(),originalFetch=globalThis.fetch;let started,seen;const ready=new Promise(resolve=>started=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{globalThis.fetch=(url,options)=>options.method==='POST'?new Promise((_resolve,reject)=>{seen=options.signal;started();if(seen.aborted)reject(Error('aborted'));else seen.addEventListener('abort',()=>reject(Error('aborted')),{once:true});}):originalFetch(url,options);poller.start();await ready;await poller.stop();assert.equal(seen.aborted,true);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');}finally{globalThis.fetch=originalFetch;await poller.stop();rollout.close();await cleanup(f);}
+test('stopping during remote export aborts the request and safely releases the gate', async () => {
+  const f = await fixture(),
+    originalFetch = globalThis.fetch;
+  let started, seen;
+  const ready = new Promise(resolve => (started = resolve)),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+  try {
+    globalThis.fetch = (url, options) =>
+      options.method === 'POST'
+        ? new Promise((_resolve, reject) => {
+            seen = options.signal;
+            started();
+            if (seen.aborted) reject(Error('aborted'));
+            else seen.addEventListener('abort', () => reject(Error('aborted')), { once: true });
+          })
+        : originalFetch(url, options);
+    poller.start();
+    await ready;
+    await poller.stop();
+    assert.equal(seen.aborted, true);
+    assert.equal(f.target.getPublished(), undefined);
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    globalThis.fetch = originalFetch;
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('stopping signals import preflight policy and audit hooks before publication',async()=>{
- for(const phase of ['export','import','attempt','source_verified','import_authorized']){const f=await fixture();let started,seen,legacy=0;const ready=new Promise(resolve=>started=resolve),waitForAbort=signal=>new Promise((_resolve,reject)=>{seen=signal;started();if(signal.aborted)reject(Error('aborted'));else signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true});}),connector=createRemoteControlConnector({...f.config,authorize:()=>{legacy++;return true;},audit:()=>{legacy++;},authorizeWithSignal:(stage,_details,signal)=>stage===phase?waitForAbort(signal):true,auditWithSignal:(event,signal)=>event.phase===phase?waitForAbort(signal):undefined}),rollout=new SqliteRemoteRollout(f.path,connector,actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;await poller.stop();assert.equal(seen.aborted,true);assert.equal(legacy,0);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');}finally{await poller.stop();rollout.close();await cleanup(f);}}
+test('stopping signals import preflight policy and audit hooks before publication', async () => {
+  for (const phase of ['export', 'import', 'attempt', 'source_verified', 'import_authorized']) {
+    const f = await fixture();
+    let started,
+      seen,
+      legacy = 0;
+    const ready = new Promise(resolve => (started = resolve)),
+      waitForAbort = signal =>
+        new Promise((_resolve, reject) => {
+          seen = signal;
+          started();
+          if (signal.aborted) reject(Error('aborted'));
+          else signal.addEventListener('abort', () => reject(Error('aborted')), { once: true });
+        }),
+      connector = createRemoteControlConnector({
+        ...f.config,
+        authorize: () => {
+          legacy++;
+          return true;
+        },
+        audit: () => {
+          legacy++;
+        },
+        authorizeWithSignal: (stage, _details, signal) => (stage === phase ? waitForAbort(signal) : true),
+        auditWithSignal: (event, signal) => (event.phase === phase ? waitForAbort(signal) : undefined)
+      }),
+      rollout = new SqliteRemoteRollout(f.path, connector, actor),
+      poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+    try {
+      poller.start();
+      await ready;
+      await poller.stop();
+      assert.equal(seen.aborted, true);
+      assert.equal(legacy, 0);
+      assert.equal(f.target.getPublished(), undefined);
+      assert.equal(rollout.getState().phase, 'idle');
+    } finally {
+      await poller.stop();
+      rollout.close();
+      await cleanup(f);
+    }
+  }
 });
 
-test('bounded import preflight rejects stalled callbacks without publishing or losing the gate',async()=>{
- for(const phase of ['export','import','attempt','source_verified','import_authorized']){const f=await fixture();let release,seen,blocked=true,calls=0;const gate=new Promise(resolve=>release=resolve),wait=signal=>{seen=signal;calls++;return gate;},connector=createRemoteControlConnector({...f.config,preflightTimeoutMs:100,maxPendingPreflightCallbacks:1,authorizeWithSignal:(stage,_details,signal)=>blocked&&stage===phase?wait(signal):true,auditWithSignal:(event,signal)=>blocked&&event.phase===phase?wait(signal):undefined}),rollout=new SqliteRemoteRollout(f.path,connector,actor);try{await assert.rejects(rollout.runOnce(),/preflight unavailable/);assert.equal(seen.aborted,true);assert.equal(f.target.getPublished(),undefined);assert.equal(rollout.getState().phase,'idle');await assert.rejects(rollout.runOnce(),/preflight unavailable/);assert.equal(calls,1);blocked=false;release(true);await new Promise(resolve=>setImmediate(resolve));assert.equal((await rollout.runOnce()).status,'imported');for(const bad of [{preflightTimeoutMs:100,maxPendingPreflightCallbacks:undefined},{preflightTimeoutMs:99,maxPendingPreflightCallbacks:1},{preflightTimeoutMs:100,maxPendingPreflightCallbacks:0}])assert.throws(()=>createRemoteControlConnector({...f.config,...bad}),/Invalid remote control configuration/);}finally{release();rollout.close();await cleanup(f);}}
+test('bounded import preflight rejects stalled callbacks without publishing or losing the gate', async () => {
+  for (const phase of ['export', 'import', 'attempt', 'source_verified', 'import_authorized']) {
+    const f = await fixture();
+    let release,
+      seen,
+      blocked = true,
+      calls = 0;
+    const gate = new Promise(resolve => (release = resolve)),
+      wait = signal => {
+        seen = signal;
+        calls++;
+        return gate;
+      },
+      connector = createRemoteControlConnector({
+        ...f.config,
+        preflightTimeoutMs: 100,
+        maxPendingPreflightCallbacks: 1,
+        authorizeWithSignal: (stage, _details, signal) => (blocked && stage === phase ? wait(signal) : true),
+        auditWithSignal: (event, signal) => (blocked && event.phase === phase ? wait(signal) : undefined)
+      }),
+      rollout = new SqliteRemoteRollout(f.path, connector, actor);
+    try {
+      await assert.rejects(rollout.runOnce(), /preflight unavailable/);
+      assert.equal(seen.aborted, true);
+      assert.equal(f.target.getPublished(), undefined);
+      assert.equal(rollout.getState().phase, 'idle');
+      await assert.rejects(rollout.runOnce(), /preflight unavailable/);
+      assert.equal(calls, 1);
+      blocked = false;
+      release(true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal((await rollout.runOnce()).status, 'imported');
+      for (const bad of [
+        { preflightTimeoutMs: 100, maxPendingPreflightCallbacks: undefined },
+        { preflightTimeoutMs: 99, maxPendingPreflightCallbacks: 1 },
+        { preflightTimeoutMs: 100, maxPendingPreflightCallbacks: 0 }
+      ])
+        assert.throws(() => createRemoteControlConnector({ ...f.config, ...bad }), /Invalid remote control configuration/);
+    } finally {
+      release();
+      rollout.close();
+      await cleanup(f);
+    }
+  }
 });
 
-test('an unexpected cancellation error without an aborted signal keeps the recovery gate',async()=>{
- const f=await fixture(),connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:()=>0,getPublished:()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async()=>{throw new RemoteControlImportCancelledError();}},rollout=new SqliteRemoteRollout(f.path,connector,actor);try{await assert.rejects(rollout.runOnce(),RemoteControlImportCancelledError);assert.equal(rollout.getState().phase,'uncertain');}finally{rollout.close();await cleanup(f);}
+test('an unexpected cancellation error without an aborted signal keeps the recovery gate', async () => {
+  const f = await fixture(),
+    connector = {
+      rolloutConfig: { safe: true, applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      rolloutRepository: { getPromotionFloor: () => 0, getPublished: () => undefined },
+      discoverLatest: async () => ({ applicationId: 'demo', sourceVersion: 1 }),
+      importPublication: async () => {
+        throw new RemoteControlImportCancelledError();
+      }
+    },
+    rollout = new SqliteRemoteRollout(f.path, connector, actor);
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportCancelledError);
+    assert.equal(rollout.getState().phase, 'uncertain');
+  } finally {
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('custom connector preflight errors cannot clear a possible write',async()=>{
- for(const kind of ['cancel','timeout']){const f=await fixture(),controller=new AbortController(),connector={rolloutConfig:{safe:true,applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},rolloutRepository:{getPromotionFloor:()=>0,getPublished:()=>undefined},discoverLatest:async()=>({applicationId:'demo',sourceVersion:1}),importPublication:async()=>{controller.abort();throw kind==='cancel'?new RemoteControlImportCancelledError():new RemoteControlImportPreflightUnavailableError();}},rollout=new SqliteRemoteRollout(f.path,connector,actor);try{await assert.rejects(rollout.runOnce(controller.signal),/cancelled|unavailable/);assert.equal(rollout.getState().phase,'uncertain');}finally{rollout.close();await cleanup(f);}}
+test('custom connector preflight errors cannot clear a possible write', async () => {
+  for (const kind of ['cancel', 'timeout']) {
+    const f = await fixture(),
+      controller = new AbortController(),
+      connector = {
+        rolloutConfig: { safe: true, applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+        rolloutRepository: { getPromotionFloor: () => 0, getPublished: () => undefined },
+        discoverLatest: async () => ({ applicationId: 'demo', sourceVersion: 1 }),
+        importPublication: async () => {
+          controller.abort();
+          throw kind === 'cancel' ? new RemoteControlImportCancelledError() : new RemoteControlImportPreflightUnavailableError();
+        }
+      },
+      rollout = new SqliteRemoteRollout(f.path, connector, actor);
+    try {
+      await assert.rejects(rollout.runOnce(controller.signal), /cancelled|unavailable/);
+      assert.equal(rollout.getState().phase, 'uncertain');
+    } finally {
+      rollout.close();
+      await cleanup(f);
+    }
+  }
 });
 
-test('stopping after a local publication begins waits for its outcome',async()=>{
- const f=await fixture();let started,release,completionSignal;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),repository={promote:f.target.promote.bind(f.target),promoteVerified:f.target.promoteVerified.bind(f.target),promoteAdvancing:async(...args)=>{started();await gate;return f.target.promoteAdvancing(...args);},getPromotionFloor:f.target.getPromotionFloor.bind(f.target),getPublished:f.target.getPublished.bind(f.target)},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,repository,auditWithSignal:(event,signal)=>{if(event.phase==='completed')completionSignal=signal;}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;assert.equal(rollout.getState().phase,'importing');let stopped=false;const pending=poller.stop().then(()=>stopped=true);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(stopped,false);release();await pending;assert.equal(f.target.getPublished().version,1);assert.equal(completionSignal.aborted,false);assert.equal(rollout.getState().phase,'idle');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('stopping after a local publication begins waits for its outcome', async () => {
+  const f = await fixture();
+  let started, release, completionSignal;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    repository = {
+      promote: f.target.promote.bind(f.target),
+      promoteVerified: f.target.promoteVerified.bind(f.target),
+      promoteAdvancing: async (...args) => {
+        started();
+        await gate;
+        return f.target.promoteAdvancing(...args);
+      },
+      getPromotionFloor: f.target.getPromotionFloor.bind(f.target),
+      getPublished: f.target.getPublished.bind(f.target)
+    },
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        repository,
+        auditWithSignal: (event, signal) => {
+          if (event.phase === 'completed') completionSignal = signal;
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+  try {
+    poller.start();
+    await ready;
+    assert.equal(rollout.getState().phase, 'importing');
+    let stopped = false;
+    const pending = poller.stop().then(() => (stopped = true));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(stopped, false);
+    release();
+    await pending;
+    assert.equal(f.target.getPublished().version, 1);
+    assert.equal(completionSignal.aborted, false);
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('stopping during a failed import keeps the uncertainty gate',async()=>{
- const f=await fixture();let started,release;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve),repository={promote:f.target.promote.bind(f.target),promoteVerified:f.target.promoteVerified.bind(f.target),promoteAdvancing:async(...args)=>{started();await gate;return f.target.promoteAdvancing(...args);},getPromotionFloor:f.target.getPromotionFloor.bind(f.target),getPublished:f.target.getPublished.bind(f.target)},rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,repository,audit:event=>{if(event.phase==='completed')throw Error('audit failed');}}),actor),poller=new RemoteRolloutPoller({rollout,intervalMs:100,maxBackoffMs:100,onResult:()=>{},onError:()=>{}});try{poller.start();await ready;const pending=poller.stop();release();await pending;assert.equal(f.target.getPublished().version,1);assert.equal(rollout.getState().phase,'uncertain');}finally{release();await poller.stop();rollout.close();await cleanup(f);}
+test('stopping during a failed import keeps the uncertainty gate', async () => {
+  const f = await fixture();
+  let started, release;
+  const ready = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve)),
+    repository = {
+      promote: f.target.promote.bind(f.target),
+      promoteVerified: f.target.promoteVerified.bind(f.target),
+      promoteAdvancing: async (...args) => {
+        started();
+        await gate;
+        return f.target.promoteAdvancing(...args);
+      },
+      getPromotionFloor: f.target.getPromotionFloor.bind(f.target),
+      getPublished: f.target.getPublished.bind(f.target)
+    },
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        repository,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit failed');
+        }
+      }),
+      actor
+    ),
+    poller = new RemoteRolloutPoller({ rollout, intervalMs: 100, maxBackoffMs: 100, onResult: () => {}, onError: () => {} });
+  try {
+    poller.start();
+    await ready;
+    const pending = poller.stop();
+    release();
+    await pending;
+    assert.equal(f.target.getPublished().version, 1);
+    assert.equal(rollout.getState().phase, 'uncertain');
+  } finally {
+    release();
+    await poller.stop();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('a bounded completion audit timeout keeps a committed import uncertain',async()=>{
- const f=await fixture();let release,seen,attempts=0;const gate=new Promise(resolve=>release=resolve),connector=createRemoteControlConnector({...f.config,completionAuditTimeoutMs:100,maxPendingCompletionAudits:1,auditWithSignal:(event,signal)=>{if(event.phase==='completed'){attempts++;seen=signal;return gate;}if(event.phase==='uncertain')attempts++;}}),rollout=new SqliteRemoteRollout(f.path,connector,actor);try{await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);assert.equal(seen.aborted,true);assert.equal(attempts,1);assert.equal(f.target.getPublished().version,1);assert.equal(rollout.getState().phase,'uncertain');await assert.rejects(rollout.runOnce(),/recovery/);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(rollout.getState().phase,'uncertain');await rollout.recover(state=>state.sourceVersion===f.target.getPublicationProvenance(1).sourceVersion);assert.equal((await rollout.runOnce()).status,'unchanged');for(const bad of [{completionAuditTimeoutMs:100,maxPendingCompletionAudits:undefined},{completionAuditTimeoutMs:99,maxPendingCompletionAudits:1},{completionAuditTimeoutMs:100,maxPendingCompletionAudits:0}])assert.throws(()=>createRemoteControlConnector({...f.config,...bad}),/Invalid remote control configuration/);}finally{release();rollout.close();await cleanup(f);}
+test('a bounded completion audit timeout keeps a committed import uncertain', async () => {
+  const f = await fixture();
+  let release,
+    seen,
+    attempts = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    connector = createRemoteControlConnector({
+      ...f.config,
+      completionAuditTimeoutMs: 100,
+      maxPendingCompletionAudits: 1,
+      auditWithSignal: (event, signal) => {
+        if (event.phase === 'completed') {
+          attempts++;
+          seen = signal;
+          return gate;
+        }
+        if (event.phase === 'uncertain') attempts++;
+      }
+    }),
+    rollout = new SqliteRemoteRollout(f.path, connector, actor);
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    assert.equal(seen.aborted, true);
+    assert.equal(attempts, 1);
+    assert.equal(f.target.getPublished().version, 1);
+    assert.equal(rollout.getState().phase, 'uncertain');
+    await assert.rejects(rollout.runOnce(), /recovery/);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(rollout.getState().phase, 'uncertain');
+    await rollout.recover(state => state.sourceVersion === f.target.getPublicationProvenance(1).sourceVersion);
+    assert.equal((await rollout.runOnce()).status, 'unchanged');
+    for (const bad of [
+      { completionAuditTimeoutMs: 100, maxPendingCompletionAudits: undefined },
+      { completionAuditTimeoutMs: 99, maxPendingCompletionAudits: 1 },
+      { completionAuditTimeoutMs: 100, maxPendingCompletionAudits: 0 }
+    ])
+      assert.throws(() => createRemoteControlConnector({ ...f.config, ...bad }), /Invalid remote control configuration/);
+  } finally {
+    release();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
 // FIX-029: an unchanged draft publishes no new version, so every further version in these tests follows a draft change.
-const publishNext=store=>{const draft=store.getDraft();store.apply(draft.revision,[{op:'addPage',page:{id:`page-${draft.revision}`,route:`/page-${draft.revision}`,title:`Page ${draft.revision}`,components:[]}}]);return store.publish(draft.revision+1);};
-test('scheduled rollout imports signed newer versions and skips an already applied version',async()=>{
- const f=await fixture(),connector=createRemoteControlConnector(f.config),rollout=new SqliteRemoteRollout(f.path,connector,actor);
- assert.equal(Object.isFrozen(connector),true);assert.throws(()=>{connector.importPublication=async()=>{};},TypeError);
- try{assert.deepEqual(await rollout.runOnce(),{status:'imported',sourceVersion:1,targetVersion:1});assert.deepEqual(await rollout.runOnce(),{status:'unchanged',sourceVersion:1,targetVersion:1});publishNext(f.source);assert.deepEqual(await rollout.runOnce(),{status:'imported',sourceVersion:2,targetVersion:2});assert.equal(f.target.getPublicationProvenance(2).signature.keyId,'key');assert.equal(rollout.getState().phase,'idle');}finally{rollout.close();await cleanup(f);}
+const publishNext = store => {
+  const draft = store.getDraft();
+  store.apply(draft.revision, [{ op: 'addPage', page: { id: `page-${draft.revision}`, route: `/page-${draft.revision}`, title: `Page ${draft.revision}`, components: [] } }]);
+  return store.publish(draft.revision + 1);
+};
+test('scheduled rollout imports signed newer versions and skips an already applied version', async () => {
+  const f = await fixture(),
+    connector = createRemoteControlConnector(f.config),
+    rollout = new SqliteRemoteRollout(f.path, connector, actor);
+  assert.equal(Object.isFrozen(connector), true);
+  assert.throws(() => {
+    connector.importPublication = async () => {};
+  }, TypeError);
+  try {
+    assert.deepEqual(await rollout.runOnce(), { status: 'imported', sourceVersion: 1, targetVersion: 1 });
+    assert.deepEqual(await rollout.runOnce(), { status: 'unchanged', sourceVersion: 1, targetVersion: 1 });
+    publishNext(f.source);
+    assert.deepEqual(await rollout.runOnce(), { status: 'imported', sourceVersion: 2, targetVersion: 2 });
+    assert.equal(f.target.getPublicationProvenance(2).signature.keyId, 'key');
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('uncertain import is durably blocked until an authorized recovery inspects it',async()=>{
- const f=await fixture();let rollout;
- try{const connector=createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failed');}});rollout=new SqliteRemoteRollout(f.path,connector,actor);await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);assert.equal(f.target.getPublished().version,1);assert.deepEqual({...rollout.getState(),token:'token'},{phase:'uncertain',sourceVersion:1,expectedVersion:0,token:'token'});rollout.close();rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor);await assert.rejects(rollout.runOnce(),/recovery/);await assert.rejects(rollout.recover(()=>false),/denied/);assert.equal(rollout.getState().phase,'uncertain');await rollout.recover(state=>state.sourceVersion===f.target.getPublicationProvenance(1).sourceVersion);assert.deepEqual(await rollout.runOnce(),{status:'unchanged',sourceVersion:1,targetVersion:1});}finally{rollout?.close();await cleanup(f);}
+test('uncertain import is durably blocked until an authorized recovery inspects it', async () => {
+  const f = await fixture();
+  let rollout;
+  try {
+    const connector = createRemoteControlConnector({
+      ...f.config,
+      audit: event => {
+        if (event.phase === 'completed') throw Error('audit failed');
+      }
+    });
+    rollout = new SqliteRemoteRollout(f.path, connector, actor);
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    assert.equal(f.target.getPublished().version, 1);
+    assert.deepEqual({ ...rollout.getState(), token: 'token' }, { phase: 'uncertain', sourceVersion: 1, expectedVersion: 0, token: 'token' });
+    rollout.close();
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor);
+    await assert.rejects(rollout.runOnce(), /recovery/);
+    await assert.rejects(
+      rollout.recover(() => false),
+      /denied/
+    );
+    assert.equal(rollout.getState().phase, 'uncertain');
+    await rollout.recover(state => state.sourceVersion === f.target.getPublicationProvenance(1).sourceVersion);
+    assert.deepEqual(await rollout.runOnce(), { status: 'unchanged', sourceVersion: 1, targetVersion: 1 });
+  } finally {
+    rollout?.close();
+    await cleanup(f);
+  }
 });
 
-test('a killed worker leaves a durable import gate for an operator to reconcile',async()=>{
- const f=await fixture(),fixturePath=fileURLToPath(new URL('./fixtures/rollout-crash.mjs',import.meta.url)),env={...process.env,TEST_TARGET:join(f.dir,'target.sqlite'),TEST_ORIGIN:f.config.sourceOrigin,TEST_TOKEN:token,TEST_PUBLIC_KEY:f.publicKey.export({type:'spki',format:'pem'}),TEST_ROLLOUT:f.path},child=spawn(process.execPath,[fixturePath],{env,stdio:['ignore','pipe','pipe']});let rollout;
- try{let output='',errors='';child.stderr.on('data',chunk=>errors+=chunk);await Promise.race([new Promise((resolve,reject)=>{child.stdout.on('data',chunk=>{output+=chunk;if(output.includes('IMPORTING'))resolve();});child.once('exit',()=>reject(Error('worker exited before import: '+errors)));}),new Promise((_,reject)=>setTimeout(()=>reject(Error('worker did not reach import')),10000).unref())]);const exited=once(child,'exit');child.kill();await exited;rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor);assert.equal(rollout.getState().phase,'importing');assert.equal(f.target.getPublished(),undefined);await assert.rejects(rollout.runOnce(),/recovery/);await rollout.recover(state=>state.phase==='importing'&&f.target.getPublished()===undefined);assert.equal((await rollout.runOnce()).status,'imported');}finally{if(child.exitCode===null&&child.signalCode===null)child.kill();rollout?.close();await cleanup(f);}
+test('a killed worker leaves a durable import gate for an operator to reconcile', async () => {
+  const f = await fixture(),
+    fixturePath = fileURLToPath(new URL('./fixtures/rollout-crash.mjs', import.meta.url)),
+    env = {
+      ...process.env,
+      TEST_TARGET: join(f.dir, 'target.sqlite'),
+      TEST_ORIGIN: f.config.sourceOrigin,
+      TEST_TOKEN: token,
+      TEST_PUBLIC_KEY: f.publicKey.export({ type: 'spki', format: 'pem' }),
+      TEST_ROLLOUT: f.path
+    },
+    child = spawn(process.execPath, [fixturePath], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let rollout;
+  try {
+    let output = '',
+      errors = '';
+    child.stderr.on('data', chunk => (errors += chunk));
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        child.stdout.on('data', chunk => {
+          output += chunk;
+          if (output.includes('IMPORTING')) resolve();
+        });
+        child.once('exit', () => reject(Error('worker exited before import: ' + errors)));
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(Error('worker did not reach import')), 10000).unref())
+    ]);
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor);
+    assert.equal(rollout.getState().phase, 'importing');
+    assert.equal(f.target.getPublished(), undefined);
+    await assert.rejects(rollout.runOnce(), /recovery/);
+    await rollout.recover(state => state.phase === 'importing' && f.target.getPublished() === undefined);
+    assert.equal((await rollout.runOnce()).status, 'imported');
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    rollout?.close();
+    await cleanup(f);
+  }
 });
 
-test('SQLite rollout survives a worker killed after publication and before completion audit',async()=>{
- const f=await fixture(),fixturePath=fileURLToPath(new URL('./fixtures/rollout-crash.mjs',import.meta.url)),env={...process.env,TEST_TARGET:join(f.dir,'target.sqlite'),TEST_ORIGIN:f.config.sourceOrigin,TEST_TOKEN:token,TEST_PUBLIC_KEY:f.publicKey.export({type:'spki',format:'pem'}),TEST_ROLLOUT:f.path,TEST_BARRIER:'completed'},child=spawn(process.execPath,[fixturePath],{env,stdio:['ignore','pipe','pipe']});let rollout,foreign;try{let output='',errors='';child.stderr.on('data',chunk=>errors+=chunk);await Promise.race([new Promise((resolve,reject)=>{child.stdout.on('data',chunk=>{output+=chunk;if(output.includes('COMPLETED'))resolve();});child.once('exit',()=>reject(Error('worker exited before completion audit: '+errors)));}),new Promise((_,reject)=>setTimeout(()=>reject(Error('worker did not reach completion audit')),10000).unref())]);assert.equal(f.target.getPublished().version,1);const exited=once(child,'exit');child.kill();await exited;f.target.close();f.target=new SqliteApplicationStore(join(f.dir,'target.sqlite'),definition);const connector=createRemoteControlConnector({...f.config,repository:f.target});rollout=new SqliteRemoteRollout(f.path,connector,actor);foreign=new SqliteRemoteRollout(f.path,connector,{...actor,tenantId:'other'});assert.equal(rollout.getState().phase,'importing');assert.equal(foreign.getState().phase,'idle');await assert.rejects(rollout.runOnce(),/recovery/);await rollout.recover(state=>state.sourceVersion===f.target.getPublicationProvenance(1).sourceVersion);assert.equal((await rollout.runOnce()).status,'unchanged');assert.equal(f.target.getPublished().version,1);}finally{if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}foreign?.close();rollout?.close();await cleanup(f);}
+test('SQLite rollout survives a worker killed after publication and before completion audit', async () => {
+  const f = await fixture(),
+    fixturePath = fileURLToPath(new URL('./fixtures/rollout-crash.mjs', import.meta.url)),
+    env = {
+      ...process.env,
+      TEST_TARGET: join(f.dir, 'target.sqlite'),
+      TEST_ORIGIN: f.config.sourceOrigin,
+      TEST_TOKEN: token,
+      TEST_PUBLIC_KEY: f.publicKey.export({ type: 'spki', format: 'pem' }),
+      TEST_ROLLOUT: f.path,
+      TEST_BARRIER: 'completed'
+    },
+    child = spawn(process.execPath, [fixturePath], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let rollout, foreign;
+  try {
+    let output = '',
+      errors = '';
+    child.stderr.on('data', chunk => (errors += chunk));
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        child.stdout.on('data', chunk => {
+          output += chunk;
+          if (output.includes('COMPLETED')) resolve();
+        });
+        child.once('exit', () => reject(Error('worker exited before completion audit: ' + errors)));
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(Error('worker did not reach completion audit')), 10000).unref())
+    ]);
+    assert.equal(f.target.getPublished().version, 1);
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+    f.target.close();
+    f.target = new SqliteApplicationStore(join(f.dir, 'target.sqlite'), definition);
+    const connector = createRemoteControlConnector({ ...f.config, repository: f.target });
+    rollout = new SqliteRemoteRollout(f.path, connector, actor);
+    foreign = new SqliteRemoteRollout(f.path, connector, { ...actor, tenantId: 'other' });
+    assert.equal(rollout.getState().phase, 'importing');
+    assert.equal(foreign.getState().phase, 'idle');
+    await assert.rejects(rollout.runOnce(), /recovery/);
+    await rollout.recover(state => state.sourceVersion === f.target.getPublicationProvenance(1).sourceVersion);
+    assert.equal((await rollout.runOnce()).status, 'unchanged');
+    assert.equal(f.target.getPublished().version, 1);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    foreign?.close();
+    rollout?.close();
+    await cleanup(f);
+  }
 });
 
-test('competing workers cannot overlap',async()=>{
- const f=await fixture();let release,started;const entered=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>release=resolve);const connector=createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{started();await gate;return true;}}}),first=new SqliteRemoteRollout(f.path,connector,actor),second=new SqliteRemoteRollout(f.path,connector,actor);
- try{const pending=first.runOnce();await entered;await assert.rejects(second.runOnce(),/recovery/);assert.throws(()=>first.close(),/active/);release();assert.equal((await pending).status,'imported');assert.equal((await second.runOnce()).status,'unchanged');}finally{release();first.close();second.close();await cleanup(f);}
+test('competing workers cannot overlap', async () => {
+  const f = await fixture();
+  let release, started;
+  const entered = new Promise(resolve => (started = resolve)),
+    gate = new Promise(resolve => (release = resolve));
+  const connector = createRemoteControlConnector({
+      ...f.config,
+      discovery: {
+        ...f.config.discovery,
+        authorize: async () => {
+          started();
+          await gate;
+          return true;
+        }
+      }
+    }),
+    first = new SqliteRemoteRollout(f.path, connector, actor),
+    second = new SqliteRemoteRollout(f.path, connector, actor);
+  try {
+    const pending = first.runOnce();
+    await entered;
+    await assert.rejects(second.runOnce(), /recovery/);
+    assert.throws(() => first.close(), /active/);
+    release();
+    assert.equal((await pending).status, 'imported');
+    assert.equal((await second.runOnce()).status, 'unchanged');
+  } finally {
+    release();
+    first.close();
+    second.close();
+    await cleanup(f);
+  }
 });
 
-test('source outage releases a live pre-import claim and leaves publication unchanged',async()=>{
- const f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor);
- try{f.server.closeAllConnections();await new Promise(resolve=>f.server.close(resolve));await assert.rejects(rollout.runOnce(),/discovery failed/);assert.equal(rollout.getState().phase,'idle');assert.equal(f.target.getPublished(),undefined);}finally{rollout.close();await cleanup(f);}
+test('source outage releases a live pre-import claim and leaves publication unchanged', async () => {
+  const f = await fixture(),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor);
+  try {
+    f.server.closeAllConnections();
+    await new Promise(resolve => f.server.close(resolve));
+    await assert.rejects(rollout.runOnce(), /discovery failed/);
+    assert.equal(rollout.getState().phase, 'idle');
+    assert.equal(f.target.getPublished(), undefined);
+  } finally {
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout requires signed advancing imports and refuses a source behind retained history',async()=>{
- const f=await fixture();let rollout;
- try{assert.throws(()=>new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,requireAdvancingSource:false}),actor),/configuration/);publishNext(f.source);const direct=createRemoteControlConnector(f.config);await direct.importPublication({actor,sourceVersion:2,expectedVersion:0});const stale=new ApplicationStore(definition);stale.publish(0);const staleServer=createControlPlane(stale,token);staleServer.listen(0,'127.0.0.1');await once(staleServer,'listening');try{rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,sourceOrigin:`http://127.0.0.1:${staleServer.address().port}`}),actor);await assert.rejects(rollout.runOnce(),/behind local history/);assert.equal(rollout.getState().phase,'idle');assert.equal(f.target.getPublished().version,1);}finally{staleServer.closeAllConnections();await new Promise(resolve=>staleServer.close(resolve));}}finally{rollout?.close();await cleanup(f);}
+test('rollout requires signed advancing imports and refuses a source behind retained history', async () => {
+  const f = await fixture();
+  let rollout;
+  try {
+    assert.throws(() => new SqliteRemoteRollout(f.path, createRemoteControlConnector({ ...f.config, requireAdvancingSource: false }), actor), /configuration/);
+    publishNext(f.source);
+    const direct = createRemoteControlConnector(f.config);
+    await direct.importPublication({ actor, sourceVersion: 2, expectedVersion: 0 });
+    const stale = new ApplicationStore(definition);
+    stale.publish(0);
+    const staleServer = createControlPlane(stale, token);
+    staleServer.listen(0, '127.0.0.1');
+    await once(staleServer, 'listening');
+    try {
+      rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector({ ...f.config, sourceOrigin: `http://127.0.0.1:${staleServer.address().port}` }), actor);
+      await assert.rejects(rollout.runOnce(), /behind local history/);
+      assert.equal(rollout.getState().phase, 'idle');
+      assert.equal(f.target.getPublished().version, 1);
+    } finally {
+      staleServer.closeAllConnections();
+      await new Promise(resolve => staleServer.close(resolve));
+    }
+  } finally {
+    rollout?.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout status capability exposes one separately authorized gate without the claim token',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutStatusCapability,createCapabilityServer}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),actor),registry=new CapabilityRegistry(()=>{}),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},options={candidate:{operationId:'rollout.status',method:'GET',path:'/rollout'},scope,authorize:who=>who.principalId==='operator',authorizeStatus:()=>true};let server;
- try{assert.equal(rollout.isBoundTo(scope),true);assert.equal(rollout.isBoundTo({...scope,targetEnvironment:'other'}),false);assert.throws(()=>registerRemoteRolloutStatusCapability(registry,rollout,{...options,scope:{...scope,tenantId:'other'}}),/Invalid rollout/);registerRemoteRolloutStatusCapability(registry,rollout,options);scope.targetEnvironment='other';const context={...actor,origin:'ui'};assert.deepEqual(await registry.invoke('rollout.status',{},context),{phase:'idle',sourceVersion:null,expectedVersion:null});await assert.rejects(registry.invoke('rollout.status',{tenantId:'other'},context),/Invalid capability input/);await assert.rejects(registry.invoke('rollout.status',{}, {...context,tenantId:'other'}),/forbidden/);await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);const status=await registry.invoke('rollout.status',{},context);assert.deepEqual(status,{phase:'uncertain',sourceVersion:1,expectedVersion:0});assert.equal(Object.hasOwn(status,'token'),false);server=createCapabilityServer(registry,()=>actor,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const response=await fetch(`http://127.0.0.1:${server.address().port}/capabilities/rollout.status/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})});assert.equal(response.status,200);assert.deepEqual((await response.json()).result,status);
- }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}rollout.close();await cleanup(f);}
+test('rollout status capability exposes one separately authorized gate without the claim token', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutStatusCapability, createCapabilityServer } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit failure');
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {}),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    options = { candidate: { operationId: 'rollout.status', method: 'GET', path: '/rollout' }, scope, authorize: who => who.principalId === 'operator', authorizeStatus: () => true };
+  let server;
+  try {
+    assert.equal(rollout.isBoundTo(scope), true);
+    assert.equal(rollout.isBoundTo({ ...scope, targetEnvironment: 'other' }), false);
+    assert.throws(() => registerRemoteRolloutStatusCapability(registry, rollout, { ...options, scope: { ...scope, tenantId: 'other' } }), /Invalid rollout/);
+    registerRemoteRolloutStatusCapability(registry, rollout, options);
+    scope.targetEnvironment = 'other';
+    const context = { ...actor, origin: 'ui' };
+    assert.deepEqual(await registry.invoke('rollout.status', {}, context), { phase: 'idle', sourceVersion: null, expectedVersion: null });
+    await assert.rejects(registry.invoke('rollout.status', { tenantId: 'other' }, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('rollout.status', {}, { ...context, tenantId: 'other' }), /forbidden/);
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    const status = await registry.invoke('rollout.status', {}, context);
+    assert.deepEqual(status, { phase: 'uncertain', sourceVersion: 1, expectedVersion: 0 });
+    assert.equal(Object.hasOwn(status, 'token'), false);
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/rollout.status/invoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ origin: 'ui', input: {} })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).result, status);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout status rechecks authorization and rejects a changed gate',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutStatusCapability}=await import('../dist/index.js'),f=await fixture();let statusEnter,statusRelease,discoveryEnter,discoveryRelease,checks=0;const statusReady=new Promise(resolve=>statusEnter=resolve),statusGate=new Promise(resolve=>statusRelease=resolve),discoveryReady=new Promise(resolve=>discoveryEnter=resolve),discoveryGate=new Promise(resolve=>discoveryRelease=resolve),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,discovery:{...f.config.discovery,authorize:async()=>{discoveryEnter();await discoveryGate;return true;}}}),actor),registry=new CapabilityRegistry(()=>{});
- try{registerRemoteRolloutStatusCapability(registry,rollout,{candidate:{operationId:'status',method:'GET',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeStatus:async()=>{if(++checks===2){statusEnter();await statusGate;}return true;}});const read=registry.invoke('status',{}, {...actor,origin:'ui'});await statusReady;const work=rollout.runOnce();await discoveryReady;statusRelease();await assert.rejects(read,/Rollout status changed/);discoveryRelease();await work;assert.equal(rollout.getState().phase,'idle');}finally{statusRelease();discoveryRelease();rollout.close();await cleanup(f);}
+test('rollout status rechecks authorization and rejects a changed gate', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutStatusCapability } = await import('../dist/index.js'),
+    f = await fixture();
+  let statusEnter,
+    statusRelease,
+    discoveryEnter,
+    discoveryRelease,
+    checks = 0;
+  const statusReady = new Promise(resolve => (statusEnter = resolve)),
+    statusGate = new Promise(resolve => (statusRelease = resolve)),
+    discoveryReady = new Promise(resolve => (discoveryEnter = resolve)),
+    discoveryGate = new Promise(resolve => (discoveryRelease = resolve)),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        discovery: {
+          ...f.config.discovery,
+          authorize: async () => {
+            discoveryEnter();
+            await discoveryGate;
+            return true;
+          }
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {});
+  try {
+    registerRemoteRolloutStatusCapability(registry, rollout, {
+      candidate: { operationId: 'status', method: 'GET', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeStatus: async () => {
+        if (++checks === 2) {
+          statusEnter();
+          await statusGate;
+        }
+        return true;
+      }
+    });
+    const read = registry.invoke('status', {}, { ...actor, origin: 'ui' });
+    await statusReady;
+    const work = rollout.runOnce();
+    await discoveryReady;
+    statusRelease();
+    await assert.rejects(read, /Rollout status changed/);
+    discoveryRelease();
+    await work;
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    statusRelease();
+    discoveryRelease();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout status timeout keeps its slot until host authorization settles',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutStatusCapability}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),registry=new CapabilityRegistry(()=>{});let release,entered,aborted,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),cancelled=new Promise(resolve=>aborted=resolve);
- try{registerRemoteRolloutStatusCapability(registry,rollout,{candidate:{operationId:'status',method:'GET',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeStatus:async(_actor,_scope,signal)=>{if(block){signal.addEventListener('abort',aborted,{once:true});entered();await gate;}return true;},timeoutMs:100,maxPending:1});const context={...actor,origin:'ui'},pending=registry.invoke('status',{},context);await ready;await assert.rejects(pending,/Rollout status unavailable/);await cancelled;await assert.rejects(registry.invoke('status',{},context),/Rollout status unavailable/);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await registry.invoke('status',{},context)).phase,'idle');}finally{release();rollout.close();await cleanup(f);}
+test('rollout status timeout keeps its slot until host authorization settles', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutStatusCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    aborted,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    cancelled = new Promise(resolve => (aborted = resolve));
+  try {
+    registerRemoteRolloutStatusCapability(registry, rollout, {
+      candidate: { operationId: 'status', method: 'GET', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeStatus: async (_actor, _scope, signal) => {
+        if (block) {
+          signal.addEventListener('abort', aborted, { once: true });
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      timeoutMs: 100,
+      maxPending: 1
+    });
+    const context = { ...actor, origin: 'ui' },
+      pending = registry.invoke('status', {}, context);
+    await ready;
+    await assert.rejects(pending, /Rollout status unavailable/);
+    await cancelled;
+    await assert.rejects(registry.invoke('status', {}, context), /Rollout status unavailable/);
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await registry.invoke('status', {}, context)).phase, 'idle');
+  } finally {
+    release();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout status denies a policy revoked during its read',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutStatusCapability}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),registry=new CapabilityRegistry(()=>{});let allowed=true,release,entered,checks=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
- try{registerRemoteRolloutStatusCapability(registry,rollout,{candidate:{operationId:'status',method:'GET',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeStatus:async()=>{if(++checks===2){entered();await gate;}return allowed;}});const pending=registry.invoke('status',{}, {...actor,origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/Capability forbidden/);}finally{release();rollout.close();await cleanup(f);}
+test('rollout status denies a policy revoked during its read', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutStatusCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    registry = new CapabilityRegistry(() => {});
+  let allowed = true,
+    release,
+    entered,
+    checks = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    registerRemoteRolloutStatusCapability(registry, rollout, {
+      candidate: { operationId: 'status', method: 'GET', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeStatus: async () => {
+        if (++checks === 2) {
+          entered();
+          await gate;
+        }
+        return allowed;
+      }
+    });
+    const pending = registry.invoke('status', {}, { ...actor, origin: 'ui' });
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /Capability forbidden/);
+  } finally {
+    release();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout status HTTP reports bounded authorization saturation as unavailable',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutStatusCapability,createCapabilityServer}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),registry=new CapabilityRegistry(()=>{});let release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);let server;
- try{registerRemoteRolloutStatusCapability(registry,rollout,{candidate:{operationId:'status',method:'GET',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeStatus:async()=>{entered();await gate;return true;},timeoutMs:200,maxPending:1});server=createCapabilityServer(registry,()=>actor,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/status/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})}),first=call();await ready;assert.equal((await call()).status,503);assert.equal((await first).status,503);release();await new Promise(resolve=>setImmediate(resolve));}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}rollout.close();await cleanup(f);}
+test('rollout status HTTP reports bounded authorization saturation as unavailable', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutStatusCapability, createCapabilityServer } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    registry = new CapabilityRegistry(() => {});
+  let release, entered;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  let server;
+  try {
+    registerRemoteRolloutStatusCapability(registry, rollout, {
+      candidate: { operationId: 'status', method: 'GET', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeStatus: async () => {
+        entered();
+        await gate;
+        return true;
+      },
+      timeoutMs: 200,
+      maxPending: 1
+    });
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = () =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/status/invoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input: {} })
+        }),
+      first = call();
+    await ready;
+    assert.equal((await call()).status, 503);
+    assert.equal((await first).status, 503);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout recovery capability requires fixed scope, authorization and host verification',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutRecoveryCapability}=await import('../dist/index.js'),f=await fixture();let failAudit=true,allowed=true,verified=false;const seen=[],rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(failAudit&&event.phase==='completed')throw Error('audit failure');}}),actor),registry=new CapabilityRegistry(()=>{}),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},options={candidate:{operationId:'recover',method:'POST',path:'/recover'},scope,clock:()=>123,authorize:who=>who.principalId==='operator',authorizeRecovery:()=>allowed,verifyRecovery:(_actor,_scope,state,reference)=>{seen.push({state,reference});return verified&&state.phase==='uncertain'&&state.sourceVersion===f.target.getPublicationProvenance(1).sourceVersion;}};
- try{assert.throws(()=>registerRemoteRolloutRecoveryCapability(registry,rollout,{...options,scope:{...scope,tenantId:'other'}}),/Invalid rollout/);registerRemoteRolloutRecoveryCapability(registry,rollout,options);scope.targetEnvironment='changed';const context={...actor,origin:'ui'};await assert.rejects(registry.invoke('recover',{reference:'evidence'},context),/No rollout requires recovery/);await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);await assert.rejects(registry.invoke('recover',{reference:'evidence',decision:'clear'},context),/Invalid capability input/);await assert.rejects(registry.invoke('recover',{reference:'evidence'}, {...context,tenantId:'other'}),/forbidden/);await assert.rejects(registry.invoke('recover',{reference:'evidence'},context),/not verified/);assert.equal(rollout.getState().phase,'uncertain');assert.deepEqual(seen[0],{state:{phase:'uncertain',sourceVersion:1,expectedVersion:0},reference:'evidence'});assert.equal(Object.hasOwn(seen[0].state,'token'),false);allowed=false;await assert.rejects(registry.invoke('recover',{reference:'evidence'},context),/forbidden/);assert.equal(rollout.getState().phase,'uncertain');allowed=true;verified=true;assert.deepEqual(await registry.invoke('recover',{reference:'evidence'},context),{recovered:true});assert.equal(rollout.getState().phase,'idle');const history=rollout.listRecoveryEvidence();assert.deepEqual(history.items.map(({principalId,reference,phase,sourceVersion,expectedVersion,observedAt})=>({principalId,reference,phase,sourceVersion,expectedVersion,observedAt})),[{principalId:'operator',reference:'evidence',phase:'uncertain',sourceVersion:1,expectedVersion:0,observedAt:123}]);failAudit=false;assert.equal((await rollout.runOnce()).status,'unchanged');
- }finally{rollout.close();await cleanup(f);}
+test('rollout recovery capability requires fixed scope, authorization and host verification', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutRecoveryCapability } = await import('../dist/index.js'),
+    f = await fixture();
+  let failAudit = true,
+    allowed = true,
+    verified = false;
+  const seen = [],
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (failAudit && event.phase === 'completed') throw Error('audit failure');
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {}),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    options = {
+      candidate: { operationId: 'recover', method: 'POST', path: '/recover' },
+      scope,
+      clock: () => 123,
+      authorize: who => who.principalId === 'operator',
+      authorizeRecovery: () => allowed,
+      verifyRecovery: (_actor, _scope, state, reference) => {
+        seen.push({ state, reference });
+        return verified && state.phase === 'uncertain' && state.sourceVersion === f.target.getPublicationProvenance(1).sourceVersion;
+      }
+    };
+  try {
+    assert.throws(() => registerRemoteRolloutRecoveryCapability(registry, rollout, { ...options, scope: { ...scope, tenantId: 'other' } }), /Invalid rollout/);
+    registerRemoteRolloutRecoveryCapability(registry, rollout, options);
+    scope.targetEnvironment = 'changed';
+    const context = { ...actor, origin: 'ui' };
+    await assert.rejects(registry.invoke('recover', { reference: 'evidence' }, context), /No rollout requires recovery/);
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    await assert.rejects(registry.invoke('recover', { reference: 'evidence', decision: 'clear' }, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('recover', { reference: 'evidence' }, { ...context, tenantId: 'other' }), /forbidden/);
+    await assert.rejects(registry.invoke('recover', { reference: 'evidence' }, context), /not verified/);
+    assert.equal(rollout.getState().phase, 'uncertain');
+    assert.deepEqual(seen[0], { state: { phase: 'uncertain', sourceVersion: 1, expectedVersion: 0 }, reference: 'evidence' });
+    assert.equal(Object.hasOwn(seen[0].state, 'token'), false);
+    allowed = false;
+    await assert.rejects(registry.invoke('recover', { reference: 'evidence' }, context), /forbidden/);
+    assert.equal(rollout.getState().phase, 'uncertain');
+    allowed = true;
+    verified = true;
+    assert.deepEqual(await registry.invoke('recover', { reference: 'evidence' }, context), { recovered: true });
+    assert.equal(rollout.getState().phase, 'idle');
+    const history = rollout.listRecoveryEvidence();
+    assert.deepEqual(
+      history.items.map(({ principalId, reference, phase, sourceVersion, expectedVersion, observedAt }) => ({ principalId, reference, phase, sourceVersion, expectedVersion, observedAt })),
+      [{ principalId: 'operator', reference: 'evidence', phase: 'uncertain', sourceVersion: 1, expectedVersion: 0, observedAt: 123 }]
+    );
+    failAudit = false;
+    assert.equal((await rollout.runOnce()).status, 'unchanged');
+  } finally {
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('timed out recovery verification cannot clear a gate after a late result',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutRecoveryCapability}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),actor),registry=new CapabilityRegistry(()=>{});let release,entered,aborted,block=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),cancelled=new Promise(resolve=>aborted=resolve);
- try{await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);registerRemoteRolloutRecoveryCapability(registry,rollout,{candidate:{operationId:'recover',method:'POST',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeRecovery:()=>true,verifyRecovery:async(_actor,_scope,_state,_reference,signal)=>{if(block){signal.addEventListener('abort',aborted,{once:true});entered();await gate;}return true;},timeoutMs:100,maxPending:1});const context={...actor,origin:'ui'},pending=registry.invoke('recover',{reference:'evidence'},context);await ready;await assert.rejects(pending,/Rollout recovery unavailable/);await cancelled;assert.equal(rollout.getState().phase,'uncertain');await assert.rejects(registry.invoke('recover',{reference:'evidence'},context),/Rollout recovery unavailable/);block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal(rollout.getState().phase,'uncertain');assert.deepEqual(await registry.invoke('recover',{reference:'evidence'},context),{recovered:true});}finally{release();rollout.close();await cleanup(f);}
+test('timed out recovery verification cannot clear a gate after a late result', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutRecoveryCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit failure');
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    aborted,
+    block = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    cancelled = new Promise(resolve => (aborted = resolve));
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    registerRemoteRolloutRecoveryCapability(registry, rollout, {
+      candidate: { operationId: 'recover', method: 'POST', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeRecovery: () => true,
+      verifyRecovery: async (_actor, _scope, _state, _reference, signal) => {
+        if (block) {
+          signal.addEventListener('abort', aborted, { once: true });
+          entered();
+          await gate;
+        }
+        return true;
+      },
+      timeoutMs: 100,
+      maxPending: 1
+    });
+    const context = { ...actor, origin: 'ui' },
+      pending = registry.invoke('recover', { reference: 'evidence' }, context);
+    await ready;
+    await assert.rejects(pending, /Rollout recovery unavailable/);
+    await cancelled;
+    assert.equal(rollout.getState().phase, 'uncertain');
+    await assert.rejects(registry.invoke('recover', { reference: 'evidence' }, context), /Rollout recovery unavailable/);
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(rollout.getState().phase, 'uncertain');
+    assert.deepEqual(await registry.invoke('recover', { reference: 'evidence' }, context), { recovered: true });
+  } finally {
+    release();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('recovery capability rejects a gate changed during verification',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutRecoveryCapability}=await import('../dist/index.js'),f=await fixture(),connector=createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),rollout=new SqliteRemoteRollout(f.path,connector,actor),other=new SqliteRemoteRollout(f.path,connector,actor),registry=new CapabilityRegistry(()=>{});let release,entered;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
- try{await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);registerRemoteRolloutRecoveryCapability(registry,rollout,{candidate:{operationId:'recover',method:'POST',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeRecovery:()=>true,verifyRecovery:async()=>{entered();await gate;return true;}});const pending=registry.invoke('recover',{reference:'evidence'}, {...actor,origin:'ui'});await ready;await other.recover(()=>true);release();await assert.rejects(pending,/Remote rollout state changed/);assert.equal(rollout.getState().phase,'idle');}finally{release();other.close();rollout.close();await cleanup(f);}
+test('recovery capability rejects a gate changed during verification', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutRecoveryCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    connector = createRemoteControlConnector({
+      ...f.config,
+      audit: event => {
+        if (event.phase === 'completed') throw Error('audit failure');
+      }
+    }),
+    rollout = new SqliteRemoteRollout(f.path, connector, actor),
+    other = new SqliteRemoteRollout(f.path, connector, actor),
+    registry = new CapabilityRegistry(() => {});
+  let release, entered;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    registerRemoteRolloutRecoveryCapability(registry, rollout, {
+      candidate: { operationId: 'recover', method: 'POST', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeRecovery: () => true,
+      verifyRecovery: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    });
+    const pending = registry.invoke('recover', { reference: 'evidence' }, { ...actor, origin: 'ui' });
+    await ready;
+    await other.recover(() => true);
+    release();
+    await assert.rejects(pending, /Remote rollout state changed/);
+    assert.equal(rollout.getState().phase, 'idle');
+  } finally {
+    release();
+    other.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('recovery capability rechecks permission after host verification',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutRecoveryCapability}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),actor),registry=new CapabilityRegistry(()=>{});let release,entered,allowed=true;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);
- try{await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);registerRemoteRolloutRecoveryCapability(registry,rollout,{candidate:{operationId:'recover',method:'POST',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeRecovery:()=>allowed,verifyRecovery:async()=>{entered();await gate;return true;}});const pending=registry.invoke('recover',{reference:'evidence'}, {...actor,origin:'ui'});await ready;allowed=false;release();await assert.rejects(pending,/Capability forbidden/);assert.equal(rollout.getState().phase,'uncertain');}finally{release();rollout.close();await cleanup(f);}
+test('recovery capability rechecks permission after host verification', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutRecoveryCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit failure');
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    allowed = true;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    registerRemoteRolloutRecoveryCapability(registry, rollout, {
+      candidate: { operationId: 'recover', method: 'POST', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeRecovery: () => allowed,
+      verifyRecovery: async () => {
+        entered();
+        await gate;
+        return true;
+      }
+    });
+    const pending = registry.invoke('recover', { reference: 'evidence' }, { ...actor, origin: 'ui' });
+    await ready;
+    allowed = false;
+    release();
+    await assert.rejects(pending, /Capability forbidden/);
+    assert.equal(rollout.getState().phase, 'uncertain');
+  } finally {
+    release();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout recovery HTTP reports unverified evidence and bounded saturation',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutRecoveryCapability,createCapabilityServer}=await import('../dist/index.js'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),actor),registry=new CapabilityRegistry(()=>{});let release,entered,mode='deny';const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve);let server;
- try{await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);registerRemoteRolloutRecoveryCapability(registry,rollout,{candidate:{operationId:'recover',method:'POST',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeRecovery:()=>true,verifyRecovery:async()=>{if(mode==='block'){entered();await gate;}return mode!=='deny';},timeoutMs:200,maxPending:1});server=createCapabilityServer(registry,()=>actor,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{reference:'evidence'}})});assert.equal((await call()).status,409);mode='block';const first=call();await ready;assert.equal((await call()).status,503);assert.equal((await first).status,503);release();await new Promise(resolve=>setImmediate(resolve));assert.equal(rollout.getState().phase,'uncertain');}finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}rollout.close();await cleanup(f);}
+test('rollout recovery HTTP reports unverified evidence and bounded saturation', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutRecoveryCapability, createCapabilityServer } = await import('../dist/index.js'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit failure');
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    mode = 'deny';
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve));
+  let server;
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    registerRemoteRolloutRecoveryCapability(registry, rollout, {
+      candidate: { operationId: 'recover', method: 'POST', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeRecovery: () => true,
+      verifyRecovery: async () => {
+        if (mode === 'block') {
+          entered();
+          await gate;
+        }
+        return mode !== 'deny';
+      },
+      timeoutMs: 200,
+      maxPending: 1
+    });
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = () =>
+      fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origin: 'ui', input: { reference: 'evidence' } })
+      });
+    assert.equal((await call()).status, 409);
+    mode = 'block';
+    const first = call();
+    await ready;
+    assert.equal((await call()).status, 503);
+    assert.equal((await first).status, 503);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(rollout.getState().phase, 'uncertain');
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout recovery evidence is atomic, scoped and immutable in SQLite',async()=>{
- const {DatabaseSync}=await import('node:sqlite'),{CapabilityRegistry,registerRemoteRolloutRecoveryCapability}=await import('../dist/index.js'),f=await fixture(),connector=createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),rollout=new SqliteRemoteRollout(f.path,connector,actor),other=new SqliteRemoteRollout(f.path,connector,{...actor,tenantId:'other'}),registry=new CapabilityRegistry(()=>{});let db;
- try{await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);registerRemoteRolloutRecoveryCapability(registry,rollout,{candidate:{operationId:'recover',method:'POST',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},authorize:()=>true,authorizeRecovery:()=>true,verifyRecovery:()=>true,clock:()=>321});db=new DatabaseSync(f.path);db.exec("CREATE TRIGGER fail_rollout_evidence BEFORE INSERT ON remote_rollout_recovery_events BEGIN SELECT RAISE(ABORT,'evidence unavailable'); END");const invoke=()=>registry.invoke('recover',{reference:'case-1'}, {...actor,origin:'ui'});await assert.rejects(invoke(),/evidence unavailable/);assert.equal(rollout.getState().phase,'uncertain');assert.deepEqual(rollout.listRecoveryEvidence().items,[]);db.exec('DROP TRIGGER fail_rollout_evidence');assert.deepEqual(await invoke(),{recovered:true});const events=rollout.listRecoveryEvidence().items;assert.equal(events.length,1);assert.equal(events[0].principalId,'operator');assert.equal(events[0].reference,'case-1');assert.equal(events[0].observedAt,321);assert.deepEqual(other.listRecoveryEvidence().items,[]);assert.throws(()=>db.exec("UPDATE remote_rollout_recovery_events SET reference='forged'"),/immutable/);assert.throws(()=>db.exec('DELETE FROM remote_rollout_recovery_events'),/immutable/);assert.throws(()=>db.prepare('INSERT OR REPLACE INTO remote_rollout_recovery_events SELECT * FROM remote_rollout_recovery_events WHERE event_id=?').run(events[0].id),/immutable/);publishNext(f.source);await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);assert.deepEqual(await registry.invoke('recover',{reference:'case-2'}, {...actor,origin:'ui'}),{recovered:true});const first=rollout.listRecoveryEvidence({limit:1});assert.equal(first.items[0].reference,'case-1');assert.ok(first.nextAfter);const second=rollout.listRecoveryEvidence({after:first.nextAfter,limit:1});assert.equal(second.items[0].reference,'case-2');assert.equal(second.nextAfter,undefined);for(const bad of [{after:-1},{limit:0},{limit:101}])assert.throws(()=>rollout.listRecoveryEvidence(bad),/Invalid rollout recovery listing/);
- }finally{db?.close();other.close();rollout.close();await cleanup(f);}
+test('rollout recovery evidence is atomic, scoped and immutable in SQLite', async () => {
+  const { DatabaseSync } = await import('node:sqlite'),
+    { CapabilityRegistry, registerRemoteRolloutRecoveryCapability } = await import('../dist/index.js'),
+    f = await fixture(),
+    connector = createRemoteControlConnector({
+      ...f.config,
+      audit: event => {
+        if (event.phase === 'completed') throw Error('audit failure');
+      }
+    }),
+    rollout = new SqliteRemoteRollout(f.path, connector, actor),
+    other = new SqliteRemoteRollout(f.path, connector, { ...actor, tenantId: 'other' }),
+    registry = new CapabilityRegistry(() => {});
+  let db;
+  try {
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    registerRemoteRolloutRecoveryCapability(registry, rollout, {
+      candidate: { operationId: 'recover', method: 'POST', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      authorize: () => true,
+      authorizeRecovery: () => true,
+      verifyRecovery: () => true,
+      clock: () => 321
+    });
+    db = new DatabaseSync(f.path);
+    db.exec("CREATE TRIGGER fail_rollout_evidence BEFORE INSERT ON remote_rollout_recovery_events BEGIN SELECT RAISE(ABORT,'evidence unavailable'); END");
+    const invoke = () => registry.invoke('recover', { reference: 'case-1' }, { ...actor, origin: 'ui' });
+    await assert.rejects(invoke(), /evidence unavailable/);
+    assert.equal(rollout.getState().phase, 'uncertain');
+    assert.deepEqual(rollout.listRecoveryEvidence().items, []);
+    db.exec('DROP TRIGGER fail_rollout_evidence');
+    assert.deepEqual(await invoke(), { recovered: true });
+    const events = rollout.listRecoveryEvidence().items;
+    assert.equal(events.length, 1);
+    assert.equal(events[0].principalId, 'operator');
+    assert.equal(events[0].reference, 'case-1');
+    assert.equal(events[0].observedAt, 321);
+    assert.deepEqual(other.listRecoveryEvidence().items, []);
+    assert.throws(() => db.exec("UPDATE remote_rollout_recovery_events SET reference='forged'"), /immutable/);
+    assert.throws(() => db.exec('DELETE FROM remote_rollout_recovery_events'), /immutable/);
+    assert.throws(() => db.prepare('INSERT OR REPLACE INTO remote_rollout_recovery_events SELECT * FROM remote_rollout_recovery_events WHERE event_id=?').run(events[0].id), /immutable/);
+    publishNext(f.source);
+    await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+    assert.deepEqual(await registry.invoke('recover', { reference: 'case-2' }, { ...actor, origin: 'ui' }), { recovered: true });
+    const first = rollout.listRecoveryEvidence({ limit: 1 });
+    assert.equal(first.items[0].reference, 'case-1');
+    assert.ok(first.nextAfter);
+    const second = rollout.listRecoveryEvidence({ after: first.nextAfter, limit: 1 });
+    assert.equal(second.items[0].reference, 'case-2');
+    assert.equal(second.nextAfter, undefined);
+    for (const bad of [{ after: -1 }, { limit: 0 }, { limit: 101 }]) assert.throws(() => rollout.listRecoveryEvidence(bad), /Invalid rollout recovery listing/);
+  } finally {
+    db?.close();
+    other.close();
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout evidence capability uses scoped authorization and opaque actor-bound cursors',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutEvidenceCapability}=await import('../dist/index.js'),{randomBytes}=await import('node:crypto'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector({...f.config,audit:event=>{if(event.phase==='completed')throw Error('audit failure');}}),actor),registry=new CapabilityRegistry(()=>{}),scope={tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},key=randomBytes(32);let permitted=true;
- try{for(const [i,reference] of ['first','second'].entries()){if(i)publishNext(f.source);await assert.rejects(rollout.runOnce(),RemoteControlImportUncertainError);await rollout.recover(()=>true,{principalId:'operator',reference,observedAt:100+i});}const options={candidate:{operationId:'evidence',method:'GET',path:'/'},scope,cursorKey:key,authorize:()=>true,authorizeEvidence:()=>permitted};assert.throws(()=>registerRemoteRolloutEvidenceCapability(registry,rollout,{...options,scope:{...scope,tenantId:'other'}}),/Invalid rollout/);registerRemoteRolloutEvidenceCapability(registry,rollout,options);key.fill(0);scope.targetEnvironment='forged';const context={...actor,origin:'ui'},first=await registry.invoke('evidence',{limit:1},context);assert.equal(first.items[0].reference,'first');assert.equal(Object.hasOwn(first.items[0],'id'),false);assert.equal(Object.hasOwn(first.items[0],'token'),false);assert.match(first.nextCursor,/^[A-Za-z0-9_-]{48}$/);const second=await registry.invoke('evidence',{limit:1,cursor:first.nextCursor},context);assert.equal(second.items[0].reference,'second');assert.equal(second.nextCursor,undefined);await assert.rejects(registry.invoke('evidence',{cursor:first.nextCursor}, {...context,principalId:'other'}),/Invalid capability input/);await assert.rejects(registry.invoke('evidence',{cursor:first.nextCursor.slice(0,-1)+(first.nextCursor.endsWith('A')?'B':'A')},context),/Invalid capability input/);await assert.rejects(registry.invoke('evidence',{limit:101},context),/Invalid capability input/);await assert.rejects(registry.invoke('evidence',{scope:'other'},context),/Invalid capability input/);await assert.rejects(registry.invoke('evidence',{}, {...context,tenantId:'other'}),/forbidden/);permitted=false;await assert.rejects(registry.invoke('evidence',{},context),/forbidden/);
- }finally{rollout.close();await cleanup(f);}
+test('rollout evidence capability uses scoped authorization and opaque actor-bound cursors', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutEvidenceCapability } = await import('../dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(
+      f.path,
+      createRemoteControlConnector({
+        ...f.config,
+        audit: event => {
+          if (event.phase === 'completed') throw Error('audit failure');
+        }
+      }),
+      actor
+    ),
+    registry = new CapabilityRegistry(() => {}),
+    scope = { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+    key = randomBytes(32);
+  let permitted = true;
+  try {
+    for (const [i, reference] of ['first', 'second'].entries()) {
+      if (i) publishNext(f.source);
+      await assert.rejects(rollout.runOnce(), RemoteControlImportUncertainError);
+      await rollout.recover(() => true, { principalId: 'operator', reference, observedAt: 100 + i });
+    }
+    const options = { candidate: { operationId: 'evidence', method: 'GET', path: '/' }, scope, cursorKey: key, authorize: () => true, authorizeEvidence: () => permitted };
+    assert.throws(() => registerRemoteRolloutEvidenceCapability(registry, rollout, { ...options, scope: { ...scope, tenantId: 'other' } }), /Invalid rollout/);
+    registerRemoteRolloutEvidenceCapability(registry, rollout, options);
+    key.fill(0);
+    scope.targetEnvironment = 'forged';
+    const context = { ...actor, origin: 'ui' },
+      first = await registry.invoke('evidence', { limit: 1 }, context);
+    assert.equal(first.items[0].reference, 'first');
+    assert.equal(Object.hasOwn(first.items[0], 'id'), false);
+    assert.equal(Object.hasOwn(first.items[0], 'token'), false);
+    assert.match(first.nextCursor, /^[A-Za-z0-9_-]{48}$/);
+    const second = await registry.invoke('evidence', { limit: 1, cursor: first.nextCursor }, context);
+    assert.equal(second.items[0].reference, 'second');
+    assert.equal(second.nextCursor, undefined);
+    await assert.rejects(registry.invoke('evidence', { cursor: first.nextCursor }, { ...context, principalId: 'other' }), /Invalid capability input/);
+    await assert.rejects(registry.invoke('evidence', { cursor: first.nextCursor.slice(0, -1) + (first.nextCursor.endsWith('A') ? 'B' : 'A') }, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('evidence', { limit: 101 }, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('evidence', { scope: 'other' }, context), /Invalid capability input/);
+    await assert.rejects(registry.invoke('evidence', {}, { ...context, tenantId: 'other' }), /forbidden/);
+    permitted = false;
+    await assert.rejects(registry.invoke('evidence', {}, context), /forbidden/);
+  } finally {
+    rollout.close();
+    await cleanup(f);
+  }
 });
 
-test('rollout evidence capability rechecks permission and bounds stalled policy',async()=>{
- const {CapabilityRegistry,registerRemoteRolloutEvidenceCapability,createCapabilityServer}=await import('../dist/index.js'),{randomBytes}=await import('node:crypto'),f=await fixture(),rollout=new SqliteRemoteRollout(f.path,createRemoteControlConnector(f.config),actor),registry=new CapabilityRegistry(()=>{});let release,entered,aborted,block=true,allowed=true,checks=0;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>entered=resolve),cancelled=new Promise(resolve=>aborted=resolve);let server;
- try{registerRemoteRolloutEvidenceCapability(registry,rollout,{candidate:{operationId:'evidence',method:'GET',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},cursorKey:randomBytes(32),authorize:()=>true,authorizeEvidence:async(_actor,_scope,signal)=>{if(block){signal.addEventListener('abort',aborted,{once:true});entered();await gate;}return allowed;},timeoutMs:200,maxPending:1});server=createCapabilityServer(registry,()=>actor,()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const call=()=>fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:'ui',input:{}})}),first=call();await ready;assert.equal((await call()).status,503);assert.equal((await first).status,503);await cancelled;block=false;release();await new Promise(resolve=>setImmediate(resolve));assert.equal((await call()).status,200);
-  const otherRegistry=new CapabilityRegistry(()=>{});let secondRelease,secondEnter;const secondGate=new Promise(resolve=>secondRelease=resolve),secondReady=new Promise(resolve=>secondEnter=resolve);registerRemoteRolloutEvidenceCapability(otherRegistry,rollout,{candidate:{operationId:'other',method:'GET',path:'/'},scope:{tenantId:'tenant',applicationId:'demo',sourceEnvironment:'dev',targetEnvironment:'prod'},cursorKey:randomBytes(32),authorize:()=>true,authorizeEvidence:async()=>{if(++checks===2){secondEnter();await secondGate;}return allowed;}});const pending=otherRegistry.invoke('other',{}, {...actor,origin:'ui'});await secondReady;allowed=false;secondRelease();await assert.rejects(pending,/Capability forbidden/);
- }finally{release();if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}rollout.close();await cleanup(f);}
+test('rollout evidence capability rechecks permission and bounds stalled policy', async () => {
+  const { CapabilityRegistry, registerRemoteRolloutEvidenceCapability, createCapabilityServer } = await import('../dist/index.js'),
+    { randomBytes } = await import('node:crypto'),
+    f = await fixture(),
+    rollout = new SqliteRemoteRollout(f.path, createRemoteControlConnector(f.config), actor),
+    registry = new CapabilityRegistry(() => {});
+  let release,
+    entered,
+    aborted,
+    block = true,
+    allowed = true,
+    checks = 0;
+  const gate = new Promise(resolve => (release = resolve)),
+    ready = new Promise(resolve => (entered = resolve)),
+    cancelled = new Promise(resolve => (aborted = resolve));
+  let server;
+  try {
+    registerRemoteRolloutEvidenceCapability(registry, rollout, {
+      candidate: { operationId: 'evidence', method: 'GET', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeEvidence: async (_actor, _scope, signal) => {
+        if (block) {
+          signal.addEventListener('abort', aborted, { once: true });
+          entered();
+          await gate;
+        }
+        return allowed;
+      },
+      timeoutMs: 200,
+      maxPending: 1
+    });
+    server = createCapabilityServer(
+      registry,
+      () => actor,
+      () => {}
+    );
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const call = () =>
+        fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ origin: 'ui', input: {} })
+        }),
+      first = call();
+    await ready;
+    assert.equal((await call()).status, 503);
+    assert.equal((await first).status, 503);
+    await cancelled;
+    block = false;
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await call()).status, 200);
+    const otherRegistry = new CapabilityRegistry(() => {});
+    let secondRelease, secondEnter;
+    const secondGate = new Promise(resolve => (secondRelease = resolve)),
+      secondReady = new Promise(resolve => (secondEnter = resolve));
+    registerRemoteRolloutEvidenceCapability(otherRegistry, rollout, {
+      candidate: { operationId: 'other', method: 'GET', path: '/' },
+      scope: { tenantId: 'tenant', applicationId: 'demo', sourceEnvironment: 'dev', targetEnvironment: 'prod' },
+      cursorKey: randomBytes(32),
+      authorize: () => true,
+      authorizeEvidence: async () => {
+        if (++checks === 2) {
+          secondEnter();
+          await secondGate;
+        }
+        return allowed;
+      }
+    });
+    const pending = otherRegistry.invoke('other', {}, { ...actor, origin: 'ui' });
+    await secondReady;
+    allowed = false;
+    secondRelease();
+    await assert.rejects(pending, /Capability forbidden/);
+  } finally {
+    release();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    rollout.close();
+    await cleanup(f);
+  }
 });
