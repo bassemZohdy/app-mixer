@@ -26,6 +26,8 @@ type WorkerOptions = {
   sharedSlots?: PostgresAgentRunSlots;
   /** Recheck the shared slot on asynchronous lease assertions before protected work. */
   verifySharedSlotAtUse?: boolean;
+  /** Called when a swallowed store failure would otherwise disappear: releasing the shared slot or renewing the lease. A throwing hook is ignored. */
+  onError?: (error: unknown, scope: AgentRunScope, runId: string, stage: 'releaseSlot' | 'renewLease') => void;
 };
 /** Execute one explicitly selected run. The host supplies policy, execution and outcome classification. */
 export class DurableAgentWorker {
@@ -61,7 +63,8 @@ export class DurableAgentWorker {
         (!options.tracing ||
           !options.tracing.tracer ||
           typeof options.tracing.tracer.startSpan !== 'function' ||
-          (options.tracing.usePersistedParent !== undefined && typeof options.tracing.usePersistedParent !== 'boolean')))
+          (options.tracing.usePersistedParent !== undefined && typeof options.tracing.usePersistedParent !== 'boolean'))) ||
+      (options.onError !== undefined && typeof options.onError !== 'function')
     )
       throw Error('Invalid agent worker');
     if (
@@ -115,6 +118,14 @@ export class DurableAgentWorker {
   }
   usesRegistry(runs: SqliteAgentRuns): boolean {
     return this.options.runs === runs;
+  }
+  /** Report a swallowed store failure to the host without letting a failing hook change the outcome. */
+  private report(error: unknown, scope: AgentRunScope, runId: string, stage: 'releaseSlot' | 'renewLease'): void {
+    try {
+      this.options.onError?.(error, scope, runId, stage);
+    } catch {
+      /* a failing hook must not change the outcome */
+    }
   }
   async runOnce(scope: AgentRunScope, runId: string): Promise<DurableAgentRun> {
     if (!this.tracer) return this.executeOnce(scope, runId);
@@ -197,7 +208,9 @@ export class DurableAgentWorker {
       if (shared && slot)
         try {
           await shared.release(scope, runId, slot);
-        } catch {}
+        } catch (error) {
+          this.report(error, scope, runId, 'releaseSlot');
+        }
     };
     try {
       run = runs.claim(scope, runId, run.revision, workerId, leaseMs, this.clock(), quotas.maxConcurrentRuns, quotas.maxRunsPerDay);
@@ -292,7 +305,8 @@ export class DurableAgentWorker {
         const current = runs.get(scope, runId)!;
         run = runs.renew(scope, runId, current.revision, token, leaseMs, this.clock());
         if (shared && slot && !(await waitActive(pulseSignal, () => shared.renew(scope, runId, slot!, leaseMs)))) throw Error('Agent run slot lost');
-      } catch {
+      } catch (error) {
+        this.report(error, scope, runId, 'renewLease');
         lost = true;
         slotUncertain = true;
         controller.abort();

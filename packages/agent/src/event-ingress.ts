@@ -35,6 +35,8 @@ type Options = {
   contentType?: 'application/x-www-form-urlencoded';
   acknowledgement?: 'twiml' | 'paddle' | 'linear' | 'discord';
   traceParent?: (request: IncomingMessage, identity: SourceIdentity, event: EventRequest, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
+  /** Called when a host callback fails and the ingress continues without it (authentication, authorization, observation, trace parent). A throwing hook is ignored. */
+  onError?: (error: unknown, stage: 'authenticate' | 'authenticateRaw' | 'authorize' | 'observe' | 'traceParent') => void;
   tracing?: { tracer: Tracer; propagateToRun?: boolean };
   wakeup?: {
     runs: SqliteAgentRuns | PostgresAgentRunLifecycleFoundation;
@@ -111,6 +113,7 @@ export function createAgentEventIngress(options: Options): Server {
     (options.observe !== undefined && typeof options.observe !== 'function') ||
     (options.clock !== undefined && typeof options.clock !== 'function') ||
     (options.traceParent !== undefined && typeof options.traceParent !== 'function') ||
+    (options.onError !== undefined && typeof options.onError !== 'function') ||
     (options.mapAuthenticatedBody !== undefined && (typeof options.mapAuthenticatedBody !== 'function' || typeof options.authenticateRaw !== 'function')) ||
     (options.challengeAuthenticatedBody !== undefined && (typeof options.challengeAuthenticatedBody !== 'function' || typeof options.authenticateRaw !== 'function')) ||
     (options.tracing !== undefined &&
@@ -153,6 +156,14 @@ export function createAgentEventIngress(options: Options): Server {
       acknowledgement
     } = options,
     clock = options.clock ?? Date.now;
+  /** Report a failed host callback to the optional hook without letting a failing hook change the outcome. */
+  const reportError = (stage: 'authenticate' | 'authenticateRaw' | 'authorize' | 'observe' | 'traceParent', error: unknown): void => {
+    try {
+      options.onError?.(error, stage);
+    } catch {
+      /* a failing hook must not change the outcome */
+    }
+  };
   const basicLookup = definitions.get.bind(definitions),
     getDefinition = definitions.getWithSignal ? definitions.getWithSignal.bind(definitions) : (tenantId: string, agentId: string, _signal: AbortSignal) => basicLookup(tenantId, agentId);
   let inFlight = 0;
@@ -184,8 +195,10 @@ export function createAgentEventIngress(options: Options): Server {
                 ...(outcome === 'unavailable' ? { reason: unavailableReason ?? 'other' } : {}),
                 durationMs: Math.max(0, performance.now() - started)
               });
-              if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
-            } catch {}
+              if (result && typeof result.then === 'function') Promise.resolve(result).catch(error => reportError('observe', error));
+            } catch (error) {
+              reportError('observe', error);
+            }
           };
           res.once('finish', () => report(false));
           res.once('close', () => report(true));
@@ -226,7 +239,9 @@ export function createAgentEventIngress(options: Options): Server {
           if (authenticate) {
             try {
               source = await authenticate(req, controller.signal);
-            } catch {}
+            } catch (error) {
+              reportError('authenticate', error);
+            }
             if (expired) return;
             if (!source || !id(source.tenantId) || !id(source.principalId) || !id(source.sourceId) || source.sourceId.startsWith('schedule.')) {
               reply(res, 401, { error: 'Unauthorized' });
@@ -248,7 +263,9 @@ export function createAgentEventIngress(options: Options): Server {
           if (authenticateRaw && raw) {
             try {
               source = await authenticateRaw(req, Buffer.from(raw), controller.signal);
-            } catch {}
+            } catch (error) {
+              reportError('authenticateRaw', error);
+            }
           }
           if (expired) return;
           if (!source || !id(source.tenantId) || !id(source.principalId) || !id(source.sourceId) || source.sourceId.startsWith('schedule.')) {
@@ -291,14 +308,18 @@ export function createAgentEventIngress(options: Options): Server {
             let allowed = false;
             try {
               allowed = (await authorize({ ...source }, structuredClone(event), structuredClone(definition), controller.signal)) === true;
-            } catch {}
+            } catch (error) {
+              reportError('authorize', error);
+            }
             if (expired) return;
             let parent: string | undefined;
             if (allowed && traceParent)
               try {
                 const candidate = await traceParent(req, { ...source }, structuredClone(event), controller.signal);
                 if (parseAgentTraceParent(candidate)) parent = candidate;
-              } catch {}
+              } catch (error) {
+                reportError('traceParent', error);
+              }
             if (expired) return;
             let target: AgentEventWakeupTarget | undefined, selectedRun: string | undefined;
             if (allowed && wakeup) {

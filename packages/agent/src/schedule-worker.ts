@@ -235,7 +235,12 @@ export class AgentScheduleWorker {
           } catch {}
         }
       } catch (error) {
-        if (keepGoing() && !(error instanceof Error && error.message === 'Schedule revision conflict')) this.options.onError(error);
+        if (keepGoing() && !(error instanceof Error && error.message === 'Schedule revision conflict'))
+          try {
+            this.options.onError(error);
+          } catch {
+            /* a failing hook must not change the outcome */
+          }
       } finally {
         if (keepGoing()) this.cursor = { nextAt: schedule.nextAt, scheduleId: schedule.scheduleId };
       }
