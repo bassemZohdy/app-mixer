@@ -77,6 +77,9 @@ jobs:
       - run: npm run format:check
         if: matrix.node == '22'
       - run: npm test
+      # FEAT-017: a line and branch coverage figure per package with a minimum threshold; the run fails below it.
+      - run: npm run coverage
+        if: matrix.node == '22'
       - run: npm run build
       # The container tests pull pinned images; cache them keyed by the image list so registry limits and pull time stay out of the run.
       - name: Docker image cache key

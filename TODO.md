@@ -2,8 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **FEAT-017** · P2 · mid · Add a coverage report with a minimum threshold to CI; nothing measures coverage today and the mutation script is run by hand
-  - Done when: the coverage command reports a figure per package and exits non-zero below the threshold; `npm run coverage`
 - [ ] **FEAT-018** · P2 · mid · Add a workflow that builds the Data Plane image, scans it for vulnerabilities and produces an SBOM; no workflow does this today
   - Done when: a test parses the workflow and finds the build, scan and SBOM steps with read-only permissions; `node --test packages/cli/test/process-files.test.mjs`
 - [ ] **TASK-019** · P2 · mid · Make the Kubernetes base manifest secure by default (signed publication, JWT access, TLS, no test image tag) and move the open variant to a named example overlay
